@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Time Tracker</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><div><strong>Private Time Tracker</strong><div id="sync-status" class="muted"></div></div><button id="settings" class="icon" title="Settings">⚙</button></header>
+  <main>
+    <div id="error" class="error" role="alert"></div>
+    <section id="conflicts" hidden></section>
+    <section id="setup" hidden><p>Configure a private GitHub repository and fine-grained token.</p><button id="setup-button" class="primary">Open Settings</button></section>
+    <section id="active" hidden>
+      <div class="label">Running</div><a id="active-issue" target="_blank" rel="noreferrer"></a><div id="active-title" class="muted"></div><div id="elapsed" class="elapsed">00:00:00</div>
+      <label>Description <input id="stop-description" maxlength="2000" placeholder="Optional"></label>
+      <button id="stop" class="danger">Stop and save</button>
+    </section>
+    <section id="idle" hidden><div class="label">No timer running</div><button id="start-current" class="primary">Start on current issue</button><div id="current-hint" class="muted"></div></section>
+    <section id="recent-section" hidden><div class="section-head"><span class="label">Recent</span><button id="refresh" class="link">Refresh</button></div><div id="recent"></div></section>
+    <section id="editor" hidden>
+      <div class="section-head"><strong>Edit entry</strong><button id="close-editor" class="link">Cancel</button></div>
+      <form id="edit-form">
+        <label>Issue <input id="edit-issue" required pattern="[^/# ]+/[^/# ]+#[1-9][0-9]*"></label>
+        <label>Start <input id="edit-start" type="datetime-local" step="1" required></label>
+        <label>End <input id="edit-end" type="datetime-local" step="1" required></label>
+        <label>Description <textarea id="edit-description" maxlength="2000" rows="3"></textarea></label>
+        <div class="actions"><button id="delete" type="button" class="danger-outline">Delete</button><button type="submit" class="primary">Save</button></div>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

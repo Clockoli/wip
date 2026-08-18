@@ -1,0 +1,14 @@
+{
+  "name": "github-time-tracker-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private GitHub-backed issue time tracking Chrome extension",
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/validate-extension.js && node --check src/background/service-worker.js && node --check src/content/github.js && node --check src/popup/popup.js && node --check src/options/options.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

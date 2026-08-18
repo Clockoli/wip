@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Private Time Tracker",
+  "version": "0.1.0",
+  "description": "Track time on GitHub issues and store entries in a private GitHub repository.",
+  "permissions": [
+    "alarms",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "GitHub Private Time Tracker",
+    "default_popup": "src/popup/popup.html"
+  },
+  "options_page": "src/options/options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*"
+      ],
+      "js": [
+        "src/content/github.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "minimum_chrome_version": "102"
+}
