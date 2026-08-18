@@ -39,7 +39,10 @@
       ],
       "properties": {
         "type": {
-          "const": "issue"
+          "enum": [
+            "issue",
+            "pull_request"
+          ]
         },
         "owner": {
           "type": "string"

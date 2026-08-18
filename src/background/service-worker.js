@@ -71,8 +71,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onInstalled.addListener(() => chrome.alarms.create('sync-pending', { periodInMinutes: 1 }));
-chrome.runtime.onStartup.addListener(() => chrome.alarms.create('sync-pending', { periodInMinutes: 1 }));
+function syncPendingNow() {
+  return executor.run(async () => {
+    const state = await store.getState();
+    if (!(state.pendingWrites ?? []).length) return;
+    const { tracker } = await context();
+    await tracker.syncPending();
+  });
+}
+
+function scheduleSync() {
+  chrome.alarms.create('sync-pending', { periodInMinutes: 1 });
+  void syncPendingNow().catch(() => {});
+}
+
+chrome.runtime.onInstalled.addListener(scheduleSync);
+chrome.runtime.onStartup.addListener(scheduleSync);
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'sync-pending') executor.run(() => context().then(({ tracker }) => tracker.syncPending())).catch(() => {});
+  if (alarm.name === 'sync-pending') void syncPendingNow().catch(() => {});
 });
+
+scheduleSync();

@@ -196,7 +196,14 @@ export class TrackerService {
       throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.');
     }
     try { await this.github.deleteFile(activePath(this.user), `timer: clear ${this.user}`, remote.sha); }
-    catch (error) { if (isConflict(error)) throw new TrackerConflictError('The active timer changed while it was being cleared.'); throw error; }
+    catch (error) {
+      if (isNotFound(error)) {
+        try { await this.github.getFile(activePath(this.user)); }
+        catch (verificationError) { if (isNotFound(verificationError)) return; throw verificationError; }
+      }
+      if (isConflict(error)) throw new TrackerConflictError('The active timer changed while it was being cleared.');
+      throw error;
+    }
   }
 
   async syncPending() {

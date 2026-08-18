@@ -88,7 +88,7 @@ function render() {
   $('stop').disabled = controls.stopDisabled;
   renderRecent(state?.recent || []);
   $('start-current').disabled = controls.startDisabled;
-  $('current-hint').textContent = currentIssue ? issueLabel(currentIssue) : 'Open a GitHub issue tab first.';
+  $('current-hint').textContent = currentIssue ? issueLabel(currentIssue) : 'Open a GitHub issue or pull request tab first.';
 }
 
 async function load(refresh = false) {
@@ -109,7 +109,7 @@ function openEditor(entry) {
 $('settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 $('setup-button').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 $('refresh').addEventListener('click', async () => { try { setError(); await send({ type:'SYNC' }); const recent = await send({ type:'LOAD_RECENT' }); state.recent = recent; state = { ...state, ...(await send({ type:'GET_STATE', refresh:true })) }; render(); } catch (e) { setError(e); } });
-$('start-current').addEventListener('click', async event => { try { event.currentTarget.disabled = true; await send({ type:'START', issue:currentIssue }); await load(true); } catch (e) { setError(e); render(); } });
+$('start-current').addEventListener('click', async event => { try { event.currentTarget.disabled = true; await send({ type:'START', issue:currentIssue }); await load(false); } catch (e) { setError(e); render(); } });
 $('stop').addEventListener('click', async event => {
   try {
     const hours = (Date.now() - new Date(state.active.startedAt).getTime()) / 3600000;
@@ -123,7 +123,7 @@ $('close-editor').addEventListener('click', () => { editing = null; render(); })
 $('edit-form').addEventListener('submit', async event => {
   event.preventDefault();
   try {
-    const issue = parseIssueReference($('edit-issue').value);
+    const issue = parseIssueReference($('edit-issue').value, editing.issue.type);
     const startedAt = new Date($('edit-start').value).toISOString();
     const endedAt = new Date($('edit-end').value).toISOString();
     await send({ type:'EDIT_ENTRY', payload:{ path:editing._path, originalSha:editing._sha, edits:{ issue, startedAt, endedAt, description:$('edit-description').value } } });

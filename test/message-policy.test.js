@@ -19,6 +19,13 @@ test('content-script START issue must match its sender URL', () => {
   assert.throws(() => issueForStart({ ...issue, number: 999, url: 'https://github.com/acme/frontend/issues/999' }, content, origin), /match/i);
 });
 
+test('content-script START accepts a matching canonical pull request page', () => {
+  const pull = { type: 'pull_request', owner: 'acme', repo: 'frontend', number: 456, url: 'https://github.com/acme/frontend/pull/456' };
+  const sender = { url: pull.url, tab: { id: 2 } };
+  assert.deepEqual(issueForStart(pull, sender, origin), pull);
+  assert.throws(() => issueForStart({ ...pull, type: 'issue', url: 'https://github.com/acme/frontend/issues/456' }, sender, origin), /match/i);
+});
+
 test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('DELETE_ENTRY', extension, origin));

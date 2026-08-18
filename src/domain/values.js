@@ -37,33 +37,39 @@ export function validateEntryId(value) {
 }
 
 export function normalizeIssue({ type = 'issue', owner, repo, number, url } = {}) {
-  if (type !== 'issue') throw new Error('Invalid issue type');
+  if (!['issue', 'pull_request'].includes(type)) throw new Error('Invalid issue type');
   owner = validateOwner(owner);
   repo = validateRepo(repo);
   number = Number(number);
   if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid issue number');
-  const canonicalUrl = `https://github.com/${owner}/${repo}/issues/${number}`;
+  const route = type === 'pull_request' ? 'pull' : 'issues';
+  const canonicalUrl = `https://github.com/${owner}/${repo}/${route}/${number}`;
   if (url && url !== canonicalUrl) throw new Error('Invalid issue URL');
-  return { type: 'issue', owner, repo, number, url: canonicalUrl };
+  return { type, owner, repo, number, url: canonicalUrl };
 }
 
 export function parseIssueUrl(value) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
-    const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/?$/);
+    const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
     if (!match) return null;
-    return normalizeIssue({ owner: decodeURIComponent(match[1]), repo: decodeURIComponent(match[2]), number: Number(match[3]) });
+    return normalizeIssue({
+      type: match[3] === 'pull' ? 'pull_request' : 'issue',
+      owner: decodeURIComponent(match[1]),
+      repo: decodeURIComponent(match[2]),
+      number: Number(match[4]),
+    });
   } catch {
     return null;
   }
 }
 
-export function parseIssueReference(value) {
+export function parseIssueReference(value, type = 'issue') {
   const match = String(value ?? '').trim().match(/^([^/#\s]+)\/([^/#\s]+)#([1-9]\d*)$/);
   if (!match) throw new Error('Enter a valid issue such as owner/repo#123');
   try {
-    return normalizeIssue({ owner: match[1], repo: match[2], number: Number(match[3]) });
+    return normalizeIssue({ type, owner: match[1], repo: match[2], number: Number(match[3]) });
   } catch {
     throw new Error('Enter a valid issue such as owner/repo#123');
   }

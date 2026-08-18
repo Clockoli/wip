@@ -16,7 +16,10 @@ test('parses only canonical GitHub issue URLs', () => {
     url: 'https://github.com/acme/front-end/issues/123',
   });
   assert.equal(parseIssueUrl('https://evil.example/acme/repo/issues/1'), null);
-  assert.equal(parseIssueUrl('https://github.com/acme/repo/pull/1'), null);
+  assert.deepEqual(parseIssueUrl('https://github.com/acme/repo/pull/1?diff=split#discussion'), {
+    type: 'pull_request', owner: 'acme', repo: 'repo', number: 1,
+    url: 'https://github.com/acme/repo/pull/1',
+  });
   assert.equal(parseIssueUrl('https://github.com/acme/repo/issues/0'), null);
 });
 
@@ -24,6 +27,10 @@ test('parses an editable issue reference', () => {
   assert.deepEqual(parseIssueReference('acme/frontend#42'), {
     type: 'issue', owner: 'acme', repo: 'frontend', number: 42,
     url: 'https://github.com/acme/frontend/issues/42',
+  });
+  assert.deepEqual(parseIssueReference('acme/frontend#42', 'pull_request'), {
+    type: 'pull_request', owner: 'acme', repo: 'frontend', number: 42,
+    url: 'https://github.com/acme/frontend/pull/42',
   });
   assert.throws(() => parseIssueReference('../escape/repo#1'), /valid issue/i);
 });

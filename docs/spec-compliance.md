@@ -9,7 +9,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Decision | Implementation |
 |---|---|
 | Browser | Chrome/Chromium Manifest V3; Chrome 102+ |
-| Work items | GitHub issues only; pull requests are not matched |
+| Work items | Canonical GitHub issue and pull-request pages |
 | Descriptions | Optional, maximum 2,000 characters |
 | Manual entries | Deferred to MVP 1.1 |
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
@@ -24,7 +24,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## Architecture mapping
 
-- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` pages, survives dynamic GitHub navigation, and renders Start/Stop controls.
+- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and renders Start/Stop controls.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
 - `src/api/github-client.js` implements authenticated user lookup plus GitHub Contents API read/list/create/update/delete operations.
 - `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across all configured date directories, SHA-safe edits/deletes, pending Stop retries, and idempotent partial-failure recovery.
@@ -56,6 +56,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue detection, path/date validation, record validation, UTF-8 GitHub content handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, restart recovery, offline Stop retries, duplicate prevention, partial Stop recovery, globally ordered recent-entry limits, oversized-directory API-budget rejection, stable malformed-entry conflicts with explicit retry, URL-churn refresh isolation, popup Stop-state reset, cross-device Stop convergence, legacy records, and concurrent Stop serialization.
+Automated tests cover canonical issue/pull-request detection, path/date validation, record validation, UTF-8 GitHub content handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, restart recovery, offline Stop retries, duplicate prevention, partial Stop recovery, globally ordered recent-entry limits, oversized-directory API-budget rejection, stable malformed-entry conflicts with explicit retry, URL-churn refresh isolation, popup Stop-state reset, cross-device Stop convergence, legacy records, and concurrent Stop serialization.
 
 Manual entry, older-entry search, reminders, pull-request tracking, GitHub App authentication, reporting, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

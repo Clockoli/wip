@@ -1,10 +1,10 @@
 # GitHub Private Time Tracker
 
-Chrome/Chromium extension for tracking time on GitHub issues while keeping all records in a dedicated **private GitHub repository**. There is no application server or third-party time-tracking service.
+Chrome/Chromium extension for tracking time on GitHub issues and pull requests while keeping all records in a dedicated **private GitHub repository**. There is no application server or third-party time-tracking service.
 
 ## What is implemented
 
-- GitHub issue-page Start/Stop panel that survives GitHub SPA navigation.
+- GitHub issue and pull-request Start/Stop panel that survives GitHub SPA navigation.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
@@ -17,7 +17,7 @@ Chrome/Chromium extension for tracking time on GitHub issues while keeping all r
 - Configurable allowed issue owners and recent-entry window.
 - Recent entries are sorted by their editable start timestamp across the selected window. A 200-candidate safety limit fails before per-file reads rather than exhausting GitHub API quota on an unexpectedly large or hostile directory.
 
-Deferred by the specification: pull requests, manual entries, GitHub App auth, reporting, Firefox packaging, reminders, and advanced conflict-diff UI.
+Deferred by the specification: manual entries, GitHub App auth, reporting, Firefox packaging, reminders, and advanced conflict-diff UI.
 
 ## Install for development
 
@@ -32,7 +32,7 @@ The data repository must already exist and allow direct commits to its configure
 
 ## Usage
 
-1. Open `https://github.com/{owner}/{repo}/issues/{number}`.
+1. Open `https://github.com/{owner}/{repo}/issues/{number}` or `https://github.com/{owner}/{repo}/pull/{number}`.
 2. Start from the injected panel or toolbar popup.
 3. Stop and optionally enter a description.
 4. Edit or delete recent records in the popup.
@@ -77,7 +77,7 @@ Changing the target data repository is blocked while writes are pending.
 - PAT and persistent state are stored in extension-origin IndexedDB and used by extension pages/service worker. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot read that database.
 - PAT is never sent to content scripts, page JavaScript, URLs, logs, analytics, commit messages, or data files.
 - API host access is limited to `https://api.github.com/*`.
-- Page integration is limited to `https://github.com/*` and validates exact issue URL forms.
+- Page integration is limited to `https://github.com/*` and validates exact issue and pull-request URL forms.
 - Owner, repository, login, issue number, IDs, and generated paths are validated before writes.
 - Untrusted issue titles/descriptions are rendered via `textContent`; remote content is never executed.
 - Tokens should be fine-grained, repository-restricted, and granted only **Contents: Read and write**.
@@ -100,7 +100,7 @@ npm run check
 ```text
 src/api/          GitHub Contents API client
 src/background/   MV3 service worker and message boundary
-src/content/      GitHub issue-page panel
+src/content/      GitHub issue/pull-request panel
 src/domain/       validation, records, paths, timestamps, ULIDs
 src/options/      secure setup and validation
 src/popup/        active/recent/edit/delete UI

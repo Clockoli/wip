@@ -3,7 +3,7 @@
 ## Decisions
 
 - Chrome/Chromium Manifest V3; WebExtensions-friendly APIs where practical.
-- GitHub issues only (`/{owner}/{repo}/issues/{number}`); pull requests and manual entries are deferred.
+- GitHub issues (`/{owner}/{repo}/issues/{number}`) and pull requests (`/{owner}/{repo}/pull/{number}`); manual entries are deferred.
 - Fine-grained PAT stored only in extension-origin IndexedDB; never sent to content scripts.
 - One configured private data repository and canonical branch (`main` by default).
 - Authenticated GitHub login is the canonical user and sanitized/validated before path creation.
@@ -23,7 +23,7 @@
 - `src/storage/chrome-store.js`: configuration/cache/queue persistence.
 - `src/services/tracker.js`: timer state machine, recent entries, edits/deletes, queue retry.
 - `src/background/service-worker.js`: message boundary; token and API calls remain isolated.
-- `src/content/github.js`: GitHub SPA issue detection and injected controls.
+- `src/content/github.js`: GitHub SPA issue/pull-request detection and injected controls.
 - `src/popup/*`: active/recent/sync UI and edit/delete controls.
 - `src/options/*`: least-privilege PAT/repository setup and validation.
 

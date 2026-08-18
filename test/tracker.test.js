@@ -11,7 +11,7 @@ class MemoryStore {
 }
 
 class FakeGitHub {
-  constructor() { this.files = new Map(); this.failDeleteOnce = false; this.createCalls = 0; }
+  constructor() { this.files = new Map(); this.failDeleteOnce = false; this.deleteBeforeNotFoundOnce = false; this.denyDeleteAsNotFoundOnce = false; this.createCalls = 0; }
   async getFile(path) {
     if (!this.files.has(path)) { const e = new Error('not found'); e.status = 404; throw e; }
     const value = this.files.get(path); return { path, sha: value.sha, data: structuredClone(value.data) };
@@ -24,6 +24,8 @@ class FakeGitHub {
   }
   async deleteFile(path, message, sha) {
     if (this.failDeleteOnce) { this.failDeleteOnce = false; throw new TypeError('network'); }
+    if (this.deleteBeforeNotFoundOnce) { this.deleteBeforeNotFoundOnce = false; this.files.delete(path); const e = new Error('not found'); e.status = 404; throw e; }
+    if (this.denyDeleteAsNotFoundOnce) { this.denyDeleteAsNotFoundOnce = false; const e = new Error('not found'); e.status = 404; throw e; }
     if (this.files.get(path)?.sha !== sha) { const e = new Error('conflict'); e.status = 409; throw e; }
     this.files.delete(path);
   }
@@ -56,6 +58,30 @@ test('stop is queued before I/O and retry does not duplicate a created entry', a
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(github.files.has('active/alice.json'), false);
   assert.equal(github.createCalls, callsAfterCreate);
+});
+
+test('stop completes immediately when active deletion reports it is already absent', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const service = new TrackerService({ github, store, user: 'alice', clock: clock.now, idFactory: () => '01K2ABCDEF0123456789ABCDEG' });
+  await service.start(issue, 'title');
+  github.deleteBeforeNotFoundOnce = true;
+  clock.set(new Date(2026, 7, 18, 9, 0, 0));
+  const result = await service.stop('worked');
+  assert.equal(result.pending, false);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache, null);
+});
+
+test('permission-masked active deletion 404 remains queued when the remote timer still exists', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const service = new TrackerService({ github, store, user: 'alice', clock: clock.now, idFactory: () => '01K2ABCDEF0123456789ABCDEH' });
+  await service.start(issue, 'title');
+  github.denyDeleteAsNotFoundOnce = true;
+  clock.set(new Date(2026, 7, 18, 9, 0, 0));
+  const result = await service.stop('worked');
+  assert.equal(result.pending, true);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(github.files.has('active/alice.json'), true);
 });
 
 test('stale entry edit is rejected without overwrite', async () => {

@@ -23,8 +23,8 @@ export function issueForStart(payloadIssue, sender, extensionOrigin) {
   const requested = normalizeIssue(payloadIssue);
   if (kind === 'content') {
     const pageIssue = parseIssueUrl(sender.url || sender.tab?.url || '');
-    if (!pageIssue || pageIssue.owner !== requested.owner || pageIssue.repo !== requested.repo || pageIssue.number !== requested.number) {
-      throw new Error('Requested issue must match the GitHub issue page');
+    if (!pageIssue || pageIssue.type !== requested.type || pageIssue.owner !== requested.owner || pageIssue.repo !== requested.repo || pageIssue.number !== requested.number) {
+      throw new Error('Requested item must match the GitHub issue or pull request page');
     }
   }
   return requested;

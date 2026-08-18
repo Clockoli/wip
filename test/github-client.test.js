@@ -20,6 +20,7 @@ test('GitHub client encodes unicode JSON and uses SHA for update/delete', async 
   await client.deleteFile('active/alice.json', 'delete', 'newsha');
   assert.equal(JSON.parse(calls[1].options.body).sha, 'oldsha');
   assert.equal(JSON.parse(calls[2].options.body).sha, 'newsha');
+  assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
   assert.equal(client.token, 'secret');
 });
 

@@ -7,9 +7,10 @@
 
   function issueFromLocation() {
     if (location.protocol !== 'https:' || location.hostname !== 'github.com') return null;
-    const match = location.pathname.match(/^\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/?$/);
+    const match = location.pathname.match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
     if (!match) return null;
-    return { type: 'issue', owner: match[1], repo: match[2], number: Number(match[3]), url: `https://github.com/${match[1]}/${match[2]}/issues/${match[3]}` };
+    const type = match[3] === 'pull' ? 'pull_request' : 'issue';
+    return { type, owner: match[1], repo: match[2], number: Number(match[4]), url: `https://github.com/${match[1]}/${match[2]}/${match[3]}/${match[4]}` };
   }
 
   function send(message) {
@@ -75,18 +76,19 @@
         start.addEventListener('click', async event => {
           if (!event.isTrusted) return;
           start.disabled = true;
-          try { await send({ type: 'START', issue, issueTitle: titleFromPage() }); await render(true); }
+          try { await send({ type: 'START', issue, issueTitle: titleFromPage() }); await render(false); }
           catch (error) { status.textContent = error.message; start.disabled = false; }
         });
         card.append(start);
       } else {
         const active = state.active;
-        const same = active.issue.owner === issue.owner && active.issue.repo === issue.repo && active.issue.number === issue.number;
-        card.append(el('div', same ? 'Timer running on this issue' : 'Timer running on another issue', 'muted'));
+        const same = active.issue.type === issue.type && active.issue.owner === issue.owner && active.issue.repo === issue.repo && active.issue.number === issue.number;
+        const itemLabel = active.issue.type === 'pull_request' ? 'pull request' : 'issue';
+        card.append(el('div', same ? `Timer running on this ${itemLabel}` : `Timer running on another ${itemLabel}`, 'muted'));
         card.append(el('div', `${active.issue.owner}/${active.issue.repo}#${active.issue.number}`, 'title'));
         const time = el('div', formatElapsed(active.startedAt), 'time'); card.append(time);
         clearInterval(tick); tick = setInterval(() => { time.textContent = formatElapsed(active.startedAt); }, 1000);
-        if (!same) { const link = el('a', 'Go to issue'); link.href = active.issue.url; card.append(link, document.createTextNode(' ')); }
+        if (!same) { const link = el('a', `Go to ${itemLabel}`); link.href = active.issue.url; card.append(link, document.createTextNode(' ')); }
         const stop = el('button', '■ Stop', 'stop');
         stop.addEventListener('click', async event => {
           if (!event.isTrusted) return;
@@ -95,7 +97,7 @@
           const description = prompt('Description (optional)', active.description || '');
           if (description === null) return;
           stop.disabled = true;
-          try { const result = await send({ type: 'STOP', description }); if (result.pending) alert('Saved locally. The entry is waiting to sync with GitHub.'); await render(true); }
+          try { const result = await send({ type: 'STOP', description }); if (result.pending) alert('Saved locally. The entry is waiting to sync with GitHub.'); await render(false); }
           catch (error) { status.textContent = error.message; stop.disabled = false; }
         });
         card.append(stop);

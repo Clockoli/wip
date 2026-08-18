@@ -50,6 +50,7 @@ export class GitHubClient {
   async request(path, options = {}) {
     const response = await this.fetchImpl(`https://api.github.com${path}`, {
       ...options,
+      cache: 'no-store',
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${this.token}`,
