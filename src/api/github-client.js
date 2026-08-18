@@ -44,7 +44,7 @@ export class GitHubClient {
     this.owner = validateOwner(owner);
     this.repo = validateRepo(repo);
     this.branch = validateBranch(String(branch || 'main'));
-    this.fetchImpl = fetchImpl;
+    this.fetchImpl = fetchImpl.bind(globalThis);
   }
 
   async request(path, options = {}) {

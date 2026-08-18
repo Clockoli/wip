@@ -38,3 +38,13 @@ test('setup rejects public repositories and 422 is validation, not a concurrency
   await assert.rejects(() => invalid.putJson('x.json', {}, 'm'), GitHubValidationError);
   await assert.rejects(() => invalid.putJson('x.json', {}, 'm'), error => !(error instanceof GitHubConflictError));
 });
+
+
+test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global receiver', async () => {
+  const workerFetch = async function () {
+    if (this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'WorkerGlobalScope': Illegal invocation");
+    return response(200, { login: 'alice' });
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: workerFetch });
+  assert.equal(await client.getAuthenticatedUser(), 'alice');
+});
