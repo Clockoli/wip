@@ -11,7 +11,7 @@ test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
-  assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
+  assert.doesNotThrow(() => assertMessageAllowed('EDIT_ENTRY', content, origin));
 });
 
 test('content-script START issue must match its sender URL', () => {
@@ -32,5 +32,12 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
-  assert.throws(() => assertMessageAllowed('RESOLVE_PENDING', content, origin), /not allowed/i);
+  assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
+});
+
+
+test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
+  const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
 });

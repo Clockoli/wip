@@ -4,7 +4,7 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 
 ## What is implemented
 
-- GitHub issue and pull-request Start/Stop panel that survives GitHub SPA navigation.
+- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
@@ -33,9 +33,9 @@ The data repository must already exist and allow direct commits to its configure
 ## Usage
 
 1. Open `https://github.com/{owner}/{repo}/issues/{number}` or `https://github.com/{owner}/{repo}/pull/{number}`.
-2. Start from the injected panel or toolbar popup.
-3. Stop and optionally enter a description.
-4. Edit or delete recent records in the popup.
+2. Use the stopwatch control immediately before your GitHub avatar, or use the extension toolbar popup.
+3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
+4. Edit or delete recent records directly in the dropdown or toolbar popup. The stopwatch is gray while idle and green while any timer is running.
 
 A running timer is authoritative from `startedAt`; elapsed time is always `now - startedAt`, not a browser tick counter. Start also stores `entryDate` (the browser-local calendar date at Start), so every device writes the eventual entry to the same directory.
 
@@ -100,7 +100,7 @@ npm run check
 ```text
 src/api/          GitHub Contents API client
 src/background/   MV3 service worker and message boundary
-src/content/      GitHub issue/pull-request panel
+src/content/      GitHub issue/pull-request header control and dropdown
 src/domain/       validation, records, paths, timestamps, ULIDs
 src/options/      secure setup and validation
 src/popup/        active/recent/edit/delete UI

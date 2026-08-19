@@ -1,6 +1,6 @@
 import { normalizeIssue, parseIssueUrl } from '../domain/values.js';
 
-const CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'OPEN_OPTIONS']);
+const CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_OPTIONS']);
 const EXTENSION_MESSAGES = new Set(['GET_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'OPEN_OPTIONS']);
 
 function senderType(sender, extensionOrigin) {

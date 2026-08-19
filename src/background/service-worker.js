@@ -49,7 +49,10 @@ async function handle(message, sender) {
         issue: state.active.issue, startedAt: state.active.startedAt,
         description: state.active.description || '', issueTitle: state.active.issueTitle || '',
       } : null;
-      return { configured: true, active, pendingCount: state.pendingWrites.length };
+      return {
+        configured: true, active, pendingCount: state.pendingWrites.length,
+        pendingWrites: state.pendingWrites.map(({ id, status, stage }) => ({ id, status, stage })),
+      };
     }
     return { configured: true, ...state };
   }
