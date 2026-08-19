@@ -483,6 +483,9 @@ test('batch edit preflights and updates an adjacent time boundary', async () => 
   assert.equal(result.length, 2);
   assert.equal(github.files.get(firstPath).data.endedAt, '2026-08-18T09:15:00.000Z');
   assert.equal(github.files.get(secondPath).data.startedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(store.value.recentCache.length, 2, 'the successful writes update cache without a stale remote reload');
+  assert.equal(store.value.recentCache.find(entry => entry._path === firstPath).endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(store.value.recentCache.find(entry => entry._path === secondPath).startedAt, '2026-08-18T09:15:00.000Z');
 });
 
 test('batch edit rejects a stale second entry before writing the first', async () => {

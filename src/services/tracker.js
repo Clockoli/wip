@@ -358,8 +358,13 @@ export class TrackerService {
       if (isConflict(error)) throw new TrackerConflictError('A time entry changed while the boundary was being saved. Reload recent entries.');
       throw error;
     }
-    await this.loadRecent();
-    return written.map(item => ({ ...item.entry, _path: item.path, _sha: item.savedSha }));
+    const savedEntries = written.map(item => ({ ...item.entry, _path: item.path, _sha: item.savedSha }));
+    const state = await this.store.getState();
+    const savedPaths = new Set(savedEntries.map(entry => entry._path));
+    const recentCache = [...savedEntries, ...(state.recentCache ?? []).filter(entry => !savedPaths.has(entry._path))]
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50);
+    await this.store.patchState({ recentCache });
+    return savedEntries;
   }
 
   async editEntry({ path, originalSha, edits }) {

@@ -19,6 +19,7 @@ class FakeNode {
     this.children = [];
     this.parentElement = null;
     this.attributes = new Map();
+    this.style = {};
   }
   get nextElementSibling() {
     if (!this.parentElement) return null;
@@ -374,6 +375,8 @@ test('Edit entry drag handle previews End changes within twelve hours', async ()
   assert.match(handle.getAttribute('aria-label'), /adjust end time/i);
   handle.onpointerdown({ isTrusted: true, pointerId: 1, clientX: 0, preventDefault() {} });
   handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 12, preventDefault() {} });
+  assert.equal(handle.children[1].style.transform, 'translateX(12px)', 'the grip follows the pointer');
+  assert.doesNotMatch(handle.walk().map(node => node.textContent).join(''), /Drag.*12h/i, 'the control has no instructional text');
   const endLabel = createdNodes.findLast(node => node.tag === 'label' && node.textContent === 'End');
   assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 60 * 60000, '12px previews a 60-minute later End');
   handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 10_000, preventDefault() {} });
@@ -404,7 +407,10 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [newer, older] });
-      else if (message.type === 'MOVE_BOUNDARY') callback({ ok: true, data: [] });
+      else if (message.type === 'MOVE_BOUNDARY') callback({ ok: true, data: [
+        { ...older, endedAt: message.payload.upper.endedAt, durationSeconds: 4500, _sha: 'older-saved' },
+        { ...newer, startedAt: message.payload.lower.startedAt, durationSeconds: 2700, _sha: 'newer-saved' },
+      ] });
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
@@ -417,12 +423,15 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
   assert.match(handle.getAttribute('aria-label'), /boundary.*#1.*#2/i);
   handle.onpointerdown({ isTrusted: true, pointerId: 2, clientX: 0, preventDefault() {} });
   handle.onpointermove({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
+  assert.equal(handle.children[1].style.transform, 'translateX(3px)', 'the boundary grip follows the pointer');
+  assert.doesNotMatch(handle.walk().map(node => node.textContent).join(''), /Drag.*12h/i, 'the boundary has no instructional text');
   await handle.onpointerup({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
   const batch = messages.find(message => message.type === 'MOVE_BOUNDARY');
   assert.equal(batch.payload.upper.path, older._path);
   assert.equal(batch.payload.upper.endedAt, '2026-08-18T09:15:00.000Z');
   assert.equal(batch.payload.lower.path, newer._path);
   assert.equal(batch.payload.lower.startedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 1, 'saved entries stay visible without an immediate stale reload');
   const moveCount = messages.filter(message => message.type === 'MOVE_BOUNDARY').length;
   handle.setAttribute('aria-disabled', 'true');
   handle.onpointerdown({ isTrusted: true, pointerId: 3, clientX: 0, preventDefault() {} });

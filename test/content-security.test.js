@@ -36,4 +36,5 @@ test('time adjustment controls require trusted pointer input and keyboard suppor
   assert.match(source, /ArrowLeft/);
   assert.match(source, /ArrowRight/);
   assert.match(source, /12 \* 60/);
+  assert.doesNotMatch(source, /Drag ±12h/);
 });

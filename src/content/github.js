@@ -60,7 +60,7 @@
   }
 
   function clamp(value, minimum, maximum) { return Math.min(maximum, Math.max(minimum, value)); }
-  function stepped(value) { return Math.round(value / DRAG_STEP_MINUTES) * DRAG_STEP_MINUTES; }
+  function stepped(value, step = 1) { return Math.round(value / step) * step; }
   function deltaLabel(minutes) {
     if (!minutes) return 'No change';
     const sign = minutes > 0 ? '+' : '−', absolute = Math.abs(minutes), hours = Math.floor(absolute / 60), rest = absolute % 60;
@@ -71,14 +71,15 @@
     const handle = el('div', undefined, className);
     handle.tabIndex = 0; handle.setAttribute('role', 'slider'); handle.setAttribute('aria-orientation', 'horizontal'); handle.setAttribute('aria-label', label); handle.title = `${label}. Drag horizontally or use the arrow keys.`;
     const left = el('span', undefined, 'drag-line'), grip = el('span', '↔', 'drag-grip'), right = el('span', undefined, 'drag-line');
-    const value = el('span', 'Drag ±12h', 'drag-value'); handle.append(left, grip, right, value);
+    handle.append(left, grip, right);
     let minutes = 0, pointerId = null, pointerStart = 0, valueStart = 0;
     const apply = next => {
       const { minimum, maximum } = bounds();
       minutes = clamp(stepped(next), minimum, maximum);
       handle.setAttribute('aria-valuemin', String(minimum)); handle.setAttribute('aria-valuemax', String(maximum));
       handle.setAttribute('aria-valuenow', String(minutes)); handle.setAttribute('aria-valuetext', deltaLabel(minutes));
-      value.textContent = minutes ? deltaLabel(minutes) : 'Drag ±12h'; preview(minutes); return minutes;
+      grip.style.transform = `translateX(${minutes / DRAG_MINUTES_PER_PIXEL}px)`;
+      preview(minutes); return minutes;
     };
     const save = async () => {
       handle.setAttribute('aria-busy', 'true');
@@ -192,7 +193,7 @@
     form.append(timeDragHandle({
       className: 'time-drag', label: 'Adjust end time, up to 12 hours earlier or later',
       bounds: () => ({
-        minimum: Math.max(-DRAG_MAX_MINUTES, Math.ceil((new Date(startField.value).getTime() - originalEnd) / 60000 / DRAG_STEP_MINUTES) * DRAG_STEP_MINUTES),
+        minimum: Math.max(-DRAG_MAX_MINUTES, Math.ceil((new Date(startField.value).getTime() - originalEnd) / 60000)),
         maximum: DRAG_MAX_MINUTES,
       }),
       preview: minutes => { endField.value = localInput(originalEnd + minutes * 60000); },
@@ -262,8 +263,8 @@
         className: 'time-drag time-boundary',
         label: `Adjust boundary between #${upper.issue.number} and #${lower.issue.number}`,
         bounds: () => ({
-          minimum: Math.max(-DRAG_MAX_MINUTES, Math.ceil((new Date(upper.startedAt).getTime() - upperEnd) / 60000 / DRAG_STEP_MINUTES) * DRAG_STEP_MINUTES),
-          maximum: Math.min(DRAG_MAX_MINUTES, Math.floor((new Date(lower.endedAt).getTime() - lowerStart) / 60000 / DRAG_STEP_MINUTES) * DRAG_STEP_MINUTES),
+          minimum: Math.max(-DRAG_MAX_MINUTES, Math.ceil((new Date(upper.startedAt).getTime() - upperEnd) / 60000)),
+          maximum: Math.min(DRAG_MAX_MINUTES, Math.floor((new Date(lower.endedAt).getTime() - lowerStart) / 60000)),
         }),
         preview: minutes => {
           upperRow.meta.textContent = recentMeta(upper, upper.startedAt, new Date(upperEnd + minutes * 60000).toISOString());
@@ -272,11 +273,13 @@
         commit: async minutes => {
           if (!minutes) return;
           try {
-            await send({ type: 'MOVE_BOUNDARY', payload: {
+            const saved = await send({ type: 'MOVE_BOUNDARY', payload: {
               upper: { path: upper._path, originalSha: upper._sha, endedAt: new Date(upperEnd + minutes * 60000).toISOString() },
               lower: { path: lower._path, originalSha: lower._sha, startedAt: new Date(lowerStart + minutes * 60000).toISOString() },
             } });
-            recentLoaded = false; await refreshState(false, true);
+            const byPath = new Map(saved.map(entry => [entry._path, entry]));
+            recent = recent.map(entry => byPath.get(entry._path) ?? entry);
+            renderUi();
           } catch (error) { setError(error); }
         },
       });
@@ -366,7 +369,7 @@
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .active-link { display:inline-block } .elapsed { margin:8px 0 10px; font:600 28px ui-monospace,SFMono-Regular,monospace }
       button { border:1px solid var(--button-default-borderColor-rest,rgba(31,35,40,.15)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#1f2328); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:disabled { opacity:.55; cursor:default } .wide { width:100%; margin-top:10px } .primary { background:var(--button-primary-bgColor-rest,#1f883d); color:#fff } .primary:hover { background:var(--button-primary-bgColor-hover,#1a7f37) } .danger { background:#cf222e; border-color:rgba(27,31,36,.15); color:#fff } .danger:hover { background:#a40e26 } .danger-outline { color:var(--fgColor-danger,#cf222e) }
       .icon-button,.link-button { border:0; padding:5px; background:transparent; color:var(--fgColor-muted,#59636e) } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d8dee4) } .section-head { margin-bottom:7px }
-      .time-drag { display:grid; grid-template-columns:1fr 28px 1fr auto; align-items:center; gap:6px; min-height:32px; margin:7px 0; color:var(--fgColor-muted,#59636e); cursor:ew-resize; touch-action:none; user-select:none } .time-drag[aria-disabled="true"] { opacity:.5; cursor:default } .time-drag[aria-busy="true"] { opacity:.65 } .drag-line { height:1px; background:var(--borderColor-default,#d1d9e0) } .drag-grip { display:grid; place-items:center; width:28px; height:24px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--button-default-bgColor-rest,#f6f8fa); font-weight:700 } .drag-value { min-width:66px; font:600 11px ui-monospace,SFMono-Regular,monospace; text-align:right } .time-boundary { margin:0 }
+      .time-drag { display:grid; grid-template-columns:1fr 28px 1fr; align-items:center; gap:6px; min-height:32px; margin:7px 0; color:var(--fgColor-muted,#59636e); cursor:ew-resize; touch-action:none; user-select:none } .time-drag[aria-disabled="true"] { opacity:.5; cursor:default } .time-drag[aria-busy="true"] { opacity:.65 } .drag-line { height:1px; background:var(--borderColor-default,#d1d9e0) } .drag-grip { display:grid; place-items:center; width:28px; height:24px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--button-default-bgColor-rest,#f6f8fa); font-weight:700; will-change:transform } .time-boundary { margin:0 }
       .entry { padding:10px 0; border-top:1px solid var(--borderColor-muted,#d8dee4) } .entry:first-of-type { border-top:0 } .entry-copy { flex:1; min-width:0 } .entry-copy a { overflow-wrap:anywhere } .entry-description { margin-top:4px; overflow-wrap:anywhere } label { display:block; margin:10px 0 4px; font-size:12px; font-weight:600 } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#cf222e); white-space:pre-wrap }
       @media (prefers-color-scheme:dark) { .trigger { background:#21262d; border-color:#30363d; color:#8b949e } .menu { background:#0d1117; color:#e6edf3; border-color:#30363d; box-shadow:0 8px 24px #010409 } input,textarea { background:#0d1117; color:#e6edf3; border-color:#30363d } }
     `);
