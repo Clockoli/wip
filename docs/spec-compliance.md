@@ -24,10 +24,10 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## Architecture mapping
 
-- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides Start/Stop, sync status/retry, recent entries, edit/delete, and Settings; the icon is gray while idle and green while any timer is active.
+- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour time adjustment, adjacent-entry boundary movement, and Settings; the icon is gray while idle and green while any timer is active.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
 - `src/api/github-client.js` implements authenticated user lookup plus GitHub Contents API read/list/create/update/delete operations.
-- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across all configured date directories, SHA-safe edits/deletes, pending Stop retries, and idempotent partial-failure recovery.
+- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across all configured date directories, SHA-safe edits/deletes and rollback-protected two-entry boundary movement, pending Stop retries, and idempotent partial-failure recovery.
 - `src/storage/chrome-store.js` stores configuration, the PAT, cache, and pending writes in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, edit/delete UI, sync status, and conflict acknowledgement.
 - `src/options/*` validates the authenticated user, private repository, branch, write access, owner policy, and recent-entry window.
@@ -56,6 +56,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue/pull-request detection, path/date validation, record validation, UTF-8 GitHub content handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, restart recovery, offline Stop retries, duplicate prevention, partial Stop recovery, globally ordered recent-entry limits, oversized-directory API-budget rejection, stable malformed-entry conflicts with explicit retry, URL-churn refresh isolation, delayed GitHub-header recovery, before-avatar placement, idle/running icon state, popup Stop-state reset, cross-device Stop convergence, legacy records, and concurrent Stop serialization.
+Automated tests cover canonical issue/pull-request detection, path/date validation, record validation, UTF-8 GitHub content handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, restart recovery, offline Stop retries, duplicate prevention, partial Stop recovery, globally ordered recent-entry limits, oversized-directory API-budget rejection, stable malformed-entry conflicts with explicit retry, URL-churn refresh isolation, delayed GitHub-header recovery, before-avatar placement, idle/running icon state, numbered Start labels, draggable time bounds, boundary preflight/rollback, popup Stop-state reset, cross-device Stop convergence, legacy records, and concurrent Stop serialization.
 
 Manual entry, older-entry search, reminders, GitHub App authentication, reporting, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

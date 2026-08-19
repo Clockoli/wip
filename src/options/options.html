@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private Time Tracker Settings</title><link rel="stylesheet" href="options.css"></head>
 <body><main>
   <h1>Private Time Tracker</h1>
-  <p>Time records are written only to the private repository below. Use a fine-grained personal access token restricted to that repository with <strong>Contents: Read and write</strong>.</p>
+  <p>Time records are written only to the private repository below. <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to that repository with <strong>Contents: Read and write</strong>.</p>
   <div id="message" role="status"></div>
   <form id="settings-form">
     <fieldset><legend>Private time-data repository</legend>
@@ -21,6 +21,5 @@
     </fieldset>
     <button id="save" type="submit">Validate and save</button>
   </form>
-  <section><h2>Data convention</h2><code>active/{github-login}.json</code><br><code>entries/{github-login}/{local YYYY}/{MM}/{DD}/{ULID}.json</code><p class="help">Timestamps are UTC. Directories use the local calendar date when the timer started.</p></section>
 </main><script type="module" src="options.js"></script></body>
 </html>

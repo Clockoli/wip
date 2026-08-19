@@ -462,3 +462,128 @@ test('recent loading rejects an oversized candidate set before per-file API read
   await assert.rejects(() => service.loadRecent(50), /candidate safety limit/i);
   assert.equal(fileReads, 0);
 });
+
+
+test('batch edit preflights and updates an adjacent time boundary', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const firstPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const secondPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({
+    schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt,
+    durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
+    createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z',
+  });
+  github.files.set(firstPath, { sha: 'first', data: make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z') });
+  github.files.set(secondPath, { sha: 'second', data: make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z') });
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  const result = await service.moveBoundary({
+    upper: { path: firstPath, originalSha: 'first', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: secondPath, originalSha: 'second', startedAt: '2026-08-18T09:15:00.000Z' },
+  });
+  assert.equal(result.length, 2);
+  assert.equal(github.files.get(firstPath).data.endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(github.files.get(secondPath).data.startedAt, '2026-08-18T09:15:00.000Z');
+});
+
+test('batch edit rejects a stale second entry before writing the first', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const firstPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const secondPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({
+    schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt,
+    durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
+    createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z',
+  });
+  github.files.set(firstPath, { sha: 'first', data: make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z') });
+  github.files.set(secondPath, { sha: 'newer-than-panel', data: make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z') });
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  await assert.rejects(() => service.moveBoundary({
+    upper: { path: firstPath, originalSha: 'first', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: secondPath, originalSha: 'stale', startedAt: '2026-08-18T09:15:00.000Z' },
+  }), TrackerConflictError);
+  assert.equal(github.files.get(firstPath).sha, 'first');
+  assert.equal(github.files.get(firstPath).data.endedAt, '2026-08-18T09:00:00.000Z');
+});
+
+
+test('batch edit rolls back the first entry if the second write races', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const firstPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const secondPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({
+    schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt,
+    durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
+    createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z',
+  });
+  const originalFirst = make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const originalSecond = make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z');
+  github.files.set(firstPath, { sha: 'first', data: originalFirst }); github.files.set(secondPath, { sha: 'second', data: originalSecond });
+  const put = github.putJson.bind(github); let secondRaced = false;
+  github.putJson = async (path, data, message, sha) => {
+    if (path === secondPath && !secondRaced) { secondRaced = true; const error = new Error('race'); error.status = 409; throw error; }
+    return put(path, data, message, sha);
+  };
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  await assert.rejects(() => service.moveBoundary({
+    upper: { path: firstPath, originalSha: 'first', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: secondPath, originalSha: 'second', startedAt: '2026-08-18T09:15:00.000Z' },
+  }), TrackerConflictError);
+  assert.deepEqual(github.files.get(firstPath).data, originalFirst);
+  assert.deepEqual(github.files.get(secondPath).data, originalSecond);
+});
+
+
+test('boundary move preserves a gap while shifting both sides by the same delta', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const upperPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const lowerPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({ schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '', createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z' });
+  github.files.set(upperPath, { sha: 'upper', data: make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z') });
+  github.files.set(lowerPath, { sha: 'lower', data: make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:30:00.000Z', '2026-08-18T10:30:00.000Z') });
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  await service.moveBoundary({
+    upper: { path: upperPath, originalSha: 'upper', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: lowerPath, originalSha: 'lower', startedAt: '2026-08-18T09:45:00.000Z' },
+  });
+  assert.equal(github.files.get(upperPath).data.endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(github.files.get(lowerPath).data.startedAt, '2026-08-18T09:45:00.000Z');
+});
+
+test('boundary move rejects unequal deltas on its two sides', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const upperPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const lowerPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({ schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '', createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z' });
+  github.files.set(upperPath, { sha: 'upper', data: make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z') });
+  github.files.set(lowerPath, { sha: 'lower', data: make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:30:00.000Z', '2026-08-18T10:30:00.000Z') });
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  await assert.rejects(() => service.moveBoundary({
+    upper: { path: upperPath, originalSha: 'upper', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: lowerPath, originalSha: 'lower', startedAt: '2026-08-18T09:50:00.000Z' },
+  }), /same amount/i);
+});
+
+test('batch edit verifies a committed second write after its response is lost', async () => {
+  const store = new MemoryStore(); const github = new FakeGitHub();
+  const upperPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEA.json';
+  const lowerPath = 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEB.json';
+  const make = (id, startedAt, endedAt) => ({ schemaVersion: 1, id, user: 'alice', issue, entryDate: '2026-08-18', startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '', createdAt: '2026-08-18T10:00:00.000Z', updatedAt: '2026-08-18T10:00:00.000Z' });
+  github.files.set(upperPath, { sha: 'upper', data: make('01K2ABCDEF0123456789ABCDEA', '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z') });
+  github.files.set(lowerPath, { sha: 'lower', data: make('01K2ABCDEF0123456789ABCDEB', '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z') });
+  const put = github.putJson.bind(github), get = github.getFile.bind(github); let lost = false, staleReads = 0;
+  const originalLower = structuredClone(github.files.get(lowerPath));
+  github.putJson = async (...args) => { const result = await put(...args); if (args[0] === lowerPath && !lost) { lost = true; throw new TypeError('response lost after commit'); } return result; };
+  github.getFile = async path => {
+    if (path === lowerPath && lost && staleReads++ === 0) return { path, sha: originalLower.sha, data: structuredClone(originalLower.data) };
+    return get(path);
+  };
+  const service = new TrackerService({ github, store, user: 'alice', clock: () => new Date('2026-08-18T11:00:00.000Z') });
+  const result = await service.moveBoundary({
+    upper: { path: upperPath, originalSha: 'upper', endedAt: '2026-08-18T09:15:00.000Z' },
+    lower: { path: lowerPath, originalSha: 'lower', startedAt: '2026-08-18T09:15:00.000Z' },
+  });
+  assert.equal(result.length, 2);
+  assert.equal(github.files.get(upperPath).data.endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(github.files.get(lowerPath).data.startedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(staleReads, 2, 'verification retries after one successful but stale read');
+});

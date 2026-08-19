@@ -4,7 +4,7 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 
 ## What is implemented
 
-- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation.
+- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation. Edit times by dragging up to ±12 hours, and drag the boundary between adjacent entries to move both timestamps together.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
@@ -26,7 +26,7 @@ Deferred by the specification: manual entries, GitHub App auth, reporting, Firef
 3. Enable **Developer mode**.
 4. Click **Load unpacked** and choose this repository root.
 5. Open the extension’s **Settings**.
-6. Configure a private time-data repository and a fine-grained GitHub token restricted to it with **Contents: Read and write**.
+6. Configure a private time-data repository and a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens) restricted to it with **Contents: Read and write**.
 
 The data repository must already exist and allow direct commits to its configured branch. See [docs/time-data-repository.md](docs/time-data-repository.md). The selected Version 1 defaults and requirement mapping are documented in [docs/spec-compliance.md](docs/spec-compliance.md).
 

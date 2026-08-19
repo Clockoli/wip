@@ -50,6 +50,8 @@ class FakeNode {
     this.parentElement = null; this.isConnected = false; if (this.id) documentNodes.delete(this.id);
   }
   addEventListener(type, listener) { this[`on${type}`] = listener; }
+  setPointerCapture(pointerId) { this.capturedPointer = pointerId; }
+  releasePointerCapture(pointerId) { if (this.capturedPointer === pointerId) this.capturedPointer = null; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); if (name === 'class') this.className = String(value); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   querySelector(selector) {
@@ -152,7 +154,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on this item').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on #2').at(-1);
   assert.ok(start?.onclick, 'Start handler was rendered in the pull-request menu');
   await start.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -291,7 +293,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on this item').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on #7').at(-1);
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry entry sync').at(-1);
   assert.equal(start.disabled, true, 'pending entry prevents another timer');
   assert.ok(retry?.onclick, 'entry conflict exposes its recovery action');
@@ -334,4 +336,97 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   assert.equal(right.children.at(-2)?.id, 'github-private-time-tracker-root');
   assert.equal(right.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [{ type: 'GET_PAGE_STATE', refresh: true }]);
+});
+
+
+test('Edit entry drag handle previews End changes within twelve hours', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const entry = {
+    schemaVersion: 1, id: '01K2ABCDEF0123456789ABCDEF', user: 'alice',
+    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
+    startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600,
+    description: '', createdAt: '2026-08-18T09:00:00.000Z', updatedAt: '2026-08-18T09:00:00.000Z',
+    _path: 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEF.json', _sha: 'one',
+  };
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const edit = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Edit').at(-1);
+  await edit.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const handle = createdNodes.filter(node => node.className.includes('time-drag')).at(-1);
+  assert.equal(handle.getAttribute('role'), 'slider');
+  assert.match(handle.getAttribute('aria-label'), /adjust end time/i);
+  handle.onpointerdown({ isTrusted: true, pointerId: 1, clientX: 0, preventDefault() {} });
+  handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 12, preventDefault() {} });
+  const endLabel = createdNodes.findLast(node => node.tag === 'label' && node.textContent === 'End');
+  assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 60 * 60000, '12px previews a 60-minute later End');
+  handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 10_000, preventDefault() {} });
+  assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 12 * 60 * 60000, 'dragging is capped at 12 hours after the original End');
+  handle.onkeydown({ isTrusted: true, key: 'Escape', preventDefault() {} });
+  assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime(), 'Escape cancels the drag preview');
+});
+
+test('panel boundary drag shifts adjacent End and Start together', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const entry = (id, number, startedAt, endedAt, sha) => ({
+    schemaVersion: 1, id, user: 'alice', issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
+    startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
+    createdAt: endedAt, updatedAt: endedAt, _path: `entries/alice/2026/08/18/${id}.json`, _sha: sha,
+  });
+  const older = entry('01K2ABCDEF0123456789ABCDEA', 1, '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', 'older');
+  const newer = entry('01K2ABCDEF0123456789ABCDEB', 2, '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z', 'newer');
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [newer, older] });
+      else if (message.type === 'MOVE_BOUNDARY') callback({ ok: true, data: [] });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const handle = createdNodes.filter(node => node.className.includes('time-boundary')).at(-1);
+  assert.match(handle.getAttribute('aria-label'), /boundary.*#1.*#2/i);
+  handle.onpointerdown({ isTrusted: true, pointerId: 2, clientX: 0, preventDefault() {} });
+  handle.onpointermove({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
+  await handle.onpointerup({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
+  const batch = messages.find(message => message.type === 'MOVE_BOUNDARY');
+  assert.equal(batch.payload.upper.path, older._path);
+  assert.equal(batch.payload.upper.endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(batch.payload.lower.path, newer._path);
+  assert.equal(batch.payload.lower.startedAt, '2026-08-18T09:15:00.000Z');
+  const moveCount = messages.filter(message => message.type === 'MOVE_BOUNDARY').length;
+  handle.setAttribute('aria-disabled', 'true');
+  handle.onpointerdown({ isTrusted: true, pointerId: 3, clientX: 0, preventDefault() {} });
+  handle.onpointermove({ isTrusted: true, pointerId: 3, clientX: 3, preventDefault() {} });
+  await handle.onpointerup({ isTrusted: true, pointerId: 3, clientX: 3, preventDefault() {} });
+  assert.equal(messages.filter(message => message.type === 'MOVE_BOUNDARY').length, moveCount, 'disabled pending boundaries cannot commit');
 });

@@ -22,7 +22,11 @@ const htmlFiles = [manifest.action.default_popup, manifest.options_page];
 for (const file of htmlFiles) {
   const html = read(file);
   if (/<script(?![^>]+src=)/i.test(html)) fail(`Inline script is forbidden: ${file}`);
-  if (/https?:\/\//i.test(html)) fail(`Remote resource is forbidden: ${file}`);
+  const withoutSafeLinks = html.replace(/<a\b[^>]*\bhref=(['"])https:\/\/[^'"]+\1[^>]*>/gi, tag => {
+    if (!/\btarget=(['"])_blank\1/i.test(tag) || !/\brel=(['"])[^'"]*\bnoreferrer\b[^'"]*\1/i.test(tag)) fail(`External link must use target="_blank" and rel="noreferrer": ${file}`);
+    return tag.replace(/https:\/\/[^'"]+/i, '#external-link');
+  });
+  if (/https?:\/\//i.test(withoutSafeLinks)) fail(`Remote resource is forbidden: ${file}`);
 }
 
 const jsFiles = [];

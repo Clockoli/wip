@@ -12,7 +12,7 @@
 - One active timer per user. A new timer is blocked while a Stop operation is pending/conflicted.
 - Offline Stop writes a stable-ID operation to an extension-origin IndexedDB queue before network I/O. Retries first ensure the same entry exists, then conditionally clear the matching active timer.
 - Recent view scans only the authenticated user’s configured local-date directories, rejects more than 200 candidates before per-file reads, validates the bounded set, globally sorts by editable `startedAt`, and returns at most 50 entries.
-- Edits preserve the original file path and require the SHA seen when editing; durations are recomputed.
+- Edits preserve the original file path and require the SHA seen when editing; durations are recomputed. Dragging an adjacent-entry boundary preflights both SHAs and rolls back the first write if the second races.
 - Deletes require explicit UI confirmation and the latest known SHA.
 - Issue owners default to the configured data-repository owner and can be expanded in Settings.
 

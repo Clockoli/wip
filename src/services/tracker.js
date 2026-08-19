@@ -296,6 +296,72 @@ export class TrackerService {
     return entries.slice(0, limit);
   }
 
+  async moveBoundary({ upper, lower }) {
+    if (!upper || !lower) throw new Error('Two adjacent entries are required');
+    return this.editEntries([
+      { path: upper.path, originalSha: upper.originalSha, edits: { endedAt: upper.endedAt } },
+      { path: lower.path, originalSha: lower.originalSha, edits: { startedAt: lower.startedAt } },
+    ], { requireEqualDelta: true });
+  }
+
+  async editEntries(requests, { requireEqualDelta = false } = {}) {
+    if (!Array.isArray(requests) || requests.length !== 2) throw new Error('Exactly two adjacent entries are required');
+    if (new Set(requests.map(item => item?.path)).size !== requests.length) throw new Error('Adjacent entry paths must be distinct');
+    const now = this.clock();
+    const prepared = [];
+    for (const { path, originalSha, edits = {} } of requests) {
+      assertUserEntryPath(path, this.user);
+      const latest = await this.github.getFile(path);
+      if (latest.sha !== originalSha) throw new TrackerConflictError('A time entry changed after the panel loaded. Refresh before moving the boundary.');
+      const original = validateEntry(latest.data); assertEntryIdentity(path, original, this.user);
+      const normalizedEdits = { ...edits, ...(edits.issue ? { issue: this.validateIssue(edits.issue) } : {}) };
+      prepared.push({ path, latest, original, entry: applyEntryEdits(original, normalizedEdits, now) });
+    }
+    if (requireEqualDelta) {
+      const upperDelta = new Date(prepared[0].entry.endedAt).getTime() - new Date(prepared[0].original.endedAt).getTime();
+      const lowerDelta = new Date(prepared[1].entry.startedAt).getTime() - new Date(prepared[1].original.startedAt).getTime();
+      if (upperDelta !== lowerDelta) throw new Error('Both sides of an adjacent boundary must move by the same amount');
+    }
+    const written = [];
+    try {
+      for (const item of prepared) {
+        try {
+          const result = await this.github.putJson(item.path, item.entry, `time: move boundary ${item.entry.id}`, item.latest.sha);
+          written.push({ ...item, savedSha: result.sha });
+        } catch (writeError) {
+          let observed = null, matches = false;
+          const attempts = isConflict(writeError) ? 1 : 3;
+          for (let attempt = 0; attempt < attempts && !matches; attempt += 1) {
+            try {
+              observed = await this.github.getFile(item.path);
+              const observedEntry = validateEntry(observed.data); assertEntryIdentity(item.path, observedEntry, this.user);
+              matches = JSON.stringify(observedEntry) === JSON.stringify(item.entry);
+            } catch { observed = null; }
+          }
+          if (matches) written.push({ ...item, savedSha: observed.sha });
+          else if (observed) throw writeError;
+          else {
+            const uncertain = new TrackerConflictError('A boundary write may have succeeded, but its result could not be verified. Reload recent entries before editing again.');
+            uncertain.boundaryOutcomeUncertain = true;
+            throw uncertain;
+          }
+        }
+      }
+    } catch (error) {
+      if (error.boundaryOutcomeUncertain) throw error;
+      let rollbackError = null;
+      for (const item of [...written].reverse()) {
+        try { await this.github.putJson(item.path, item.original, `time: rollback boundary ${item.entry.id}`, item.savedSha); }
+        catch (rollback) { rollbackError = rollback; }
+      }
+      if (rollbackError) throw new TrackerConflictError('The boundary was only partially saved and automatic rollback failed. Reload recent entries before editing again.');
+      if (isConflict(error)) throw new TrackerConflictError('A time entry changed while the boundary was being saved. Reload recent entries.');
+      throw error;
+    }
+    await this.loadRecent();
+    return written.map(item => ({ ...item.entry, _path: item.path, _sha: item.savedSha }));
+  }
+
   async editEntry({ path, originalSha, edits }) {
     assertUserEntryPath(path, this.user);
     const latest = await this.github.getFile(path);

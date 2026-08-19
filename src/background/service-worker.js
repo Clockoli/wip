@@ -63,6 +63,7 @@ async function handle(message, sender) {
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': return tracker.loadRecent(50);
     case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
+    case 'MOVE_BOUNDARY': return tracker.moveBoundary(message.payload);
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
     case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id);
     default: throw new Error('Unknown extension message');

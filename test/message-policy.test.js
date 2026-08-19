@@ -38,6 +38,6 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
 });
