@@ -389,3 +389,25 @@ test('issue-owner policy still applies to starts and edits', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   await assert.rejects(() => tracker.start({ type: 'issue', owner: 'evil', repo: 'x', number: 1, url: 'https://github.com/evil/x/issues/1' }), /not allowed/i);
 });
+
+
+test('menu data reports the complete current-day total even when recent rows are capped', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08-18/alice.txt';
+  const entries = Array.from({ length: 55 }, (_, index) => {
+    const start = new Date(Date.UTC(2026, 7, 18, 0, index, 0)), end = new Date(start.getTime() + 60_000);
+    return entry(start.toISOString().replace('.000Z', '+00:00'), end.toISOString().replace('.000Z', '+00:00'));
+  });
+  seedText(github, path, serializeDailyText(entries), 'daily');
+  const pendingEntry = entry('2026-08-18T02:00:00+00:00', '2026-08-18T02:01:00+00:00');
+  store.value.pendingWrites = [{ operation: 'completeTimer', id: 'pending-total', status: 'pending', retryCount: 0, stage: 'appendDaily', dailyPath: path, entry: pendingEntry, activeSnapshot: active(pendingEntry.startedAt), activeSha: 'active', queuedAt: pendingEntry.endedAt, lastError: '' }];
+  const running = active('2026-08-18T11:00:00+00:00');
+  store.value.activeCache = running;
+  const data = await service({ github, store, recentDays: 1, clock: () => new Date('2026-08-18T12:00:00Z') }).loadMenuData(50);
+  assert.equal(data.recent.length, 50);
+  assert.equal(data.todaySeconds, 56 * 60);
+  assert.equal(data.reportDate, '2026-08-18');
+  assert.equal(data.active.startedAt, running.startedAt);
+  assert.equal(data.pendingCount, 1);
+  assert.deepEqual(data.pendingWrites, [{ id: 'pending-total', status: 'pending', stage: 'appendDaily' }]);
+  assert.equal(Object.keys(data.active).some(key => key.startsWith('_')), false);
+});

@@ -98,6 +98,26 @@ export class GitHubClient {
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
   }
 
+  async listTextFiles(prefix = '') {
+    if (typeof prefix !== 'string' || prefix.startsWith('/') || prefix.includes('..') || prefix.includes('\\')) throw new Error('Invalid GitHub content prefix');
+    if (prefix) encodePath(prefix.endsWith('/') ? prefix.slice(0, -1) : prefix);
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const ref = await this.request(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`);
+    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(ref.object?.sha)}`);
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`);
+    if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
+    return (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
+      .map(({ path, sha }) => ({ path, sha })).sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  async getBlobText(path, sha) {
+    encodePath(path);
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) throw new Error('Invalid Git blob SHA');
+    const body = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/git/blobs/${encodeURIComponent(sha)}`);
+    if (body.encoding !== 'base64' || typeof body.content !== 'string' || body.truncated) throw new GitHubApiError('Expected a complete text blob', 422);
+    return { path, sha, text: decodeBase64Utf8(body.content) };
+  }
+
   async putText(path, text, message, sha) {
     if (typeof text !== 'string') throw new Error('Text content is required');
     const payload = { message, content: encodeBase64Utf8(text), branch: this.branch, ...(sha ? { sha } : {}) };

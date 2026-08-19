@@ -14,11 +14,11 @@ if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.g
 for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab'].includes(permission)) fail(`Unexpected permission: ${permission}`);
 if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 
-const referenced = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page];
+const referenced = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html'];
 for (const script of manifest.content_scripts || []) referenced.push(...script.js);
 for (const file of referenced) if (!exists(file)) fail(`Manifest references missing file: ${file}`);
 
-const htmlFiles = [manifest.action.default_popup, manifest.options_page];
+const htmlFiles = [manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html'];
 for (const file of htmlFiles) {
   const html = read(file);
   if (/<script(?![^>]+src=)/i.test(html)) fail(`Inline script is forbidden: ${file}`);

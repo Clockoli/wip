@@ -31,13 +31,15 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('DELETE_ENTRY', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
 });
 
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
 });

@@ -24,6 +24,26 @@ test('GitHub client encodes unicode text and uses SHA for update/delete', async 
   assert.equal(client.token, 'secret');
 });
 
+test('GitHub client lists report text files from one tree and reads immutable blobs', async () => {
+  const sha = 'a'.repeat(40), calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
+      { path: 'times/2026-08-18/alice.txt', type: 'blob', sha },
+      { path: 'active/alice.txt', type: 'blob', sha: 'b'.repeat(40) },
+      { path: 'times/readme.md', type: 'blob', sha: 'c'.repeat(40) },
+    ] });
+    if (url.endsWith(`/git/blobs/${sha}`)) return response(200, { encoding: 'base64', content: btoa('URL: https://github.com/acme/app/issues/1\n'), truncated: false });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  assert.deepEqual(await client.listTextFiles('times/'), [{ path: 'times/2026-08-18/alice.txt', sha }]);
+  assert.equal((await client.getBlobText('times/2026-08-18/alice.txt', sha)).text, 'URL: https://github.com/acme/app/issues/1\n');
+  assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
+});
+
 test('GitHub client atomically updates multiple text files from one verified tree', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {

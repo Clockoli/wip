@@ -2,6 +2,7 @@ import { GitHubClient } from '../api/github-client.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
+import { ReportService } from '../services/reports.js';
 import { assertMessageAllowed, issueForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 
@@ -25,6 +26,7 @@ async function context() {
   }
   return {
     config,
+    reports: new ReportService({ github }),
     tracker: new TrackerService({
       github, store, user, recentDays: config.recentDays || 7,
       allowedIssueOwners: config.allowedIssueOwners || [config.owner],
@@ -37,7 +39,23 @@ async function handle(message, sender) {
   const extensionOrigin = chrome.runtime.getURL('');
   assertMessageAllowed(message.type, sender, extensionOrigin);
   if (message.type === 'OPEN_OPTIONS') { await chrome.runtime.openOptionsPage(); return { ok: true }; }
+  if (message.type === 'OPEN_REPORTS') {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/reports.html') });
+    return { ok: true };
+  }
   if (message.type === 'SAVE_CONFIG') return configuration.save(message.payload);
+  if (message.type === 'LOAD_REPORT') {
+    const { config, token } = await store.getConfig();
+    if (!config) return { configured: false, records: [] };
+    if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
+    const branch = config.branch || 'main';
+    const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
+    const reports = new ReportService({ github });
+    return {
+      configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
+      records: await reports.loadRange(message.payload || {}),
+    };
+  }
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const { config } = await store.getConfig();
     if (!config) return message.type === 'GET_PAGE_STATE'
@@ -62,7 +80,7 @@ async function handle(message, sender) {
     case 'START': return tracker.start(issueForStart(message.issue, sender, extensionOrigin), message.issueTitle || '', message.description || '');
     case 'STOP': return tracker.stop(message.description || '');
     case 'SYNC': return tracker.syncPending();
-    case 'LOAD_RECENT': return tracker.loadRecent(50);
+    case 'LOAD_RECENT': return message.menuData ? tracker.loadMenuData(50) : tracker.loadRecent(50);
     case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
     case 'MOVE_BOUNDARY': return tracker.moveBoundary(message.payload);
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
@@ -72,7 +90,8 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  executor.run(() => handle(message, sender)).then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
+  const operation = message?.type === 'LOAD_REPORT' ? handle(message, sender) : executor.run(() => handle(message, sender));
+  operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
 });
 

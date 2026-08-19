@@ -21,10 +21,12 @@
 - `src/domain/*`: issue parsing/validation, timestamps, durations, ULIDs, paths, records.
 - `src/api/github-client.js`: authenticated GitHub REST Contents API with typed errors.
 - `src/storage/chrome-store.js`: configuration/cache/queue persistence.
-- `src/services/tracker.js`: timer state machine, recent entries, edits/deletes, queue retry.
+- `src/services/tracker.js`: timer state machine, recent entries, complete today total, edits/deletes, queue retry.
+- `src/services/reports.js`: immutable tree/blob reads for every user's canonical daily file in an inclusive Start-date range.
 - `src/background/service-worker.js`: message boundary; token and API calls remain isolated.
 - `src/content/github.js`: GitHub SPA issue/pull-request detection plus a native-style before-avatar stopwatch control and closed-Shadow management dropdown.
 - `src/popup/*`: active/recent/sync UI and edit/delete controls.
+- `src/reports/*`: weekly/monthly/quarterly/yearly/custom periods, person/repository facets, local stacked-bar aggregation, and plain-text/CSV downloads.
 - `src/options/*`: least-privilege PAT/repository setup and validation.
 
 ## Acceptance checks
@@ -37,4 +39,5 @@
 6. A created entry plus failed active deletion resumes at active deletion.
 7. Content script never receives token/config secrets and renders untrusted text with text nodes.
 8. Invalid owner/repo/login/path/date/issue data is rejected before an API write.
-9. Automated Node tests and a packaged-extension manifest/static validation pass.
+9. Repository-wide reports load matching immutable blobs without exposing credentials or storage SHAs, and all facet/chart changes rerender locally.
+10. Automated Node tests, real-Chromium UI/export checks, and packaged-extension validation pass.

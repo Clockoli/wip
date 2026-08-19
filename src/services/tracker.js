@@ -334,7 +334,7 @@ export class TrackerService {
     return { resolved: !remaining.some(item => item.id === id) };
   }
 
-  async loadRecent(limit = 50) {
+  async loadMenuData(limit = 50) {
     const now = this.clock();
     const days = Array.from({ length: this.recentDays }, (_, offset) => {
       const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset, 12, 0, 0);
@@ -346,11 +346,29 @@ export class TrackerService {
         return parseDailyText(file.text, { user: this.user, date, path, sha: file.sha });
       } catch (error) { if (isNotFound(error)) return []; throw error; }
     }));
-    const entries = groups.flat().sort(newestFirst);
+    const persisted = groups.flat();
+    const state = await this.store.getState();
+    const pendingWrites = state.pendingWrites ?? [];
+    const pending = pendingWrites.filter(operation => operation.operation === 'completeTimer' && operation.entry
+      && days.some(day => day.date === startDate(operation.entry)) && !persisted.some(entry => sameCompletion(entry, operation)))
+      .map(operation => ({ ...operation.entry, _path: operation.dailyPath, _sha: null, _index: -1, _pending: true }));
+    const entries = [...persisted, ...pending].sort(newestFirst);
     const recent = entries.slice(0, limit);
+    const todaySeconds = entries.filter(entry => startDate(entry) === days[0].date)
+      .reduce((sum, entry) => sum + Math.max(0, Number(entry.durationSeconds) || 0), 0);
     await this.store.patchState({ recentCache: recent });
-    return recent;
+    const active = state.activeCache ? {
+      issue: state.activeCache.issue, startedAt: state.activeCache.startedAt,
+      description: state.activeCache.description || '', issueTitle: state.activeCache.issueTitle || '',
+    } : null;
+    return {
+      recent, todaySeconds, reportDate: days[0].date, active,
+      pendingCount: pendingWrites.length,
+      pendingWrites: pendingWrites.map(({ id, status, stage }) => ({ id, status, stage })),
+    };
   }
+
+  async loadRecent(limit = 50) { return (await this.loadMenuData(limit)).recent; }
 
   async editEntry({ path, originalSha, index, original, edits }) {
     const source = await this.readDaily(path);

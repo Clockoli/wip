@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub Private Time Tracker",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Track time on GitHub issues and pull requests in a private GitHub repository.",
   "permissions": [
     "alarms",

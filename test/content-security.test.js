@@ -23,7 +23,7 @@ test('time tracker uses a native-style GitHub header menu instead of a floating 
 });
 
 test('header menu exposes recent-entry management without exposing the token', () => {
-  for (const type of ['LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SYNC', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
+  for (const type of ['LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SYNC', 'OPEN_REPORTS', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
   assert.doesNotMatch(source, /type:\s*['"]GET_STATE['"]/);
   assert.doesNotMatch(source, /token/i);
 });

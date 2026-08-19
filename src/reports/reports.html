@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Time tracker reports</title>
+  <link rel="stylesheet" href="reports.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">GitHub Private Time Tracker</p>
+      <h1>Reports</h1>
+      <p id="source" class="muted">Loading configured repository…</p>
+    </div>
+    <button id="settings" class="button secondary" type="button">Settings</button>
+  </header>
+
+  <main>
+    <section class="card period-card" aria-labelledby="period-heading">
+      <div>
+        <h2 id="period-heading">Reporting period</h2>
+        <p class="muted">Entries are included by their Start date.</p>
+      </div>
+      <div class="period-controls">
+        <label>Period
+          <select id="period">
+            <option value="this-week">This week</option>
+            <option value="last-week">Last week</option>
+            <option value="this-month">This month</option>
+            <option value="last-month">Last month</option>
+            <option value="this-quarter">This quarter</option>
+            <option value="last-quarter">Last quarter</option>
+            <option value="this-year">This year</option>
+            <option value="last-year">Last year</option>
+            <option value="custom">Custom period</option>
+          </select>
+        </label>
+        <div id="custom-period" class="custom-period" hidden>
+          <label>Start <input id="start-date" type="date" required></label>
+          <label>End <input id="end-date" type="date" required></label>
+          <button id="apply-period" class="button secondary" type="button">Apply</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="loading" class="notice" role="status" hidden>Loading time files from GitHub…</div>
+    <div id="setup" class="notice" hidden>
+      Configure a private time-data repository before opening reports.
+      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+    </div>
+
+    <section id="report-content" hidden>
+      <div class="summary-grid" aria-label="Report summary">
+        <article class="summary-card"><span>Tracked</span><strong id="summary-time">0m</strong></article>
+        <article class="summary-card"><span>Entries</span><strong id="summary-entries">0</strong></article>
+        <article class="summary-card"><span>People</span><strong id="summary-people">0</strong></article>
+        <article class="summary-card"><span>Repositories</span><strong id="summary-repositories">0</strong></article>
+      </div>
+
+      <div class="reports-layout">
+        <aside class="filters card" aria-label="Report filters">
+          <section>
+            <div class="section-heading"><h2>People</h2><button id="people-all" class="text-button" type="button">Select all</button></div>
+            <label class="search-label">Filter people <input id="people-search" type="search" placeholder="Search people"></label>
+            <div id="people-facet" class="facet-list"></div>
+          </section>
+          <section>
+            <div class="section-heading"><h2>Repositories</h2><button id="repositories-all" class="text-button" type="button">Select all</button></div>
+            <label class="search-label">Filter repositories <input id="repositories-search" type="search" placeholder="Search repositories"></label>
+            <div id="repositories-facet" class="facet-list"></div>
+          </section>
+        </aside>
+
+        <div class="report-main">
+          <section class="card analytics-card" aria-labelledby="analytics-heading">
+            <div class="section-heading analytics-heading">
+              <div><h2 id="analytics-heading">Analytics</h2><p id="filtered-summary" class="muted"></p></div>
+              <div class="dimension-controls" aria-label="Chart breakdown">
+                <fieldset>
+                  <legend>Stack by</legend>
+                  <label><input id="dimension-person" type="checkbox" checked> Person</label>
+                  <label><input id="dimension-repository" type="checkbox"> Repository</label>
+                  <label><input id="dimension-issue" type="checkbox"> Issue / PR</label>
+                </fieldset>
+                <fieldset>
+                  <legend>Horizontal axis</legend>
+                  <label><input id="dimension-interval" type="checkbox" checked> Time interval</label>
+                  <select id="interval" aria-label="Time interval">
+                    <option value="day">Day</option>
+                    <option value="week" selected>Week</option>
+                    <option value="month">Month</option>
+                  </select>
+                </fieldset>
+              </div>
+            </div>
+            <div id="analytics-chart" class="chart" aria-live="polite"></div>
+            <div id="chart-legend" class="legend" aria-label="Chart legend"></div>
+            <details class="data-table-details">
+              <summary>View analytics data table</summary>
+              <div class="table-scroll"><table id="analytics-table"></table></div>
+            </details>
+          </section>
+
+          <section class="card export-card" aria-labelledby="export-heading">
+            <div>
+              <h2 id="export-heading">Timesheet</h2>
+              <p class="muted">Download the current period and facet selection.</p>
+            </div>
+            <div class="export-controls">
+              <label>Format
+                <select id="export-format">
+                  <option value="text">Plain text</option>
+                  <option value="csv">CSV</option>
+                </select>
+              </label>
+              <button id="download-timesheet" class="button primary" type="button">Download timesheet</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="reports.js"></script>
+</body>
+</html>

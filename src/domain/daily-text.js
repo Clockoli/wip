@@ -39,12 +39,18 @@ export function dailyTextPath(user, date) {
   return `times/${date}/${validatePathSegment(user, 'user')}.txt`;
 }
 
+export function parseDailyTextPath(path) {
+  const match = typeof path === 'string' ? path.match(/^times\/(\d{4}-\d{2}-\d{2})\/([A-Za-z0-9-]+)\.txt$/) : null;
+  if (!match) throw new Error('Invalid daily time path');
+  entryDateParts(match[1]);
+  return { path, date: match[1], user: validatePathSegment(match[2], 'user') };
+}
+
 export function assertUserDailyTextPath(path, user) {
   const validatedUser = validatePathSegment(user, 'user');
-  const match = typeof path === 'string' ? path.match(/^times\/(\d{4}-\d{2}-\d{2})\/([A-Za-z0-9-]+)\.txt$/) : null;
-  if (!match || match[2] !== validatedUser) throw new Error('Invalid daily time path');
-  entryDateParts(match[1]);
-  return { path, date: match[1] };
+  const parsed = parseDailyTextPath(path);
+  if (parsed.user !== validatedUser) throw new Error('Invalid daily time path');
+  return { path, date: parsed.date };
 }
 
 function recordId(date, index) { return `${date.replaceAll('-', '')}${String(index).padStart(18, '0')}`; }

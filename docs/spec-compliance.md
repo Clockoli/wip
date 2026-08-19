@@ -24,12 +24,13 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## Architecture mapping
 
-- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour Edit adjustment, uncapped full-valid-range adjacent-entry boundary movement, and Settings; the icon is gray while idle and green while any timer is active.
+- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour Edit adjustment, uncapped full-valid-range adjacent-entry boundary movement, a complete today total, Reports, and Settings; the icon is gray while idle and green while any timer is active.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
 - `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, and atomic multi-file commits through Git Data APIs.
 - `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across daily text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-day entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
 - `src/storage/chrome-store.js` stores configuration, the PAT, cache, and pending writes in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, edit/delete UI, sync status, and conflict acknowledgement.
+- `src/reports/*` loads an inclusive Start-date range for every canonical user file, then performs person/repository faceting, stacked analytics, and text/CSV export entirely in the extension page.
 - `src/options/*` validates the authenticated user, private repository, branch, write access, owner policy, and recent-entry window.
 
 ## Data and concurrency invariants
@@ -56,6 +57,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue/PR detection, daily path/date validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-day loading, stable record lookup after reordering, same-day and atomic cross-day edits, uncapped boundary movement, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement.
+Automated tests cover canonical issue/PR detection, daily path/date validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-day loading, stable record lookup after reordering, same-day and atomic cross-day edits, uncapped boundary movement, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement, exact today totals beyond the recent-row cap, repository-wide range loading, period boundaries, faceting, analytics aggregation, and text/CSV exports.
 
-Manual entry, older-entry search, reminders, GitHub App authentication, reporting, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.
+Manual entry, older-entry search, reminders, GitHub App authentication, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

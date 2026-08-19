@@ -214,8 +214,8 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   await stop.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   const pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 2);
-  assert.equal(pageStateMessages[1].refresh, false);
+  assert.equal(pageStateMessages.length, 1);
+  assert.deepEqual(messages.findLast(message => message.type === 'LOAD_RECENT'), { type: 'LOAD_RECENT', menuData: true });
 });
 
 
@@ -464,4 +464,35 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
   handle.onpointermove({ isTrusted: true, pointerId: 3, clientX: 3, preventDefault() {} });
   await handle.onpointerup({ isTrusted: true, pointerId: 3, clientX: 3, preventDefault() {} });
   assert.equal(messages.filter(message => message.type === 'MOVE_BOUNDARY').length, moveCount, 'disabled pending boundaries cannot commit');
+});
+
+
+test('main panel shows today total and opens Reports before Settings', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const today = new Date(), pad = value => String(value).padStart(2, '0');
+  const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const recentEntry = { user: 'alice', entryDate: date, durationSeconds: 5400, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: `${date}T08:00:00+00:00`, endedAt: `${date}T09:30:00+00:00`, description: '', _path: `times/${date}/alice.txt`, _sha: 'x', _index: 0 };
+  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+    messages.push(structuredClone(message));
+    if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: { ...recentEntry, endedAt: undefined, startedAt: `${date}T08:00:00+00:00` }, pendingCount: 0, pendingWrites: [] } });
+    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todaySeconds: 5400, reportDate: date, active: null, pendingCount: 0, pendingWrites: [] } });
+    else callback({ ok: true, data: {} });
+  } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(createdNodes.findLast(node => node.className === 'today-total-value')?.textContent, '1h 30m');
+  await trigger.onclick({ isTrusted: true });
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'each menu opening refreshes its atomic today snapshot');
+  const reports = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Reports');
+  const settings = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Time tracker settings');
+  assert.ok(reports?.onclick); assert.ok(settings);
+  assert.ok(reports.parentElement.children.indexOf(reports) < reports.parentElement.children.indexOf(settings));
+  await reports.onclick({ isTrusted: true });
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
 });

@@ -5,7 +5,7 @@ Create a separate private GitHub repository, for example `acme/time-data`, with 
 ## Access
 
 - Trackers: repository **write** access.
-- Reporting/managers: repository **read** access if they are permitted to see all issue references and descriptions.
+- Reporting/managers: repository **read** access if they are permitted to see all issue references and descriptions. The Reports page scans canonical `times/` paths for the selected Start-date range and reads immutable Git blobs.
 - Administrators: maintain/admin.
 
 Time data may reveal private issue references and sensitive descriptions. Use separate data repositories when team access boundaries differ.
