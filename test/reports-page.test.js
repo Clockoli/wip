@@ -20,5 +20,7 @@ test('reports page exposes periods, dimensions, facets, chart, and export contro
   assert.match(worker, /previous\.controller\.abort\(\)/);
   assert.match(worker, /await previous\.promise\.catch/);
   assert.match(worker, /await Promise\.allSettled/);
+  assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(3\)/);
+  assert.match(worker, /function syncPendingNow[\s\S]*ensureDataVersion\(3\)/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
 });

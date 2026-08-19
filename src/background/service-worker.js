@@ -36,6 +36,7 @@ async function context() {
 }
 
 async function loadReport(message) {
+  await store.ensureDataVersion(3);
   const { config, token } = await store.getConfig();
   if (!config) return { configured: false, records: [] };
   if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
@@ -123,7 +124,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function syncPendingNow() {
   return executor.run(async () => {
-    const state = await store.getState();
+    const state = await store.ensureDataVersion(3);
     if (!(state.pendingWrites ?? []).length) return;
     const { tracker } = await context();
     await tracker.syncPending();
