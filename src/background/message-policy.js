@@ -1,7 +1,7 @@
 import { normalizeIssue, parseIssueUrl } from '../domain/values.js';
 
 const CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_OPTIONS']);
-const EXTENSION_MESSAGES = new Set(['GET_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'LOAD_REPORT', 'OPEN_REPORTS', 'OPEN_OPTIONS']);
+const EXTENSION_MESSAGES = new Set(['GET_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'LOAD_REPORT', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_OPTIONS']);
 
 function senderType(sender, extensionOrigin) {
   const url = sender?.url || sender?.tab?.url || '';

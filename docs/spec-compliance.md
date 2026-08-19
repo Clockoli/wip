@@ -27,20 +27,20 @@ The specification leaves several Version 1 choices open. This implementation sel
 - `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour Edit adjustment, uncapped full-valid-range adjacent-entry boundary movement, a complete today total, Reports, and Settings; the icon is gray while idle and green while any timer is active.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
 - `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, and atomic multi-file commits through Git Data APIs.
-- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across daily text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-day entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
-- `src/storage/chrome-store.js` stores configuration, the PAT, cache, and pending writes in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
+- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across monthly text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-month entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
+- `src/storage/chrome-store.js` stores configuration, the PAT, recent/pending state, and repository-scoped report snapshot/blob caches in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, edit/delete UI, sync status, and conflict acknowledgement.
-- `src/reports/*` loads an inclusive Start-date range for every canonical user file, then performs person/repository faceting, stacked analytics, and text/CSV export entirely in the extension page.
+- `src/reports/*` loads an inclusive Start-date range from canonical monthly user files with branch ETag validation and immutable-SHA cache reuse, then performs person/repository faceting, stacked analytics, and text/CSV export entirely in the extension page.
 - `src/options/*` validates the authenticated user, private repository, branch, write access, owner policy, and recent-entry window.
 
 ## Data and concurrency invariants
 
 - Canonical identity is the login returned by GitHub's authenticated-user endpoint and encoded in each file name.
-- Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM-DD}/{login}.txt`.
+- Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM}/{login}.txt`.
 - Each persisted block contains only canonical `URL`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
 - Duration is recomputed from `End - Start` and is never persisted or based on render ticks.
 - A parsed record's array index is only a hint. Edits/deletes also carry the original persisted fields and locate the unique matching block, so manual reordering does not retarget an operation.
-- Changing Start to another local date moves the block between daily files. Multi-file edits and boundary moves verify the branch tree and publish one atomic Git commit.
+- Changing Start to another local month moves the block between monthly files. Multi-file edits and boundary moves verify the branch tree and publish one atomic Git commit.
 - Stop verifies that a reachable remote active timer still matches the cache before queueing; retry accepts exact intended content; if another device already cleared the active timer, one unique same-URL/same-Start completion is treated as that concurrent Stop.
 - The active file is deleted with its known SHA and conflicts are re-read before any retry, preserving newer timers.
 - Same-destination settings changes preserve pending writes; repository/user changes are blocked while a write or active timer exists.
@@ -57,6 +57,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue/PR detection, daily path/date validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-day loading, stable record lookup after reordering, same-day and atomic cross-day edits, uncapped boundary movement, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement, exact today totals beyond the recent-row cap, repository-wide range loading, period boundaries, faceting, analytics aggregation, and text/CSV exports.
+Automated tests cover canonical issue/PR detection, monthly path/Start-month validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-month loading, stable record lookup after reordering, same-month and atomic cross-month edits, uncapped boundary movement, persistent SHA/ETag report caching, stale-load cancellation, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement, exact today totals beyond the recent-row cap, repository-wide range loading, period boundaries, faceting, analytics aggregation, and text/CSV exports.
 
 Manual entry, older-entry search, reminders, GitHub App authentication, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

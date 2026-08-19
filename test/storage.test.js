@@ -33,3 +33,33 @@ test('new data format clears only stale caches and pending operations', async ()
   assert.deepEqual(state, { user: 'alice', activeCache: null, recentCache: [], pendingWrites: [], dataVersion: 2 });
   assert.deepEqual(await store.getConfig(), { config: { owner: 'acme', repo: 'time-data' }, token: 'secret-token' });
 });
+
+
+test('report cache is repository-scoped, persisted separately, and cleared with configuration', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const cache = { version: 1, repositoryKey: 'acme/time@main', etag: '"one"', files: [], blobs: {} };
+  await store.saveReportCache(cache);
+  assert.deepEqual(await store.getReportCache('acme/time@main'), cache);
+  assert.equal(await store.getReportCache('other/time@main'), null);
+  await store.clearConfig();
+  assert.equal(await store.getReportCache('acme/time@main'), null);
+});
+
+test('v2 pending completions migrate to monthly paths without losing active state', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const activeCache = { startedAt: '2026-08-18T08:00:00Z' };
+  await store.patchState({ activeCache, recentCache: [{ old: true }], pendingWrites: [{
+    operation: 'completeTimer', dailyPath: 'times/2026-08-18/alice.txt', id: 'one',
+  }], dataVersion: 2 });
+  const state = await store.ensureDataVersion(3);
+  assert.deepEqual(state.activeCache, activeCache);
+  assert.deepEqual(state.recentCache, []);
+  assert.deepEqual(state.pendingWrites, [{ operation: 'completeTimer', monthlyPath: 'times/2026-08/alice.txt', id: 'one' }]);
+});
+
+test('v2 migration refuses to silently discard an unrecognized pending completion', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.patchState({ pendingWrites: [{ operation: 'completeTimer', dailyPath: '../unsafe.txt' }], dataVersion: 2 });
+  await assert.rejects(() => store.ensureDataVersion(3), /Cannot migrate a pending completion/);
+  assert.equal((await store.getState()).dataVersion, 2);
+});

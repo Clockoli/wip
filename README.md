@@ -40,13 +40,13 @@ The data repository must already exist and allow direct commits to its configure
 4. The dropdown shows the complete tracked total for today; edit or delete recent records directly there or in the toolbar popup.
 5. Choose **Reports** before the Settings icon to open repository-wide analytics. Select a period, facet by person or GitHub repository, check any combination of Person/Repository/Issue or PR breakdowns, choose a day/week/month interval, or download the current selection as plain text or CSV. The stopwatch is gray while idle and green while any timer is running.
 
-A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar date selects the eventual daily file.
+A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar month selects the eventual monthly file.
 
 ## Storage layout
 
 ```text
 active/{github-login}.txt
-times/{local YYYY-MM-DD}/{github-login}.txt
+times/{local YYYY-MM}/{github-login}.txt
 ```
 
 The login is derived from the file name, not repeated inside the file. Completed records are blank-line-separated blocks:
@@ -58,9 +58,9 @@ End: 2026-08-19T10:15:00+03:00
 Description: optional single-line text
 ```
 
-`Description` is omitted when empty. Every timestamp includes a timezone. The active file uses the same format without `End`. Files can be maintained manually as long as field names, canonical GitHub URLs, timestamp timezones, Start dates matching their `times/YYYY-MM-DD/` directory, and blank-line record separators are preserved.
+`Description` is omitted when empty. Every timestamp includes a timezone. The active file uses the same format without `End`. Files can be maintained manually as long as field names, canonical GitHub URLs, timestamp timezones, Start months matching their `times/YYYY-MM/` directory, and blank-line record separators are preserved.
 
-A normal recent-entry refresh performs one direct file read per configured day. Editing or deleting rewrites one daily file. Moving a boundary between two records in the same daily file performs one write; cross-day edits and boundaries update every affected daily file in one atomic Git commit.
+A normal recent-entry refresh performs one direct file read per represented month (normally one or two). Editing or deleting rewrites one monthly file. Same-month edits and boundary changes perform one SHA-guarded write; cross-month changes update every affected monthly file in one atomic Git commit. Reports persist raw immutable blobs by Git SHA in extension-origin IndexedDB and conditionally validate the branch ref with an ETag. An unchanged branch is served from the cache after a `304 Not Modified`; a changed branch downloads only missing blob SHAs. Obsolete report loads are aborted before a newer range begins.
 
 Every operation uses predictable commit messages without descriptions.
 
@@ -69,13 +69,13 @@ Every operation uses predictable commit messages without descriptions.
 
 Stop first verifies that the cached timer still matches GitHub when the repository is reachable; a changed timer is shown instead of completing stale data. If GitHub is temporarily unreachable, the cached completion remains offline-capable. The extension then queues the completion in extension-origin IndexedDB and synchronization:
 
-1. reads the target daily text file once;
+1. reads the target monthly text file once;
 2. adopts the exact intended record, recognizes a concurrent Stop only when the active file is gone and one matching timer completion exists, or appends with SHA protection;
 3. persists the queue stage;
 4. clears the active file with its known SHA, re-reading only to reconcile a conflict;
 5. preserves any newer active timer.
 
-A network failure leaves the queue retryable. A changed active timer or stale daily-file SHA is never silently overwritten. Manually malformed daily files produce a visible error so they can be repaired directly in GitHub.
+A network failure leaves the queue retryable. A changed active timer or stale monthly-file SHA is never silently overwritten. Manually malformed monthly files produce a visible error so they can be repaired directly in GitHub.
 
 Changing the target data repository is blocked while writes are pending.
 
@@ -108,7 +108,7 @@ npm run check
 src/api/          GitHub Contents API client
 src/background/   MV3 service worker and message boundary
 src/content/      GitHub issue/pull-request header control and dropdown
-src/domain/       validation, daily text format, records, paths, timestamps
+src/domain/       validation, monthly text format, records, paths, timestamps
 src/options/      secure setup and validation
 src/reports/      repository-wide facets, analytics chart, and timesheet export
 src/popup/        active/recent/edit/delete UI

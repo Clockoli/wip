@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GitHubClient, GitHubConflictError, GitHubNotFoundError, GitHubValidationError } from '../src/api/github-client.js';
+import {
+  GitHubClient,
+  GitHubConflictError,
+  GitHubNotFoundError,
+  GitHubPermissionError,
+  GitHubRateLimitError,
+  GitHubValidationError,
+} from '../src/api/github-client.js';
 
-function response(status, body = null) {
-  return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body };
+function response(status, body = null, headers = {}) {
+  return { ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body };
 }
 
 test('GitHub client encodes unicode text and uses SHA for update/delete', async () => {
@@ -31,7 +38,7 @@ test('GitHub client lists report text files from one tree and reads immutable bl
     if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
     if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
     if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
-      { path: 'times/2026-08-18/alice.txt', type: 'blob', sha },
+      { path: 'times/2026-08/alice.txt', type: 'blob', sha },
       { path: 'active/alice.txt', type: 'blob', sha: 'b'.repeat(40) },
       { path: 'times/readme.md', type: 'blob', sha: 'c'.repeat(40) },
     ] });
@@ -39,9 +46,29 @@ test('GitHub client lists report text files from one tree and reads immutable bl
     throw new Error(`Unexpected ${url}`);
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
-  assert.deepEqual(await client.listTextFiles('times/'), [{ path: 'times/2026-08-18/alice.txt', sha }]);
-  assert.equal((await client.getBlobText('times/2026-08-18/alice.txt', sha)).text, 'URL: https://github.com/acme/app/issues/1\n');
+  assert.deepEqual(await client.listTextFiles('times/'), [{ path: 'times/2026-08/alice.txt', sha }]);
+  assert.equal((await client.getBlobText('times/2026-08/alice.txt', sha)).text, 'URL: https://github.com/acme/app/issues/1\n');
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
+});
+
+test('GitHub client returns branch ETags and accepts a conditional 304 snapshot', async () => {
+  const sha = 'a'.repeat(40), calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/git/ref/heads/main')) {
+      if (options.headers?.['If-None-Match'] === '"snapshot"') return response(304, null, { etag: '"snapshot"' });
+      return response(200, { object: { sha: 'parent' } }, { etag: '"snapshot"' });
+    }
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [{ path: 'times/2026-08/alice.txt', type: 'blob', sha }] });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  const first = await client.listTextFilesSnapshot('times/');
+  assert.deepEqual(first, { notModified: false, etag: '"snapshot"', files: [{ path: 'times/2026-08/alice.txt', sha }] });
+  const second = await client.listTextFilesSnapshot('times/', { etag: first.etag });
+  assert.deepEqual(second, { notModified: true, etag: '"snapshot"' });
+  assert.equal(calls.length, 4, '304 skips commit and tree requests');
 });
 
 test('GitHub client atomically updates multiple text files from one verified tree', async () => {
@@ -85,6 +112,44 @@ test('GitHub client classifies not found and conflicts without exposing credenti
   await assert.rejects(() => conflict.putText('x.txt', 'text', 'm', 'stale'), GitHubConflictError);
 });
 
+
+test('GitHub client distinguishes primary rate limits from repository permission failures', async () => {
+  const limited = new GitHubClient({
+    token: 'x', owner: 'a', repo: 'b',
+    fetchImpl: async () => response(403, { message: 'API rate limit exceeded' }, {
+      'x-ratelimit-remaining': '0',
+      'x-ratelimit-reset': '1893456000',
+    }),
+  });
+  await assert.rejects(() => limited.validateRepository(), error => {
+    assert.ok(error instanceof GitHubRateLimitError);
+    assert.equal(error.code, 'rate_limit');
+    assert.match(error.message, /rate limit exceeded/i);
+    assert.match(error.message, /2030-01-01T00:00:00\.000Z/);
+    return true;
+  });
+
+  const forbidden = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(403, { message: 'Forbidden' }) });
+  await assert.rejects(() => forbidden.validateRepository(), GitHubPermissionError);
+});
+
+test('GitHub client reports secondary throttling and HTTP 429 as rate limits', async () => {
+  const secondary = new GitHubClient({
+    token: 'x', owner: 'a', repo: 'b',
+    fetchImpl: async () => response(403, { message: 'You have exceeded a secondary rate limit.' }, { 'retry-after': '60' }),
+  });
+  await assert.rejects(() => secondary.validateRepository(), error => (
+    error instanceof GitHubRateLimitError
+      && error.code === 'rate_limit'
+      && /60 seconds/i.test(error.message)
+  ));
+
+  const tooMany = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(429, { message: 'Too many requests' }) });
+  await assert.rejects(() => tooMany.validateRepository(), error => (
+    error instanceof GitHubRateLimitError
+      && /wait a few minutes/i.test(error.message)
+  ));
+});
 
 test('setup rejects public repositories and 422 is validation, not a concurrency conflict', async () => {
   const publicRepo = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(200, { private: false, permissions: { push: true } }) });

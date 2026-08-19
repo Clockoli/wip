@@ -16,5 +16,9 @@ test('reports page exposes periods, dimensions, facets, chart, and export contro
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(js, /function render\(\) \{\s*if \(!state\.range\) return;/);
   assert.match(js, /requestId !== state\.requestId/);
-  assert.match(worker, /message\?\.type === 'LOAD_REPORT' \? handle\(message, sender\) : executor\.run/);
+  assert.match(worker, /\['LOAD_REPORT', 'CANCEL_REPORT'\]\.includes\(message\?\.type\)/);
+  assert.match(worker, /previous\.controller\.abort\(\)/);
+  assert.match(worker, /await previous\.promise\.catch/);
+  assert.match(worker, /await Promise\.allSettled/);
+  assert.match(js, /type:\s*'CANCEL_REPORT'/);
 });

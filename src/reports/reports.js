@@ -172,6 +172,7 @@ $('period').addEventListener('change', () => {
   const custom = $('period').value === 'custom'; $('custom-period').hidden = !custom;
   if (custom) {
     state.requestId += 1; state.loading = false; state.range = null;
+    void send({ type: 'CANCEL_REPORT' }).catch(() => {});
     $('loading').hidden = true; $('report-content').hidden = true; $('download-timesheet').disabled = true;
     $('source').textContent = 'Choose a custom date range and apply it.';
   } else void applyPeriod();

@@ -8,7 +8,7 @@ const newPayload = { owner: 'new-org', repo: 'time-data', branch: 'main', recent
 class MemoryConfigStore {
   constructor({ activeCache = null, pendingWrites = [], user = 'alice' } = {}) {
     this.config = oldConfig; this.token = 'old-token';
-    this.state = { activeCache, recentCache: [], pendingWrites, user };
+    this.state = { activeCache, recentCache: [], pendingWrites, user, reportCache: { repositoryKey: 'old-org/time-data@main' } };
   }
   async getConfig() { return { config: structuredClone(this.config), token: this.token }; }
   async getState() { return structuredClone(this.state); }
@@ -96,4 +96,24 @@ test('configuration recovers the previous authenticated user before allowing a t
   await assert.rejects(() => service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] }), /active timer/i);
   assert.equal(oldActiveReads, 1);
   assert.equal(store.token, 'old-token');
+});
+
+
+test('changing repository clears the old private report cache', async () => {
+  const store = new MemoryConfigStore();
+  const noActiveFactory = options => options.token === 'new-token' ? factory(options) : {
+    getAuthenticatedUser: async () => 'alice',
+    getText: async () => { const error = new Error('not found'); error.status = 404; throw error; },
+  };
+  const service = new ConfigurationService({ store, githubFactory: noActiveFactory });
+  await service.save(newPayload);
+  assert.equal(store.state.reportCache, null);
+});
+
+test('same-repository settings changes preserve its immutable report cache', async () => {
+  const store = new MemoryConfigStore();
+  const original = structuredClone(store.state.reportCache);
+  const service = new ConfigurationService({ store, githubFactory: factory });
+  await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'], recentDays: 14 });
+  assert.deepEqual(store.state.reportCache, original);
 });

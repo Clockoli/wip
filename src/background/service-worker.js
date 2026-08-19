@@ -9,6 +9,7 @@ import { SerialExecutor } from './serial-executor.js';
 const store = new ChromeStore();
 const executor = new SerialExecutor();
 const configuration = new ConfigurationService({ store, githubFactory: options => new GitHubClient(options) });
+const reportLoads = new Map();
 
 function serializeError(error) {
   return { message: error?.message || 'Unexpected error', code: error?.code || 'error', status: error?.status || 0 };
@@ -18,7 +19,7 @@ async function context() {
   const { config, token } = await store.getConfig();
   if (!config || !token) throw new Error('Configure the private time-data repository and token in Settings.');
   const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch: config.branch || 'main' });
-  const localState = await store.ensureDataVersion(2);
+  const localState = await store.ensureDataVersion(3);
   let { user } = localState;
   if (!user) {
     user = await github.getAuthenticatedUser();
@@ -26,12 +27,43 @@ async function context() {
   }
   return {
     config,
-    reports: new ReportService({ github }),
+    reports: new ReportService({ github, cache: store }),
     tracker: new TrackerService({
       github, store, user, recentDays: config.recentDays || 7,
       allowedIssueOwners: config.allowedIssueOwners || [config.owner],
     }),
   };
+}
+
+async function loadReport(message) {
+  const { config, token } = await store.getConfig();
+  if (!config) return { configured: false, records: [] };
+  if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
+  const branch = config.branch || 'main';
+  const repositoryKey = `${config.owner}/${config.repo}@${branch}`;
+  const previous = reportLoads.get(repositoryKey);
+  if (previous) {
+    previous.controller.abort();
+    await previous.promise.catch(() => {});
+  }
+  const controller = new AbortController();
+  const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
+  const reports = new ReportService({ github, cache: store });
+  const promise = (async () => ({
+    configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
+    records: await reports.loadRange(message.payload || {}, { signal: controller.signal }),
+  }))();
+  reportLoads.set(repositoryKey, { controller, promise });
+  try { return await promise; }
+  finally {
+    if (reportLoads.get(repositoryKey)?.promise === promise) reportLoads.delete(repositoryKey);
+  }
+}
+
+async function cancelReports() {
+  const active = [...reportLoads.values()];
+  for (const { controller } of active) controller.abort();
+  await Promise.allSettled(active.map(({ promise }) => promise));
 }
 
 async function handle(message, sender) {
@@ -43,19 +75,13 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/reports.html') });
     return { ok: true };
   }
-  if (message.type === 'SAVE_CONFIG') return configuration.save(message.payload);
-  if (message.type === 'LOAD_REPORT') {
-    const { config, token } = await store.getConfig();
-    if (!config) return { configured: false, records: [] };
-    if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
-    const branch = config.branch || 'main';
-    const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
-    const reports = new ReportService({ github });
-    return {
-      configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
-      records: await reports.loadRange(message.payload || {}),
-    };
+  if (message.type === 'SAVE_CONFIG') {
+    await store.ensureDataVersion(3);
+    await cancelReports();
+    return configuration.save(message.payload);
   }
+  if (message.type === 'CANCEL_REPORT') { await cancelReports(); return { cancelled: true }; }
+  if (message.type === 'LOAD_REPORT') return loadReport(message);
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const { config } = await store.getConfig();
     if (!config) return message.type === 'GET_PAGE_STATE'
@@ -90,7 +116,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const operation = message?.type === 'LOAD_REPORT' ? handle(message, sender) : executor.run(() => handle(message, sender));
+  const operation = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type) ? handle(message, sender) : executor.run(() => handle(message, sender));
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
 });

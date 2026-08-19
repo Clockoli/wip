@@ -1,4 +1,4 @@
-import { activeTextPath, parseActiveText } from '../domain/daily-text.js';
+import { activeTextPath, parseActiveText } from '../domain/monthly-text.js';
 import { validateBranch, validateOwner, validateRepo } from '../domain/values.js';
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
@@ -52,7 +52,10 @@ export class ConfigurationService {
       if (await this.previousActive(previousConfig, previousToken, { ...state, user: previousUser })) throw new Error('Stop the active timer before changing the time-data repository or GitHub user.');
     }
 
-    await this.store.saveConfiguration(config, token, { user, activeCache: null, recentCache: [], pendingWrites: state.pendingWrites ?? [], dataVersion: 2 });
+    await this.store.saveConfiguration(config, token, {
+      user, activeCache: null, recentCache: [], pendingWrites: state.pendingWrites ?? [], dataVersion: 3,
+      ...((changesDestination || changesUser) ? { reportCache: null } : {}),
+    });
     return { user, config };
   }
 }

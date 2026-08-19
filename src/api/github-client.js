@@ -18,6 +18,29 @@ export class GitHubAuthenticationError extends GitHubApiError {
 export class GitHubPermissionError extends GitHubApiError {
   constructor(message = 'The token does not have access to the configured repository.') { super(message, 403, 'permission'); }
 }
+export class GitHubRateLimitError extends GitHubApiError {
+  constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403) { super(message, status, 'rate_limit'); }
+}
+
+function rateLimitMessage(response) {
+  const retryAfter = Number(response.headers?.get('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return `GitHub temporarily throttled requests. Try again in ${Math.ceil(retryAfter)} seconds.`;
+  }
+  const reset = Number(response.headers?.get('x-ratelimit-reset'));
+  if (Number.isFinite(reset) && reset > 0) {
+    return `GitHub API rate limit exceeded. Try again after ${new Date(reset * 1000).toISOString()}.`;
+  }
+  return 'GitHub API rate limit exceeded. Wait a few minutes and try again.';
+}
+
+function isRateLimited(response, body) {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  if (response.headers?.get('x-ratelimit-remaining') === '0' || response.headers?.get('retry-after')) return true;
+  const detail = `${body?.message ?? ''} ${body?.documentation_url ?? ''}`;
+  return /rate.?limit|too many requests|abuse detection/i.test(detail);
+}
 
 function encodeBase64Utf8(value) {
   const bytes = new TextEncoder().encode(value);
@@ -47,7 +70,9 @@ export class GitHubClient {
     this.fetchImpl = fetchImpl.bind(globalThis);
   }
 
-  async request(path, options = {}) {
+  get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
+
+  async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
     const response = await this.fetchImpl(`https://api.github.com${path}`, {
       ...options,
       cache: 'no-store',
@@ -59,17 +84,25 @@ export class GitHubClient {
         ...options.headers,
       },
     });
+    if (allowNotModified && response.status === 304) {
+      return { body: null, status: response.status, headers: response.headers, notModified: true };
+    }
     let body = null;
     try { body = await response.json(); } catch { /* empty response */ }
     if (!response.ok) {
       if (response.status === 401) throw new GitHubAuthenticationError();
+      if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status);
       if (response.status === 403) throw new GitHubPermissionError();
       if (response.status === 404) throw new GitHubNotFoundError();
       if (response.status === 409) throw new GitHubConflictError();
       if (response.status === 422) throw new GitHubValidationError();
       throw new GitHubApiError(`GitHub request failed (${response.status})`, response.status);
     }
-    return body;
+    return { body, status: response.status, headers: response.headers, notModified: false };
+  }
+
+  async request(path, options = {}) {
+    return (await this.requestDetailed(path, options)).body;
   }
 
   contentUrl(path) {
@@ -98,22 +131,32 @@ export class GitHubClient {
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
   }
 
-  async listTextFiles(prefix = '') {
+  async listTextFilesSnapshot(prefix = '', { etag = '', signal } = {}) {
     if (typeof prefix !== 'string' || prefix.startsWith('/') || prefix.includes('..') || prefix.includes('\\')) throw new Error('Invalid GitHub content prefix');
     if (prefix) encodePath(prefix.endsWith('/') ? prefix.slice(0, -1) : prefix);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
-    const ref = await this.request(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`);
-    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(ref.object?.sha)}`);
-    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`);
+    const refResponse = await this.requestDetailed(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`, {
+      signal,
+      headers: etag ? { 'If-None-Match': etag } : {},
+    }, { allowNotModified: true });
+    const snapshotEtag = refResponse.headers?.get('etag') || etag || '';
+    if (refResponse.notModified) return { notModified: true, etag: snapshotEtag };
+    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(refResponse.body?.object?.sha)}`, { signal });
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
-    return (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
+    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
       .map(({ path, sha }) => ({ path, sha })).sort((a, b) => a.path.localeCompare(b.path));
+    return { notModified: false, etag: snapshotEtag, files };
   }
 
-  async getBlobText(path, sha) {
+  async listTextFiles(prefix = '') {
+    return (await this.listTextFilesSnapshot(prefix)).files;
+  }
+
+  async getBlobText(path, sha, { signal } = {}) {
     encodePath(path);
     if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) throw new Error('Invalid Git blob SHA');
-    const body = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/git/blobs/${encodeURIComponent(sha)}`);
+    const body = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/git/blobs/${encodeURIComponent(sha)}`, { signal });
     if (body.encoding !== 'base64' || typeof body.content !== 'string' || body.truncated) throw new GitHubApiError('Expected a complete text blob', 422);
     return { path, sha, text: decodeBase64Utf8(body.content) };
   }

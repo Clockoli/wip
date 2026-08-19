@@ -32,8 +32,10 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
 });
 

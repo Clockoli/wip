@@ -350,7 +350,7 @@ test('Edit entry drag handle previews End changes within twelve hours', async ()
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
     startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600,
     description: '', createdAt: '2026-08-18T09:00:00.000Z', updatedAt: '2026-08-18T09:00:00.000Z',
-    _path: 'times/2026-08-18/alice.txt', _sha: 'one', _index: 0,
+    _path: 'times/2026-08/alice.txt', _sha: 'one', _index: 0,
   };
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
@@ -415,7 +415,7 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
   const entry = (id, number, startedAt, endedAt, sha) => ({
     schemaVersion: 1, id, user: 'alice', issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
     startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
-    createdAt: endedAt, updatedAt: endedAt, _path: 'times/2026-08-18/alice.txt', _sha: sha, _index: number - 1,
+    createdAt: endedAt, updatedAt: endedAt, _path: 'times/2026-08/alice.txt', _sha: sha, _index: number - 1,
   });
   const older = entry('01K2ABCDEF0123456789ABCDEA', 1, '2026-08-18T09:00:00+03:00', '2026-08-18T10:00:00+03:00', 'daily');
   const newer = entry('01K2ABCDEF0123456789ABCDEB', 2, '2026-08-18T07:00:00+00:00', '2026-08-19T08:00:00+00:00', 'daily');

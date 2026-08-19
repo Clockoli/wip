@@ -3,6 +3,7 @@ import { entryDateParts, normalizeIssue, parseIssueUrl, validatePathSegment } fr
 
 const FIELD_RE = /^([A-Za-z]+):(?: (.*))?$/;
 const ALLOWED_FIELDS = new Set(['URL', 'Start', 'End', 'Description']);
+const MONTH_RE = /^(\d{4})-(\d{2})$/;
 
 export function timestampWithTimezone(value) {
   if (typeof value !== 'string') throw new Error('Invalid timestamp with timezone');
@@ -33,24 +34,29 @@ export function normalizePlainDescription(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
 }
 
+function validateMonth(value) {
+  const match = typeof value === 'string' ? value.match(MONTH_RE) : null;
+  if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) throw new Error('Invalid monthly time path');
+  return value;
+}
+
 export function activeTextPath(user) { return `active/${validatePathSegment(user, 'user')}.txt`; }
-export function dailyTextPath(user, date) {
+export function monthlyTextPath(user, date) {
   entryDateParts(date);
-  return `times/${date}/${validatePathSegment(user, 'user')}.txt`;
+  return `times/${date.slice(0, 7)}/${validatePathSegment(user, 'user')}.txt`;
 }
 
-export function parseDailyTextPath(path) {
-  const match = typeof path === 'string' ? path.match(/^times\/(\d{4}-\d{2}-\d{2})\/([A-Za-z0-9-]+)\.txt$/) : null;
-  if (!match) throw new Error('Invalid daily time path');
-  entryDateParts(match[1]);
-  return { path, date: match[1], user: validatePathSegment(match[2], 'user') };
+export function parseMonthlyTextPath(path) {
+  const match = typeof path === 'string' ? path.match(/^times\/(\d{4}-\d{2})\/([A-Za-z0-9-]+)\.txt$/) : null;
+  if (!match) throw new Error('Invalid monthly time path');
+  return { path, month: validateMonth(match[1]), user: validatePathSegment(match[2], 'user') };
 }
 
-export function assertUserDailyTextPath(path, user) {
+export function assertUserMonthlyTextPath(path, user) {
   const validatedUser = validatePathSegment(user, 'user');
-  const parsed = parseDailyTextPath(path);
-  if (parsed.user !== validatedUser) throw new Error('Invalid daily time path');
-  return { path, date: parsed.date };
+  const parsed = parseMonthlyTextPath(path);
+  if (parsed.user !== validatedUser) throw new Error('Invalid monthly time path');
+  return { path, month: parsed.month };
 }
 
 function recordId(date, index) { return `${date.replaceAll('-', '')}${String(index).padStart(18, '0')}`; }
@@ -85,13 +91,15 @@ function splitBlocks(text) {
   return normalized.split(/\n{2,}/);
 }
 
-export function parseDailyText(text, { user, date, path = dailyTextPath(user, date), sha = null } = {}) {
-  validatePathSegment(user, 'user'); entryDateParts(date);
-  const pathDate = assertUserDailyTextPath(path, user).date;
-  if (pathDate !== date) throw new Error(`Daily path date ${pathDate} does not match context date ${date}`);
+export function parseMonthlyText(text, { user, month, path = `times/${validateMonth(month)}/${validatePathSegment(user, 'user')}.txt`, sha = null } = {}) {
+  validatePathSegment(user, 'user'); validateMonth(month);
+  const pathMonth = assertUserMonthlyTextPath(path, user).month;
+  if (pathMonth !== month) throw new Error(`Monthly path month ${pathMonth} does not match context month ${month}`);
   return splitBlocks(text).map((block, index) => {
     const record = parseBlock(block);
-    if (record.startedAt.slice(0, 10) !== date) throw new Error(`Start date must match daily file date ${date}`);
+    const date = record.startedAt.slice(0, 10);
+    if (date.slice(0, 7) !== month) throw new Error(`Start month must match monthly file month ${month}`);
+    entryDateParts(date);
     const createdAt = record.endedAt;
     return {
       schemaVersion: 1, id: recordId(date, index), user, issue: normalizeIssue(record.issue), entryDate: date,
@@ -115,8 +123,8 @@ function serializeRecord(record, { active = false } = {}) {
   return lines.join('\n');
 }
 
-export function serializeDailyText(entries) {
-  if (!Array.isArray(entries)) throw new Error('Daily entries must be an array');
+export function serializeMonthlyText(entries) {
+  if (!Array.isArray(entries)) throw new Error('Monthly entries must be an array');
   return entries.length ? `${entries.map(entry => serializeRecord(entry)).join('\n\n')}\n` : '';
 }
 
