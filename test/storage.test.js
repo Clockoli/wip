@@ -49,12 +49,12 @@ test('v2 pending completions migrate to monthly paths without losing active stat
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const activeCache = { startedAt: '2026-08-18T08:00:00Z' };
   await store.patchState({ activeCache, recentCache: [{ old: true }], pendingWrites: [{
-    operation: 'completeTimer', dailyPath: 'times/2026-08-18/alice.txt', id: 'one',
+    operation: 'completeTimer', dailyPath: 'times/2026-08-18/alice.txt', id: 'one', stage: 'appendDaily',
   }], dataVersion: 2 });
   const state = await store.ensureDataVersion(3);
   assert.deepEqual(state.activeCache, activeCache);
   assert.deepEqual(state.recentCache, []);
-  assert.deepEqual(state.pendingWrites, [{ operation: 'completeTimer', monthlyPath: 'times/2026-08/alice.txt', id: 'one' }]);
+  assert.deepEqual(state.pendingWrites, [{ operation: 'completeTimer', monthlyPath: 'times/2026-08/alice.txt', id: 'one', stage: 'appendMonthly' }]);
 });
 
 test('v2 migration refuses to silently discard an unrecognized pending completion', async () => {

@@ -73,6 +73,24 @@ test('start writes one readable active text file without user or generated metad
   assert.equal(parseActiveText(file.text, { user: 'alice' }).issue.number, 123);
 });
 
+test('an unsupported queued stage is preserved instead of clearing active or losing the completion', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const queuedEntry = entry('2026-08-18T08:00:00+00:00', '2026-08-18T09:00:00+00:00');
+  store.value.pendingWrites = [{
+    operation: 'completeTimer', id: 'legacy', status: 'pending', retryCount: 0,
+    stage: 'unknownLegacyStage', monthlyPath: 'times/2026-08/alice.txt', entry: queuedEntry,
+    activeSnapshot: active(), activeSha: 'active-sha', queuedAt: queuedEntry.endedAt, lastError: '',
+  }];
+  seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active-sha');
+  const queue = await service({ github, store }).syncPending();
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].status, 'conflict');
+  assert.match(queue[0].lastError, /unsupported storage stage/i);
+  assert.equal(github.writes.length, 0);
+  assert.equal(github.deletes.length, 0);
+  assert.equal(github.files.has('active/alice.txt'), true);
+});
+
 test('stop appends to one monthly text file and clears active', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(); let now = new Date('2026-08-18T08:00:00Z');
   const tracker = service({ github, store, clock: () => new Date(now) });
@@ -410,7 +428,7 @@ test('menu data reports the complete current-day total even when recent rows are
   });
   seedText(github, path, serializeMonthlyText(entries), 'daily');
   const pendingEntry = entry('2026-08-18T02:00:00+00:00', '2026-08-18T02:01:00+00:00');
-  store.value.pendingWrites = [{ operation: 'completeTimer', id: 'pending-total', status: 'pending', retryCount: 0, stage: 'appendDaily', monthlyPath: path, entry: pendingEntry, activeSnapshot: active(pendingEntry.startedAt), activeSha: 'active', queuedAt: pendingEntry.endedAt, lastError: '' }];
+  store.value.pendingWrites = [{ operation: 'completeTimer', id: 'pending-total', status: 'pending', retryCount: 0, stage: 'appendMonthly', monthlyPath: path, entry: pendingEntry, activeSnapshot: active(pendingEntry.startedAt), activeSha: 'active', queuedAt: pendingEntry.endedAt, lastError: '' }];
   const running = active('2026-08-18T11:00:00+00:00');
   store.value.activeCache = running;
   const data = await service({ github, store, recentDays: 1, clock: () => new Date('2026-08-18T12:00:00Z') }).loadMenuData(50);
@@ -419,6 +437,6 @@ test('menu data reports the complete current-day total even when recent rows are
   assert.equal(data.reportDate, '2026-08-18');
   assert.equal(data.active.startedAt, running.startedAt);
   assert.equal(data.pendingCount, 1);
-  assert.deepEqual(data.pendingWrites, [{ id: 'pending-total', status: 'pending', stage: 'appendDaily' }]);
+  assert.deepEqual(data.pendingWrites, [{ id: 'pending-total', status: 'pending', stage: 'appendMonthly' }]);
   assert.equal(Object.keys(data.active).some(key => key.startsWith('_')), false);
 });

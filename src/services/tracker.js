@@ -261,6 +261,9 @@ export class TrackerService {
     for (const operation of [...queue]) {
       if (operation.status === 'conflict') continue;
       try {
+        if (!['verifyActive', 'appendMonthly', 'clearActive'].includes(operation.stage)) {
+          throw new TrackerConflictError('This queued completion uses an unsupported storage stage. It was preserved for manual recovery.');
+        }
         if (operation.stage === 'verifyActive') {
           const activeState = await this.activeStateFor(operation);
           if (activeState === 'changed') throw new TrackerConflictError('The active timer changed on another device before this completion could be verified. No completion was saved.');

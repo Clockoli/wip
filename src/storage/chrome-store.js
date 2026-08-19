@@ -69,7 +69,11 @@ function migrateV2PendingWrites(pendingWrites) {
       : null;
     if (!match) throw new Error('Cannot migrate a pending completion to monthly storage. Resolve it with the previous extension version first.');
     const { dailyPath, ...rest } = operation;
-    return { ...rest, monthlyPath: `times/${match[1]}/${match[2]}.txt` };
+    return {
+      ...rest,
+      stage: rest.stage === 'appendDaily' ? 'appendMonthly' : rest.stage,
+      monthlyPath: `times/${match[1]}/${match[2]}.txt`,
+    };
   });
 }
 

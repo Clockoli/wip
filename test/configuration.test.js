@@ -52,7 +52,7 @@ test('configuration service allows first setup and returns the authenticated use
 
 
 test('same-destination settings changes preserve pending completions', async () => {
-  const pending = [{ operation: 'completeTimer', id: 'pending', stage: 'appendDaily' }];
+  const pending = [{ operation: 'completeTimer', id: 'pending', stage: 'appendMonthly' }];
   const store = new MemoryConfigStore({ pendingWrites: pending });
   const service = new ConfigurationService({ store, githubFactory: factory });
   await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] });
