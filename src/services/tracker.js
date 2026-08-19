@@ -1,63 +1,44 @@
-import { activePath, assertUserEntryPath, entryDateParts, entryDateValue, entryPath, localDateParts, normalizeIssue, utcDateParts, validateEntryId, validatePathSegment } from '../domain/values.js';
+import { activeTextPath, assertUserDailyTextPath, dailyTextPath, parseActiveText, parseDailyText, serializeActiveText, serializeDailyText } from '../domain/daily-text.js';
 import { applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
-import { createDeterministicUlid, createUlid } from '../domain/ulid.js';
+import { createUlid } from '../domain/ulid.js';
+import { entryDateValue, localDateParts, normalizeIssue, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 export class TrackerConflictError extends Error {
   constructor(message) { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; }
 }
 
-const MAX_RECENT_CANDIDATES = 200;
-
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 function isConflict(error) { return error?.status === 409 || error?.code === 'conflict'; }
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
-function persistedActive(active) {
-  if (!active || typeof active !== 'object') return active;
-  return Object.fromEntries(Object.entries(active).filter(([key]) => !key.startsWith('_')));
-}
-function sameActive(a, b) { return canonicalJson(persistedActive(a)) === canonicalJson(persistedActive(b)); }
-function assertEntryIdentity(path, entry, user) {
-  assertUserEntryPath(path, user);
-  const segments = path.split('/');
-  const pathId = segments.at(-1).slice(0, -'.json'.length);
-  const pathDate = segments.slice(2, 5).join('-');
-  const recordDate = entry?.entryDate ?? entryDateValue(utcDateParts(new Date(entry?.startedAt)));
-  if (entry?.user !== user || entry?.id !== pathId || pathDate !== recordDate) throw new Error('Entry identity does not match its storage path');
-  return entry;
-}
-
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
-  return JSON.stringify(value);
-}
-function sameEntry(a, b) { return canonicalJson(a) === canonicalJson(b); }
-function sameCompletionSource(entry, active) {
-  return Boolean(active) && entry.user === active.user && entry.startedAt === active.startedAt && canonicalJson(entry.issue) === canonicalJson(active.issue);
-}
-function reconcileStoredEntry(existing, operation, user) {
-  let entry;
-  try {
-    entry = validateEntry(existing.data);
-    assertEntryIdentity(operation.entryPath, entry, user);
-  } catch (error) {
-    throw new TrackerConflictError(`The pending entry path contains invalid data: ${error.message}`);
-  }
-  if (!sameEntry(entry, operation.entry) && !sameCompletionSource(entry, operation.activeSnapshot)) {
-    throw new TrackerConflictError('The pending entry path is occupied by unrelated data.');
-  }
-  return { sha: existing.sha, entry };
-}
-function legacyEntryEntropy(active) {
-  return [active.user, active.issue.owner, active.issue.repo, active.issue.number, active.startedAt, active.createdAt].join('|');
-}
-
 function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
-function durationLabel(seconds) {
-  const minutes = Math.max(0, Math.round(seconds / 60));
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return hours ? `${hours}h${rest ? `${rest}m` : ''}` : `${rest}m`;
+function sameTimer(a, b) { return Boolean(a && b) && a.issue?.url === b.issue?.url && a.startedAt === b.startedAt; }
+function sameCompletion(entry, operation) {
+  const expected = operation.entry;
+  return Boolean(entry && expected) && entry.issue?.url === expected.issue?.url && entry.startedAt === expected.startedAt
+    && entry.endedAt === expected.endedAt && entry.description === expected.description;
+}
+function matchesOriginal(entry, original) {
+  return Boolean(entry && original) && entry.issue?.url === original.issueUrl && entry.startedAt === original.startedAt
+    && entry.endedAt === original.endedAt && entry.description === String(original.description || '');
+}
+function locateEntry(entries, index, original) {
+  if (Number.isInteger(index) && entries[index] && (!original || matchesOriginal(entries[index], original))) return index;
+  if (original) {
+    const matches = entries.map((entry, position) => matchesOriginal(entry, original) ? position : -1).filter(position => position >= 0);
+    if (matches.length === 1) return matches[0];
+  }
+  return -1;
+}
+function startDate(entry) { return entry.startedAt.slice(0, 10); }
+function newestFirst(a, b) { return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(); }
+function stripInternal(value) { return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !key.startsWith('_'))); }
+function dateFromPath(path, user) { return assertUserDailyTextPath(path, user).date; }
+function editClock(clock, entry) { return new Date(Math.max(clock().getTime(), new Date(entry.updatedAt).getTime())); }
+
+function replaceCachedFiles(cache, replacements, touchedPaths = replacements.map(entry => entry._path)) {
+  const paths = new Set(touchedPaths);
+  return [...replacements, ...(cache ?? []).filter(entry => !paths.has(entry._path))]
+    .sort(newestFirst).slice(0, 50);
 }
 
 export class TrackerService {
@@ -74,18 +55,16 @@ export class TrackerService {
 
   validateIssue(issue) {
     const normalized = normalizeIssue(issue);
-    if (this.allowedIssueOwners && !this.allowedIssueOwners.has(normalized.owner.toLowerCase())) {
-      throw new Error(`${normalized.owner} is not allowed by the configured issue-owner policy`);
-    }
+    if (this.allowedIssueOwners && !this.allowedIssueOwners.has(normalized.owner.toLowerCase())) throw new Error(`${normalized.owner} is not allowed by the configured issue-owner policy`);
     return normalized;
   }
 
   async refreshActive() {
+    const path = activeTextPath(this.user);
     try {
-      const file = await this.github.getFile(activePath(this.user));
-      validateActiveTimer(file.data);
-      if (file.data.user !== this.user) throw new Error('Active timer user does not match authenticated user');
-      const active = { ...file.data, _sha: file.sha };
+      const file = await this.github.getText(path);
+      const active = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
+      validateActiveTimer(active);
       await this.store.patchState({ activeCache: active });
       return active;
     } catch (error) {
@@ -100,9 +79,7 @@ export class TrackerService {
     let active = state.activeCache;
     if (refresh) {
       try { active = await this.refreshActive(); }
-      catch (error) {
-        if (!active || !isRetryableReadFailure(error)) throw error;
-      }
+      catch (error) { if (!active || !isRetryableReadFailure(error)) throw error; }
     }
     return { active, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [] };
   }
@@ -113,10 +90,11 @@ export class TrackerService {
     const existing = await this.refreshActive();
     if (existing) throw new Error(`A timer is already running on ${issueLabel(existing.issue)}`);
     const now = this.clock();
-    const active = buildActiveTimer({ user: this.user, issue: this.validateIssue(issue), startedAt: now, entryId: this.idFactory(now.getTime()), description, issueTitle });
+    const active = buildActiveTimer({ user: this.user, issue: this.validateIssue(issue), startedAt: now, description, issueTitle });
+    const path = activeTextPath(this.user);
     try {
-      const result = await this.github.putJson(activePath(this.user), active, `timer: start ${this.user} on ${issueLabel(active.issue)}`);
-      const cached = { ...active, _sha: result.sha };
+      const result = await this.github.putText(path, serializeActiveText(active), `timer: start ${this.user} on ${issueLabel(active.issue)}`);
+      const cached = { ...active, _path: path, _sha: result.sha };
       await this.store.patchState({ activeCache: cached });
       return cached;
     } catch (error) {
@@ -133,100 +111,182 @@ export class TrackerService {
 
   async stopInternal(description = '') {
     const state = await this.store.getState();
-    let active = state.activeCache;
-    if (!active) active = await this.refreshActive();
-    if (!active) throw new Error('No timer is running');
-    const existingOperation = (state.pendingWrites ?? []).find(operation => operation.operation === 'completeTimer' && sameActive(operation.activeSnapshot, active));
-    if (existingOperation) {
-      await this.store.patchState({ activeCache: null });
-      return { entry: existingOperation.entry, pending: true };
+    const cached = state.activeCache;
+    let active, activeVerified = true;
+    try { active = await this.refreshActive(); }
+    catch (error) {
+      if (!cached || !isRetryableReadFailure(error)) throw error;
+      active = cached; activeVerified = false;
     }
+    if (cached && active && !sameTimer(cached, active)) throw new TrackerConflictError('The active timer changed on another device. Reload before stopping.');
+    const candidate = active || cached;
+    const existing = (state.pendingWrites ?? []).find(operation => operation.operation === 'completeTimer' && sameTimer(operation.activeSnapshot, candidate));
+    if (existing) { await this.store.patchState({ activeCache: null }); return { entry: existing.entry, pending: true }; }
+    if (!active && cached) {
+      validateActiveTimer(cached);
+      const file = await this.readDaily(dailyTextPath(this.user, cached.entryDate));
+      const matches = file.entries.filter(entry => sameTimer(entry, cached));
+      if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that another device stopped. Reload before continuing.');
+      if (matches.length === 1) {
+        const adopted = matches[0];
+        const recentCache = [adopted, ...(state.recentCache ?? []).filter(item =>
+          item._path !== adopted._path || item._index !== adopted._index)].sort(newestFirst).slice(0, 50);
+        await this.store.patchState({ activeCache: null, recentCache });
+        return { entry: adopted, pending: false };
+      }
+    }
+    if (!active) throw new Error('No timer is running');
     const endedAt = this.clock();
-    const id = active.entryId || await createDeterministicUlid(new Date(active.startedAt).getTime(), legacyEntryEntropy(active));
+    const id = this.idFactory(endedAt.getTime());
     const entry = buildEntry({ active, id, endedAt, now: endedAt, description });
-    const { _sha: _activeSha, ...activeSnapshot } = active;
     const operation = {
-      operation: 'completeTimer',
-      id,
-      status: 'pending',
-      retryCount: 0,
-      stage: 'createEntry',
-      entryPath: entryPath(this.user, entryDateParts(entry.entryDate), id),
-      entry,
-      activeSnapshot,
-      queuedAt: endedAt.toISOString(),
-      lastError: '',
+      operation: 'completeTimer', id, status: 'pending', retryCount: 0, stage: activeVerified ? 'appendDaily' : 'verifyActive',
+      dailyPath: dailyTextPath(this.user, active.entryDate), entry, activeSnapshot: stripInternal(active), activeSha: active._sha,
+      queuedAt: endedAt.toISOString(), lastError: '',
     };
-    const queue = [...(state.pendingWrites ?? []), operation];
-    const pendingEntry = { ...entry, _path: operation.entryPath, _sha: null, _pending: true };
-    const recentCache = [pendingEntry, ...(state.recentCache ?? []).filter(item => item.id !== entry.id)].slice(0, 50);
-    await this.store.patchState({ pendingWrites: queue, activeCache: null, recentCache });
+    const pendingEntry = { ...entry, _path: operation.dailyPath, _sha: null, _index: -1, _pending: true };
+    await this.store.patchState({
+      pendingWrites: [...(state.pendingWrites ?? []), operation], activeCache: null,
+      recentCache: [pendingEntry, ...(state.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
+    });
     await this.syncPending();
     const next = await this.store.getState();
     const pending = (next.pendingWrites ?? []).some(item => item.id === id);
-    const persistedEntry = (next.recentCache ?? []).find(item => item.id === id) || entry;
-    return { entry: persistedEntry, pending };
+    const exact = (next.recentCache ?? []).find(item => sameCompletion(item, operation));
+    const sameStart = (next.recentCache ?? []).filter(item => sameTimer(item, operation.activeSnapshot));
+    const persisted = exact || (sameStart.length === 1 ? sameStart[0] : entry);
+    return { entry: persisted, pending };
+  }
+
+  async readDaily(path) {
+    const date = dateFromPath(path, this.user);
+    try {
+      const file = await this.github.getText(path);
+      return { path, date, sha: file.sha, entries: parseDailyText(file.text, { user: this.user, date, path, sha: file.sha }) };
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      return { path, date, sha: null, entries: [] };
+    }
+  }
+
+  async putDaily(file, entries, message) {
+    const text = serializeDailyText(entries);
+    if (!text) {
+      if (!file.sha) return { sha: null };
+      await this.github.deleteFile(file.path, message, file.sha);
+      return { sha: null };
+    }
+    return this.github.putText(file.path, text, message, file.sha || undefined);
+  }
+
+  async activeStateFor(operation) {
+    const path = activeTextPath(this.user);
+    try {
+      const file = await this.github.getText(path), active = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
+      await this.store.patchState({ activeCache: active });
+      if (sameTimer(active, operation.activeSnapshot)) { operation.activeSha = file.sha; return 'matching'; }
+      return 'changed';
+    } catch (error) {
+      if (isNotFound(error)) { await this.store.patchState({ activeCache: null }); return 'missing'; }
+      throw error;
+    }
+  }
+
+  async completionAlreadySaved(file, operation) {
+    const exact = file.entries.find(entry => sameCompletion(entry, operation));
+    if (exact) return exact;
+    const sameStart = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+    if (!sameStart.length) return null;
+    const activeState = await this.activeStateFor(operation);
+    if (activeState === 'missing' && sameStart.length === 1) return sameStart[0];
+    if (activeState === 'changed') throw new TrackerConflictError('The active timer changed on another device while this completion was syncing.');
+    return null;
   }
 
   async ensureEntry(operation) {
+    let file = await this.readDaily(operation.dailyPath);
+    let found = await this.completionAlreadySaved(file, operation);
+    if (found) return found;
+    const proposed = [...file.entries, operation.entry];
     try {
-      const existing = await this.github.getFile(operation.entryPath);
-      return reconcileStoredEntry(existing, operation, this.user);
-    } catch (error) {
-      if (!isNotFound(error)) throw error;
-    }
-    try {
-      const result = await this.github.putJson(operation.entryPath, operation.entry,
-        `time: add ${this.user} ${durationLabel(operation.entry.durationSeconds)} on ${issueLabel(operation.entry.issue)}`);
-      return { sha: result.sha, entry: operation.entry };
+      const result = await this.putDaily(file, proposed, `time: add ${this.user} on ${issueLabel(operation.entry.issue)}`);
+      return parseDailyText(serializeDailyText(proposed), { user: this.user, date: file.date, path: file.path, sha: result.sha }).at(-1);
     } catch (error) {
       if (!isConflict(error) && error?.code !== 'validation') throw error;
-      let existing;
-      try { existing = await this.github.getFile(operation.entryPath); }
-      catch (readError) { if (isNotFound(readError)) throw error; throw readError; }
-      return reconcileStoredEntry(existing, operation, this.user);
+      file = await this.readDaily(operation.dailyPath);
+      found = await this.completionAlreadySaved(file, operation);
+      if (found) return found;
+      if (file.entries.some(entry => sameTimer(entry, operation.activeSnapshot))) {
+        throw new Error('Another Stop is still synchronizing this timer. Retry will converge automatically.');
+      }
+      throw new TrackerConflictError('The daily time file changed while the timer was stopping. Retry synchronization.');
     }
   }
 
   async clearMatchingActive(operation) {
-    let remote;
-    try { remote = await this.github.getFile(activePath(this.user)); }
-    catch (error) { if (isNotFound(error)) return; throw error; }
-    if (!sameActive(remote.data, operation.activeSnapshot)) {
-      throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.');
+    const path = activeTextPath(this.user);
+    let sha = operation.activeSha;
+    if (!sha) {
+      try {
+        const file = await this.github.getText(path), remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
+        if (!sameTimer(remote, operation.activeSnapshot)) {
+          await this.store.patchState({ activeCache: remote });
+          throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.');
+        }
+        sha = file.sha;
+      } catch (error) { if (isNotFound(error)) return; throw error; }
     }
-    try { await this.github.deleteFile(activePath(this.user), `timer: clear ${this.user}`, remote.sha); }
+    try { await this.github.deleteFile(path, `timer: clear ${this.user}`, sha); }
     catch (error) {
       if (isNotFound(error)) {
-        try { await this.github.getFile(activePath(this.user)); }
-        catch (verificationError) { if (isNotFound(verificationError)) return; throw verificationError; }
+        try { await this.github.getText(path); } catch (verificationError) { if (isNotFound(verificationError)) return; throw verificationError; }
       }
-      if (isConflict(error)) throw new TrackerConflictError('The active timer changed while it was being cleared.');
+      if (isConflict(error)) {
+        let file;
+        try { file = await this.github.getText(path); } catch (readError) { if (isNotFound(readError)) return; throw readError; }
+        const remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
+        if (!sameTimer(remote, operation.activeSnapshot)) {
+          await this.store.patchState({ activeCache: remote });
+          throw new TrackerConflictError('The active timer changed while it was being cleared. The newer timer was preserved.');
+        }
+        try { await this.github.deleteFile(path, `timer: clear ${this.user}`, file.sha); return; }
+        catch (retryError) { if (isConflict(retryError)) throw new TrackerConflictError('The active timer changed while it was being cleared.'); throw retryError; }
+      }
       throw error;
     }
   }
 
   async syncPending() {
-    const state = await this.store.getState();
-    const queue = [...(state.pendingWrites ?? [])];
+    const state = await this.store.getState(), queue = [...(state.pendingWrites ?? [])];
     for (const operation of [...queue]) {
       if (operation.status === 'conflict') continue;
       try {
-        if (operation.stage === 'createEntry') {
-          const persisted = await this.ensureEntry(operation);
-          operation.entrySha = persisted.sha;
-          operation.entry = persisted.entry;
-          operation.stage = 'clearActive';
-          operation.lastError = '';
+        if (operation.stage === 'verifyActive') {
+          const activeState = await this.activeStateFor(operation);
+          if (activeState === 'changed') throw new TrackerConflictError('The active timer changed on another device before this completion could be verified. No completion was saved.');
+          if (activeState === 'missing') {
+            const file = await this.readDaily(operation.dailyPath);
+            const matches = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+            if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that disappeared during verification. Reload before continuing.');
+            if (matches.length === 0) throw new TrackerConflictError('The active timer no longer exists and no matching completion was found. No completion was saved.');
+            operation.entry = matches[0]; operation.stage = 'clearActive'; operation.lastError = '';
+          } else {
+            operation.stage = 'appendDaily'; operation.lastError = '';
+          }
+          await this.store.patchState({ pendingWrites: queue });
+        }
+        if (operation.stage === 'appendDaily') {
+          operation.entry = await this.ensureEntry(operation);
+          operation.stage = 'clearActive'; operation.lastError = '';
           await this.store.patchState({ pendingWrites: queue });
         }
         await this.clearMatchingActive(operation);
-        if (!operation.entrySha) operation.entrySha = (await this.github.getFile(operation.entryPath)).sha;
-        const latestState = await this.store.getState();
-        const completedEntry = { ...operation.entry, _path: operation.entryPath, _sha: operation.entrySha };
-        const recentCache = [completedEntry, ...(latestState.recentCache ?? []).filter(item => item.id !== operation.id)].slice(0, 50);
+        const latest = await this.store.getState();
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
+        const recentCache = [operation.entry, ...(latest.recentCache ?? []).filter(item =>
+          !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
+          .sort(newestFirst).slice(0, 50);
         await this.store.patchState({ pendingWrites: queue, activeCache: null, recentCache });
       } catch (error) {
         operation.retryCount = (operation.retryCount ?? 0) + 1;
@@ -242,158 +302,149 @@ export class TrackerService {
     validateEntryId(id);
     const state = await this.store.getState();
     const operation = (state.pendingWrites ?? []).find(item => item.id === id);
-    if (!operation || operation.status !== 'conflict') {
-      throw new Error('Only a pending conflict can be resolved');
+    if (!operation || operation.status !== 'conflict') throw new Error('Only a pending conflict can be resolved');
+    if (operation.stage === 'clearActive' || operation.stage === 'verifyActive') {
+      const active = await this.refreshActive();
+      const changed = Boolean(active && !sameTimer(active, operation.activeSnapshot));
+      if (operation.stage === 'verifyActive' && !active) {
+        const file = await this.readDaily(operation.dailyPath);
+        const matches = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+        if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that disappeared during verification. Reload before continuing.');
+        if (matches.length === 1) {
+          operation.entry = matches[0]; operation.stage = 'clearActive'; operation.status = 'pending'; operation.lastError = '';
+          await this.store.patchState({ pendingWrites: state.pendingWrites });
+          const remaining = await this.syncPending();
+          return { resolved: !remaining.some(item => item.id === id) };
+        }
+      }
+      const canAcknowledge = !active || changed;
+      if (canAcknowledge) {
+        const pendingWrites = (state.pendingWrites ?? []).filter(item => item.id !== id);
+        const retained = (state.recentCache ?? []).filter(item => !(item._pending && sameTimer(item, operation.activeSnapshot)));
+        const recentCache = (operation.stage === 'clearActive'
+          ? [operation.entry, ...retained.filter(item => !sameCompletion(item, operation))]
+          : retained).sort(newestFirst).slice(0, 50);
+        await this.store.patchState({ pendingWrites, recentCache });
+        return { resolved: true };
+      }
     }
-    if (operation.stage === 'createEntry') {
-      operation.status = 'pending';
-      operation.lastError = '';
-      await this.store.patchState({ pendingWrites: state.pendingWrites });
-      const remaining = await this.syncPending();
-      return { resolved: !remaining.some(item => item.id === id) };
-    }
-    if (operation.stage !== 'clearActive') throw new Error('Unsupported pending conflict stage');
-    const saved = await this.github.getFile(operation.entryPath);
-    validateEntry(saved.data);
-    if (!sameEntry(saved.data, operation.entry)) throw new TrackerConflictError('The saved entry differs from the pending completion. Review it before resolving.');
-    const activeCache = await this.refreshActive();
-    const pendingWrites = state.pendingWrites.filter(item => item.id !== id);
-    const completedEntry = { ...saved.data, _path: operation.entryPath, _sha: saved.sha };
-    const recentCache = [completedEntry, ...(state.recentCache ?? []).filter(item => item.id !== id)].slice(0, 50);
-    await this.store.patchState({ pendingWrites, activeCache, recentCache });
-    return { resolved: true };
+    operation.status = 'pending'; operation.lastError = '';
+    await this.store.patchState({ pendingWrites: state.pendingWrites });
+    const remaining = await this.syncPending();
+    return { resolved: !remaining.some(item => item.id === id) };
   }
 
   async loadRecent(limit = 50) {
-    const files = [];
     const now = this.clock();
-    for (let offset = 0; offset < this.recentDays; offset += 1) {
+    const days = Array.from({ length: this.recentDays }, (_, offset) => {
       const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset, 12, 0, 0);
-      const { year, month, day: date } = localDateParts(day);
-      const directory = `entries/${this.user}/${year}/${month}/${date}`;
+      const date = entryDateValue(localDateParts(day)); return { date, path: dailyTextPath(this.user, date) };
+    });
+    const groups = await Promise.all(days.map(async ({ date, path }) => {
       try {
-        const listed = await this.github.listDirectory(directory);
-        files.push(...listed.filter(item => item.type === 'file' && /^[0-9A-HJKMNP-TV-Z]{26}\.json$/.test(item.name)));
-        if (files.length > MAX_RECENT_CANDIDATES) {
-          throw new Error(`Recent-entry candidate safety limit (${MAX_RECENT_CANDIDATES}) exceeded; reduce the recent window or repair the data directories.`);
-        }
-      } catch (error) { if (!isNotFound(error)) throw error; }
-    }
-    const entries = [];
-    const newestFiles = files.sort((a, b) => b.name.localeCompare(a.name));
-    for (const file of newestFiles) {
-      let loaded;
-      try { loaded = await this.github.getFile(file.path); }
-      catch (error) { if (!isNotFound(error)) throw error; else continue; }
-      try {
-        const entry = validateEntry(loaded.data);
-        assertEntryIdentity(file.path, entry, this.user);
-        entries.push({ ...entry, _path: file.path, _sha: loaded.sha });
-      } catch { /* Ignore malformed GitHub records without breaking the recent list. */ }
-    }
-    entries.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-    await this.store.patchState({ recentCache: entries.slice(0, limit) });
-    return entries.slice(0, limit);
+        const file = await this.github.getText(path);
+        return parseDailyText(file.text, { user: this.user, date, path, sha: file.sha });
+      } catch (error) { if (isNotFound(error)) return []; throw error; }
+    }));
+    const entries = groups.flat().sort(newestFirst);
+    const recent = entries.slice(0, limit);
+    await this.store.patchState({ recentCache: recent });
+    return recent;
+  }
+
+  async editEntry({ path, originalSha, index, original, edits }) {
+    const source = await this.readDaily(path);
+    if (source.sha !== originalSha) throw new TrackerConflictError('This daily time file changed after you opened it. Reload before saving.');
+    const position = locateEntry(source.entries, index, original);
+    if (position < 0) throw new TrackerConflictError('This time entry changed after you opened it. Reload before saving.');
+    const normalized = { ...edits, ...(edits.issue ? { issue: this.validateIssue(edits.issue) } : {}) };
+    const updated = applyEntryEdits(source.entries[position], normalized, editClock(this.clock, source.entries[position]));
+    updated.entryDate = startDate(updated);
+    const destinationPath = dailyTextPath(this.user, updated.entryDate);
+    try {
+      if (destinationPath === path) {
+        const entries = source.entries.with(position, updated);
+        const result = await this.putDaily(source, entries, `time: edit ${this.user} ${source.date}`);
+        const saved = parseDailyText(serializeDailyText(entries), { user: this.user, date: source.date, path, sha: result.sha });
+        const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved) });
+        return saved[position];
+      }
+      const destination = await this.readDaily(destinationPath);
+      const sourceEntries = source.entries.filter((_, current) => current !== position), destinationEntries = [...destination.entries, updated];
+      const changes = [
+        { path: source.path, sha: source.sha, text: serializeDailyText(sourceEntries) || null },
+        { path: destination.path, sha: destination.sha, text: serializeDailyText(destinationEntries) },
+      ];
+      const result = await this.github.updateTextsAtomic(changes, `time: move edited entry ${this.user}`);
+      const savedSource = parseDailyText(serializeDailyText(sourceEntries), { user: this.user, date: source.date, path: source.path, sha: result.blobShas[source.path] ?? null });
+      const savedDestination = parseDailyText(serializeDailyText(destinationEntries), { user: this.user, date: destination.date, path: destination.path, sha: result.blobShas[destination.path] });
+      const replacements = [...savedSource, ...savedDestination];
+      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, [source.path, destination.path]) });
+      return savedDestination.at(-1);
+    } catch (error) { if (isConflict(error)) throw new TrackerConflictError('A daily time file changed while you were saving. Reload.'); throw error; }
+  }
+
+  async deleteEntry({ path, originalSha, index, original }) {
+    const file = await this.readDaily(path);
+    if (file.sha !== originalSha) throw new TrackerConflictError('This daily time file changed after the panel loaded. Reload before deleting.');
+    const located = locateEntry(file.entries, index, original);
+    if (located < 0) throw new TrackerConflictError('This time entry changed after the panel loaded. Reload before deleting.');
+    const entries = file.entries.filter((_, position) => position !== located);
+    try {
+      const result = await this.putDaily(file, entries, `time: delete ${this.user} ${file.date}`);
+      const saved = parseDailyText(serializeDailyText(entries), { user: this.user, date: file.date, path, sha: result.sha });
+      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
+      return { deleted: true };
+    } catch (error) { if (isConflict(error)) throw new TrackerConflictError('This daily time file changed while deleting. Reload.'); throw error; }
   }
 
   async moveBoundary({ upper, lower }) {
     if (!upper || !lower) throw new Error('Two adjacent entries are required');
-    return this.editEntries([
-      { path: upper.path, originalSha: upper.originalSha, edits: { endedAt: upper.endedAt } },
-      { path: lower.path, originalSha: lower.originalSha, edits: { startedAt: lower.startedAt } },
-    ], { requireEqualDelta: true });
-  }
-
-  async editEntries(requests, { requireEqualDelta = false } = {}) {
-    if (!Array.isArray(requests) || requests.length !== 2) throw new Error('Exactly two adjacent entries are required');
-    if (new Set(requests.map(item => item?.path)).size !== requests.length) throw new Error('Adjacent entry paths must be distinct');
-    const now = this.clock();
-    const prepared = [];
-    for (const { path, originalSha, edits = {} } of requests) {
-      assertUserEntryPath(path, this.user);
-      const latest = await this.github.getFile(path);
-      if (latest.sha !== originalSha) throw new TrackerConflictError('A time entry changed after the panel loaded. Refresh before moving the boundary.');
-      const original = validateEntry(latest.data); assertEntryIdentity(path, original, this.user);
-      const normalizedEdits = { ...edits, ...(edits.issue ? { issue: this.validateIssue(edits.issue) } : {}) };
-      prepared.push({ path, latest, original, entry: applyEntryEdits(original, normalizedEdits, now) });
+    const requests = [
+      { ...upper, edits: { endedAt: upper.endedAt } },
+      { ...lower, edits: { startedAt: lower.startedAt } },
+    ];
+    const files = new Map();
+    for (const request of requests) {
+      if (!files.has(request.path)) files.set(request.path, await this.readDaily(request.path));
+      const file = files.get(request.path);
+      if (file.sha !== request.originalSha) throw new TrackerConflictError('A daily time file changed after the panel loaded. Reload before moving the boundary.');
+      request.position = locateEntry(file.entries, request.index, request.original);
+      if (request.position < 0) throw new TrackerConflictError('An adjacent entry changed inside its daily file. Reload before moving the boundary.');
     }
-    if (requireEqualDelta) {
-      const upperDelta = new Date(prepared[0].entry.endedAt).getTime() - new Date(prepared[0].original.endedAt).getTime();
-      const lowerDelta = new Date(prepared[1].entry.startedAt).getTime() - new Date(prepared[1].original.startedAt).getTime();
-      if (upperDelta !== lowerDelta) throw new Error('Both sides of an adjacent boundary must move by the same amount');
+    if (requests[0].path === requests[1].path && requests[0].position === requests[1].position) throw new Error('Adjacent entries must be distinct');
+    const originals = requests.map(request => files.get(request.path).entries[request.position]);
+    const updated = requests.map((request, i) => applyEntryEdits(originals[i], request.edits, editClock(this.clock, originals[i])));
+    updated[1].entryDate = startDate(updated[1]);
+    const upperDelta = new Date(updated[0].endedAt).getTime() - new Date(originals[0].endedAt).getTime();
+    const lowerDelta = new Date(updated[1].startedAt).getTime() - new Date(originals[1].startedAt).getTime();
+    if (upperDelta !== lowerDelta) throw new Error('Both sides of an adjacent boundary must move by the same amount');
+    const targetPaths = [requests[0].path, dailyTextPath(this.user, updated[1].entryDate)];
+    for (const targetPath of targetPaths) if (!files.has(targetPath)) files.set(targetPath, await this.readDaily(targetPath));
+    for (let i = 0; i < requests.length; i += 1) {
+      const request = requests[i], targetPath = targetPaths[i], source = files.get(request.path);
+      if (targetPath === request.path) source.entries[request.position] = updated[i];
+      else { source.entries.splice(request.position, 1); files.get(targetPath).entries.push(updated[i]); }
     }
-    const written = [];
+    const touched = [...new Set([...requests.map(request => request.path), ...targetPaths])].map(path => files.get(path));
+    const resultLocations = updated.map((entry, index) => ({ path: targetPaths[index], index: files.get(targetPaths[index]).entries.indexOf(entry) }));
     try {
-      for (const item of prepared) {
-        try {
-          const result = await this.github.putJson(item.path, item.entry, `time: move boundary ${item.entry.id}`, item.latest.sha);
-          written.push({ ...item, savedSha: result.sha });
-        } catch (writeError) {
-          let observed = null, matches = false;
-          const attempts = isConflict(writeError) ? 1 : 3;
-          for (let attempt = 0; attempt < attempts && !matches; attempt += 1) {
-            try {
-              observed = await this.github.getFile(item.path);
-              const observedEntry = validateEntry(observed.data); assertEntryIdentity(item.path, observedEntry, this.user);
-              matches = JSON.stringify(observedEntry) === JSON.stringify(item.entry);
-            } catch { observed = null; }
-          }
-          if (matches) written.push({ ...item, savedSha: observed.sha });
-          else if (observed) throw writeError;
-          else {
-            const uncertain = new TrackerConflictError('A boundary write may have succeeded, but its result could not be verified. Reload recent entries before editing again.');
-            uncertain.boundaryOutcomeUncertain = true;
-            throw uncertain;
-          }
-        }
+      let blobShas = {};
+      if (touched.length === 1) {
+        const file = touched[0], result = await this.putDaily(file, file.entries, `time: move boundary ${this.user}`);
+        blobShas[file.path] = result.sha;
+      } else {
+        const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeDailyText(file.entries) || null }));
+        ({ blobShas } = await this.github.updateTextsAtomic(changes, `time: move boundary ${this.user}`));
       }
+      const savedByPath = new Map(touched.map(file => [file.path, parseDailyText(serializeDailyText(file.entries), { user: this.user, date: file.date, path: file.path, sha: blobShas[file.path] ?? null })]));
+      const replacements = [...savedByPath.values()].flat();
+      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touched.map(file => file.path)) });
+      return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
     } catch (error) {
-      if (error.boundaryOutcomeUncertain) throw error;
-      let rollbackError = null;
-      for (const item of [...written].reverse()) {
-        try { await this.github.putJson(item.path, item.original, `time: rollback boundary ${item.entry.id}`, item.savedSha); }
-        catch (rollback) { rollbackError = rollback; }
-      }
-      if (rollbackError) throw new TrackerConflictError('The boundary was only partially saved and automatic rollback failed. Reload recent entries before editing again.');
-      if (isConflict(error)) throw new TrackerConflictError('A time entry changed while the boundary was being saved. Reload recent entries.');
-      throw error;
-    }
-    const savedEntries = written.map(item => ({ ...item.entry, _path: item.path, _sha: item.savedSha }));
-    const state = await this.store.getState();
-    const savedPaths = new Set(savedEntries.map(entry => entry._path));
-    const recentCache = [...savedEntries, ...(state.recentCache ?? []).filter(entry => !savedPaths.has(entry._path))]
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 50);
-    await this.store.patchState({ recentCache });
-    return savedEntries;
-  }
-
-  async editEntry({ path, originalSha, edits }) {
-    assertUserEntryPath(path, this.user);
-    const latest = await this.github.getFile(path);
-    if (latest.sha !== originalSha) throw new TrackerConflictError('This time entry changed after you opened it. Reload the latest version before saving.');
-    const latestEntry = validateEntry(latest.data);
-    assertEntryIdentity(path, latestEntry, this.user);
-    const normalizedEdits = { ...edits, ...(edits.issue ? { issue: this.validateIssue(edits.issue) } : {}) };
-    const entry = applyEntryEdits(latestEntry, normalizedEdits, this.clock());
-    try {
-      const result = await this.github.putJson(path, entry, `time: edit ${entry.id}`, latest.sha);
-      await this.loadRecent();
-      return { ...entry, _path: path, _sha: result.sha };
-    } catch (error) {
-      if (isConflict(error)) throw new TrackerConflictError('This time entry changed while you were saving it. Reload the latest version.');
+      if (isConflict(error)) throw new TrackerConflictError('A daily time file changed while the boundary was being saved. Reload.');
       throw error;
     }
   }
 
-  async deleteEntry({ path, originalSha }) {
-    assertUserEntryPath(path, this.user);
-    const latest = await this.github.getFile(path);
-    if (latest.sha !== originalSha) throw new TrackerConflictError('This time entry changed after you opened it. Reload it before deleting.');
-    const latestEntry = validateEntry(latest.data);
-    assertEntryIdentity(path, latestEntry, this.user);
-    try { await this.github.deleteFile(path, `time: delete ${latestEntry.id}`, latest.sha); }
-    catch (error) { if (isConflict(error)) throw new TrackerConflictError('This time entry changed while you were deleting it.'); throw error; }
-    const state = await this.store.getState();
-    await this.store.patchState({ recentCache: (state.recentCache ?? []).filter(entry => entry._path !== path) });
-  }
 }

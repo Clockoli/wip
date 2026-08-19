@@ -1,4 +1,5 @@
-import { activePath, validateBranch, validateOwner, validateRepo } from '../domain/values.js';
+import { activeTextPath, parseActiveText } from '../domain/daily-text.js';
+import { validateBranch, validateOwner, validateRepo } from '../domain/values.js';
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 
@@ -28,7 +29,7 @@ export class ConfigurationService {
     if (!previousConfig || !previousToken) return null;
     const github = this.githubFactory({ token: previousToken, ...previousConfig });
     const user = state.user || await github.getAuthenticatedUser();
-    try { return (await github.getFile(activePath(user))).data; }
+    try { const path = activeTextPath(user), file = await github.getText(path); return parseActiveText(file.text, { user, path, sha: file.sha }); }
     catch (error) { if (isNotFound(error)) return null; throw error; }
   }
 
@@ -51,7 +52,7 @@ export class ConfigurationService {
       if (await this.previousActive(previousConfig, previousToken, { ...state, user: previousUser })) throw new Error('Stop the active timer before changing the time-data repository or GitHub user.');
     }
 
-    await this.store.saveConfiguration(config, token, { user, activeCache: null, recentCache: [] });
+    await this.store.saveConfiguration(config, token, { user, activeCache: null, recentCache: [], pendingWrites: state.pendingWrites ?? [], dataVersion: 2 });
     return { user, config };
   }
 }

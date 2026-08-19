@@ -1,17 +1,24 @@
 import { entryDateParts, entryDateValue, localDateParts, normalizeIssue, utcDateParts, validateEntryId, validatePathSegment } from './values.js';
 
 export function toIso(value) {
+  if (typeof value === 'string') {
+    validateTimestamp(value);
+    return value;
+  }
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
-  return date.toISOString();
+  const pad = (number, width = 2) => String(number).padStart(width, '0');
+  const offset = -date.getTimezoneOffset(), sign = offset >= 0 ? '+' : '-', absolute = Math.abs(offset);
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${date.getMilliseconds() ? `.${pad(date.getMilliseconds(), 3)}` : ''}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
 }
 
-
-function validateUtcTimestamp(value, label = 'timestamp') {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) throw new Error(`Invalid UTC ${label}`);
-  const parsed = new Date(value);
-  const canonical = value.includes('.') ? value : value.replace(/Z$/, '.000Z');
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== canonical) throw new Error(`Invalid UTC ${label}`);
+function validateTimestamp(value, label = 'timestamp') {
+  const match = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|[+-]\d{2}:\d{2})$/) : null;
+  if (!match) throw new Error(`Invalid ${label} with timezone`);
+  const [, year, month, day, hour, minute, second] = match;
+  const maxDay = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > maxDay || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) throw new Error(`Invalid ${label} with timezone`);
+  if (Number.isNaN(new Date(value).getTime())) throw new Error(`Invalid ${label} with timezone`);
   return value;
 }
 
@@ -46,8 +53,8 @@ export function validateActiveTimer(active) {
   normalizeIssue(active.issue);
   if (active.entryId !== undefined) validateEntryId(active.entryId);
   if (active.entryDate !== undefined) entryDateParts(active.entryDate);
-  validateUtcTimestamp(active.startedAt, 'startedAt timestamp');
-  validateUtcTimestamp(active.createdAt, 'createdAt timestamp');
+  validateTimestamp(active.startedAt, 'startedAt timestamp');
+  validateTimestamp(active.createdAt, 'createdAt timestamp');
   if (new Date(active.createdAt).getTime() !== new Date(active.startedAt).getTime()) throw new Error('Active timer createdAt must equal startedAt');
   if (typeof active.description !== 'string' || active.description.length > 2000) throw new Error('Invalid active timer description');
   if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle.length > 300)) throw new Error('Invalid active timer issue title');
@@ -81,10 +88,10 @@ export function validateEntry(entry) {
   validatePathSegment(entry.user, 'user');
   normalizeIssue(entry.issue);
   if (entry.entryDate !== undefined) entryDateParts(entry.entryDate);
-  validateUtcTimestamp(entry.startedAt, 'startedAt timestamp');
-  validateUtcTimestamp(entry.endedAt, 'endedAt timestamp');
-  validateUtcTimestamp(entry.createdAt, 'createdAt timestamp');
-  validateUtcTimestamp(entry.updatedAt, 'updatedAt timestamp');
+  validateTimestamp(entry.startedAt, 'startedAt timestamp');
+  validateTimestamp(entry.endedAt, 'endedAt timestamp');
+  validateTimestamp(entry.createdAt, 'createdAt timestamp');
+  validateTimestamp(entry.updatedAt, 'updatedAt timestamp');
   const computed = durationSeconds(entry.startedAt, entry.endedAt);
   if (!Number.isInteger(entry.durationSeconds) || entry.durationSeconds !== computed) throw new Error('Duration does not match timestamps');
   if (new Date(entry.updatedAt).getTime() < new Date(entry.createdAt).getTime()) throw new Error('updatedAt must not be before createdAt');

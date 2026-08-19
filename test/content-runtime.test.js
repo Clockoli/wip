@@ -50,9 +50,10 @@ class FakeNode {
     if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(child => child !== this);
     this.parentElement = null; this.isConnected = false; if (this.id) documentNodes.delete(this.id);
   }
-  addEventListener(type, listener) { this[`on${type}`] = listener; }
+  addEventListener(type, listener, options) { this[`on${type}`] = listener; this[`${type}Options`] = options; }
   setPointerCapture(pointerId) { this.capturedPointer = pointerId; }
   releasePointerCapture(pointerId) { if (this.capturedPointer === pointerId) this.capturedPointer = null; }
+  getBoundingClientRect() { return { left: 0, right: 300, width: 300, top: 0, bottom: 32, height: 32 }; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); if (name === 'class') this.className = String(value); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   querySelector(selector) {
@@ -349,7 +350,7 @@ test('Edit entry drag handle previews End changes within twelve hours', async ()
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
     startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600,
     description: '', createdAt: '2026-08-18T09:00:00.000Z', updatedAt: '2026-08-18T09:00:00.000Z',
-    _path: 'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEF.json', _sha: 'one',
+    _path: 'times/2026-08-18/alice.txt', _sha: 'one', _index: 0,
   };
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
@@ -373,16 +374,37 @@ test('Edit entry drag handle previews End changes within twelve hours', async ()
   const handle = createdNodes.filter(node => node.className.includes('time-drag')).at(-1);
   assert.equal(handle.getAttribute('role'), 'slider');
   assert.match(handle.getAttribute('aria-label'), /adjust end time/i);
-  handle.onpointerdown({ isTrusted: true, pointerId: 1, clientX: 0, preventDefault() {} });
-  handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 12, preventDefault() {} });
-  assert.equal(handle.children[1].style.transform, 'translateX(12px)', 'the grip follows the pointer');
+  handle.onpointerdown({ isTrusted: true, pointerId: 1, clientX: 35, preventDefault() {} });
+  handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 286, preventDefault() {} });
+  assert.equal(handle.children[1].style.left, '100%', 'the grip reaches the far right of the track');
+  assert.equal(handle.children[1].style.transform, 'translateX(-28px)', 'the grip remains inside the track at the right edge');
   assert.doesNotMatch(handle.walk().map(node => node.textContent).join(''), /Drag.*12h/i, 'the control has no instructional text');
   const endLabel = createdNodes.findLast(node => node.tag === 'label' && node.textContent === 'End');
-  assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 60 * 60000, '12px previews a 60-minute later End');
+  assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 12 * 60 * 60000, 'the right edge previews the maximum End');
   handle.onpointermove({ isTrusted: true, pointerId: 1, clientX: 10_000, preventDefault() {} });
   assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime() + 12 * 60 * 60000, 'dragging is capped at 12 hours after the original End');
   handle.onkeydown({ isTrusted: true, key: 'Escape', preventDefault() {} });
   assert.equal(new Date(endLabel.children[0].value).getTime(), new Date(entry.endedAt).getTime(), 'Escape cancels the drag preview');
+});
+
+test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
+  const active = { issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: '2026-08-18T08:00:00.000Z', description: '' };
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+    callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active, pendingCount: 0, pendingWrites: [] } : [] });
+  } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const description = createdNodes.findLast(node => node.tag === 'input' && node.placeholder === 'Optional');
+  let stopped = false;
+  description.onkeydown({ target: description, key: 'a', stopPropagation() { stopped = true; } });
+  assert.equal(stopped, true);
 });
 
 test('panel boundary drag shifts adjacent End and Start together', async () => {
@@ -393,10 +415,10 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
   const entry = (id, number, startedAt, endedAt, sha) => ({
     schemaVersion: 1, id, user: 'alice', issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
     startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
-    createdAt: endedAt, updatedAt: endedAt, _path: `entries/alice/2026/08/18/${id}.json`, _sha: sha,
+    createdAt: endedAt, updatedAt: endedAt, _path: 'times/2026-08-18/alice.txt', _sha: sha, _index: number - 1,
   });
-  const older = entry('01K2ABCDEF0123456789ABCDEA', 1, '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', 'older');
-  const newer = entry('01K2ABCDEF0123456789ABCDEB', 2, '2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z', 'newer');
+  const older = entry('01K2ABCDEF0123456789ABCDEA', 1, '2026-08-18T09:00:00+03:00', '2026-08-18T10:00:00+03:00', 'daily');
+  const newer = entry('01K2ABCDEF0123456789ABCDEB', 2, '2026-08-18T07:00:00+00:00', '2026-08-19T08:00:00+00:00', 'daily');
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -421,16 +443,20 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const handle = createdNodes.filter(node => node.className.includes('time-boundary')).at(-1);
   assert.match(handle.getAttribute('aria-label'), /boundary.*#1.*#2/i);
-  handle.onpointerdown({ isTrusted: true, pointerId: 2, clientX: 0, preventDefault() {} });
-  handle.onpointermove({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
-  assert.equal(handle.children[1].style.transform, 'translateX(3px)', 'the boundary grip follows the pointer');
+  assert.equal(handle.getAttribute('aria-valuemax'), '1500', 'the main-panel range is derived from the full lower interval, not capped at 12 hours');
+  handle.onpointerdown({ isTrusted: true, pointerId: 2, clientX: 150, preventDefault() {} });
+  handle.onpointermove({ isTrusted: true, pointerId: 2, clientX: 286, preventDefault() {} });
+  assert.equal(handle.children[1].style.left, '100%', 'the boundary grip reaches the far right of the track');
+  assert.equal(handle.children[1].style.transform, 'translateX(-28px)', 'the boundary grip stays inside the right edge');
   assert.doesNotMatch(handle.walk().map(node => node.textContent).join(''), /Drag.*12h/i, 'the boundary has no instructional text');
-  await handle.onpointerup({ isTrusted: true, pointerId: 2, clientX: 3, preventDefault() {} });
+  await handle.onpointerup({ isTrusted: true, pointerId: 2, clientX: 286, preventDefault() {} });
   const batch = messages.find(message => message.type === 'MOVE_BOUNDARY');
   assert.equal(batch.payload.upper.path, older._path);
-  assert.equal(batch.payload.upper.endedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(batch.payload.upper.endedAt, '2026-08-19T08:00:00.000Z');
+  assert.equal(batch.payload.upper.index, 0);
   assert.equal(batch.payload.lower.path, newer._path);
-  assert.equal(batch.payload.lower.startedAt, '2026-08-18T09:15:00.000Z');
+  assert.equal(batch.payload.lower.startedAt, '2026-08-19T08:00:00.000Z');
+  assert.equal(batch.payload.lower.index, 1);
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 1, 'saved entries stay visible without an immediate stale reload');
   const moveCount = messages.filter(message => message.type === 'MOVE_BOUNDARY').length;
   handle.setAttribute('aria-disabled', 'true');

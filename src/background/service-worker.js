@@ -17,7 +17,8 @@ async function context() {
   const { config, token } = await store.getConfig();
   if (!config || !token) throw new Error('Configure the private time-data repository and token in Settings.');
   const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch: config.branch || 'main' });
-  let { user } = await store.getState();
+  const localState = await store.ensureDataVersion(2);
+  let { user } = localState;
   if (!user) {
     user = await github.getAuthenticatedUser();
     await store.patchState({ user });

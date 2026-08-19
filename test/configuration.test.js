@@ -23,7 +23,7 @@ function factory({ token }) {
   };
   return {
     getAuthenticatedUser: async () => 'alice',
-    getFile: async () => ({ data: { schemaVersion: 1, user: 'alice', issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' }, startedAt: '2026-08-18T08:00:00.000Z', description: '', createdAt: '2026-08-18T08:00:00.000Z' } }),
+    getText: async () => ({ sha: 'active', text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-18T08:00:00Z\n' }),
   };
 }
 
@@ -50,6 +50,14 @@ test('configuration service allows first setup and returns the authenticated use
   assert.equal(store.state.user, 'alice');
 });
 
+
+test('same-destination settings changes preserve pending completions', async () => {
+  const pending = [{ operation: 'completeTimer', id: 'pending', stage: 'appendDaily' }];
+  const store = new MemoryConfigStore({ pendingWrites: pending });
+  const service = new ConfigurationService({ store, githubFactory: factory });
+  await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] });
+  assert.deepEqual(store.state.pendingWrites, pending);
+});
 
 test('configuration service re-reads pending state after asynchronous GitHub validation', async () => {
   const store = new MemoryConfigStore();
@@ -82,7 +90,7 @@ test('configuration recovers the previous authenticated user before allowing a t
     getAuthenticatedUser: async () => 'bob', validateRepository: async () => ({ private: true }), validateBranch: async () => ({}),
   } : {
     getAuthenticatedUser: async () => 'alice',
-    getFile: async () => { oldActiveReads += 1; return { data: { schemaVersion: 1, user: 'alice' } }; },
+    getText: async () => { oldActiveReads += 1; return { sha: 'active', text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-18T08:00:00Z\n' }; },
   };
   const service = new ConfigurationService({ store, githubFactory: identityFactory });
   await assert.rejects(() => service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] }), /active timer/i);

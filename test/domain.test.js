@@ -4,7 +4,6 @@ import {
   parseIssueUrl,
   parseIssueReference,
   validatePathSegment,
-  entryPath,
   localDateParts,
 } from '../src/domain/values.js';
 
@@ -35,16 +34,9 @@ test('parses an editable issue reference', () => {
   assert.throws(() => parseIssueReference('../escape/repo#1'), /valid issue/i);
 });
 
-test('validates path segments and builds user-local entry paths', () => {
+test('validates path segments and local calendar dates', () => {
   assert.equal(validatePathSegment('alice-1', 'user'), 'alice-1');
   assert.throws(() => validatePathSegment('../alice', 'user'), /invalid user/i);
   const parts = localDateParts(localDate);
   assert.deepEqual(parts, { year: '2026', month: '08', day: '18' });
-  assert.equal(entryPath('alice', parts, '01K2ABCDEF0123456789ABCDEF'),
-    'entries/alice/2026/08/18/01K2ABCDEF0123456789ABCDEF.json');
-});
-
-
-test('rejects impossible calendar dates in generated and user-supplied entry paths', () => {
-  assert.throws(() => entryPath('alice', { year: '2026', month: '02', day: '31' }, '01K2ABCDEF0123456789ABCDEF'), /date/i);
 });

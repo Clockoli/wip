@@ -28,6 +28,7 @@ function localInput(iso) {
   const date = new Date(iso), pad = n => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
+function originalRecord(entry) { return { issueUrl: entry.issue.url, startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
 function button(text, handler) { const node = document.createElement('button'); node.textContent = text; node.className = 'link'; node.addEventListener('click', handler); return node; }
 
@@ -58,7 +59,7 @@ function renderConflicts(pending) {
   const conflicts = pending.filter(item => item.status === 'conflict');
   show('conflicts', conflicts.length > 0);
   for (const item of conflicts) {
-    const activeConflict = item.stage === 'clearActive';
+    const activeConflict = item.stage === 'clearActive' || item.stage === 'verifyActive';
     const title = document.createElement('strong'); title.textContent = activeConflict ? 'Newer GitHub timer preserved' : 'Entry path conflict';
     const detail = document.createElement('p'); detail.className = 'muted'; detail.textContent = item.lastError || (activeConflict ? 'The active timer changed on another device.' : 'Repair or remove the conflicting entry in GitHub, then retry.');
     const acknowledge = document.createElement('button'); acknowledge.className = 'primary'; acknowledge.textContent = activeConflict ? 'Keep newer timer' : 'Retry entry sync';
@@ -89,6 +90,13 @@ function render() {
   renderRecent(state?.recent || []);
   $('start-current').disabled = controls.startDisabled;
   $('current-hint').textContent = currentIssue ? issueLabel(currentIssue) : 'Open a GitHub issue or pull request tab first.';
+}
+
+function timestampFromLocalInput(value) {
+  const date = new Date(value), pad = (number, width = 2) => String(number).padStart(width, '0');
+  if (Number.isNaN(date.getTime())) throw new Error('Enter a valid date and time.');
+  const offset = -date.getTimezoneOffset(), sign = offset >= 0 ? '+' : '-', absolute = Math.abs(offset);
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
 }
 
 async function load(refresh = false) {
@@ -124,15 +132,15 @@ $('edit-form').addEventListener('submit', async event => {
   event.preventDefault();
   try {
     const issue = parseIssueReference($('edit-issue').value, editing.issue.type);
-    const startedAt = new Date($('edit-start').value).toISOString();
-    const endedAt = new Date($('edit-end').value).toISOString();
-    await send({ type:'EDIT_ENTRY', payload:{ path:editing._path, originalSha:editing._sha, edits:{ issue, startedAt, endedAt, description:$('edit-description').value } } });
+    const startedAt = timestampFromLocalInput($('edit-start').value);
+    const endedAt = timestampFromLocalInput($('edit-end').value);
+    await send({ type:'EDIT_ENTRY', payload:{ path:editing._path, originalSha:editing._sha, index:editing._index, original:originalRecord(editing), edits:{ issue, startedAt, endedAt, description:$('edit-description').value } } });
     editing = null; await load(false);
   } catch (e) { setError(e); }
 });
 $('delete').addEventListener('click', async () => {
   if (!confirm(`Delete this ${duration(editing.durationSeconds)} entry?\n\nThe previous version remains in Git history.`)) return;
-  try { await send({ type:'DELETE_ENTRY', payload:{ path:editing._path, originalSha:editing._sha } }); editing = null; await load(false); } catch (e) { setError(e); }
+  try { await send({ type:'DELETE_ENTRY', payload:{ path:editing._path, originalSha:editing._sha, index:editing._index, original:originalRecord(editing) } }); editing = null; await load(false); } catch (e) { setError(e); }
 });
 
 chrome.tabs.query({ active:true, currentWindow:true }).then(([tab]) => { currentIssue = parseIssueUrl(tab?.url || ''); render(); }).catch(() => {});

@@ -1,4 +1,4 @@
-const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null });
+const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
 const ALL_KEYS = ['config', 'token', ...Object.keys(DEFAULT_STATE)];
 
 function requestResult(request) {
@@ -69,6 +69,14 @@ export class ChromeStore {
   }
 
   async patchState(patch) { await this.backend.setMany(patch); }
+
+  async ensureDataVersion(version) {
+    const state = await this.getState();
+    if (state.dataVersion === version) return state;
+    const reset = { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
+    await this.patchState(reset);
+    return { ...state, ...reset };
+  }
 
   async getConfig() {
     const { config = null, token = '' } = await this.backend.getMany(['config', 'token']);

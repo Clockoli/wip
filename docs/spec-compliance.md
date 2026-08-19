@@ -13,37 +13,37 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Descriptions | Optional, maximum 2,000 characters |
 | Manual entries | Deferred to MVP 1.1 |
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
-| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; globally sorted by editable start timestamp; maximum 50 returned; 200-candidate API safety limit |
+| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct daily-file read per day; globally sorted by editable start timestamp; maximum 50 returned |
 | External issue owners | Configurable allowlist; defaults to the time-data repository owner |
 | Storage | One configured private GitHub repository and canonical branch |
 | Deletion | Allowed after explicit confirmation, with Git history retained |
 | Long entries | Warning above 12 hours |
 | Issue title | Captured from the GitHub issue page when available |
-| Active state | `active/{login}.json` is deleted after a successful Stop |
+| Active state | `active/{login}.txt` is deleted after a successful Stop |
 | Authentication | Fine-grained PAT; GitHub App deferred |
 
 ## Architecture mapping
 
-- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour time adjustment, adjacent-entry boundary movement, and Settings; the icon is gray while idle and green while any timer is active.
+- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour Edit adjustment, uncapped full-valid-range adjacent-entry boundary movement, and Settings; the icon is gray while idle and green while any timer is active.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
-- `src/api/github-client.js` implements authenticated user lookup plus GitHub Contents API read/list/create/update/delete operations.
-- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across all configured date directories, SHA-safe edits/deletes and rollback-protected two-entry boundary movement, pending Stop retries, and idempotent partial-failure recovery.
+- `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, and atomic multi-file commits through Git Data APIs.
+- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across daily text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-day entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
 - `src/storage/chrome-store.js` stores configuration, the PAT, cache, and pending writes in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, edit/delete UI, sync status, and conflict acknowledgement.
 - `src/options/*` validates the authenticated user, private repository, branch, write access, owner policy, and recent-entry window.
 
 ## Data and concurrency invariants
 
-- Canonical identity is the login returned by GitHub's authenticated-user endpoint.
-- Active state is stored at `active/{login}.json`.
-- Completed entries are stored at `entries/{login}/{local YYYY}/{MM}/{DD}/{ULID}.json`.
-- Timestamps are UTC; `entryDate` captures the browser-local date at Start and is persisted in both active and completed records, so cross-time-zone Stops converge on one path. Legacy active records without `entryDate` use the UTC start date deterministically.
-- Duration is recomputed from `endedAt - startedAt` and is never based on render ticks.
-- A stable entry ULID is reserved at Start. Legacy active records without one derive a deterministic ID.
-- Stop is placed in local storage before network writes. Retry checks the exact expected entry content before treating an existing path as idempotent success.
-- The active file is deleted only if the latest GitHub value still represents the stopped timer.
-- Entry edits and deletes require the exact latest SHA and never silently overwrite concurrent changes.
-- GitHub-backed records, repository coordinates, branch, issue data, dates, IDs, timestamps, and paths are validated before use.
+- Canonical identity is the login returned by GitHub's authenticated-user endpoint and encoded in each file name.
+- Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM-DD}/{login}.txt`.
+- Each persisted block contains only canonical `URL`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
+- Duration is recomputed from `End - Start` and is never persisted or based on render ticks.
+- A parsed record's array index is only a hint. Edits/deletes also carry the original persisted fields and locate the unique matching block, so manual reordering does not retarget an operation.
+- Changing Start to another local date moves the block between daily files. Multi-file edits and boundary moves verify the branch tree and publish one atomic Git commit.
+- Stop verifies that a reachable remote active timer still matches the cache before queueing; retry accepts exact intended content; if another device already cleared the active timer, one unique same-URL/same-Start completion is treated as that concurrent Stop.
+- The active file is deleted with its known SHA and conflicts are re-read before any retry, preserving newer timers.
+- Same-destination settings changes preserve pending writes; repository/user changes are blocked while a write or active timer exists.
+- Repository coordinates, branch, issue data, dates, timestamps, paths, and manually maintained text fields are validated before use.
 
 ## Privacy and permissions
 
@@ -56,6 +56,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue/pull-request detection, path/date validation, record validation, UTF-8 GitHub content handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, restart recovery, offline Stop retries, duplicate prevention, partial Stop recovery, globally ordered recent-entry limits, oversized-directory API-budget rejection, stable malformed-entry conflicts with explicit retry, URL-churn refresh isolation, delayed GitHub-header recovery, before-avatar placement, idle/running icon state, numbered Start labels, draggable time bounds, boundary preflight/rollback, popup Stop-state reset, cross-device Stop convergence, legacy records, and concurrent Stop serialization.
+Automated tests cover canonical issue/PR detection, daily path/date validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-day loading, stable record lookup after reordering, same-day and atomic cross-day edits, uncapped boundary movement, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement.
 
 Manual entry, older-entry search, reminders, GitHub App authentication, reporting, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

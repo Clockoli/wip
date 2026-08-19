@@ -1,17 +1,6 @@
 # Time-data repository setup
 
-Create a separate private GitHub repository, for example `acme/time-data`, with direct commits permitted on `main`.
-
-Recommended initial files:
-
-```text
-README.md
-schema/time-entry.schema.json
-active/.gitkeep
-entries/.gitkeep
-```
-
-Copy `schema/time-entry.schema.json` from this extension repository. Empty directories are not required—the extension creates file paths through GitHub’s Contents API.
+Create a separate private GitHub repository, for example `acme/time-data`, with direct commits permitted on `main`. No initial files or directories are required; the extension creates them through GitHub's Contents API.
 
 ## Access
 
@@ -23,16 +12,26 @@ Time data may reveal private issue references and sensitive descriptions. Use se
 
 ## Token
 
-Each user should create a fine-grained PAT with:
+Each user should create a fine-grained PAT with repository access limited to the private time-data repository and **Contents: Read and write**. No write access is required on source issue repositories.
 
-- repository access: only the private time-data repository;
-- repository permission: **Contents: Read and write**;
-- no write access required on source issue repositories.
+## Files
 
-## Recovery
+```text
+active/{github-login}.txt
+times/{YYYY-MM-DD}/{github-login}.txt
+```
 
-- An active timer can be inspected at `active/{login}.json`.
-- Completed entries are immutable-ish files under `entries/{login}/...`; their `entryDate` must match the `YYYY/MM/DD` directory.
-- New active records carry the same `entryDate`, pinning the eventual path across devices and time zones. Legacy active records fall back to their UTC start date.
-- Edits and deletes remain visible in Git history, but Git history is not tamper-proof against repository administrators.
-- Optional backups can use `git clone --mirror`.
+A completed record is plain text:
+
+```text
+URL: https://github.com/acme/frontend/issues/123
+Start: 2026-08-19T09:00:00+03:00
+End: 2026-08-19T10:15:00+03:00
+Description: optional single-line text
+```
+
+Records in a daily file are separated by a blank line. `Description` may be omitted. The GitHub login comes from the file name. Active files use `URL`, `Start`, and optional `Description`; Stop appends the matching completed record to the daily file and removes the active file.
+
+Files may be edited manually. Keep canonical GitHub issue/PR URLs, explicit timestamp timezones, Start dates matching the `times/YYYY-MM-DD/` directory, recognized field names, and blank-line separators. A malformed daily file is reported rather than partially ignored.
+
+Edits and deletes remain visible in Git history, but Git history is not tamper-proof against repository administrators. Optional backups can use `git clone --mirror`.

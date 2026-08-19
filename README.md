@@ -4,18 +4,18 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 
 ## What is implemented
 
-- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation. Edit times by dragging up to ±12 hours, and drag the boundary between adjacent entries to move both timestamps together.
+- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation. Edit an entry end time by dragging up to ±12 hours, and drag a boundary between adjacent entries across its full valid range to move both timestamps together.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
 - One GitHub-backed active timer per user.
-- One JSON file per completed entry.
+- One human-editable plain-text file per GitHub user per local day.
 - SHA-protected edits/deletes and safe conflict errors.
 - Local cache and an idempotent offline Stop queue.
-- A stable entry ULID reserved at Start, making retries and cross-device Stop races converge on one file.
+- Stop retries match the full intended record; concurrent Stops converge only when the active file is already gone and exactly one same-URL/same-Start completion exists.
 - 12-hour long-entry warning.
 - Configurable allowed issue owners and recent-entry window.
-- Recent entries are sorted by their editable start timestamp across the selected window. A 200-candidate safety limit fails before per-file reads rather than exhausting GitHub API quota on an unexpectedly large or hostile directory.
+- Recent entries are sorted by their editable start timestamp across the selected window. Loading requires at most one direct GitHub read per day rather than one read per record.
 
 Deferred by the specification: manual entries, GitHub App auth, reporting, Firefox packaging, reminders, and advanced conflict-diff UI.
 
@@ -37,38 +37,42 @@ The data repository must already exist and allow direct commits to its configure
 3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
 4. Edit or delete recent records directly in the dropdown or toolbar popup. The stopwatch is gray while idle and green while any timer is running.
 
-A running timer is authoritative from `startedAt`; elapsed time is always `now - startedAt`, not a browser tick counter. Start also stores `entryDate` (the browser-local calendar date at Start), so every device writes the eventual entry to the same directory.
+A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar date selects the eventual daily file.
 
 ## Storage layout
 
 ```text
-active/{github-login}.json
-entries/{github-login}/{local YYYY}/{MM}/{DD}/{ULID}.json
+active/{github-login}.txt
+times/{local YYYY-MM-DD}/{github-login}.txt
 ```
 
-Timestamps are stored in UTC. Entry directories use the browser-local calendar date at the timer’s start. Editing a start time does not relocate the original file, preserving the entry’s path and Git history.
-
-Every operation uses predictable commit messages without descriptions:
+The login is derived from the file name, not repeated inside the file. Completed records are blank-line-separated blocks:
 
 ```text
-timer: start alice on acme/frontend#123
-time: add alice 1h42m on acme/frontend#123
-time: edit 01K2ABCDEF...
-time: delete 01K2ABCDEF...
-timer: clear alice
+URL: https://github.com/acme/frontend/issues/123
+Start: 2026-08-19T09:00:00+03:00
+End: 2026-08-19T10:15:00+03:00
+Description: optional single-line text
 ```
+
+`Description` is omitted when empty. Every timestamp includes a timezone. The active file uses the same format without `End`. Files can be maintained manually as long as field names, canonical GitHub URLs, timestamp timezones, Start dates matching their `times/YYYY-MM-DD/` directory, and blank-line record separators are preserved.
+
+A normal recent-entry refresh performs one direct file read per configured day. Editing or deleting rewrites one daily file. Moving a boundary between two records in the same daily file performs one write; cross-day edits and boundaries update every affected daily file in one atomic Git commit.
+
+Every operation uses predictable commit messages without descriptions.
+
 
 ## Failure and conflict behavior
 
-Start reserves the eventual entry ULID in the GitHub-backed active timer. Stop first persists that stable-ID operation in extension-origin IndexedDB. Synchronization then:
+Stop first verifies that the cached timer still matches GitHub when the repository is reachable; a changed timer is shown instead of completing stale data. If GitHub is temporarily unreachable, the cached completion remains offline-capable. The extension then queues the completion in extension-origin IndexedDB and synchronization:
 
-1. checks whether the entry path already exists;
-2. creates it only if absent;
+1. reads the target daily text file once;
+2. adopts the exact intended record, recognizes a concurrent Stop only when the active file is gone and one matching timer completion exists, or appends with SHA protection;
 3. persists the queue stage;
-4. fetches the latest active-timer SHA;
-5. clears it only when it still matches the stopped timer.
+4. clears the active file with its known SHA, re-reading only to reconcile a conflict;
+5. preserves any newer active timer.
 
-A network failure at any point leaves the queue retryable. A changed active timer or stale entry SHA is never silently overwritten. When the active timer changed on another device after the entry was saved, the popup preserves the newer GitHub timer and lets the user acknowledge that safe resolution. Entry-path conflicts also remain visible: after repairing or removing the conflicting GitHub file, the popup can retry the queued completion. No conflict is overwritten silently.
+A network failure leaves the queue retryable. A changed active timer or stale daily-file SHA is never silently overwritten. Manually malformed daily files produce a visible error so they can be repaired directly in GitHub.
 
 Changing the target data repository is blocked while writes are pending.
 
@@ -78,7 +82,7 @@ Changing the target data repository is blocked while writes are pending.
 - PAT is never sent to content scripts, page JavaScript, URLs, logs, analytics, commit messages, or data files.
 - API host access is limited to `https://api.github.com/*`.
 - Page integration is limited to `https://github.com/*` and validates exact issue and pull-request URL forms.
-- Owner, repository, login, issue number, IDs, and generated paths are validated before writes.
+- Owner, repository, login, issue number, and generated paths are validated before writes.
 - Untrusted issue titles/descriptions are rendered via `textContent`; remote content is never executed.
 - Tokens should be fine-grained, repository-restricted, and granted only **Contents: Read and write**.
 
@@ -101,11 +105,10 @@ npm run check
 src/api/          GitHub Contents API client
 src/background/   MV3 service worker and message boundary
 src/content/      GitHub issue/pull-request header control and dropdown
-src/domain/       validation, records, paths, timestamps, ULIDs
+src/domain/       validation, daily text format, records, paths, timestamps
 src/options/      secure setup and validation
 src/popup/        active/recent/edit/delete UI
 src/services/     timer and synchronization state machine
-src/storage/      chrome.storage adapter
-schema/           JSON schemas
+src/storage/      extension-origin IndexedDB adapter
 test/             dependency-free Node tests
 ```

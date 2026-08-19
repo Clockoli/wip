@@ -113,21 +113,3 @@ export function entryDateParts(value) {
   if (!match) throw new Error('Invalid entry date');
   return validateDateParts({ year: match[1], month: match[2], day: match[3] });
 }
-
-export function activePath(user) {
-  return `active/${validatePathSegment(user, 'user')}.json`;
-}
-
-export function entryPath(user, dateParts, id) {
-  const { year, month, day } = validateDateParts(dateParts);
-  return `entries/${validatePathSegment(user, 'user')}/${year}/${month}/${day}/${validateEntryId(id)}.json`;
-}
-
-export function assertUserEntryPath(path, user) {
-  const validatedUser = validatePathSegment(user, 'user');
-  const match = typeof path === 'string' ? path.match(/^entries\/([A-Za-z0-9-]+)\/(\d{4})\/(\d{2})\/(\d{2})\/([0-9A-HJKMNP-TV-Z]{26})\.json$/) : null;
-  if (!match || match[1] !== validatedUser) throw new Error('Invalid entry path');
-  validateDateParts({ year: match[2], month: match[3], day: match[4] });
-  validateEntryId(match[5]);
-  return path;
-}

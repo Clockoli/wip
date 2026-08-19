@@ -92,22 +92,15 @@ export class GitHubClient {
     return this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/branches/${encodeURIComponent(this.branch)}`);
   }
 
-  async getFile(path) {
+  async getText(path) {
     const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`);
     if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
-    let data;
-    try { data = JSON.parse(decodeBase64Utf8(body.content)); } catch { throw new GitHubApiError('Stored file is not valid JSON', 422, 'invalid_json'); }
-    return { path, sha: body.sha, data };
+    return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
   }
 
-  async listDirectory(path) {
-    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`);
-    if (!Array.isArray(body)) throw new GitHubApiError('Expected a directory', 422);
-    return body.map(item => ({ name: item.name, path: item.path, sha: item.sha, type: item.type }));
-  }
-
-  async putJson(path, data, message, sha) {
-    const payload = { message, content: encodeBase64Utf8(`${JSON.stringify(data, null, 2)}\n`), branch: this.branch, ...(sha ? { sha } : {}) };
+  async putText(path, text, message, sha) {
+    if (typeof text !== 'string') throw new Error('Text content is required');
+    const payload = { message, content: encodeBase64Utf8(text), branch: this.branch, ...(sha ? { sha } : {}) };
     const body = await this.request(this.contentUrl(path), { method: 'PUT', body: JSON.stringify(payload) });
     return { sha: body.content?.sha, commitSha: body.commit?.sha };
   }
@@ -116,4 +109,41 @@ export class GitHubClient {
     if (!sha) throw new Error('SHA is required to delete a file');
     return this.request(this.contentUrl(path), { method: 'DELETE', body: JSON.stringify({ message, sha, branch: this.branch }) });
   }
+
+  async updateTextsAtomic(changes, message) {
+    if (!Array.isArray(changes) || changes.length < 2) throw new Error('At least two file changes are required');
+    const unique = new Set();
+    for (const change of changes) {
+      encodePath(change.path);
+      if (unique.has(change.path)) throw new Error('Atomic file paths must be unique');
+      unique.add(change.path);
+      if (change.text !== null && typeof change.text !== 'string') throw new Error('Atomic text content must be a string or null');
+    }
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const refPath = `${base}/git/ref/heads/${encodeURIComponent(this.branch)}`;
+    const updateRefPath = `${base}/git/refs/heads/${encodeURIComponent(this.branch)}`;
+    const ref = await this.request(refPath), parentSha = ref.object?.sha;
+    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(parentSha)}`), treeSha = commit.tree?.sha;
+    const currentTree = await this.request(`${base}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`);
+    if (currentTree.truncated) throw new GitHubApiError('Repository tree is too large for an atomic update', 422);
+    const current = new Map((currentTree.tree ?? []).filter(item => item.type === 'blob').map(item => [item.path, item.sha]));
+    for (const change of changes) {
+      if ((current.get(change.path) ?? null) !== (change.sha ?? null)) throw new GitHubConflictError();
+    }
+    const blobShas = {}, tree = [];
+    for (const change of changes) {
+      let sha = null;
+      if (change.text !== null) {
+        const blob = await this.request(`${base}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: change.text, encoding: 'utf-8' }) });
+        sha = blob.sha; blobShas[change.path] = sha;
+      }
+      tree.push({ path: change.path, mode: '100644', type: 'blob', sha });
+    }
+    const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
+    const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });
+    try { await this.request(updateRefPath, { method: 'PATCH', body: JSON.stringify({ sha: nextCommit.sha, force: false }) }); }
+    catch (error) { if (error?.status === 409 || error?.status === 422) throw new GitHubConflictError(); throw error; }
+    return { commitSha: nextCommit.sha, blobShas };
+  }
+
 }

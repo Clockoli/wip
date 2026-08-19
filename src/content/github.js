@@ -4,7 +4,6 @@
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
   const DRAG_MAX_MINUTES = 12 * 60;
-  const DRAG_MINUTES_PER_PIXEL = 5;
   const DRAG_STEP_MINUTES = 5;
   const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
   let lastRoute = null;
@@ -39,6 +38,9 @@
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
     if (className) node.className = className;
+    if (tag === 'input' || tag === 'textarea') {
+      for (const type of ['keydown', 'keypress', 'keyup']) node.addEventListener(type, event => event.stopPropagation());
+    }
     return node;
   }
 
@@ -70,16 +72,22 @@
   function timeDragHandle({ className, label, bounds, preview, commit = async () => {} }) {
     const handle = el('div', undefined, className);
     handle.tabIndex = 0; handle.setAttribute('role', 'slider'); handle.setAttribute('aria-orientation', 'horizontal'); handle.setAttribute('aria-label', label); handle.title = `${label}. Drag horizontally or use the arrow keys.`;
-    const left = el('span', undefined, 'drag-line'), grip = el('span', '↔', 'drag-grip'), right = el('span', undefined, 'drag-line');
-    handle.append(left, grip, right);
-    let minutes = 0, pointerId = null, pointerStart = 0, valueStart = 0;
+    const line = el('span', undefined, 'drag-line'), grip = el('span', '↔', 'drag-grip');
+    handle.append(line, grip);
+    let minutes = 0, pointerId = null, valueStart = 0;
     const apply = next => {
       const { minimum, maximum } = bounds();
       minutes = clamp(stepped(next), minimum, maximum);
+      const ratio = maximum === minimum ? 0.5 : (minutes - minimum) / (maximum - minimum);
       handle.setAttribute('aria-valuemin', String(minimum)); handle.setAttribute('aria-valuemax', String(maximum));
       handle.setAttribute('aria-valuenow', String(minutes)); handle.setAttribute('aria-valuetext', deltaLabel(minutes));
-      grip.style.transform = `translateX(${minutes / DRAG_MINUTES_PER_PIXEL}px)`;
+      grip.style.left = `${ratio * 100}%`; grip.style.transform = `translateX(${-ratio * 28}px)`;
       preview(minutes); return minutes;
+    };
+    const valueAtPointer = clientX => {
+      const { minimum, maximum } = bounds(), rect = handle.getBoundingClientRect();
+      const usable = Math.max(1, rect.width - 28), ratio = clamp((clientX - rect.left - 14) / usable, 0, 1);
+      return minimum + ratio * (maximum - minimum);
     };
     const save = async () => {
       handle.setAttribute('aria-busy', 'true');
@@ -88,12 +96,12 @@
     };
     handle.addEventListener('pointerdown', event => {
       if (!event.isTrusted || handle.getAttribute('aria-disabled') === 'true') return;
-      event.preventDefault(); pointerId = event.pointerId; pointerStart = event.clientX; valueStart = minutes; handle.setPointerCapture?.(pointerId);
+      event.preventDefault(); pointerId = event.pointerId; valueStart = minutes; handle.setPointerCapture?.(pointerId); apply(valueAtPointer(event.clientX));
     });
     handle.addEventListener('pointermove', event => {
       if (!event.isTrusted || event.pointerId !== pointerId) return;
       if (handle.getAttribute('aria-disabled') === 'true') { handle.releasePointerCapture?.(pointerId); pointerId = null; apply(valueStart); return; }
-      event.preventDefault(); apply(valueStart + (event.clientX - pointerStart) * DRAG_MINUTES_PER_PIXEL);
+      event.preventDefault(); apply(valueAtPointer(event.clientX));
     });
     handle.addEventListener('pointerup', async event => {
       if (!event.isTrusted || event.pointerId !== pointerId) return;
@@ -122,6 +130,13 @@
   function localInput(iso) {
     const date = new Date(iso), pad = value => String(value).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  function timestampFromLocalInput(value) {
+    const date = new Date(value), pad = (number, width = 2) => String(number).padStart(width, '0');
+    if (Number.isNaN(date.getTime())) throw new Error('Enter a valid date and time.');
+    const offset = -date.getTimezoneOffset(), sign = offset >= 0 ? '+' : '-', absolute = Math.abs(offset);
+    return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
   }
 
   function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
@@ -169,6 +184,8 @@
 
   function closeMenu() { menuOpen = false; editing = null; errorText = ''; renderUi(); }
 
+  function originalRecord(entry) { return { issueUrl: entry.issue.url, startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
+
   async function refreshState(refresh = false, loadEntries = false) {
     pageState = await send({ type: 'GET_PAGE_STATE', refresh });
     if (loadEntries && pageState.configured) {
@@ -203,7 +220,7 @@
     const remove = button('Delete', 'danger-outline', async (event, node) => {
       if (!confirm(`Delete this ${formatDuration(editing.durationSeconds)} entry?\n\nThe previous version remains in Git history.`)) return;
       node.disabled = true;
-      try { await send({ type: 'DELETE_ENTRY', payload: { path: editing._path, originalSha: editing._sha } }); editing = null; recentLoaded = false; await refreshState(false, true); }
+      try { await send({ type: 'DELETE_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing) } }); editing = null; recentLoaded = false; await refreshState(false, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
     const save = el('button', 'Save', 'primary'); save.type = 'submit';
@@ -217,7 +234,7 @@
         const type = editing.issue.type;
         const segment = type === 'pull_request' ? 'pull' : 'issues';
         const issue = { type, owner: match[1], repo: match[2], number: Number(match[3]), url: `https://github.com/${match[1]}/${match[2]}/${segment}/${match[3]}` };
-        await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, edits: { issue, startedAt: new Date(startField.value).toISOString(), endedAt: new Date(endField.value).toISOString(), description: description.value } } });
+        await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing), edits: { issue, startedAt: timestampFromLocalInput(startField.value), endedAt: timestampFromLocalInput(endField.value), description: description.value } } });
         editing = null; recentLoaded = false; await refreshState(false, true);
       } catch (error) { save.disabled = false; setError(error); }
     });
@@ -252,7 +269,7 @@
     if (loadingRecent) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Open the menu again to load entries.', 'muted')); return; }
     if (!recent.length) { container.append(el('div', 'No entries in the configured window.', 'muted')); return; }
-    const entries = [...recent].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    const entries = [...recent].sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
     const rows = entries.map(recentRow);
     for (let index = 0; index < entries.length; index += 1) {
       const upper = entries[index], upperRow = rows[index]; container.append(upperRow.row);
@@ -263,8 +280,8 @@
         className: 'time-drag time-boundary',
         label: `Adjust boundary between #${upper.issue.number} and #${lower.issue.number}`,
         bounds: () => ({
-          minimum: Math.max(-DRAG_MAX_MINUTES, Math.ceil((new Date(upper.startedAt).getTime() - upperEnd) / 60000)),
-          maximum: Math.min(DRAG_MAX_MINUTES, Math.floor((new Date(lower.endedAt).getTime() - lowerStart) / 60000)),
+          minimum: Math.ceil((new Date(upper.startedAt).getTime() - upperEnd) / 60000),
+          maximum: Math.floor((new Date(lower.endedAt).getTime() - lowerStart) / 60000),
         }),
         preview: minutes => {
           upperRow.meta.textContent = recentMeta(upper, upper.startedAt, new Date(upperEnd + minutes * 60000).toISOString());
@@ -274,11 +291,11 @@
           if (!minutes) return;
           try {
             const saved = await send({ type: 'MOVE_BOUNDARY', payload: {
-              upper: { path: upper._path, originalSha: upper._sha, endedAt: new Date(upperEnd + minutes * 60000).toISOString() },
-              lower: { path: lower._path, originalSha: lower._sha, startedAt: new Date(lowerStart + minutes * 60000).toISOString() },
+              upper: { path: upper._path, originalSha: upper._sha, index: upper._index, original: originalRecord(upper), endedAt: new Date(upperEnd + minutes * 60000).toISOString() },
+              lower: { path: lower._path, originalSha: lower._sha, index: lower._index, original: originalRecord(lower), startedAt: new Date(lowerStart + minutes * 60000).toISOString() },
             } });
-            const byPath = new Map(saved.map(entry => [entry._path, entry]));
-            recent = recent.map(entry => byPath.get(entry._path) ?? entry);
+            recent = recent.map(entry => entry._path === upper._path && entry._index === upper._index ? saved[0]
+              : entry._path === lower._path && entry._index === lower._index ? saved[1] : entry);
             renderUi();
           } catch (error) { setError(error); }
         },
@@ -291,7 +308,7 @@
   function renderPendingConflicts(container) {
     const conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict');
     for (const item of conflicts) {
-      const activeConflict = item.stage === 'clearActive';
+      const activeConflict = item.stage === 'clearActive' || item.stage === 'verifyActive';
       const box = el('div', undefined, 'conflict');
       box.append(el('strong', activeConflict ? 'Newer GitHub timer preserved' : 'Entry path conflict'));
       box.append(el('div', activeConflict ? 'The active timer changed on another device.' : 'Repair or remove the conflicting entry in GitHub, then retry.', 'muted'));
@@ -369,7 +386,7 @@
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .active-link { display:inline-block } .elapsed { margin:8px 0 10px; font:600 28px ui-monospace,SFMono-Regular,monospace }
       button { border:1px solid var(--button-default-borderColor-rest,rgba(31,35,40,.15)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#1f2328); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:disabled { opacity:.55; cursor:default } .wide { width:100%; margin-top:10px } .primary { background:var(--button-primary-bgColor-rest,#1f883d); color:#fff } .primary:hover { background:var(--button-primary-bgColor-hover,#1a7f37) } .danger { background:#cf222e; border-color:rgba(27,31,36,.15); color:#fff } .danger:hover { background:#a40e26 } .danger-outline { color:var(--fgColor-danger,#cf222e) }
       .icon-button,.link-button { border:0; padding:5px; background:transparent; color:var(--fgColor-muted,#59636e) } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d8dee4) } .section-head { margin-bottom:7px }
-      .time-drag { display:grid; grid-template-columns:1fr 28px 1fr; align-items:center; gap:6px; min-height:32px; margin:7px 0; color:var(--fgColor-muted,#59636e); cursor:ew-resize; touch-action:none; user-select:none } .time-drag[aria-disabled="true"] { opacity:.5; cursor:default } .time-drag[aria-busy="true"] { opacity:.65 } .drag-line { height:1px; background:var(--borderColor-default,#d1d9e0) } .drag-grip { display:grid; place-items:center; width:28px; height:24px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--button-default-bgColor-rest,#f6f8fa); font-weight:700; will-change:transform } .time-boundary { margin:0 }
+      .time-drag { position:relative; min-height:32px; margin:7px 0; color:var(--fgColor-muted,#59636e); cursor:ew-resize; touch-action:none; user-select:none } .time-drag[aria-disabled="true"] { opacity:.5; cursor:default } .time-drag[aria-busy="true"] { opacity:.65 } .drag-line { position:absolute; left:0; right:0; top:16px; height:1px; background:var(--borderColor-default,#d1d9e0) } .drag-grip { position:absolute; top:4px; display:grid; place-items:center; width:28px; height:24px; box-sizing:border-box; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--button-default-bgColor-rest,#f6f8fa); font-weight:700; will-change:left,transform } .time-boundary { margin:0 }
       .entry { padding:10px 0; border-top:1px solid var(--borderColor-muted,#d8dee4) } .entry:first-of-type { border-top:0 } .entry-copy { flex:1; min-width:0 } .entry-copy a { overflow-wrap:anywhere } .entry-description { margin-top:4px; overflow-wrap:anywhere } label { display:block; margin:10px 0 4px; font-size:12px; font-weight:600 } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#cf222e); white-space:pre-wrap }
       @media (prefers-color-scheme:dark) { .trigger { background:#21262d; border-color:#30363d; color:#8b949e } .menu { background:#0d1117; color:#e6edf3; border-color:#30363d; box-shadow:0 8px 24px #010409 } input,textarea { background:#0d1117; color:#e6edf3; border-color:#30363d } }
     `);
