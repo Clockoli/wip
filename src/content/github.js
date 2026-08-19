@@ -74,16 +74,21 @@
     return current?.parentElement === ancestor ? current : null;
   }
 
-  function mountInHeader() {
-    const actions = document.querySelector('.AppHeader-actions');
-    const avatar = actions?.querySelector('img.avatar');
+  function headerTarget() {
+    const actions = document.querySelector('[data-testid="top-nav-right"]') || document.querySelector('.AppHeader-actions');
+    const avatar = actions?.querySelector('img[data-testid="github-avatar"]') || actions?.querySelector('img.avatar');
     const anchor = avatar && directChild(avatar, actions);
-    if (!actions || !anchor) return false;
+    return actions && anchor ? { actions, anchor } : null;
+  }
+
+  function mountInHeader() {
+    const target = headerTarget();
+    if (!target) return false;
     if (!root) {
       root = el('div'); root.id = ROOT_ID;
       shadow = root.attachShadow({ mode: 'closed' });
     }
-    if (root.parentElement !== actions || root.nextElementSibling !== anchor) actions.insertBefore(root, anchor);
+    if (root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) target.actions.insertBefore(root, target.anchor);
     return true;
   }
 
@@ -289,7 +294,10 @@
       const firstRender = lastRoute === null;
       lastRoute = route; recent = []; recentLoaded = false; editing = null; menuOpen = false;
       void render(firstRender);
-    } else if (route && (!root?.isConnected || root.parentElement !== document.querySelector('.AppHeader-actions'))) void render(false);
+    } else if (route) {
+      const target = headerTarget();
+      if (!root?.isConnected || !target || root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) void render(false);
+    }
   }
 
   document.addEventListener('click', event => {

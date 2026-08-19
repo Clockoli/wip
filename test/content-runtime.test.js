@@ -54,6 +54,7 @@ class FakeNode {
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   querySelector(selector) {
     if (selector === 'img.avatar') return this.walk().find(node => node.tag === 'img' && node.className.split(/\s+/).includes('avatar')) ?? null;
+    if (selector === 'img[data-testid="github-avatar"]') return this.walk().find(node => node.tag === 'img' && node.getAttribute('data-testid') === 'github-avatar') ?? null;
     return null;
   }
   walk() { return [this, ...this.children.flatMap(child => typeof child.walk === 'function' ? child.walk() : [])]; }
@@ -69,6 +70,16 @@ function makeHeader() {
   const avatarSlot = new FakeNode('div'); const avatar = new FakeNode('img'); avatar.className = 'avatar';
   avatarSlot.append(avatar); actions.append(avatarSlot);
   return { actions, avatarSlot };
+}
+
+function makeModernHeader() {
+  const right = new FakeNode('div'); right.setAttribute('data-testid', 'top-nav-right'); right.isConnected = true;
+  const topBarActions = new FakeNode('div'); topBarActions.setAttribute('data-testid', 'top-bar-actions');
+  const avatarSlot = new FakeNode('div');
+  const avatarButton = new FakeNode('button'); avatarButton.setAttribute('data-login', 'alice');
+  const avatar = new FakeNode('img'); avatar.setAttribute('data-testid', 'github-avatar');
+  avatarButton.append(avatar); avatarSlot.append(avatarButton); right.append(topBarActions, avatarSlot);
+  return { right, topBarActions, avatarSlot };
 }
 
 
@@ -288,4 +299,39 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'), { type: 'RESOLVE_PENDING', id: 'pending-1' });
   assert.equal(resolved, true);
+});
+
+
+test('header control mounts before the avatar in GitHub current top-nav-right header', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = {
+    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/4822', href: 'https://github.com/acme/app/issues/4822',
+  };
+  const { right, topBarActions, avatarSlot } = makeModernHeader();
+  const document = {
+    documentElement: new FakeNode('html'),
+    createElement: tag => new FakeNode(tag),
+    createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }),
+    getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '[data-testid="top-nav-right"]' ? right : null,
+    addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document,
+    chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    confirm: () => true, alert() {},
+  });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(right.children[0], topBarActions);
+  assert.equal(right.children.at(-2)?.id, 'github-private-time-tracker-root');
+  assert.equal(right.children.at(-1), avatarSlot);
+  assert.deepEqual(messages, [{ type: 'GET_PAGE_STATE', refresh: true }]);
 });
