@@ -32,7 +32,7 @@ class FakeGitHub {
     signal?.throwIfAborted();
     this.snapshots.push({ etag });
     if (this.notModified && etag === this.etag) return { notModified: true, etag: this.etag };
-    return { notModified: false, etag: this.etag, files: [...this.files].map(([path, file]) => ({ path, sha: file.sha })) };
+    return { notModified: false, etag: this.etag, files: [...this.files].map(([path, file]) => ({ path, sha: file.sha, size: new TextEncoder().encode(file.text).length })) };
   }
   async getBlobText(path, sha, { signal } = {}) {
     signal?.throwIfAborted();
@@ -124,4 +124,14 @@ test('current-user task loading enforces file and record budgets before returnin
   await assert.rejects(() => service.loadUserRange(
     { startDate: '2026-08-01', endDate: '2026-08-31' }, 'alice', {}, { maxRecords: 2 },
   ), /record budget/i);
+});
+
+test('current-user loading refreshes a legacy size-less cache before byte preflight', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache(), service = new ReportService({ github, cache });
+  await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });
+  cache.value.files = cache.value.files.map(({ path, sha }) => ({ path, sha }));
+  github.notModified = true;
+  await service.loadUserRange({ startDate: '2026-08-01', endDate: '2026-08-31' }, 'alice');
+  assert.equal(github.snapshots.at(-1).etag, '', 'legacy cache must be refreshed so tree blob sizes are known before reads');
+  assert.ok(cache.value.files.every(file => Number.isSafeInteger(file.size)));
 });

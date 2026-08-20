@@ -65,7 +65,8 @@ export class ReportService {
 
     const repositoryKey = this.github.repositoryKey || 'repository';
     const cache = await this.readCache(repositoryKey);
-    const snapshot = await this.github.listTextFilesSnapshot('times/', { etag: cache.etag, signal });
+    const snapshotEtag = user && cache.files.some(file => !Number.isSafeInteger(file.size)) ? '' : cache.etag;
+    const snapshot = await this.github.listTextFilesSnapshot('times/', { etag: snapshotEtag, signal });
     signal?.throwIfAborted();
     if (snapshot.notModified) {
       if (!cache.files.length) throw new Error('GitHub returned an unchanged report snapshot without a local cache');
