@@ -26,7 +26,7 @@
 - `src/background/service-worker.js`: message boundary; token and API calls remain isolated.
 - `src/content/github.js`: GitHub SPA issue/pull-request detection plus a native-style before-avatar stopwatch control and closed-Shadow management dropdown.
 - `src/popup/*`: active/recent/sync UI and edit/delete controls.
-- `src/reports/*`: weekly/monthly/quarterly/yearly/custom periods, person/repository facets, local stacked-bar aggregation, and plain-text/CSV downloads.
+- `src/reports/*`: weekly/monthly/quarterly/yearly/custom periods, person/repository facets, selectable metric/axis local stacked-bar aggregation, and direct CSV/JSON downloads.
 - `src/options/*`: least-privilege PAT/repository setup and validation.
 
 ## Acceptance checks

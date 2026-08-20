@@ -1,6 +1,8 @@
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DIMENSIONS = new Set(['person', 'repository', 'issue']);
-const INTERVALS = new Set(['day', 'week', 'month']);
+const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
+const METRICS = new Set(['total-time', 'avg-time', 'task-count']);
+const MONTH_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const MONTH_LABELS = new Map();
 
 function dateParts(value) {
   const match = String(value ?? '').match(DATE_RE);
@@ -101,52 +103,83 @@ export function buildFacets(records, filters = {}) {
   };
 }
 
-function bucketKey(record, interval) {
-  const date = record.entryDate || record.startedAt.slice(0, 10);
-  if (!interval) return 'total';
-  if (interval === 'day') return date;
-  if (interval === 'month') return date.slice(0, 7);
-  const { date: parsed } = dateParts(date), offset = (parsed.getUTCDay() + 6) % 7;
-  return addDays(date, -offset);
-}
+function recordDate(record) { return record.entryDate || record.startedAt.slice(0, 10); }
 
-function bucketLabel(key, interval) {
-  if (!interval) return 'Total';
-  if (interval === 'week') return `Week of ${key}`;
-  if (interval === 'month') {
-    const [year, month] = key.split('-').map(Number);
-    return new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, month - 1, 1)));
-  }
-  return key;
-}
-
-function dimensionPart(record, dimension) {
-  if (dimension === 'person') return { key: record.user, label: record.user };
-  if (dimension === 'repository') return { key: repository(record), label: repository(record) };
+function taskPart(record) {
   const type = record.issue.type === 'pull_request' ? 'PR' : 'Issue';
   return { key: record.issue.url, label: `${record.issue.owner}/${record.issue.repo}#${record.issue.number} (${type})` };
 }
 
+function axisPart(record, axis) {
+  const date = recordDate(record);
+  if (axis === 'day') return { key: date, label: date };
+  if (axis === 'week') {
+    const { date: parsed } = dateParts(date), offset = (parsed.getUTCDay() + 6) % 7, key = addDays(date, -offset);
+    return { key, label: `Week of ${key}` };
+  }
+  if (axis === 'month') {
+    const key = date.slice(0, 7);
+    if (!MONTH_LABELS.has(key)) {
+      const [year, month] = key.split('-').map(Number);
+      MONTH_LABELS.set(key, MONTH_FORMATTER.format(new Date(Date.UTC(year, month - 1, 1))));
+    }
+    return { key, label: MONTH_LABELS.get(key) };
+  }
+  if (axis === 'person') return { key: record.user, label: record.user };
+  if (axis === 'repository') return { key: repository(record), label: repository(record) };
+  return taskPart(record);
+}
+
+function metricValue(metric, seconds, count) {
+  if (metric === 'task-count') return count;
+  if (metric === 'avg-time') return count ? seconds / count : 0;
+  return seconds;
+}
+
+function segmentValue(metric, aggregate, bucketTaskCount) {
+  if (metric === 'avg-time') return bucketTaskCount ? aggregate.seconds / bucketTaskCount : 0;
+  return metricValue(metric, aggregate.seconds, aggregate.taskCount);
+}
+
 export function buildAnalytics(records, options = {}) {
-  const dimensions = [...new Set(options.dimensions ?? [])].filter(value => DIMENSIONS.has(value));
-  const interval = options.interval == null ? null : options.interval;
-  if (interval !== null && !INTERVALS.has(interval)) throw new Error('Invalid analytics interval');
+  const metric = options.metric ?? 'total-time';
+  const horizontalAxis = options.horizontalAxis ?? 'week';
+  const stackBy = options.stackBy ?? 'person';
+  if (!METRICS.has(metric)) throw new Error('Invalid analytics metric');
+  if (!AXES.has(horizontalAxis)) throw new Error('Invalid horizontal axis');
+  if (!AXES.has(stackBy)) throw new Error('Invalid stack dimension');
   const buckets = new Map(), series = new Map();
   for (const record of records ?? []) {
-    const bucket = bucketKey(record, interval), parts = dimensions.map(dimension => dimensionPart(record, dimension));
-    const seriesKey = parts.length ? parts.map(part => part.key).join('\u001f') : 'total';
-    const seriesLabel = parts.length ? parts.map(part => part.label).join(' · ') : 'Total';
-    series.set(seriesKey, { key: seriesKey, label: seriesLabel });
-    const item = buckets.get(bucket) ?? { key: bucket, label: bucketLabel(bucket, interval), totalSeconds: 0, values: new Map() };
-    const seconds = Math.max(0, Number(record.durationSeconds) || 0);
-    item.totalSeconds += seconds; item.values.set(seriesKey, (item.values.get(seriesKey) ?? 0) + seconds); buckets.set(bucket, item);
+    const bucketPart = axisPart(record, horizontalAxis), seriesPart = axisPart(record, stackBy);
+    series.set(seriesPart.key, seriesPart);
+    const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
+    const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, tasks: new Set() };
+    cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1; cell.tasks.add(record.issue.url);
+    bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
-  const bucketList = [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)).map(bucket => ({
-    key: bucket.key, label: bucket.label, totalSeconds: bucket.totalSeconds,
-    segments: seriesList.filter(item => bucket.values.has(item.key)).map(item => ({ ...item, seconds: bucket.values.get(item.key) })),
-  }));
-  return { series: seriesList, buckets: bucketList, maxSeconds: Math.max(0, ...bucketList.map(item => item.totalSeconds)) };
+  const bucketList = [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)).map(bucket => {
+    const bucketTasks = new Set(), bucketSeconds = [...bucket.values.values()].reduce((sum, aggregate) => {
+      for (const task of aggregate.tasks) bucketTasks.add(task);
+      return sum + aggregate.seconds;
+    }, 0);
+    const segments = [...bucket.values.entries()].map(([key, aggregate]) => {
+      const item = series.get(key), taskCount = aggregate.tasks.size;
+      return {
+        ...item, seconds: aggregate.seconds, count: aggregate.count, taskCount,
+        averageValue: metricValue('avg-time', aggregate.seconds, taskCount),
+        value: segmentValue(metric, { ...aggregate, taskCount }, bucketTasks.size),
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+    const totalValue = metric === 'task-count'
+      ? segments.reduce((sum, segment) => sum + segment.value, 0)
+      : metricValue(metric, bucketSeconds, bucketTasks.size);
+    return { key: bucket.key, label: bucket.label, totalValue, segments };
+  });
+  return {
+    metric, horizontalAxis, stackBy, series: seriesList, buckets: bucketList,
+    maxValue: Math.max(0, ...bucketList.map(item => item.totalValue)),
+  };
 }
 
 function sortedRecords(records) { return [...(records ?? [])].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt) || a.user.localeCompare(b.user)); }
@@ -162,28 +195,30 @@ function hms(seconds) {
 
 export function exportTimesheet(records, { format, startDate, endDate }) {
   validateDateRange(startDate, endDate);
-  const ordered = sortedRecords(records), total = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
+  const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
+  const entries = ordered.map(record => ({
+    person: record.user,
+    repository: repository(record),
+    type: record.issue.type === 'pull_request' ? 'Pull request' : 'Issue',
+    number: record.issue.number,
+    url: record.issue.url,
+    start: record.startedAt,
+    end: record.endedAt,
+    duration: hms(record.durationSeconds),
+    durationSeconds: record.durationSeconds,
+    description: record.description || '',
+  }));
   if (format === 'csv') {
     const rows = [['Person', 'Repository', 'Type', 'Number', 'URL', 'Start', 'End', 'Duration', 'Duration seconds', 'Description']];
-    for (const record of ordered) rows.push([
-      record.user, repository(record), record.issue.type === 'pull_request' ? 'Pull request' : 'Issue', record.issue.number,
-      record.issue.url, record.startedAt, record.endedAt, hms(record.durationSeconds), record.durationSeconds, record.description || '',
-    ]);
+    for (const entry of entries) rows.push(Object.values(entry));
     return `${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
   }
-  if (format !== 'text') throw new Error('Unknown timesheet format');
-  const lines = [`Timesheet: ${startDate} to ${endDate}`, `Total: ${formatClockDuration(total, { zeroPadMinutes: true })}`, ''];
-  ordered.forEach((record, index) => {
-    lines.push(`Person: ${record.user}`, `Repository: ${repository(record)}`, `Item: ${record.issue.type === 'pull_request' ? 'Pull request' : 'Issue'} #${record.issue.number}`,
-      `URL: ${record.issue.url}`, `Start: ${record.startedAt}`, `End: ${record.endedAt}`, `Duration: ${hms(record.durationSeconds)}`);
-    if (record.description) lines.push(`Description: ${record.description}`);
-    if (index < ordered.length - 1) lines.push('');
-  });
-  return `${lines.join('\n')}\n`;
+  if (format === 'json') return `${JSON.stringify({ period: { startDate, endDate }, totalSeconds, entries }, null, 2)}\n`;
+  throw new Error('Unknown timesheet format');
 }
 
 export function reportFilename(format, startDate, endDate) {
   validateDateRange(startDate, endDate);
-  if (!['csv', 'text'].includes(format)) throw new Error('Unknown timesheet format');
-  return `timesheet-${startDate}-to-${endDate}.${format === 'csv' ? 'csv' : 'txt'}`;
+  if (!['csv', 'json'].includes(format)) throw new Error('Unknown timesheet format');
+  return `timesheet-${startDate}-to-${endDate}.${format}`;
 }

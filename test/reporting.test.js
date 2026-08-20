@@ -57,37 +57,72 @@ test('person and repository facets cross-filter and expose duration counts', () 
   ]);
 });
 
-test('analytics builds interval buckets and stacked series from checked dimensions', () => {
-  const analytics = buildAnalytics(records, { dimensions: ['person', 'repository'], interval: 'day' });
-  assert.deepEqual(analytics.series.map(item => item.label), ['alice · acme/api', 'alice · acme/app', 'bob · acme/app']);
-  assert.deepEqual(analytics.buckets.map(item => [item.key, item.totalSeconds]), [['2026-08-17', 10800], ['2026-08-18', 10800]]);
-  assert.equal(analytics.buckets[0].segments.find(item => item.label === 'bob · acme/app').seconds, 7200);
-  const total = buildAnalytics(records, { dimensions: [], interval: null });
-  assert.deepEqual(total.buckets.map(item => [item.key, item.totalSeconds]), [['total', 21600]]);
-  assert.deepEqual(total.series.map(item => item.label), ['Total']);
+test('analytics independently selects total-time horizontal and stack dimensions', () => {
+  const analytics = buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'day', stackBy: 'person' });
+  assert.equal(analytics.metric, 'total-time');
+  assert.equal(analytics.horizontalAxis, 'day');
+  assert.equal(analytics.stackBy, 'person');
+  assert.deepEqual(analytics.series.map(item => item.label), ['alice', 'bob']);
+  assert.deepEqual(analytics.buckets.map(item => [item.key, item.totalValue]), [['2026-08-17', 10800], ['2026-08-18', 10800]]);
+  assert.equal(analytics.buckets[0].segments.find(item => item.label === 'bob').value, 7200);
+  assert.equal(analytics.maxValue, 10800);
 });
 
-test('analytics can stack by issue or PR without a time interval', () => {
-  const analytics = buildAnalytics(records, { dimensions: ['issue'], interval: null });
-  assert.equal(analytics.buckets.length, 1);
-  assert.equal(analytics.buckets[0].key, 'total');
-  assert.equal(analytics.series.length, 3);
-  assert.ok(analytics.series.some(series => series.label === 'acme/app#2 (PR)'));
-  assert.equal(analytics.buckets[0].totalSeconds, 6 * 3600);
+test('analytics supports average time and task count for every requested axis', () => {
+  const axes = ['day', 'week', 'month', 'person', 'repository', 'task'];
+  for (const metric of ['total-time', 'avg-time', 'task-count']) {
+    for (const horizontalAxis of axes) {
+      for (const stackBy of axes) {
+        const analytics = buildAnalytics(records, { metric, horizontalAxis, stackBy });
+        assert.ok(analytics.buckets.every(bucket => Math.abs(bucket.segments.reduce((sum, segment) => sum + segment.value, 0) - bucket.totalValue) < 1e-9), `${metric}/${horizontalAxis}/${stackBy}`);
+        assert.ok(analytics.buckets.every(bucket => bucket.segments.every(segment => segment.count >= 1)));
+        if (metric === 'task-count') assert.equal(analytics.buckets.reduce((sum, bucket) => sum + bucket.totalValue, 0), 3, `${horizontalAxis}/${stackBy}`);
+        if (metric === 'total-time') assert.equal(analytics.buckets.reduce((sum, bucket) => sum + bucket.totalValue, 0), 21600, `${horizontalAxis}/${stackBy}`);
+      }
+    }
+  }
+  const average = buildAnalytics(records, { metric: 'avg-time', horizontalAxis: 'repository', stackBy: 'person' });
+  const app = average.buckets.find(bucket => bucket.key === 'acme/app');
+  assert.equal(app.segments.find(segment => segment.label === 'alice').value, 1800);
+  assert.equal(app.segments.find(segment => segment.label === 'alice').averageValue, 3600);
+  assert.equal(app.segments.find(segment => segment.label === 'bob').value, 3600);
+  assert.equal(app.totalValue, 5400);
+  assert.equal(average.buckets.find(bucket => bucket.key === 'acme/api').totalValue, 10800);
 });
 
-test('timesheet exports stable plain text and correctly escaped CSV', () => {
-  const text = exportTimesheet(records, { format: 'text', startDate: '2026-08-17', endDate: '2026-08-18' });
-  assert.match(text, /Timesheet: 2026-08-17 to 2026-08-18/);
-  assert.match(text, /Total: 6h 00m/);
-  assert.match(text, /Person: alice/);
-  assert.match(text, /Item: Pull request #2/);
+test('task count and average time aggregate repeated sessions by distinct task', () => {
+  const repeated = [
+    record('alice', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
+    record('alice', '2026-08-17T11:00:00+00:00', '2026-08-17T13:00:00+00:00'),
+  ];
+  const count = buildAnalytics(repeated, { metric: 'task-count', horizontalAxis: 'day', stackBy: 'person' });
+  assert.equal(count.buckets[0].totalValue, 1);
+  assert.equal(count.buckets[0].segments[0].taskCount, 1);
+  assert.equal(count.buckets[0].segments[0].count, 2);
+  const average = buildAnalytics(repeated, { metric: 'avg-time', horizontalAxis: 'day', stackBy: 'person' });
+  assert.equal(average.buckets[0].totalValue, 10800);
+  assert.equal(average.buckets[0].segments[0].averageValue, 10800);
+});
+
+test('analytics rejects unknown metrics and axes', () => {
+  assert.throws(() => buildAnalytics(records, { metric: 'median', horizontalAxis: 'day', stackBy: 'person' }), /metric/i);
+  assert.throws(() => buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'year', stackBy: 'person' }), /horizontal axis/i);
+  assert.throws(() => buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'day', stackBy: 'owner' }), /stack/i);
+});
+
+test('timesheet exports correctly escaped CSV and structured JSON', () => {
   const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-17', endDate: '2026-08-18' });
   assert.match(csv, /^Person,Repository,Type,Number,URL,Start,End,Duration,Duration seconds,Description\r\n/);
   assert.match(csv, /"comma, quote "" value"/);
   assert.equal(csv.split('\r\n').length, 5);
   const formulaCsv = exportTimesheet([record('alice', '2026-08-18T01:00:00+00:00', '2026-08-18T02:00:00+00:00', { description: '=HYPERLINK("https://example.com")' })], { format: 'csv', startDate: '2026-08-18', endDate: '2026-08-18' });
   assert.match(formulaCsv, /"'=HYPERLINK\(""https:\/\/example\.com""\)"/);
+  const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-17', endDate: '2026-08-18' }));
+  assert.deepEqual(json.period, { startDate: '2026-08-17', endDate: '2026-08-18' });
+  assert.equal(json.totalSeconds, 21600);
+  assert.equal(json.entries.length, 3);
+  assert.deepEqual(Object.keys(json.entries[0]), ['person', 'repository', 'type', 'number', 'url', 'start', 'end', 'duration', 'durationSeconds', 'description']);
   assert.equal(reportFilename('csv', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.csv');
-  assert.equal(reportFilename('text', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.txt');
+  assert.equal(reportFilename('json', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.json');
+  assert.throws(() => exportTimesheet(records, { format: 'text', startDate: '2026-08-17', endDate: '2026-08-18' }), /format/i);
 });

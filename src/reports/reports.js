@@ -6,7 +6,7 @@ import {
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, sourceRepository: '', branch: '', loading: false, requestId: 0,
+  records: [], range: null, sourceRepository: '', branch: '', loading: false, requestId: 0, analytics: null,
   people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
 };
 
@@ -35,10 +35,22 @@ function svg(tag, attributes = {}, text = '') {
   return node;
 }
 
-function dimensions() {
-  return [
-    ['dimension-person', 'person'], ['dimension-repository', 'repository'], ['dimension-issue', 'issue'],
-  ].filter(([id]) => $(id).checked).map(([, value]) => value);
+const METRIC_LABELS = { 'total-time': 'Total time', 'avg-time': 'Avg time', 'task-count': 'Task count' };
+const AXIS_LABELS = { day: 'Day', week: 'Week', month: 'Month', person: 'Person', repository: 'Repository', task: 'Task' };
+
+function formatMetricValue(value, metric, { tooltip = false } = {}) {
+  if (metric === 'task-count') {
+    const count = Math.round(value);
+    return tooltip ? `${count} ${count === 1 ? 'task' : 'tasks'}` : String(count);
+  }
+  return formatClockDuration(value);
+}
+
+function setDownloadsAvailable(available) {
+  for (const id of ['download-csv', 'download-json']) {
+    $(id).classList.toggle('disabled', !available);
+    $(id).setAttribute('aria-disabled', String(!available));
+  }
 }
 
 function selectedFilters() {
@@ -83,32 +95,61 @@ function renderSummary(filtered) {
   $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)}`;
 }
 
+function renderAnalyticsTable(analytics) {
+  const table = $('analytics-table');
+  table.replaceChildren();
+  if (!$('analytics-details').open) return;
+  const metricLabel = analytics.metric === 'avg-time' ? 'Avg time contribution' : METRIC_LABELS[analytics.metric];
+  const head = document.createElement('thead'), headRow = document.createElement('tr');
+  for (const label of [AXIS_LABELS[analytics.horizontalAxis], AXIS_LABELS[analytics.stackBy], metricLabel, 'Bucket total']) {
+    const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; headRow.append(th);
+  }
+  head.append(headRow); table.append(head);
+  const body = document.createElement('tbody');
+  for (const bucket of analytics.buckets) {
+    for (const segment of bucket.segments) {
+      const row = document.createElement('tr');
+      for (const value of [bucket.label, segment.label, formatMetricValue(segment.value, analytics.metric), formatMetricValue(bucket.totalValue, analytics.metric)]) {
+        const td = document.createElement('td'); td.textContent = value; row.append(td);
+      }
+      body.append(row);
+    }
+  }
+  table.append(body);
+}
+
 function renderChart(analytics) {
-  const container = $('analytics-chart'), legend = $('chart-legend'), table = $('analytics-table');
-  container.replaceChildren(); legend.replaceChildren(); table.replaceChildren();
+  const container = $('analytics-chart'), legend = $('chart-legend');
+  container.replaceChildren(); legend.replaceChildren(); renderAnalyticsTable(analytics);
   if (!analytics.buckets.length) {
-    const empty = document.createElement('div'); empty.className = 'chart-empty'; empty.textContent = 'No tracked time matches these filters.'; container.append(empty); return;
+    const empty = document.createElement('div'); empty.className = 'chart-empty'; empty.textContent = 'No data matches these filters.'; container.append(empty); return;
   }
   const width = Math.max(720, analytics.buckets.length * 92 + 100), height = 400;
   const margin = { top: 24, right: 20, bottom: 104, left: 66 }, plotWidth = width - margin.left - margin.right, plotHeight = height - margin.top - margin.bottom;
-  const chart = svg('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Stacked tracked-time bar chart' });
-  const colors = colorMap(analytics.series), maximum = analytics.maxSeconds || 1;
+  const metricLabel = METRIC_LABELS[analytics.metric];
+  const chart = svg('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `Stacked bar chart of ${metricLabel.toLowerCase()}` });
+  const colors = colorMap(analytics.series);
+  const countStep = analytics.metric === 'task-count' ? Math.max(1, Math.ceil(analytics.maxValue / 4)) : null;
+  const maximum = countStep ? countStep * 4 : analytics.maxValue || 1;
   for (let step = 0; step <= 4; step += 1) {
-    const y = margin.top + plotHeight - plotHeight * step / 4, seconds = maximum * step / 4;
+    const y = margin.top + plotHeight - plotHeight * step / 4, value = maximum * step / 4;
     chart.append(svg('line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y, class: 'grid-line' }));
-    chart.append(svg('text', { x: margin.left - 10, y: y + 4, 'text-anchor': 'end', class: 'grid-label' }, formatClockDuration(seconds)));
+    chart.append(svg('text', { x: margin.left - 10, y: y + 4, 'text-anchor': 'end', class: 'grid-label' }, formatMetricValue(value, analytics.metric)));
   }
   const slot = plotWidth / analytics.buckets.length, barWidth = Math.min(58, slot * .68);
   analytics.buckets.forEach((bucket, index) => {
     const x = margin.left + slot * index + (slot - barWidth) / 2; let yBottom = margin.top + plotHeight;
     for (const segment of bucket.segments) {
-      const segmentHeight = plotHeight * segment.seconds / maximum; yBottom -= segmentHeight;
-      const rect = svg('rect', { x, y: yBottom, width: barWidth, height: Math.max(0, segmentHeight), fill: colors.get(segment.key), class: 'bar-segment', tabindex: '0', 'aria-label': `${bucket.label}, ${segment.label}: ${formatClockDuration(segment.seconds)}` });
-      rect.append(svg('title', {}, `${bucket.label}\n${segment.label}\n${formatClockDuration(segment.seconds)}`)); chart.append(rect);
+      const segmentHeight = plotHeight * segment.value / maximum; yBottom -= segmentHeight;
+      const formatted = formatMetricValue(segment.value, analytics.metric, { tooltip: true });
+      const detail = analytics.metric === 'avg-time' ? `${formatted} contribution (${formatClockDuration(segment.averageValue)} stack average)` : formatted;
+      const rect = svg('rect', { x, y: yBottom, width: barWidth, height: Math.max(0, segmentHeight), fill: colors.get(segment.key), class: 'bar-segment', tabindex: '0', 'aria-label': `${bucket.label}, ${segment.label}: ${detail}` });
+      rect.append(svg('title', {}, `${bucket.label}
+${segment.label}
+${detail}`)); chart.append(rect);
     }
     const labelY = height - margin.bottom + 24;
-    const label = svg('text', { x: x + barWidth / 2, y: labelY, 'text-anchor': 'end', transform: `rotate(-28 ${x + barWidth / 2} ${labelY})`, class: 'axis-label' }, bucket.label);
-    chart.append(label);
+    chart.append(svg('text', { x: x + barWidth / 2, y: labelY, 'text-anchor': 'end', transform: `rotate(-28 ${x + barWidth / 2} ${labelY})`, class: 'axis-label' }, bucket.label));
   });
   container.append(chart);
   for (const item of analytics.series) {
@@ -116,16 +157,6 @@ function renderChart(analytics) {
     const swatch = document.createElement('span'); swatch.className = 'legend-swatch'; swatch.style.backgroundColor = colors.get(item.key);
     const label = document.createElement('span'); label.textContent = item.label; node.append(swatch, label); legend.append(node);
   }
-  const head = document.createElement('thead'), headRow = document.createElement('tr');
-  for (const label of ['Interval', ...analytics.series.map(item => item.label), 'Total']) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; headRow.append(th); }
-  head.append(headRow); table.append(head);
-  const body = document.createElement('tbody');
-  for (const bucket of analytics.buckets) {
-    const row = document.createElement('tr'), values = new Map(bucket.segments.map(segment => [segment.key, segment.seconds]));
-    for (const value of [bucket.label, ...analytics.series.map(item => formatClockDuration(values.get(item.key) || 0)), formatClockDuration(bucket.totalSeconds)]) { const td = document.createElement('td'); td.textContent = value; row.append(td); }
-    body.append(row);
-  }
-  table.append(body);
 }
 
 function render() {
@@ -135,10 +166,13 @@ function render() {
   renderFacet($('repositories-facet'), facets.repositories, state.repositories, state.repositoriesSearch, render);
   const filtered = filterReportRecords(state.records, selectedFilters());
   renderSummary(filtered);
-  const interval = $('dimension-interval').checked ? $('interval').value : null;
-  $('interval').disabled = interval === null;
-  renderChart(buildAnalytics(filtered, { dimensions: dimensions(), interval }));
-  $('download-timesheet').disabled = !filtered.length;
+  state.analytics = buildAnalytics(filtered, {
+    metric: $('metric').value,
+    horizontalAxis: $('horizontal-axis').value,
+    stackBy: $('stack-by').value,
+  });
+  renderChart(state.analytics);
+  setDownloadsAvailable(Boolean(filtered.length));
 }
 
 async function loadRange(range) {
@@ -173,26 +207,32 @@ $('period').addEventListener('change', () => {
   if (custom) {
     state.requestId += 1; state.loading = false; state.range = null;
     void send({ type: 'CANCEL_REPORT' }).catch(() => {});
-    $('loading').hidden = true; $('report-content').hidden = true; $('download-timesheet').disabled = true;
+    $('loading').hidden = true; $('report-content').hidden = true; setDownloadsAvailable(false);
     $('source').textContent = 'Choose a custom date range and apply it.';
   } else void applyPeriod();
 });
 $('apply-period').addEventListener('click', () => void applyPeriod());
-for (const id of ['dimension-person', 'dimension-repository', 'dimension-issue', 'dimension-interval', 'interval']) $(id).addEventListener('change', render);
+for (const id of ['metric', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
+$('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
 $('repositories-search').addEventListener('input', event => { state.repositoriesSearch = event.target.value; render(); });
 $('people-all').addEventListener('click', () => { state.people = new Set(state.records.map(record => record.user)); render(); });
 $('repositories-all').addEventListener('click', () => { state.repositories = new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`)); render(); });
 $('settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
-$('download-timesheet').addEventListener('click', () => {
-  const filtered = filterReportRecords(state.records, selectedFilters()), format = $('export-format').value;
+function downloadTimesheet(format, event) {
+  event.preventDefault();
+  const filtered = filterReportRecords(state.records, selectedFilters());
+  if (!state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, { format, startDate: state.range.startDate, endDate: state.range.endDate });
-  const blob = new Blob([content], { type: format === 'csv' ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob), anchor = document.createElement('a');
+  const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+  const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');
   anchor.href = url; anchor.download = reportFilename(format, state.range.startDate, state.range.endDate); anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
-});
+}
+$('download-csv').addEventListener('click', event => downloadTimesheet('csv', event));
+$('download-json').addEventListener('click', event => downloadTimesheet('json', event));
+
 
 const initial = periodRange('this-week', localDateValue());
 $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;

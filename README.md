@@ -6,7 +6,7 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 
 - Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation. Edit an entry end time by dragging up to ±12 hours, and drag a boundary between adjacent entries across its full valid range to move both timestamps together.
 - Main panel shows the authenticated user's complete tracked total for today, including an unsynced completion exactly once and a live running timer.
-- Dedicated Reports page with repository-wide person/repository facets, instant day/week/month stacked-bar analytics, and plain-text or CSV timesheet downloads for weekly, monthly, quarterly, yearly, and custom periods.
+- Dedicated Reports page with repository-wide person/repository facets; selectable total time, average time per distinct task, or distinct task count; independent day/week/month/person/repository/task horizontal and stack dimensions; and direct CSV/JSON timesheet downloads for weekly, monthly, quarterly, yearly, and custom periods.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
@@ -38,7 +38,7 @@ The data repository must already exist and allow direct commits to its configure
 2. Use the stopwatch control immediately before your GitHub avatar, or use the extension toolbar popup.
 3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
 4. The dropdown shows the complete tracked total for today; edit or delete recent records directly there or in the toolbar popup.
-5. Choose **Reports** before the Settings icon to open repository-wide analytics. Select a period, facet by person or GitHub repository, check any combination of Person/Repository/Issue or PR breakdowns, choose a day/week/month interval, or download the current selection as plain text or CSV. The stopwatch is gray while idle and green while any timer is running.
+5. Choose **Reports** before the Settings icon to open repository-wide analytics. Select a period, facet by person or GitHub repository, choose the metric plus horizontal and stack dimensions, or download the current selection directly as CSV or JSON. The stopwatch is gray while idle and green while any timer is running.
 
 A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar month selects the eventual monthly file.
 
