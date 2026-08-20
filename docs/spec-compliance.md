@@ -13,7 +13,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Descriptions | Optional, maximum 2,000 characters |
 | Manual entries | Deferred to MVP 1.1 |
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
-| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct daily-file read per day; globally sorted by editable start timestamp; maximum 50 returned |
+| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly-file read per represented month; globally sorted by editable start timestamp; maximum 50 returned |
 | External issue owners | Configurable allowlist; defaults to the time-data repository owner |
 | Storage | One configured private GitHub repository and canonical branch |
 | Deletion | Allowed after explicit confirmation, with Git history retained |
@@ -24,13 +24,14 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## Architecture mapping
 
-- `src/content/github.js` detects canonical `/{owner}/{repo}/issues/{number}` and `/{owner}/{repo}/pull/{number}` pages, survives dynamic GitHub navigation, and inserts a native-style stopwatch control immediately before the avatar. Its closed-Shadow dropdown provides numbered Start actions, Stop, sync status/retry, recent entries, edit/delete, draggable ±12-hour Edit adjustment, uncapped full-valid-range adjacent-entry boundary movement, a complete today total, Reports, and Settings; the icon is gray while idle and green while any timer is active.
+- `src/content/github.js` survives dynamic GitHub navigation and inserts a closed-Shadow split stopwatch control immediately before the avatar on every GitHub page. The left segment opens full timer management only on canonical issue/PR pages and otherwise opens the same Reports/Tasks navigation as the separately clickable arrow.
 - `src/background/service-worker.js` owns privileged messages, GitHub API access, synchronization, and timer mutations.
-- `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, and atomic multi-file commits through Git Data APIs.
+- `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, atomic multi-file commits through Git Data APIs, and bounded GraphQL hydration of tracked task titles/status.
 - `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across monthly text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-month entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
 - `src/storage/chrome-store.js` stores configuration, the PAT, recent/pending state, and repository-scoped report snapshot/blob caches in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, edit/delete UI, sync status, and conflict acknowledgement.
 - `src/reports/*` loads an inclusive Start-date range from canonical monthly user files with branch ETag validation and immutable-SHA cache reuse, then performs person/repository faceting, selectable metric/axis stacked analytics (task metrics deduplicate repeated sessions by canonical issue/PR URL), and CSV/JSON export entirely in the extension page.
+- `src/tasks/*` preselects only the authenticated user's monthly paths, aggregates repeated sessions and any active-only task by canonical issue/PR URL, sorts by completed plus running time, defaults to confirmed-open work over the last two weeks, filters immediately while typing, and uses the serialized tracker Start/Stop messages. Unknown metadata remains available under All rather than being mislabeled Open.
 - `src/options/*` validates the authenticated user, private repository, branch, write access, owner policy, and recent-entry window.
 
 ## Data and concurrency invariants
@@ -57,6 +58,6 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## MVP acceptance coverage
 
-Automated tests cover canonical issue/PR detection, monthly path/Start-month validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-month loading, stable record lookup after reordering, same-month and atomic cross-month edits, uncapped boundary movement, persistent SHA/ETag report caching, stale-load cancellation, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, and current authenticated-header placement, exact today totals beyond the recent-row cap, repository-wide range loading, period boundaries, faceting, analytics aggregation across every requested axis combination, and CSV/JSON exports.
+Automated tests cover canonical issue/PR detection, monthly path/Start-month validation, strict plain-text parsing, UTF-8 GitHub handling, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-month loading, stable record lookup after reordering, same-month and atomic cross-month edits, uncapped boundary movement, persistent SHA/ETag report caching, stale-load cancellation, cache eviction, popup behavior, GitHub shortcut isolation, SPA/header recovery, split navigation on non-issue pages, exact today totals beyond the recent-row cap, repository-wide range loading, period boundaries, faceting, analytics aggregation across every requested axis combination, task deduplication, active-time re-sorting, user-only blob selection, load budgets, bounded cached metadata hydration, and CSV/JSON exports.
 
 Manual entry, older-entry search, reminders, GitHub App authentication, and Firefox packaging remain intentionally outside MVP 1, consistent with the specification's suggested scope.

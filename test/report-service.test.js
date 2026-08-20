@@ -104,3 +104,24 @@ test('report service identifies the malformed monthly file that must be repaired
   github.files = new Map([['times/2026-08/alice.txt', { sha: 'd'.repeat(40), text: 'URL: not-a-github-url\nStart: 2026-08-18T08:00:00+00:00\nEnd: 2026-08-18T09:00:00+00:00\n' }]]);
   await assert.rejects(() => new ReportService({ github }).loadRange({ startDate: '2026-08-18', endDate: '2026-08-18' }), /Invalid time data in times\/2026-08\/alice\.txt/);
 });
+
+test('current-user task loading never fetches or parses another user monthly file', async () => {
+  const github = new FakeGitHub();
+  github.files.set('times/2026-08/bob.txt', { sha: B, text: 'malformed hostile data' });
+  const records = await new ReportService({ github }).loadUserRange(
+    { startDate: '2026-08-17', endDate: '2026-08-18' }, 'alice',
+  );
+  assert.deepEqual(github.reads, ['times/2026-08/alice.txt']);
+  assert.equal(records.every(record => record.user === 'alice'), true);
+});
+
+test('current-user task loading enforces file and record budgets before returning partial data', async () => {
+  const github = new FakeGitHub(), service = new ReportService({ github });
+  await assert.rejects(() => service.loadUserRange(
+    { startDate: '2026-08-01', endDate: '2026-08-31' }, 'alice', {}, { maxFiles: 0 },
+  ), /file budget/i);
+  assert.equal(github.reads.length, 0);
+  await assert.rejects(() => service.loadUserRange(
+    { startDate: '2026-08-01', endDate: '2026-08-31' }, 'alice', {}, { maxRecords: 2 },
+  ), /record budget/i);
+});

@@ -10,8 +10,19 @@ const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
   assert.doesNotThrow(() => assertMessageAllowed('EDIT_ENTRY', content, origin));
+});
+
+test('non-issue GitHub pages can open navigation pages but cannot mutate timers', () => {
+  const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
+  for (const type of ['GET_PAGE_STATE', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
+    assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
+  }
+  for (const type of ['START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY']) {
+    assert.throws(() => assertMessageAllowed(type, dashboard, origin), /not allowed/i);
+  }
 });
 
 test('content-script START issue must match its sender URL', () => {

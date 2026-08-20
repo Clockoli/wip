@@ -4,20 +4,21 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 
 ## What is implemented
 
-- Native-style GitHub header control on issue and pull-request pages: a gray idle stopwatch, green running stopwatch, dropdown arrow, and full Start/Stop/recent/edit/delete/sync menu that survives GitHub SPA navigation. Edit an entry end time by dragging up to ±12 hours, and drag a boundary between adjacent entries across its full valid range to move both timestamps together.
+- Native-style split GitHub header control on every GitHub page. Its left stopwatch opens the full Start/Stop/recent/edit/delete/sync panel on issue and pull-request pages; elsewhere it opens navigation. The separately clickable arrow always opens Reports/Tasks navigation and survives GitHub SPA navigation.
 - Main panel shows the authenticated user's complete tracked total for today, including an unsynced completion exactly once and a live running timer.
 - Dedicated Reports page with repository-wide person/repository facets; selectable total time, average time per distinct task, or distinct task count; independent day/week/month/person/repository/task horizontal and stack dimensions; and direct CSV/JSON timesheet downloads for weekly, monthly, quarterly, yearly, and custom periods.
+- Dedicated **Recently tracked work** page: current-user issues and pull requests are deduplicated, hydrated with cached GitHub titles/status, sorted by completed plus currently running time, filtered as you type, and controlled with inline Start/Stop buttons. Its rolling period defaults to two weeks and persists locally; unavailable status appears only under All.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
 - Authenticated GitHub login as the canonical user ID.
 - One GitHub-backed active timer per user.
-- One human-editable plain-text file per GitHub user per local day.
+- One human-editable plain-text file per GitHub user per local month.
 - SHA-protected edits/deletes and safe conflict errors.
 - Local cache and an idempotent offline Stop queue.
 - Stop retries match the full intended record; concurrent Stops converge only when the active file is already gone and exactly one same-URL/same-Start completion exists.
 - 12-hour long-entry warning.
 - Configurable allowed issue owners and recent-entry window.
-- Recent entries are sorted by their editable start timestamp across the selected window. Loading requires at most one direct GitHub read per day rather than one read per record.
+- Recent entries are sorted by their editable start timestamp across the selected window. Loading requires at most one direct GitHub read per represented month rather than one read per record.
 
 Deferred by the specification: manual entries, GitHub App auth, Firefox packaging, reminders, and advanced conflict-diff UI.
 
@@ -34,11 +35,11 @@ The data repository must already exist and allow direct commits to its configure
 
 ## Usage
 
-1. Open `https://github.com/{owner}/{repo}/issues/{number}` or `https://github.com/{owner}/{repo}/pull/{number}`.
-2. Use the stopwatch control immediately before your GitHub avatar, or use the extension toolbar popup.
+1. Open GitHub. The split stopwatch control is immediately before your avatar on every page.
+2. On an issue or pull request, use the left stopwatch for tracking. On other GitHub pages, either segment opens Reports/Tasks navigation. The arrow always opens that navigation menu.
 3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
 4. The dropdown shows the complete tracked total for today; edit or delete recent records directly there or in the toolbar popup.
-5. Choose **Reports** before the Settings icon to open repository-wide analytics. Select a period, facet by person or GitHub repository, choose the metric plus horizontal and stack dimensions, or download the current selection directly as CSV or JSON. The stopwatch is gray while idle and green while any timer is running.
+5. Choose **Reports** for repository-wide analytics, or **Tasks** for your recently tracked issues and pull requests. The stopwatch is gray while idle and green while any timer is running.
 
 A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar month selects the eventual monthly file.
 
@@ -60,7 +61,7 @@ Description: optional single-line text
 
 `Description` is omitted when empty. Every timestamp includes a timezone. The active file uses the same format without `End`. Files can be maintained manually as long as field names, canonical GitHub URLs, timestamp timezones, Start months matching their `times/YYYY-MM/` directory, and blank-line record separators are preserved.
 
-A normal recent-entry refresh performs one direct file read per represented month (normally one or two). Editing or deleting rewrites one monthly file. Same-month edits and boundary changes perform one SHA-guarded write; cross-month changes update every affected monthly file in one atomic Git commit. Reports persist raw immutable blobs by Git SHA in extension-origin IndexedDB and conditionally validate the branch ref with an ETag. An unchanged branch is served from the cache after a `304 Not Modified`; a changed branch downloads only missing blob SHAs. Obsolete report loads are aborted before a newer range begins.
+A normal recent-entry refresh performs one direct file read per represented month (normally one or two). Editing or deleting rewrites one monthly file. Same-month edits and boundary changes perform one SHA-guarded write; cross-month changes update every affected monthly file in one atomic Git commit. Reports persist raw immutable blobs by Git SHA in extension-origin IndexedDB and conditionally validate the branch ref with an ETag. The Tasks page selects only the authenticated user's monthly paths before blob reads, applies explicit file/byte/record/metadata-request budgets, and caches issue/PR metadata for 15 minutes. An unchanged branch is served from the cache after a `304 Not Modified`; a changed branch downloads only missing blob SHAs. Obsolete report loads are aborted before a newer range begins.
 
 Every operation uses predictable commit messages without descriptions.
 
@@ -111,6 +112,7 @@ src/content/      GitHub issue/pull-request header control and dropdown
 src/domain/       validation, monthly text format, records, paths, timestamps
 src/options/      secure setup and validation
 src/reports/      repository-wide facets, analytics chart, and timesheet export
+src/tasks/        recent tracked-work list, live filtering, and Start/Stop controls
 src/popup/        active/recent/edit/delete UI
 src/services/     timer and synchronization state machine
 src/storage/      extension-origin IndexedDB adapter

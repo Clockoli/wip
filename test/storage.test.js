@@ -63,3 +63,13 @@ test('v2 migration refuses to silently discard an unrecognized pending completio
   await assert.rejects(() => store.ensureDataVersion(3), /Cannot migrate a pending completion/);
   assert.equal((await store.getState()).dataVersion, 2);
 });
+
+test('task metadata cache is repository-scoped and cleared with configuration', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const cache = { repositoryKey: 'acme/time@main', fetchedAt: 123, entries: { 'https://github.com/acme/app/issues/1': { title: 'One', status: 'OPEN' } } };
+  await store.saveTaskMetadataCache(cache);
+  assert.deepEqual(await store.getTaskMetadataCache('acme/time@main'), cache);
+  assert.equal(await store.getTaskMetadataCache('other/time@main'), null);
+  await store.clearConfig();
+  assert.equal(await store.getTaskMetadataCache('acme/time@main'), null);
+});

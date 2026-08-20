@@ -1,4 +1,4 @@
-import { validateBranch, validateOwner, validateRepo } from '../domain/values.js';
+import { normalizeIssue, validateBranch, validateOwner, validateRepo } from '../domain/values.js';
 
 export class GitHubApiError extends Error {
   constructor(message, status, code = 'github_api_error') { super(message); this.name = this.constructor.name; this.status = status; this.code = code; }
@@ -145,7 +145,7 @@ export class GitHubClient {
     const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
     const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
-      .map(({ path, sha }) => ({ path, sha })).sort((a, b) => a.path.localeCompare(b.path));
+      .map(({ path, sha, size }) => ({ path, sha, ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}) })).sort((a, b) => a.path.localeCompare(b.path));
     return { notModified: false, etag: snapshotEtag, files };
   }
 
@@ -159,6 +159,35 @@ export class GitHubClient {
     const body = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/git/blobs/${encodeURIComponent(sha)}`, { signal });
     if (body.encoding !== 'base64' || typeof body.content !== 'string' || body.truncated) throw new GitHubApiError('Expected a complete text blob', 422);
     return { path, sha, text: decodeBase64Utf8(body.content) };
+  }
+
+  async getTaskMetadata(issues, { batchSize = 40, maxRequests = 40, signal } = {}) {
+    const unique = new Map();
+    for (const value of issues ?? []) {
+      const issue = normalizeIssue(value); unique.set(issue.url, issue);
+    }
+    const requested = [...unique.values()], metadata = new Map();
+    const size = Math.min(50, Math.max(1, Number(batchSize) || 40));
+    const requestBudget = Number(maxRequests);
+    if (!Number.isSafeInteger(requestBudget) || requestBudget < 0) throw new Error('Invalid task metadata request budget');
+    if (Math.ceil(requested.length / size) > requestBudget) {
+      throw new Error(`Task metadata request budget exceeded (${requested.length} tasks; maximum ${requestBudget * size}). Choose a shorter period.`);
+    }
+    for (let offset = 0; offset < requested.length; offset += size) {
+      const batch = requested.slice(offset, offset + size);
+      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title state url } ... on PullRequest { title state url } } }`).join('\n');
+      const body = await this.request('/graphql', { method: 'POST', signal, body: JSON.stringify({ query: `query TrackedTasks {\n${fields}\n}` }) });
+      if (!body?.data && body?.errors?.length) throw new GitHubApiError('GitHub could not load tracked task details', 422);
+      for (let index = 0; index < batch.length; index += 1) {
+        const issue = batch[index], node = body?.data?.[`task${index}`]?.issueOrPullRequest;
+        const expectedType = issue.type === 'pull_request' ? 'PullRequest' : 'Issue';
+        if (!node || node.__typename !== expectedType || node.url !== issue.url || typeof node.title !== 'string') continue;
+        const status = String(node.state || '').toUpperCase();
+        if (!['OPEN', 'CLOSED', 'MERGED'].includes(status)) continue;
+        metadata.set(issue.url, { title: node.title, status });
+      }
+    }
+    return metadata;
   }
 
   async putText(path, text, message, sha) {

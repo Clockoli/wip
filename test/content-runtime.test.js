@@ -496,3 +496,72 @@ test('main panel shows today total and opens Reports before Settings', async () 
   await reports.onclick({ isTrusted: true });
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
 });
+
+test('split header navigation works on a non-issue GitHub page without loading tracker entries', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
+  const { actions, avatarSlot } = makeHeader();
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(actions.children.at(-2)?.id, 'github-private-time-tracker-root');
+  assert.equal(actions.children.at(-1), avatarSlot);
+  const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
+  const arrow = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-menu'));
+  assert.ok(main?.onclick); assert.ok(arrow?.onclick);
+  assert.equal(main.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(arrow.getAttribute('aria-haspopup'), 'menu');
+  await arrow.onclick({ isTrusted: true });
+  const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks');
+  assert.ok(tasks?.onclick);
+  await tasks.onclick({ isTrusted: true });
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TASKS'), { type: 'OPEN_TASKS' });
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
+  await main.onclick({ isTrusted: true });
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Reports'));
+});
+
+test('split main segment resolves non-issue to issue SPA navigation at activation time', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
+  const { actions } = makeHeader();
+  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+    messages.push(structuredClone(message));
+    if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [], todaySeconds: 0, reportDate: '2026-08-20', active: null, pendingCount: 0, pendingWrites: [] } });
+    else callback({ ok: true, data: {} });
+  } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
+  location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
+  await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start timer on #7'));
+});
+
+test('split main segment resolves issue to non-issue SPA navigation at activation time', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) { messages.push(structuredClone(message)); callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} }); } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
+  location.pathname = '/issues/assigned'; location.href = 'https://github.com/issues/assigned';
+  await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks'));
+});

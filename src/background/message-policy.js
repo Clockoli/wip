@@ -1,21 +1,28 @@
 import { normalizeIssue, parseIssueUrl } from '../domain/values.js';
 
-const CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_OPTIONS']);
-const EXTENSION_MESSAGES = new Set(['GET_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'LOAD_REPORT', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_OPTIONS']);
+const ISSUE_CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']);
+const PAGE_CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']);
+const EXTENSION_MESSAGES = new Set(['GET_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'LOAD_REPORT', 'LOAD_TASKS', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']);
 
-function senderType(sender, extensionOrigin) {
+function senderContext(sender, extensionOrigin) {
   const url = sender?.url || sender?.tab?.url || '';
-  if (url.startsWith(extensionOrigin)) return 'extension';
-  const issue = parseIssueUrl(url);
-  if (issue && sender?.tab) return 'content';
-  return 'unknown';
+  if (url.startsWith(extensionOrigin)) return { kind: 'extension', issue: null };
+  try {
+    const parsed = new URL(url);
+    if (sender?.tab && parsed.protocol === 'https:' && parsed.hostname === 'github.com') {
+      return { kind: 'content', issue: parseIssueUrl(url) };
+    }
+  } catch { /* invalid sender URL */ }
+  return { kind: 'unknown', issue: null };
 }
 
 export function assertMessageAllowed(type, sender, extensionOrigin) {
-  const kind = senderType(sender, extensionOrigin);
-  const allowed = kind === 'extension' ? EXTENSION_MESSAGES : kind === 'content' ? CONTENT_MESSAGES : new Set();
+  const context = senderContext(sender, extensionOrigin);
+  const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES
+    : context.kind === 'content' ? (context.issue ? ISSUE_CONTENT_MESSAGES : PAGE_CONTENT_MESSAGES)
+      : new Set();
   if (!allowed.has(type)) throw new Error(`Message ${type} is not allowed from this sender`);
-  return kind;
+  return context.kind;
 }
 
 export function issueForStart(payloadIssue, sender, extensionOrigin) {

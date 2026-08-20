@@ -1,5 +1,5 @@
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
-const ALL_KEYS = ['config', 'token', 'reportCache', ...Object.keys(DEFAULT_STATE)];
+const ALL_KEYS = ['config', 'token', 'reportCache', 'taskMetadataCache', ...Object.keys(DEFAULT_STATE)];
 
 function requestResult(request) {
   return new Promise((resolve, reject) => {
@@ -110,6 +110,13 @@ export class ChromeStore {
   }
 
   async saveReportCache(reportCache) { await this.backend.setMany({ reportCache }); }
+
+  async getTaskMetadataCache(repositoryKey) {
+    const { taskMetadataCache = null } = await this.backend.getMany(['taskMetadataCache']);
+    return taskMetadataCache?.repositoryKey === repositoryKey ? taskMetadataCache : null;
+  }
+
+  async saveTaskMetadataCache(taskMetadataCache) { await this.backend.setMany({ taskMetadataCache }); }
   async saveConfiguration(config, token, statePatch) { await this.backend.setMany({ config, token, ...statePatch }); }
 
   async clearConfig() { await this.backend.deleteMany(ALL_KEYS); }

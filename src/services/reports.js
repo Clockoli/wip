@@ -1,7 +1,8 @@
 import { parseMonthlyText, parseMonthlyTextPath } from '../domain/monthly-text.js';
-import { entryDateParts } from '../domain/values.js';
+import { entryDateParts, validatePathSegment } from '../domain/values.js';
 
 const CACHE_VERSION = 1;
+const DEFAULT_USER_BUDGET = Object.freeze({ maxFiles: 13, maxBytes: 20 * 1024 * 1024, maxRecords: 100000 });
 
 function withoutStorageMetadata(record) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')));
@@ -16,12 +17,19 @@ function normalizeCache(value, repositoryKey) {
       || !Array.isArray(value.files) || !value.blobs || typeof value.blobs !== 'object' || Array.isArray(value.blobs)) {
     return emptyCache(repositoryKey);
   }
-  const files = value.files.filter(file => file && typeof file.path === 'string' && /^[0-9a-f]{40}$/i.test(file.sha));
+  const files = value.files.filter(file => file && typeof file.path === 'string' && /^[0-9a-f]{40}$/i.test(file.sha))
+    .map(file => ({ path: file.path, sha: file.sha, ...(Number.isSafeInteger(file.size) && file.size >= 0 ? { size: file.size } : {}) }));
   const blobs = {};
   for (const [sha, text] of Object.entries(value.blobs)) {
     if (/^[0-9a-f]{40}$/i.test(sha) && typeof text === 'string') blobs[sha] = text;
   }
   return { version: CACHE_VERSION, repositoryKey, etag: typeof value.etag === 'string' ? value.etag : '', files, blobs };
+}
+
+function budgetValue(value, fallback, label) {
+  const parsed = value === undefined ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`Invalid task ${label} budget`);
+  return parsed;
 }
 
 export class ReportService {
@@ -39,7 +47,18 @@ export class ReportService {
     await this.cache?.saveReportCache?.(value);
   }
 
-  async loadRange({ startDate, endDate }, { signal } = {}) {
+  async loadUserRange(range, user, options = {}, budgets = {}) {
+    const validatedUser = validatePathSegment(user, 'user');
+    return this.loadRange(range, {
+      ...options,
+      user: validatedUser,
+      maxFiles: budgetValue(budgets.maxFiles, DEFAULT_USER_BUDGET.maxFiles, 'file'),
+      maxBytes: budgetValue(budgets.maxBytes, DEFAULT_USER_BUDGET.maxBytes, 'byte'),
+      maxRecords: budgetValue(budgets.maxRecords, DEFAULT_USER_BUDGET.maxRecords, 'record'),
+    });
+  }
+
+  async loadRange({ startDate, endDate }, { signal, user = null, maxFiles = Infinity, maxBytes = Infinity, maxRecords = Infinity } = {}) {
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
     signal?.throwIfAborted();
@@ -63,7 +82,11 @@ export class ReportService {
     const files = cache.files.map(file => {
       try { return { ...file, ...parseMonthlyTextPath(file.path) }; }
       catch { return null; }
-    }).filter(file => file && file.month >= startMonth && file.month <= endMonth);
+    }).filter(file => file && file.month >= startMonth && file.month <= endMonth && (!user || file.user === user));
+
+    if (files.length > maxFiles) throw new Error(`Task file budget exceeded (${files.length} files; maximum ${maxFiles}). Choose a shorter period.`);
+    const knownBytes = files.reduce((sum, file) => sum + (Number.isSafeInteger(file.size) ? file.size : 0), 0);
+    if (knownBytes > maxBytes) throw new Error(`Task byte budget exceeded (${knownBytes} bytes; maximum ${maxBytes}). Choose a shorter period.`);
 
     const missing = files.filter(file => typeof cache.blobs[file.sha] !== 'string');
     try {
@@ -79,6 +102,9 @@ export class ReportService {
       throw error;
     }
 
+    const actualBytes = files.reduce((sum, file) => sum + new TextEncoder().encode(cache.blobs[file.sha] ?? '').length, 0);
+    if (actualBytes > maxBytes) throw new Error(`Task byte budget exceeded (${actualBytes} bytes; maximum ${maxBytes}). Choose a shorter period.`);
+
     const records = files.flatMap(file => {
       try {
         return parseMonthlyText(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })
@@ -88,6 +114,7 @@ export class ReportService {
         throw new Error(`Invalid time data in ${file.path}: ${error.message}`);
       }
     });
+    if (records.length > maxRecords) throw new Error(`Task record budget exceeded (${records.length} records; maximum ${maxRecords}). Choose a shorter period.`);
     return records.sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }
 }

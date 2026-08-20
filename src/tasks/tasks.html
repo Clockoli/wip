@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Recently tracked work</title>
+  <link rel="stylesheet" href="tasks.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">GitHub Private Time Tracker</p>
+      <h1>Recently tracked work</h1>
+      <p id="source" class="muted">Loading configured repository…</p>
+    </div>
+    <button id="settings" class="button secondary" type="button">Settings</button>
+  </header>
+
+  <main>
+    <section class="toolbar" aria-label="Task filters">
+      <input id="task-filter" type="text" autocomplete="off" placeholder="Filter by title, repository, or number" aria-label="Filter tracked work">
+      <label>Status
+        <select id="status">
+          <option value="open" selected>Open</option>
+          <option value="closed">Closed</option>
+          <option value="all">All</option>
+        </select>
+      </label>
+      <label>Period
+        <select id="period">
+          <option value="two-weeks">Last 2 weeks</option>
+          <option value="one-month">Last month</option>
+          <option value="three-months">Last 3 months</option>
+          <option value="six-months">Last 6 months</option>
+          <option value="one-year">Last year</option>
+        </select>
+      </label>
+    </section>
+
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="loading" class="notice" role="status">Loading tracked work from GitHub…</div>
+    <div id="setup" class="notice" hidden>
+      Configure a private time-data repository before opening tracked work.
+      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+    </div>
+
+    <section id="tasks-content" class="tasks-card" hidden aria-labelledby="result-count">
+      <header class="list-header"><strong id="result-count">0 results</strong></header>
+      <div id="task-list" aria-live="polite"></div>
+      <p id="empty" class="empty" hidden>No tracked work matches these filters.</p>
+    </section>
+  </main>
+  <script type="module" src="tasks.js"></script>
+</body>
+</html>

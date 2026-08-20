@@ -12,6 +12,7 @@
   let root = null;
   let shadow = null;
   let menuOpen = false;
+  let navigationOpen = false;
   let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
   let recent = [];
   let recentLoaded = false;
@@ -212,7 +213,7 @@
 
   function setError(error = '') { errorText = error?.message || String(error || ''); renderUi(); }
 
-  function closeMenu() { menuOpen = false; editing = null; errorText = ''; renderUi(); }
+  function closeMenu() { menuOpen = false; navigationOpen = false; editing = null; errorText = ''; renderUi(); }
 
   function originalRecord(entry) { return { issueUrl: entry.issue.url, startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
@@ -416,6 +417,15 @@
     menu.append(body); return menu;
   }
 
+  function renderNavigationMenu() {
+    const menu = el('section', undefined, 'navigation-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Time tracker pages');
+    const reports = button('Reports', 'navigation-item', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); });
+    reports.setAttribute('role', 'menuitem'); reports.prepend(icon('graph', REPORTS_PATH));
+    const tasks = button('Tasks', 'navigation-item', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); });
+    tasks.setAttribute('role', 'menuitem'); tasks.prepend(icon('issue-opened', STOPWATCH_PATH));
+    menu.append(reports, tasks); return menu;
+  }
+
   function renderUi() {
     if (!shadow || !root?.isConnected) return;
     clearInterval(tick); tick = null; todayTotalValue = null;
@@ -430,14 +440,23 @@
       button { border:1px solid var(--button-default-borderColor-rest,rgba(31,35,40,.15)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#1f2328); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:disabled { opacity:.55; cursor:default } .wide { width:100%; margin-top:10px } .primary { background:var(--button-primary-bgColor-rest,#1f883d); color:#fff } .primary:hover { background:var(--button-primary-bgColor-hover,#1a7f37) } .danger { background:#cf222e; border-color:rgba(27,31,36,.15); color:#fff } .danger:hover { background:#a40e26 } .danger-outline { color:var(--fgColor-danger,#cf222e) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; border:0; padding:5px 7px; background:transparent; color:var(--fgColor-muted,#59636e) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d8dee4); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { border:0; padding:5px; background:transparent; color:var(--fgColor-muted,#59636e) } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d8dee4) } .section-head { margin-bottom:7px }
       .time-drag { position:relative; min-height:32px; margin:7px 0; color:var(--fgColor-muted,#59636e); cursor:ew-resize; touch-action:none; user-select:none } .time-drag[aria-disabled="true"] { opacity:.5; cursor:default } .time-drag[aria-busy="true"] { opacity:.65 } .drag-line { position:absolute; left:0; right:0; top:16px; height:1px; background:var(--borderColor-default,#d1d9e0) } .drag-grip { position:absolute; top:4px; display:grid; place-items:center; width:28px; height:24px; box-sizing:border-box; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--button-default-bgColor-rest,#f6f8fa); font-weight:700; will-change:left,transform } .time-boundary { margin:0 }
+      .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
+      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:0 8px 24px rgba(140,149,159,.22) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; border:0; background:transparent; text-align:left }
       .entry { padding:10px 0; border-top:1px solid var(--borderColor-muted,#d8dee4) } .entry:first-of-type { border-top:0 } .entry-copy { flex:1; min-width:0 } .entry-copy a { overflow-wrap:anywhere } .entry-description { margin-top:4px; overflow-wrap:anywhere } label { display:block; margin:10px 0 4px; font-size:12px; font-weight:600 } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#cf222e); white-space:pre-wrap }
-      @media (prefers-color-scheme:dark) { .trigger { background:#21262d; border-color:#30363d; color:#8b949e } .menu { background:#0d1117; color:#e6edf3; border-color:#30363d; box-shadow:0 8px 24px #010409 } input,textarea { background:#0d1117; color:#e6edf3; border-color:#30363d } }
+      @media (prefers-color-scheme:dark) { .trigger { background:#21262d; border-color:#30363d; color:#8b949e } .menu,.navigation-menu { background:#0d1117; color:#e6edf3; border-color:#30363d; box-shadow:0 8px 24px #010409 } input,textarea { background:#0d1117; color:#e6edf3; border-color:#30363d } }
     `);
-    const trigger = el('button', undefined, `trigger${pageState.active ? ' running' : ''}`); trigger.type = 'button'; trigger.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker'); trigger.setAttribute('aria-haspopup', 'dialog'); trigger.setAttribute('aria-expanded', String(menuOpen)); trigger.title = pageState.active ? 'Time tracker is running' : 'Time tracker';
-    trigger.append(icon('stopwatch', STOPWATCH_PATH), icon('triangle-down', TRIANGLE_PATH, 12));
-    trigger.addEventListener('click', async event => {
+    const current = issueFromLocation(), group = el('div', undefined, 'trigger-group');
+    const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
+    main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
+    main.setAttribute('aria-haspopup', current ? 'dialog' : 'menu'); main.setAttribute('aria-expanded', String(current ? menuOpen : navigationOpen));
+    main.title = pageState.active ? 'Time tracker is running' : current ? 'Open time tracker' : 'Open time tracker pages'; main.append(icon('stopwatch', STOPWATCH_PATH));
+    main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      menuOpen = !menuOpen; editing = null; errorText = ''; renderUi();
+      const activatedIssue = issueFromLocation();
+      if (!activatedIssue) {
+        menuOpen = false; navigationOpen = !navigationOpen; editing = null; errorText = ''; renderUi(); return;
+      }
+      navigationOpen = false; menuOpen = !menuOpen; editing = null; errorText = ''; renderUi();
       if (menuOpen && pageState.configured) {
         loadingRecent = true; renderUi();
         try { applyMenuData(await send({ type: 'LOAD_RECENT', menuData: true })); }
@@ -445,13 +464,19 @@
         finally { loadingRecent = false; renderUi(); }
       }
     });
-    shadow.append(style, trigger);
-    if (menuOpen) shadow.append(renderMenu());
+    const arrow = el('button', undefined, 'trigger trigger-menu'); arrow.type = 'button'; arrow.setAttribute('aria-label', 'Open time tracker pages');
+    arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports and tasks'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
+    arrow.addEventListener('click', event => {
+      if (!event.isTrusted) return;
+      menuOpen = false; navigationOpen = !navigationOpen; editing = null; errorText = ''; renderUi();
+    });
+    group.append(main, arrow); shadow.append(style, group);
+    if (navigationOpen) shadow.append(renderNavigationMenu());
+    else if (menuOpen) shadow.append(renderMenu());
   }
 
   async function render(refresh = false) {
-    const issue = issueFromLocation();
-    if (!issue) { root?.remove(); root = null; shadow = null; menuOpen = false; return; }
+    if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; navigationOpen = false; return; }
     if (!mountInHeader()) return;
     renderUi();
     try { pageState = await send({ type: 'GET_PAGE_STATE', refresh }); errorText = ''; }
@@ -460,10 +485,10 @@
   }
 
   function navigationCheck() {
-    const route = issueFromLocation()?.url ?? '';
+    const route = issueFromLocation()?.url ?? `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; editing = null; menuOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; editing = null; menuOpen = false; navigationOpen = false;
       void render(firstRender);
     } else if (route) {
       const target = headerTarget();
@@ -472,9 +497,9 @@
   }
 
   document.addEventListener('click', event => {
-    if (menuOpen && !event.composedPath().includes(root)) closeMenu();
+    if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
   });
-  document.addEventListener('keydown', event => { if (menuOpen && event.key === 'Escape') closeMenu(); });
+  document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
   navigationCheck();
   setInterval(navigationCheck, 750);
 })();

@@ -22,11 +22,12 @@
 - `src/api/github-client.js`: authenticated GitHub REST Contents API with typed errors.
 - `src/storage/chrome-store.js`: configuration/queue persistence plus repository-scoped branch-ETag and immutable-blob report caches.
 - `src/services/tracker.js`: timer state machine, recent entries, complete today total, edits/deletes, queue retry.
-- `src/services/reports.js`: immutable tree/blob reads for every user's canonical monthly file in an inclusive Start-date range.
+- `src/services/reports.js`: immutable tree/blob reads for every user's reports, plus budgeted authenticated-user-only reads for Tasks, in an inclusive Start-date range.
 - `src/background/service-worker.js`: message boundary; token and API calls remain isolated.
 - `src/content/github.js`: GitHub SPA issue/pull-request detection plus a native-style before-avatar stopwatch control and closed-Shadow management dropdown.
 - `src/popup/*`: active/recent/sync UI and edit/delete controls.
 - `src/reports/*`: weekly/monthly/quarterly/yearly/custom periods, person/repository facets, selectable metric/axis local stacked-bar aggregation, and direct CSV/JSON downloads.
+- `src/tasks/*`: authenticated-user rolling-period task aggregation, immediate text/status filtering, cached GitHub title/status hydration, active-only task inclusion, elapsed-time ordering, and inline Start/Stop controls.
 - `src/options/*`: least-privilege PAT/repository setup and validation.
 
 ## Acceptance checks
@@ -40,4 +41,5 @@
 7. Content script never receives token/config secrets and renders untrusted text with text nodes.
 8. Invalid owner/repo/login/path/date/issue data is rejected before an API write.
 9. Repository-wide reports load matching immutable blobs without exposing credentials or storage SHAs, and all facet/chart changes rerender locally.
-10. Automated Node tests, real-Chromium UI/export checks, and packaged-extension validation pass.
+10. The split GitHub header opens timer management only on issue/PR pages and exposes Reports/Tasks navigation everywhere without exposing privileged report/task data to content scripts.
+11. Automated Node tests, real-Chromium UI/export checks, and packaged-extension validation pass.

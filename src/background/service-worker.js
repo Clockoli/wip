@@ -3,6 +3,7 @@ import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { ReportService } from '../services/reports.js';
+import { aggregateTrackedTasks } from '../domain/tasks.js';
 import { assertMessageAllowed, issueForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 
@@ -10,6 +11,36 @@ const store = new ChromeStore();
 const executor = new SerialExecutor();
 const configuration = new ConfigurationService({ store, githubFactory: options => new GitHubClient(options) });
 const reportLoads = new Map();
+const TASK_METADATA_TTL_MS = 15 * 60 * 1000;
+
+function cachedTaskDetails(value) {
+  if (!value || typeof value.title !== 'string' || !['OPEN', 'CLOSED', 'MERGED'].includes(value.status)) return null;
+  return { title: value.title.slice(0, 500), status: value.status };
+}
+
+async function hydrateTaskMetadata(github, issues, repositoryKey, signal) {
+  const now = Date.now(), cached = await store.getTaskMetadataCache(repositoryKey);
+  const fresh = cached && Number.isFinite(cached.fetchedAt) && now - cached.fetchedAt >= 0
+    && now - cached.fetchedAt < TASK_METADATA_TTL_MS && cached.entries && typeof cached.entries === 'object';
+  const entries = fresh ? { ...cached.entries } : {};
+  const metadata = new Map(), missing = [];
+  for (const issue of issues) {
+    if (Object.hasOwn(entries, issue.url)) {
+      const details = cachedTaskDetails(entries[issue.url]);
+      if (details) metadata.set(issue.url, details);
+    } else missing.push(issue);
+  }
+  if (missing.length) {
+    const loaded = await github.getTaskMetadata(missing, { batchSize: 50, maxRequests: 40, signal });
+    for (const issue of missing) {
+      const details = loaded.get(issue.url) ?? null;
+      entries[issue.url] = details;
+      if (details) metadata.set(issue.url, details);
+    }
+    await store.saveTaskMetadataCache({ repositoryKey, fetchedAt: now, entries });
+  }
+  return metadata;
+}
 
 function serializeError(error) {
   return { message: error?.message || 'Unexpected error', code: error?.code || 'error', status: error?.status || 0 };
@@ -42,7 +73,8 @@ async function loadReport(message) {
   if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
   const branch = config.branch || 'main';
   const repositoryKey = `${config.owner}/${config.repo}@${branch}`;
-  const previous = reportLoads.get(repositoryKey);
+  const loadKey = `${repositoryKey}:reports`;
+  const previous = reportLoads.get(loadKey);
   if (previous) {
     previous.controller.abort();
     await previous.promise.catch(() => {});
@@ -54,15 +86,65 @@ async function loadReport(message) {
     configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
     records: await reports.loadRange(message.payload || {}, { signal: controller.signal }),
   }))();
-  reportLoads.set(repositoryKey, { controller, promise });
+  reportLoads.set(loadKey, { controller, promise });
   try { return await promise; }
   finally {
-    if (reportLoads.get(repositoryKey)?.promise === promise) reportLoads.delete(repositoryKey);
+    if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey);
   }
 }
 
-async function cancelReports() {
-  const active = [...reportLoads.values()];
+async function loadTasks(message, sender) {
+  await store.ensureDataVersion(3);
+  const { config, token } = await store.getConfig();
+  if (!config) return { configured: false, tasks: [], active: null, pendingWrites: [] };
+  if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
+  const branch = config.branch || 'main';
+  const repositoryKey = `${config.owner}/${config.repo}@${branch}`;
+  const requestOwner = sender?.tab?.id ?? sender?.url ?? 'extension';
+  const loadKey = `${repositoryKey}:tasks:${requestOwner}`;
+  const previous = reportLoads.get(loadKey);
+  if (previous) {
+    previous.controller.abort();
+    await previous.promise.catch(() => {});
+  }
+  const controller = new AbortController();
+  const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
+  const reports = new ReportService({ github, cache: store });
+  const promise = (async () => {
+    let { user } = await store.getState();
+    if (!user) {
+      user = await github.getAuthenticatedUser();
+      await store.patchState({ user });
+    }
+    const tracker = new TrackerService({
+      github, store, user, recentDays: config.recentDays || 7,
+      allowedIssueOwners: config.allowedIssueOwners || [config.owner],
+    });
+    const timerState = await tracker.getState({ refresh: true });
+    controller.signal.throwIfAborted();
+    const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
+    const issueValues = records.map(record => record.issue);
+    if (timerState.active) issueValues.push(timerState.active.issue);
+    const issues = [...new Map(issueValues.map(issue => [issue.url, issue])).values()];
+    const metadata = await hydrateTaskMetadata(github, issues, repositoryKey, controller.signal);
+    return {
+      configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
+      tasks: aggregateTrackedTasks(records, { user, metadata, active: timerState.active }),
+      active: timerState.active,
+      pendingWrites: timerState.pendingWrites,
+    };
+  })();
+  reportLoads.set(loadKey, { controller, promise });
+  try { return await promise; }
+  finally {
+    if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey);
+  }
+}
+
+async function cancelReports(channel = null) {
+  const active = [...reportLoads.entries()]
+    .filter(([key]) => !channel || key.endsWith(`:${channel}`))
+    .map(([, value]) => value);
   for (const { controller } of active) controller.abort();
   await Promise.allSettled(active.map(({ promise }) => promise));
 }
@@ -76,13 +158,18 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/reports.html') });
     return { ok: true };
   }
+  if (message.type === 'OPEN_TASKS') {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') });
+    return { ok: true };
+  }
   if (message.type === 'SAVE_CONFIG') {
     await store.ensureDataVersion(3);
     await cancelReports();
     return configuration.save(message.payload);
   }
-  if (message.type === 'CANCEL_REPORT') { await cancelReports(); return { cancelled: true }; }
+  if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const { config } = await store.getConfig();
     if (!config) return message.type === 'GET_PAGE_STATE'
@@ -117,7 +204,8 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const operation = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type) ? handle(message, sender) : executor.run(() => handle(message, sender));
+  const readOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type) || message?.type === 'LOAD_TASKS';
+  const operation = readOnly ? handle(message, sender) : executor.run(() => handle(message, sender));
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
 });

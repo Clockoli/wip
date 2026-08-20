@@ -160,6 +160,40 @@ test('setup rejects public repositories and 422 is validation, not a concurrency
 });
 
 
+test('GitHub client returns task metadata in bounded GraphQL batches', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    const query = JSON.parse(options.body).query;
+    assert.match(query, /issueOrPullRequest\(number: 1\)/);
+    assert.match(query, /issueOrPullRequest\(number: 2\)/);
+    return response(200, { data: {
+      task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Fix indexing', state: 'OPEN', url: 'https://github.com/acme/app/issues/1' } },
+      task1: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Ship reports', state: 'MERGED', url: 'https://github.com/acme/app/pull/2' } },
+    } });
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  const issues = [
+    { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
+    { type: 'pull_request', owner: 'acme', repo: 'app', number: 2, url: 'https://github.com/acme/app/pull/2' },
+  ];
+  assert.deepEqual(await client.getTaskMetadata(issues), new Map([
+    [issues[0].url, { title: 'Fix indexing', status: 'OPEN' }],
+    [issues[1].url, { title: 'Ship reports', status: 'MERGED' }],
+  ]));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.github.com/graphql');
+});
+
+test('task metadata rejects a GraphQL node whose URL or type does not match the requested task', async () => {
+  const fetchImpl = async () => response(200, { data: {
+    task0: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Wrong object', state: 'OPEN', url: 'https://github.com/acme/app/pull/1' } },
+  } });
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  const issue = { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' };
+  assert.deepEqual(await client.getTaskMetadata([issue]), new Map());
+});
+
 test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global receiver', async () => {
   const workerFetch = async function () {
     if (this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'WorkerGlobalScope': Illegal invocation");
@@ -167,4 +201,18 @@ test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global re
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: workerFetch });
   assert.equal(await client.getAuthenticatedUser(), 'alice');
+});
+
+test('task metadata enforces a total GraphQL request budget before fetching', async () => {
+  let calls = 0;
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data',
+    fetchImpl: async () => { calls += 1; return response(200, { data: {} }); },
+  });
+  const issues = Array.from({ length: 3 }, (_, index) => ({
+    type: 'issue', owner: 'acme', repo: 'app', number: index + 1,
+    url: `https://github.com/acme/app/issues/${index + 1}`,
+  }));
+  await assert.rejects(() => client.getTaskMetadata(issues, { batchSize: 1, maxRequests: 2 }), /metadata request budget/i);
+  assert.equal(calls, 0);
 });
