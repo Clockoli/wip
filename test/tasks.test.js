@@ -75,4 +75,3 @@ test('running elapsed time participates in total-time ordering without mutating 
   assert.deepEqual(sortTrackedTasks([first, second], { active, now: '2026-08-20T10:20:00.000Z' }).map(task => task.issue.number), [2, 1]);
   assert.equal(second.totalSeconds, 3000);
 });
-
