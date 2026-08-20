@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SerialExecutor } from '../src/background/serial-executor.js';
-import { finalizeTaskLoad, refreshTaskState, saveConfigurationAfterCancelling } from '../src/background/task-load.js';
+import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState, saveConfigurationAfterCancelling } from '../src/background/task-load.js';
 
 const activeA = { issue: { url: 'https://github.com/acme/app/issues/1' }, sha: 'a'.repeat(40) };
 const activeB = { issue: { url: 'https://github.com/acme/app/issues/2' }, sha: 'b'.repeat(40) };
@@ -63,4 +63,30 @@ test('a Tasks refresh queued after configuration rotation aborts before touching
   const tracker = { getState: async () => { refreshes += 1; return { active: activeA, pendingWrites: [] }; } };
   await assert.rejects(() => refreshTaskState(executor, store, tracker, 11), error => error?.name === 'AbortError');
   assert.equal(refreshes, 0);
+});
+
+test('a load missed by the cancellation snapshot is rejected before it can queue old work', async () => {
+  const executor = new SerialExecutor(), coordinator = new ConfigurationLoadCoordinator(executor);
+  const oldLoad = await coordinator.beginLoad();
+  let cancelled = false, saved = false, oldWorkRan = false;
+  const saving = coordinator.save(async () => { cancelled = true; }, async () => { saved = true; });
+  assert.equal(cancelled, true);
+  assert.throws(() => coordinator.assertCurrent(oldLoad), error => error?.name === 'AbortError');
+  if (oldLoad === coordinator.current()) oldWorkRan = true;
+  await saving;
+  assert.equal(oldWorkRan, false);
+  assert.equal(saved, true);
+});
+
+test('loads arriving during configuration save wait for its final configuration epoch', async () => {
+  const executor = new SerialExecutor(), coordinator = new ConfigurationLoadCoordinator(executor), gate = deferred();
+  const saving = coordinator.save(async () => {}, async () => { await gate.promise; });
+  let began = false;
+  const loading = coordinator.beginLoad().then(epoch => { began = true; return epoch; });
+  await Promise.resolve();
+  assert.equal(began, false);
+  gate.resolve(); await saving;
+  const epoch = await loading;
+  assert.equal(epoch, coordinator.current());
+  coordinator.assertCurrent(epoch);
 });

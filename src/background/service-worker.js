@@ -7,10 +7,11 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { aggregateTrackedTasks } from '../domain/tasks.js';
 import { assertMessageAllowed, issueForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
-import { finalizeTaskLoad, refreshTaskState, saveConfigurationAfterCancelling } from './task-load.js';
+import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
 const store = new ChromeStore();
 const executor = new SerialExecutor();
+const loadCoordinator = new ConfigurationLoadCoordinator(executor);
 const configuration = new ConfigurationService({ store, githubFactory: options => new GitHubClient(options) });
 const reportLoads = new Map();
 function serializeError(error) {
@@ -38,8 +39,11 @@ async function context() {
 }
 
 async function loadReport(message) {
+  const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(3);
+  loadCoordinator.assertCurrent(loadEpoch);
   const { config, token } = await store.getConfig();
+  loadCoordinator.assertCurrent(loadEpoch);
   if (!config) return { configured: false, records: [] };
   if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
   const branch = config.branch || 'main';
@@ -49,14 +53,19 @@ async function loadReport(message) {
   if (previous) {
     previous.controller.abort();
     await previous.promise.catch(() => {});
+    loadCoordinator.assertCurrent(loadEpoch);
   }
   const controller = new AbortController();
   const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
   const reports = new ReportService({ github, cache: store });
-  const promise = (async () => ({
-    configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
-    records: await reports.loadRange(message.payload || {}, { signal: controller.signal }),
-  }))();
+  const promise = (async () => {
+    controller.signal.throwIfAborted();
+    loadCoordinator.assertCurrent(loadEpoch);
+    return {
+      configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
+      records: await reports.loadRange(message.payload || {}, { signal: controller.signal }),
+    };
+  })();
   reportLoads.set(loadKey, { controller, promise });
   try { return await promise; }
   finally {
@@ -65,8 +74,11 @@ async function loadReport(message) {
 }
 
 async function loadTasks(message, sender) {
+  const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(3);
+  loadCoordinator.assertCurrent(loadEpoch);
   const { config, token, generation } = await store.getConfigurationSnapshot();
+  loadCoordinator.assertCurrent(loadEpoch);
   if (!config) return { configured: false, tasks: [], active: null, pendingWrites: [] };
   if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
   const branch = config.branch || 'main';
@@ -77,23 +89,31 @@ async function loadTasks(message, sender) {
   if (previous) {
     previous.controller.abort();
     await previous.promise.catch(() => {});
+    loadCoordinator.assertCurrent(loadEpoch);
   }
   const controller = new AbortController();
   const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
   const reports = new ReportService({ github, cache: store });
   const promise = (async () => {
     let { user } = await store.getState();
+    controller.signal.throwIfAborted();
+    loadCoordinator.assertCurrent(loadEpoch);
     if (!user) {
       user = await github.getAuthenticatedUser();
       const saved = await store.patchStateIfGeneration({ user }, generation);
       if (!saved) throw new DOMException('Task load was superseded by a configuration change.', 'AbortError');
+      controller.signal.throwIfAborted();
+      loadCoordinator.assertCurrent(loadEpoch);
     }
+    controller.signal.throwIfAborted();
+    loadCoordinator.assertCurrent(loadEpoch);
     const tracker = new TrackerService({
       github, store, user, recentDays: config.recentDays || 7,
       allowedIssueOwners: config.allowedIssueOwners || [config.owner],
     });
     const initialTimerState = await refreshTaskState(executor, store, tracker, generation);
     controller.signal.throwIfAborted();
+    loadCoordinator.assertCurrent(loadEpoch);
     const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
     const issueValues = records.map(record => record.issue);
     if (initialTimerState.active) issueValues.push(initialTimerState.active.issue);
@@ -104,11 +124,13 @@ async function loadTasks(message, sender) {
     });
     let metadata = await metadataService.load(issues, { signal: controller.signal });
     controller.signal.throwIfAborted();
+    loadCoordinator.assertCurrent(loadEpoch);
     let timerState = await finalizeTaskLoad(executor, store, tracker, generation);
     if (timerState.active && !metadata.has(timerState.active.issue.url)) {
       issues = [...new Map([...issues, timerState.active.issue].map(issue => [issue.url, issue])).values()];
       metadata = await metadataService.load(issues, { signal: controller.signal });
       controller.signal.throwIfAborted();
+      loadCoordinator.assertCurrent(loadEpoch);
       timerState = await finalizeTaskLoad(executor, store, tracker, generation);
     }
     return {
@@ -190,10 +212,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const readOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type) || message?.type === 'LOAD_TASKS';
   let operation;
   if (message?.type === 'SAVE_CONFIG') {
-    operation = Promise.resolve().then(() => {
+    try {
       assertMessageAllowed(message.type, sender, chrome.runtime.getURL(''));
-      return saveConfigurationAfterCancelling(executor, () => cancelReports(), () => handle(message, sender));
-    });
+      operation = loadCoordinator.save(() => cancelReports(), () => handle(message, sender));
+    } catch (error) { operation = Promise.reject(error); }
   } else operation = readOnly ? handle(message, sender) : executor.run(() => handle(message, sender));
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
