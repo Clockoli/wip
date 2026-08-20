@@ -64,4 +64,3 @@ test('a Tasks refresh queued after configuration rotation aborts before touching
   await assert.rejects(() => refreshTaskState(executor, store, tracker, 11), error => error?.name === 'AbortError');
   assert.equal(refreshes, 0);
 });
-

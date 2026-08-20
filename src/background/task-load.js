@@ -20,4 +20,3 @@ export async function saveConfigurationAfterCancelling(executor, cancelLoads, sa
   await cancelLoads();
   return executor.run(save);
 }
-
