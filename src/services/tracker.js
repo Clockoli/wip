@@ -59,10 +59,11 @@ export class TrackerService {
     return normalized;
   }
 
-  async refreshActive() {
+  async refreshActive({ signal } = {}) {
     const path = activeTextPath(this.user);
     try {
-      const file = await this.github.getText(path);
+      const file = await this.github.getText(path, { signal });
+      signal?.throwIfAborted();
       const active = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
       validateActiveTimer(active);
       await this.store.patchState({ activeCache: active });
@@ -74,13 +75,15 @@ export class TrackerService {
     }
   }
 
-  async getState({ refresh = false } = {}) {
+  async getState({ refresh = false, signal } = {}) {
     const state = await this.store.getState();
+    signal?.throwIfAborted();
     let active = state.activeCache;
     if (refresh) {
-      try { active = await this.refreshActive(); }
+      try { active = await this.refreshActive({ signal }); }
       catch (error) { if (!active || !isRetryableReadFailure(error)) throw error; }
     }
+    signal?.throwIfAborted();
     return { active, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [] };
   }
 

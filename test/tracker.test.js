@@ -440,3 +440,18 @@ test('menu data reports the complete current-day total even when recent rows are
   assert.deepEqual(data.pendingWrites, [{ id: 'pending-total', status: 'pending', stage: 'appendMonthly' }]);
   assert.equal(Object.keys(data.active).some(key => key.startsWith('_')), false);
 });
+
+test('active refresh forwards cancellation and cannot patch cache after abort', async () => {
+  const store = new MemoryStore(), controller = new AbortController();
+  const github = new FakeGitHub();
+  github.getText = async (_path, { signal } = {}) => {
+    assert.equal(signal, controller.signal);
+    controller.abort();
+    signal.throwIfAborted();
+  };
+  await assert.rejects(
+    () => service({ github, store }).getState({ refresh: true, signal: controller.signal }),
+    error => error?.name === 'AbortError',
+  );
+  assert.equal(store.value.activeCache, null);
+});

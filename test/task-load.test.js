@@ -90,3 +90,37 @@ test('loads arriving during configuration save wait for its final configuration 
   assert.equal(epoch, coordinator.current());
   coordinator.assertCurrent(epoch);
 });
+
+test('a queued old refresh aborts inside the executor after configuration save begins', async () => {
+  const executor = new SerialExecutor(), coordinator = new ConfigurationLoadCoordinator(executor), blocker = deferred();
+  const blocking = executor.run(() => blocker.promise);
+  const controller = new AbortController(), epoch = await coordinator.beginLoad();
+  let oldRemoteReads = 0;
+  const store = { getConfigurationGeneration: async () => 5 };
+  const tracker = { getState: async () => { oldRemoteReads += 1; return { active: null, pendingWrites: [] }; } };
+  const refresh = refreshTaskState(executor, store, tracker, 5, {
+    signal: controller.signal,
+    assertCurrent: () => coordinator.assertCurrent(epoch),
+  });
+  const saving = coordinator.save(async () => { controller.abort(); }, async () => 'saved');
+  blocker.resolve(); await blocking;
+  await assert.rejects(refresh, error => error?.name === 'AbortError');
+  assert.equal(await saving, 'saved');
+  assert.equal(oldRemoteReads, 0);
+});
+
+test('concurrent configuration saves preserve invocation order and one complete load barrier', async () => {
+  const executor = new SerialExecutor(), coordinator = new ConfigurationLoadCoordinator(executor), firstCancel = deferred();
+  const order = [];
+  const first = coordinator.save(async () => { order.push('cancel1'); await firstCancel.promise; }, async () => { order.push('save1'); });
+  const second = coordinator.save(async () => { order.push('cancel2'); }, async () => { order.push('save2'); });
+  let loadBegan = false;
+  const loading = coordinator.beginLoad().then(epoch => { loadBegan = true; return epoch; });
+  await Promise.resolve();
+  assert.equal(loadBegan, false);
+  firstCancel.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ['cancel1', 'save1', 'cancel2', 'save2']);
+  const epoch = await loading;
+  assert.equal(epoch, coordinator.current());
+});

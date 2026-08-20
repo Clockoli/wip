@@ -125,8 +125,8 @@ export class GitHubClient {
     return this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/branches/${encodeURIComponent(this.branch)}`);
   }
 
-  async getText(path) {
-    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`);
+  async getText(path, { signal } = {}) {
+    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`, { signal });
     if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
   }

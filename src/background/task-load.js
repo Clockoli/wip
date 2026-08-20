@@ -2,17 +2,31 @@ function supersededError() {
   return new DOMException('Task load was superseded by a configuration change.', 'AbortError');
 }
 
-export function refreshTaskState(executor, store, tracker, expectedGeneration) {
+function assertLoadUsable({ signal, assertCurrent } = {}) {
+  signal?.throwIfAborted();
+  assertCurrent?.();
+}
+
+export async function refreshTaskState(executor, store, tracker, expectedGeneration, guard = {}) {
   return executor.run(async () => {
+    assertLoadUsable(guard);
     if (await store.getConfigurationGeneration() !== expectedGeneration) throw supersededError();
-    return tracker.getState({ refresh: true });
+    assertLoadUsable(guard);
+    const state = await tracker.getState({ refresh: true, signal: guard.signal });
+    assertLoadUsable(guard);
+    if (await store.getConfigurationGeneration() !== expectedGeneration) throw supersededError();
+    return state;
   });
 }
 
-export function finalizeTaskLoad(executor, store, tracker, expectedGeneration) {
+export async function finalizeTaskLoad(executor, store, tracker, expectedGeneration, guard = {}) {
   return executor.run(async () => {
+    assertLoadUsable(guard);
     if (await store.getConfigurationGeneration() !== expectedGeneration) throw supersededError();
-    return tracker.getState({ refresh: false });
+    assertLoadUsable(guard);
+    const state = await tracker.getState({ signal: guard.signal });
+    assertLoadUsable(guard);
+    return state;
   });
 }
 
@@ -41,7 +55,11 @@ export class ConfigurationLoadCoordinator {
 
   save(cancelLoads, save) {
     this.epoch += 1;
-    const operation = saveConfigurationAfterCancelling(this.executor, cancelLoads, save);
+    const previous = this.saving;
+    const operation = (async () => {
+      if (previous) await previous.catch(() => {});
+      return saveConfigurationAfterCancelling(this.executor, cancelLoads, save);
+    })();
     this.saving = operation;
     const clear = () => { if (this.saving === operation) this.saving = null; };
     operation.then(clear, clear);

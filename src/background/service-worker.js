@@ -94,6 +94,7 @@ async function loadTasks(message, sender) {
   const controller = new AbortController();
   const github = new GitHubClient({ token, owner: config.owner, repo: config.repo, branch });
   const reports = new ReportService({ github, cache: store });
+  const loadGuard = { signal: controller.signal, assertCurrent: () => loadCoordinator.assertCurrent(loadEpoch) };
   const promise = (async () => {
     let { user } = await store.getState();
     controller.signal.throwIfAborted();
@@ -111,7 +112,7 @@ async function loadTasks(message, sender) {
       github, store, user, recentDays: config.recentDays || 7,
       allowedIssueOwners: config.allowedIssueOwners || [config.owner],
     });
-    const initialTimerState = await refreshTaskState(executor, store, tracker, generation);
+    const initialTimerState = await refreshTaskState(executor, store, tracker, generation, loadGuard);
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
     const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
@@ -125,13 +126,13 @@ async function loadTasks(message, sender) {
     let metadata = await metadataService.load(issues, { signal: controller.signal });
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
-    let timerState = await finalizeTaskLoad(executor, store, tracker, generation);
+    let timerState = await finalizeTaskLoad(executor, store, tracker, generation, loadGuard);
     if (timerState.active && !metadata.has(timerState.active.issue.url)) {
       issues = [...new Map([...issues, timerState.active.issue].map(issue => [issue.url, issue])).values()];
       metadata = await metadataService.load(issues, { signal: controller.signal });
       controller.signal.throwIfAborted();
       loadCoordinator.assertCurrent(loadEpoch);
-      timerState = await finalizeTaskLoad(executor, store, tracker, generation);
+      timerState = await finalizeTaskLoad(executor, store, tracker, generation, loadGuard);
     }
     return {
       configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
