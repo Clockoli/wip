@@ -3,45 +3,16 @@ import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { ReportService } from '../services/reports.js';
+import { TaskMetadataService } from '../services/task-metadata.js';
 import { aggregateTrackedTasks } from '../domain/tasks.js';
 import { assertMessageAllowed, issueForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
+import { finalizeTaskLoad, refreshTaskState, saveConfigurationAfterCancelling } from './task-load.js';
 
 const store = new ChromeStore();
 const executor = new SerialExecutor();
 const configuration = new ConfigurationService({ store, githubFactory: options => new GitHubClient(options) });
 const reportLoads = new Map();
-const TASK_METADATA_TTL_MS = 15 * 60 * 1000;
-
-function cachedTaskDetails(value) {
-  if (!value || typeof value.title !== 'string' || !['OPEN', 'CLOSED', 'MERGED'].includes(value.status)) return null;
-  return { title: value.title.slice(0, 500), status: value.status };
-}
-
-async function hydrateTaskMetadata(github, issues, repositoryKey, signal) {
-  const now = Date.now(), cached = await store.getTaskMetadataCache(repositoryKey);
-  const fresh = cached && Number.isFinite(cached.fetchedAt) && now - cached.fetchedAt >= 0
-    && now - cached.fetchedAt < TASK_METADATA_TTL_MS && cached.entries && typeof cached.entries === 'object';
-  const entries = fresh ? { ...cached.entries } : {};
-  const metadata = new Map(), missing = [];
-  for (const issue of issues) {
-    if (Object.hasOwn(entries, issue.url)) {
-      const details = cachedTaskDetails(entries[issue.url]);
-      if (details) metadata.set(issue.url, details);
-    } else missing.push(issue);
-  }
-  if (missing.length) {
-    const loaded = await github.getTaskMetadata(missing, { batchSize: 50, maxRequests: 40, signal });
-    for (const issue of missing) {
-      const details = loaded.get(issue.url) ?? null;
-      entries[issue.url] = details;
-      if (details) metadata.set(issue.url, details);
-    }
-    await store.saveTaskMetadataCache({ repositoryKey, fetchedAt: now, entries });
-  }
-  return metadata;
-}
-
 function serializeError(error) {
   return { message: error?.message || 'Unexpected error', code: error?.code || 'error', status: error?.status || 0 };
 }
@@ -95,7 +66,7 @@ async function loadReport(message) {
 
 async function loadTasks(message, sender) {
   await store.ensureDataVersion(3);
-  const { config, token } = await store.getConfig();
+  const { config, token, generation } = await store.getConfigurationSnapshot();
   if (!config) return { configured: false, tasks: [], active: null, pendingWrites: [] };
   if (!token) throw new Error('Configure the private time-data repository and token in Settings.');
   const branch = config.branch || 'main';
@@ -114,19 +85,32 @@ async function loadTasks(message, sender) {
     let { user } = await store.getState();
     if (!user) {
       user = await github.getAuthenticatedUser();
-      await store.patchState({ user });
+      const saved = await store.patchStateIfGeneration({ user }, generation);
+      if (!saved) throw new DOMException('Task load was superseded by a configuration change.', 'AbortError');
     }
     const tracker = new TrackerService({
       github, store, user, recentDays: config.recentDays || 7,
       allowedIssueOwners: config.allowedIssueOwners || [config.owner],
     });
-    const timerState = await tracker.getState({ refresh: true });
+    const initialTimerState = await refreshTaskState(executor, store, tracker, generation);
     controller.signal.throwIfAborted();
     const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
     const issueValues = records.map(record => record.issue);
-    if (timerState.active) issueValues.push(timerState.active.issue);
-    const issues = [...new Map(issueValues.map(issue => [issue.url, issue])).values()];
-    const metadata = await hydrateTaskMetadata(github, issues, repositoryKey, controller.signal);
+    if (initialTimerState.active) issueValues.push(initialTimerState.active.issue);
+    let issues = [...new Map(issueValues.map(issue => [issue.url, issue])).values()];
+    const metadataService = new TaskMetadataService({
+      github, cache: store, configurationGeneration: generation,
+      scopeKey: `${repositoryKey}:${user}:g${generation}`,
+    });
+    let metadata = await metadataService.load(issues, { signal: controller.signal });
+    controller.signal.throwIfAborted();
+    let timerState = await finalizeTaskLoad(executor, store, tracker, generation);
+    if (timerState.active && !metadata.has(timerState.active.issue.url)) {
+      issues = [...new Map([...issues, timerState.active.issue].map(issue => [issue.url, issue])).values()];
+      metadata = await metadataService.load(issues, { signal: controller.signal });
+      controller.signal.throwIfAborted();
+      timerState = await finalizeTaskLoad(executor, store, tracker, generation);
+    }
     return {
       configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
       tasks: aggregateTrackedTasks(records, { user, metadata, active: timerState.active }),
@@ -164,7 +148,6 @@ async function handle(message, sender) {
   }
   if (message.type === 'SAVE_CONFIG') {
     await store.ensureDataVersion(3);
-    await cancelReports();
     return configuration.save(message.payload);
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
@@ -205,7 +188,13 @@ async function handle(message, sender) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const readOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type) || message?.type === 'LOAD_TASKS';
-  const operation = readOnly ? handle(message, sender) : executor.run(() => handle(message, sender));
+  let operation;
+  if (message?.type === 'SAVE_CONFIG') {
+    operation = Promise.resolve().then(() => {
+      assertMessageAllowed(message.type, sender, chrome.runtime.getURL(''));
+      return saveConfigurationAfterCancelling(executor, () => cancelReports(), () => handle(message, sender));
+    });
+  } else operation = readOnly ? handle(message, sender) : executor.run(() => handle(message, sender));
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
 });

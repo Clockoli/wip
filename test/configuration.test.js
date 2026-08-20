@@ -8,12 +8,14 @@ const newPayload = { owner: 'new-org', repo: 'time-data', branch: 'main', recent
 class MemoryConfigStore {
   constructor({ activeCache = null, pendingWrites = [], user = 'alice' } = {}) {
     this.config = oldConfig; this.token = 'old-token';
-    this.state = { activeCache, recentCache: [], pendingWrites, user, reportCache: { repositoryKey: 'old-org/time-data@main' } };
+    this.generation = 4;
+    this.state = { activeCache, recentCache: [], pendingWrites, user, reportCache: { repositoryKey: 'old-org/time-data@main' }, taskMetadataCache: { repositoryKey: 'private:g4' } };
   }
   async getConfig() { return { config: structuredClone(this.config), token: this.token }; }
+  async getConfigurationSnapshot() { return { ...(await this.getConfig()), generation: this.generation }; }
   async getState() { return structuredClone(this.state); }
   async saveConfig(config, token) { this.config = structuredClone(config); this.token = token; }
-  async saveConfiguration(config, token, statePatch) { this.config = structuredClone(config); this.token = token; Object.assign(this.state, structuredClone(statePatch)); }
+  async saveConfiguration(config, token, statePatch) { this.config = structuredClone(config); this.token = token; this.generation += 1; Object.assign(this.state, structuredClone(statePatch)); return this.generation; }
   async patchState(patch) { Object.assign(this.state, structuredClone(patch)); }
 }
 
@@ -116,4 +118,27 @@ test('same-repository settings changes preserve its immutable report cache', asy
   const service = new ConfigurationService({ store, githubFactory: factory });
   await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'], recentDays: 14 });
   assert.deepEqual(store.state.reportCache, original);
+});
+
+test('every credential save rotates generation and clears private task metadata', async () => {
+  const store = new MemoryConfigStore();
+  const service = new ConfigurationService({ store, githubFactory: factory });
+  await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] });
+  assert.equal(store.generation, 5);
+  assert.equal(store.state.taskMetadataCache, null);
+});
+
+test('switching authenticated users rotates generation and drops prior private metadata', async () => {
+  const store = new MemoryConfigStore();
+  const identityFactory = ({ token }) => token === 'new-token' ? {
+    getAuthenticatedUser: async () => 'bob', validateRepository: async () => ({ private: true }), validateBranch: async () => ({}),
+  } : {
+    getAuthenticatedUser: async () => 'alice',
+    getText: async () => { const error = new Error('not found'); error.status = 404; throw error; },
+  };
+  const service = new ConfigurationService({ store, githubFactory: identityFactory });
+  await service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] });
+  assert.equal(store.state.user, 'bob');
+  assert.equal(store.generation, 5);
+  assert.equal(store.state.taskMetadataCache, null);
 });

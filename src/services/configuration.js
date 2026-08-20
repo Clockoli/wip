@@ -40,7 +40,7 @@ export class ConfigurationService {
 
     // This method is invoked by the service worker's SerialExecutor. Reading state
     // after remote validation closes the previous settings-vs-Stop race window.
-    const [{ config: previousConfig, token: previousToken }, state] = await Promise.all([this.store.getConfig(), this.store.getState()]);
+    const [{ config: previousConfig, token: previousToken }, state] = await Promise.all([this.store.getConfigurationSnapshot(), this.store.getState()]);
     let previousUser = state.user;
     if (!previousUser && previousConfig && previousToken) {
       previousUser = await this.githubFactory({ token: previousToken, ...previousConfig }).getAuthenticatedUser();
@@ -54,6 +54,7 @@ export class ConfigurationService {
 
     await this.store.saveConfiguration(config, token, {
       user, activeCache: null, recentCache: [], pendingWrites: state.pendingWrites ?? [], dataVersion: 3,
+      taskMetadataCache: null,
       ...((changesDestination || changesUser) ? { reportCache: null } : {}),
     });
     return { user, config };

@@ -565,3 +565,26 @@ test('split main segment resolves issue to non-issue SPA navigation at activatio
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
   assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks'));
 });
+
+test('header mounting falls back to a complete legacy header when the modern container has no avatar', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const modern = new FakeNode('div'); modern.setAttribute('data-testid', 'top-nav-right'); modern.isConnected = true;
+  const { actions, avatarSlot } = makeHeader();
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1' };
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '[data-testid="top-nav-right"]' ? modern : selector === '.AppHeader-actions' ? actions : null,
+    addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+    } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(actions.children.at(-2)?.id, 'github-private-time-tracker-root');
+  assert.equal(actions.children.at(-1), avatarSlot);
+  assert.equal(modern.children.length, 0);
+});

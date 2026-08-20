@@ -1,5 +1,6 @@
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
-const ALL_KEYS = ['config', 'token', 'reportCache', 'taskMetadataCache', ...Object.keys(DEFAULT_STATE)];
+const CONFIGURATION_GENERATION = 'configurationGeneration';
+const ALL_KEYS = ['config', 'token', 'reportCache', 'taskMetadataCache', CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
 
 function requestResult(request) {
   return new Promise((resolve, reject) => {
@@ -58,6 +59,33 @@ export class IndexedDbBackend {
     for (const key of keys) objectStore.delete(key);
     await transactionDone(transaction);
   }
+
+  async setManyAndIncrement(values, counterKey) {
+    const database = await this.open();
+    const transaction = database.transaction('values', 'readwrite');
+    const done = transactionDone(transaction);
+    const objectStore = transaction.objectStore('values');
+    const current = await requestResult(objectStore.get(counterKey));
+    const next = (Number.isSafeInteger(current) && current >= 0 ? current : 0) + 1;
+    for (const [key, value] of Object.entries({ ...values, [counterKey]: next })) objectStore.put(value, key);
+    await done;
+    return next;
+  }
+
+  async setManyIfEqual(compareKey, expected, values) {
+    const database = await this.open();
+    const transaction = database.transaction('values', 'readwrite');
+    const done = transactionDone(transaction);
+    const objectStore = transaction.objectStore('values');
+    const current = await requestResult(objectStore.get(compareKey));
+    if ((Number.isSafeInteger(current) && current >= 0 ? current : 0) !== expected) {
+      await done;
+      return false;
+    }
+    for (const [key, value] of Object.entries(values)) objectStore.put(value, key);
+    await done;
+    return true;
+  }
 }
 
 function migrateV2PendingWrites(pendingWrites) {
@@ -87,6 +115,10 @@ export class ChromeStore {
 
   async patchState(patch) { await this.backend.setMany(patch); }
 
+  async patchStateIfGeneration(patch, expectedGeneration) {
+    return this.backend.setManyIfEqual(CONFIGURATION_GENERATION, expectedGeneration, patch);
+  }
+
   async ensureDataVersion(version) {
     const state = await this.getState();
     if (state.dataVersion === version) return state;
@@ -102,6 +134,14 @@ export class ChromeStore {
     return { config, token };
   }
 
+  async getConfigurationSnapshot() {
+    const { config = null, token = '', configurationGeneration = 0 } = await this.backend.getMany(['config', 'token', CONFIGURATION_GENERATION]);
+    const generation = Number.isSafeInteger(configurationGeneration) && configurationGeneration >= 0 ? configurationGeneration : 0;
+    return { config, token, generation };
+  }
+
+  async getConfigurationGeneration() { return (await this.getConfigurationSnapshot()).generation; }
+
   async saveConfig(config, token) { await this.backend.setMany({ config, token }); }
 
   async getReportCache(repositoryKey) {
@@ -116,8 +156,14 @@ export class ChromeStore {
     return taskMetadataCache?.repositoryKey === repositoryKey ? taskMetadataCache : null;
   }
 
-  async saveTaskMetadataCache(taskMetadataCache) { await this.backend.setMany({ taskMetadataCache }); }
-  async saveConfiguration(config, token, statePatch) { await this.backend.setMany({ config, token, ...statePatch }); }
+  async saveTaskMetadataCache(taskMetadataCache, expectedGeneration = null) {
+    if (expectedGeneration === null) { await this.backend.setMany({ taskMetadataCache }); return true; }
+    return this.backend.setManyIfEqual(CONFIGURATION_GENERATION, expectedGeneration, { taskMetadataCache });
+  }
+
+  async saveConfiguration(config, token, statePatch) {
+    return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
+  }
 
   async clearConfig() { await this.backend.deleteMany(ALL_KEYS); }
 }

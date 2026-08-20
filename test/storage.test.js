@@ -6,6 +6,16 @@ class MemoryBackend {
   constructor() { this.values = new Map(); }
   async getMany(keys) { return Object.fromEntries(keys.filter(key => this.values.has(key)).map(key => [key, structuredClone(this.values.get(key))])); }
   async setMany(values) { for (const [key, value] of Object.entries(values)) this.values.set(key, structuredClone(value)); }
+  async setManyAndIncrement(values, counterKey) {
+    const next = (this.values.get(counterKey) ?? 0) + 1;
+    await this.setMany({ ...values, [counterKey]: next });
+    return next;
+  }
+  async setManyIfEqual(compareKey, expected, values) {
+    if ((this.values.get(compareKey) ?? 0) !== expected) return false;
+    await this.setMany(values);
+    return true;
+  }
   async deleteMany(keys) { for (const key of keys) this.values.delete(key); }
 }
 
@@ -72,4 +82,29 @@ test('task metadata cache is repository-scoped and cleared with configuration', 
   assert.equal(await store.getTaskMetadataCache('other/time@main'), null);
   await store.clearConfig();
   assert.equal(await store.getTaskMetadataCache('acme/time@main'), null);
+});
+
+test('configuration generation and metadata invalidation commit atomically', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveTaskMetadataCache({ repositoryKey: 'old-scope', entries: { private: true } });
+  const first = await store.saveConfiguration({ owner: 'acme', repo: 'time' }, 'token-one', { taskMetadataCache: null });
+  assert.equal(first, 1);
+  assert.equal(await store.getConfigurationGeneration(), 1);
+  assert.equal(await store.getTaskMetadataCache('old-scope'), null);
+  const second = await store.saveConfiguration({ owner: 'acme', repo: 'time' }, 'token-two', { taskMetadataCache: null });
+  assert.equal(second, 2);
+  assert.deepEqual(await store.getConfigurationSnapshot(), {
+    config: { owner: 'acme', repo: 'time' }, token: 'token-two', generation: 2,
+  });
+});
+
+test('stale task loads cannot repopulate metadata after a configuration generation change', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveConfiguration({ owner: 'acme', repo: 'time' }, 'token-one', { taskMetadataCache: null });
+  assert.equal(await store.saveTaskMetadataCache({ repositoryKey: 'scope:g1', entries: {} }, 1), true);
+  await store.saveConfiguration({ owner: 'acme', repo: 'time' }, 'token-two', { taskMetadataCache: null });
+  assert.equal(await store.saveTaskMetadataCache({ repositoryKey: 'scope:g1', entries: { leaked: true } }, 1), false);
+  assert.equal(await store.getTaskMetadataCache('scope:g1'), null);
+  assert.equal(await store.patchStateIfGeneration({ user: 'stale-user' }, 1), false);
+  assert.equal((await store.getState()).user, null);
 });

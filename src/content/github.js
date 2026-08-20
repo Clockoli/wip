@@ -184,10 +184,13 @@
   }
 
   function headerTarget() {
-    const actions = document.querySelector('[data-testid="top-nav-right"]') || document.querySelector('.AppHeader-actions');
-    const avatar = actions?.querySelector('img[data-testid="github-avatar"]') || actions?.querySelector('img.avatar');
-    const anchor = avatar && directChild(avatar, actions);
-    return actions && anchor ? { actions, anchor } : null;
+    for (const selector of ['[data-testid="top-nav-right"]', '.AppHeader-actions']) {
+      const actions = document.querySelector(selector);
+      const avatar = actions?.querySelector('img[data-testid="github-avatar"]') || actions?.querySelector('img.avatar');
+      const anchor = avatar && directChild(avatar, actions);
+      if (actions && anchor) return { actions, anchor };
+    }
+    return null;
   }
 
   function mountInHeader() {
