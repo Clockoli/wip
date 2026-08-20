@@ -5,8 +5,8 @@ Chrome/Chromium extension for tracking time on GitHub issues and pull requests w
 ## What is implemented
 
 - Native-style split GitHub header control on every GitHub page. Its left stopwatch opens the full Start/Stop/recent/edit/delete/sync panel on issue and pull-request pages; elsewhere it opens navigation. The separately clickable arrow always opens Reports/Tasks navigation and survives GitHub SPA navigation.
-- Main panel shows the authenticated user's complete tracked total for today, including an unsynced completion exactly once and a live running timer.
-- Dedicated Reports page with repository-wide person/repository facets; selectable total time, average time per distinct task, or distinct task count; independent day/week/month/person/repository/task horizontal and stack dimensions; and direct CSV/JSON timesheet downloads for weekly, monthly, quarterly, yearly, and custom periods.
+- Main panel rotates the authenticated user's complete Today, This week, Last week, and This month totals; includes an unsynced completion exactly once and live running time; and formats recent timestamps with the browser's locale.
+- Dedicated Reports page with repository-wide person/repository facets; selectable total time, average time per distinct task, or distinct task count; independent day/week/month/person/repository/task horizontal and stack dimensions; direct CSV/JSON timesheet downloads; and native print/save-to-PDF for weekly, monthly, quarterly, yearly, and custom periods.
 - Dedicated **Recently tracked work** page: current-user issues and pull requests are deduplicated, hydrated with cached GitHub titles/status, sorted by completed plus currently running time, filtered as you type, and controlled with inline Start/Stop buttons. Its rolling period defaults to two weeks and persists locally; unavailable status appears only under All.
 - Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
 - Fine-grained PAT setup and validation against the configured repository.
@@ -38,7 +38,7 @@ The data repository must already exist and allow direct commits to its configure
 1. Open GitHub. The split stopwatch control is immediately before your avatar on every page.
 2. On an issue or pull request, use the left stopwatch for tracking. On other GitHub pages, either segment opens Reports/Tasks navigation. The arrow always opens that navigation menu.
 3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
-4. The dropdown shows the complete tracked total for today; edit or delete recent records directly there or in the toolbar popup.
+4. The dropdown rotates complete totals for today, this week, last week, and this month; edit or delete recent records directly there or in the toolbar popup.
 5. Choose **Reports** for repository-wide analytics, or **Tasks** for your recently tracked issues and pull requests. The stopwatch is gray while idle and green while any timer is running.
 
 A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar month selects the eventual monthly file.

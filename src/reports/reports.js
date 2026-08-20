@@ -47,14 +47,14 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 }
 
 function setDownloadsAvailable(available) {
-  for (const id of ['download-csv', 'download-json']) {
+  for (const id of ['download-csv', 'download-json', 'download-pdf']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
   }
 }
 
 function selectedFilters() {
-  return { people: [...state.people], repositories: [...state.repositories] };
+  return { people: [...state.people], repositories: [...state.repositories], emptyMeansNone: true };
 }
 
 function colorMap(series) {
@@ -70,13 +70,12 @@ function renderFacet(container, options, selected, query, rerender) {
   const visible = options.filter(option => option.value.toLowerCase().includes(query.toLowerCase()));
   if (!visible.length) { const empty = document.createElement('div'); empty.className = 'empty-facet'; empty.textContent = 'No matching values'; container.append(empty); return; }
   for (const option of visible) {
-    const label = document.createElement('label'); label.className = 'facet-option'; label.title = option.value;
+    const label = document.createElement('label'); label.className = 'facet-option'; label.title = `${option.value} — ${formatClockDuration(option.seconds)} tracked · ${option.count} ${option.count === 1 ? 'entry' : 'entries'}`;
     const input = document.createElement('input'); input.type = 'checkbox'; input.value = option.value; input.checked = selected.has(option.value);
     if (option.value === focusedValue) restoreFocus = input;
     input.addEventListener('change', () => {
       if (input.checked) selected.add(option.value);
-      else if (selected.size > 1) selected.delete(option.value);
-      else input.checked = true;
+      else selected.delete(option.value);
       rerender();
     });
     const name = document.createElement('span'); name.className = 'facet-name'; name.textContent = option.value;
@@ -164,6 +163,10 @@ function render() {
   const facets = buildFacets(state.records, selectedFilters());
   renderFacet($('people-facet'), facets.people, state.people, state.peopleSearch, render);
   renderFacet($('repositories-facet'), facets.repositories, state.repositories, state.repositoriesSearch, render);
+  const allPeople = [...new Set(state.records.map(record => record.user))];
+  const allRepositories = [...new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`))];
+  $('people-all').textContent = allPeople.length && allPeople.every(value => state.people.has(value)) ? 'Unselect all' : 'Select all';
+  $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   const filtered = filterReportRecords(state.records, selectedFilters());
   renderSummary(filtered);
   state.analytics = buildAnalytics(filtered, {
@@ -182,11 +185,10 @@ async function loadRange(range) {
   try {
     const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate } });
     if (requestId !== state.requestId) return;
-    if (!result.configured) { $('setup').hidden = false; $('source').textContent = 'No time-data repository configured'; return; }
+    if (!result.configured) { $('setup').hidden = false; return; }
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.people = new Set(result.records.map(record => record.user));
     state.repositories = new Set(result.records.map(record => `${record.issue.owner}/${record.issue.repo}`));
-    $('source').textContent = `${result.sourceRepository} · ${result.branch} · ${range.startDate} to ${range.endDate}`;
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
   finally { if (requestId === state.requestId) { state.loading = false; $('loading').hidden = true; } }
@@ -208,7 +210,6 @@ $('period').addEventListener('change', () => {
     state.requestId += 1; state.loading = false; state.range = null;
     void send({ type: 'CANCEL_REPORT' }).catch(() => {});
     $('loading').hidden = true; $('report-content').hidden = true; setDownloadsAvailable(false);
-    $('source').textContent = 'Choose a custom date range and apply it.';
   } else void applyPeriod();
 });
 $('apply-period').addEventListener('click', () => void applyPeriod());
@@ -216,9 +217,14 @@ for (const id of ['metric', 'horizontal-axis', 'stack-by']) $(id).addEventListen
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
 $('repositories-search').addEventListener('input', event => { state.repositoriesSearch = event.target.value; render(); });
-$('people-all').addEventListener('click', () => { state.people = new Set(state.records.map(record => record.user)); render(); });
-$('repositories-all').addEventListener('click', () => { state.repositories = new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`)); render(); });
-$('settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
+$('people-all').addEventListener('click', () => {
+  const values = [...new Set(state.records.map(record => record.user))];
+  state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); render();
+});
+$('repositories-all').addEventListener('click', () => {
+  const values = [...new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`))];
+  state.repositories = values.length && values.every(value => state.repositories.has(value)) ? new Set() : new Set(values); render();
+});
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 function downloadTimesheet(format, event) {
   event.preventDefault();
@@ -232,6 +238,7 @@ function downloadTimesheet(format, event) {
 }
 $('download-csv').addEventListener('click', event => downloadTimesheet('csv', event));
 $('download-json').addEventListener('click', event => downloadTimesheet('json', event));
+$('download-pdf').addEventListener('click', event => { event.preventDefault(); if (!$('download-pdf').classList.contains('disabled')) window.print(); });
 
 
 const initial = periodRange('this-week', localDateValue());

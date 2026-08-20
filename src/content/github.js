@@ -19,9 +19,12 @@
   let loadingRecent = false;
   let editing = null;
   let errorText = '';
-  let todaySavedSeconds = 0;
   let todayReportDate = '';
-  let todayTotalValue = null;
+  let summaryFrames = [];
+  let summaryLabel = null;
+  let summaryTotalValue = null;
+  let summaryIndex = 0;
+  let summaryElapsedMs = 0;
 
   function issueFromLocation() {
     if (location.protocol !== 'https:' || location.hostname !== 'github.com') return null;
@@ -71,20 +74,22 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   }
 
-  function todayTotalSeconds() {
-    const today = localDateValue();
-    if (todayReportDate !== today) return 0;
-    let seconds = todaySavedSeconds;
-    if (pageState.active?.startedAt?.slice(0, 10) === today) seconds += Math.max(0, Math.floor((Date.now() - new Date(pageState.active.startedAt).getTime()) / 1000));
+  function summarySeconds(frame) {
+    let seconds = Math.max(0, Number(frame?.seconds) || 0);
+    const activeDate = pageState.active?.startedAt?.slice(0, 10);
+    if (activeDate && activeDate >= frame.startDate && activeDate <= frame.endDate) seconds += Math.max(0, Math.floor((Date.now() - new Date(pageState.active.startedAt).getTime()) / 1000));
     return seconds;
   }
 
   function applyMenuData(data) {
     recent = Array.isArray(data) ? data : data?.recent ?? [];
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
-    todaySavedSeconds = Array.isArray(data)
+    const fallbackTodaySeconds = Array.isArray(data)
       ? recent.filter(entry => (entry.entryDate || entry.startedAt?.slice(0, 10)) === todayReportDate).reduce((sum, entry) => sum + (Number(entry.durationSeconds) || 0), 0)
       : Math.max(0, Number(data?.todaySeconds) || 0);
+    summaryFrames = Array.isArray(data?.summaries) && data.summaries.length ? data.summaries : [
+      { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
+    ];
     if (!Array.isArray(data)) pageState = {
       ...pageState, configured: true, active: data?.active ?? null,
       pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
@@ -275,9 +280,11 @@
   }
 
   function recentMeta(entry, startedAt = entry.startedAt, endedAt = entry.endedAt) {
-    const start = new Date(startedAt), end = new Date(endedAt);
+    const start = new Date(startedAt), end = new Date(endedAt), today = localDateValue();
     const duration = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
-    return `${entry.issue.owner} · ${start.toLocaleDateString()} ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}–${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${formatDuration(duration)}`;
+    const date = localDateValue(start) === today ? '' : `${start.toLocaleDateString()} `;
+    const time = value => value.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${date}${time(start)} - ${time(end)} · ${formatDuration(duration)}`;
   }
 
   function recentRow(entry) {
@@ -295,7 +302,7 @@
     const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
-      try { await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
+      try { errorText = ''; renderUi(); await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
     refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
@@ -403,16 +410,27 @@
       }));
       renderPendingConflicts(body);
       const today = el('div', undefined, 'today-total');
-      today.append(el('span', 'Tracked today'), todayTotalValue = el('strong', recentLoaded && todayReportDate === localDateValue() ? formatDuration(todayTotalSeconds()) : '…', 'today-total-value'));
-      body.append(today);
+      summaryIndex = 0; summaryElapsedMs = 0;
+      const currentSummary = () => summaryFrames[summaryIndex] ?? { label: 'Today', seconds: 0, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 };
+      const updateSummary = () => {
+        const frame = currentSummary();
+        if (summaryLabel) summaryLabel.textContent = `${frame.label}:`;
+        if (summaryTotalValue) summaryTotalValue.textContent = recentLoaded && todayReportDate === localDateValue() ? formatDuration(summarySeconds(frame)) : '…';
+      };
+      today.append(summaryLabel = el('span'), summaryTotalValue = el('strong', undefined, 'today-total-value'));
+      updateSummary(); body.append(today);
       clearInterval(tick); tick = setInterval(() => {
         const todayDate = localDateValue();
         if (elapsedValue && pageState.active) elapsedValue.textContent = formatElapsed(pageState.active.startedAt);
         if (todayReportDate && todayReportDate !== todayDate) {
-          clearInterval(tick); tick = null; recentLoaded = false; todayTotalValue.textContent = '…';
+          clearInterval(tick); tick = null; recentLoaded = false; summaryTotalValue.textContent = '…';
           void refreshState(false, true).catch(setError); return;
         }
-        if (todayTotalValue) todayTotalValue.textContent = formatDuration(todayTotalSeconds());
+        summaryElapsedMs += 1000;
+        if (summaryElapsedMs >= currentSummary().displayMs) {
+          summaryIndex = (summaryIndex + 1) % summaryFrames.length; summaryElapsedMs = 0;
+        }
+        updateSummary();
       }, 1000);
       const divider = el('div', undefined, 'divider'); body.append(divider); renderRecent(body);
     }
@@ -431,7 +449,7 @@
 
   function renderUi() {
     if (!shadow || !root?.isConnected) return;
-    clearInterval(tick); tick = null; todayTotalValue = null;
+    clearInterval(tick); tick = null; summaryLabel = null; summaryTotalValue = null;
     shadow.replaceChildren();
     const style = el('style', `
       :host { all:initial; position:relative; display:inline-flex; align-items:center; font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--fgColor-default,#1f2328); color-scheme:light dark }

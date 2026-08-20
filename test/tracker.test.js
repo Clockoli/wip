@@ -435,6 +435,10 @@ test('menu data reports the complete current-day total even when recent rows are
   assert.equal(data.recent.length, 50);
   assert.equal(data.todaySeconds, 56 * 60);
   assert.equal(data.reportDate, '2026-08-18');
+  assert.deepEqual(data.summaries.map(({ key, seconds }) => [key, seconds]), [
+    ['today', 56 * 60], ['this-week', 56 * 60], ['last-week', 0], ['this-month', 56 * 60],
+  ]);
+  assert.deepEqual(data.summaries.map(({ displayMs }) => displayMs), [2000, 1000, 1000, 1000]);
   assert.equal(data.active.startedAt, running.startedAt);
   assert.equal(data.pendingCount, 1);
   assert.deepEqual(data.pendingWrites, [{ id: 'pending-total', status: 'pending', stage: 'appendMonthly' }]);

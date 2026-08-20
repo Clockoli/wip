@@ -83,7 +83,9 @@ function selected(values) { return values instanceof Set ? values : new Set(valu
 
 export function filterReportRecords(records, filters = {}) {
   const people = selected(filters.people), repositories = selected(filters.repositories);
-  return (records ?? []).filter(record => (!people.size || people.has(record.user)) && (!repositories.size || repositories.has(repository(record))));
+  const peopleMatch = record => people.size ? people.has(record.user) : !filters.emptyMeansNone;
+  const repositoryMatch = record => repositories.size ? repositories.has(repository(record)) : !filters.emptyMeansNone;
+  return (records ?? []).filter(record => peopleMatch(record) && repositoryMatch(record));
 }
 
 function facet(records, key) {

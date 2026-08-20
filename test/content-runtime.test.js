@@ -469,7 +469,7 @@ test('panel boundary drag shifts adjacent End and Start together', async () => {
 
 test('main panel shows today total and opens Reports before Settings', async () => {
   documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
+  const messages = [], intervals = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
   const today = new Date(), pad = value => String(value).padStart(2, '0');
@@ -479,13 +479,31 @@ test('main panel shows today total and opens Reports before Settings', async () 
   const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
     messages.push(structuredClone(message));
     if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: { ...recentEntry, endedAt: undefined, startedAt: `${date}T08:00:00+00:00` }, pendingCount: 0, pendingWrites: [] } });
-    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todaySeconds: 5400, reportDate: date, active: null, pendingCount: 0, pendingWrites: [] } });
+    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todaySeconds: 5400, reportDate: date,
+      summaries: [
+        { key: 'today', label: 'Today', seconds: 5400, startDate: date, endDate: date, displayMs: 2000 },
+        { key: 'this-week', label: 'This week', seconds: 7200, startDate: date, endDate: date, displayMs: 1000 },
+        { key: 'last-week', label: 'Last week', seconds: 3600, startDate: '2026-08-10', endDate: '2026-08-16', displayMs: 1000 },
+        { key: 'this-month', label: 'This month', seconds: 10800, startDate: '2026-08-01', endDate: date, displayMs: 1000 },
+      ], active: null, pendingCount: 0, pendingWrites: [] } });
     else callback({ ok: true, data: {} });
-  } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  } } }, setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.findLast(node => node.className === 'today-total-value')?.textContent, '1h 30m');
+  const total = createdNodes.findLast(node => node.className === 'today-total');
+  assert.equal(total.children[0].textContent, 'Today:');
+  assert.equal(total.children[1].textContent, '1h 30m');
+  const rotate = intervals.at(-1);
+  rotate(); assert.equal(total.children[0].textContent, 'Today:', 'Today remains visible for two seconds');
+  rotate(); assert.equal(total.children[0].textContent, 'This week:');
+  rotate(); assert.equal(total.children[0].textContent, 'Last week:');
+  rotate(); assert.equal(total.children[0].textContent, 'This month:');
+  const meta = createdNodes.findLast(node => node.className === 'muted' && /1h 30m$/.test(node.textContent));
+  const expectedStart = new Date(recentEntry.startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const expectedEnd = new Date(recentEntry.endedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  assert.equal(meta.textContent, `${expectedStart} - ${expectedEnd} · 1h 30m`);
+  assert.doesNotMatch(meta.textContent, /acme|\d{1,2}\/\d{1,2}\/\d{4}/);
   await trigger.onclick({ isTrusted: true });
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'each menu opening refreshes its atomic today snapshot');

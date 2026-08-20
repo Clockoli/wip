@@ -14,12 +14,17 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   for (const value of ['day', 'week', 'month', 'person', 'repository', 'task']) {
     assert.match(html, new RegExp(`<option value="${value}"`));
   }
-  for (const id of ['people-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['people-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf']) assert.match(html, new RegExp(`id="${id}"`));
   assert.doesNotMatch(html, /Filter people|Filter repositories|id="export-format"|id="download-timesheet"|>Format</);
   assert.match(html, /aria-label="Search people"/);
   assert.match(html, /aria-label="Search repositories"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
+  assert.match(html, /aria-label="Print report or save as PDF"/);
+  assert.doesNotMatch(html, /GitHub Private Time Tracker|id="settings"|id="source"/);
+  assert.match(js, /window\.print\(\)/);
+  assert.match(js, /Unselect all/);
+  assert.match(js, /tracked · \${option\.count}.*entries/);
   assert.match(js, /type:\s*'LOAD_REPORT'/);
   assert.match(js, /new Blob/);
   assert.match(js, /reportFilename/);

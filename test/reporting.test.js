@@ -46,6 +46,7 @@ test('today total includes completed and running entries whose Start date is tod
 test('person and repository facets cross-filter and expose duration counts', () => {
   assert.deepEqual(filterReportRecords(records, { people: ['alice'], repositories: [] }).map(item => item.user), ['alice', 'alice']);
   assert.deepEqual(filterReportRecords(records, { people: [], repositories: ['acme/api'] }).map(item => item.user), ['alice']);
+  assert.deepEqual(filterReportRecords(records, { people: [], repositories: [], emptyMeansNone: true }), []);
   const facets = buildFacets(records, { people: ['alice'], repositories: ['acme/app'] });
   assert.deepEqual(facets.people, [
     { value: 'alice', count: 1, seconds: 3600 },

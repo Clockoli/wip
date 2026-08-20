@@ -38,3 +38,7 @@ test('time adjustment controls require trusted pointer input and keyboard suppor
   assert.match(source, /12 \* 60/);
   assert.doesNotMatch(source, /Drag ±12h/);
 });
+
+test('successful Sync and refresh clears a stale boundary conflict message', () => {
+  assert.match(source, /errorText = ''; renderUi\(\); await send\(\{ type: 'SYNC' \}\)[\s\S]*refreshState\(true, true\)/);
+});

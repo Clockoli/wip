@@ -3,3 +3,10 @@
 @media(max-width:900px){.reports-layout{grid-template-columns:1fr}.filters{position:static;display:grid;grid-template-columns:1fr 1fr;gap:18px}.filters section+section{margin:0;padding:0 0 0 18px;border-top:0;border-left:1px solid var(--subtle)}.analytics-heading{display:block}.dimension-controls{justify-content:flex-start;margin-top:14px}}
 @media(max-width:640px){.app-header,main{padding:16px}.period-card,.export-card{align-items:stretch;flex-direction:column}.period-controls,.custom-period,.export-controls{align-items:stretch;flex-direction:column}.period-controls label,.custom-period label{width:100%}.period-controls input,.period-controls select{width:100%}.summary-grid{grid-template-columns:1fr 1fr}.reports-layout{display:block}.filters{display:block;margin-bottom:16px}.filters section+section{margin-top:18px;padding:18px 0 0;border-top:1px solid var(--subtle);border-left:0}.dimension-controls{display:grid;grid-template-columns:1fr}.dimension-controls label{width:100%}.export-controls{display:grid;grid-template-columns:1fr 1fr}.export-link{justify-content:center}}
 @media(prefers-color-scheme:dark){:root{--bg:#010409;--panel:#0d1117;--fg:#e6edf3;--muted:#8b949e;--border:#30363d;--subtle:#21262d;--accent:#58a6ff;--primary:#238636;--danger:#ff7b72;--shadow:0 8px 24px #010409}.button{background:#21262d;color:#e6edf3;border-color:#30363d}.button:hover{background:#30363d}.notice.error{background:#3d1117}.today-total{background:#161b22}}
+@media print{
+  :root{color-scheme:light;--bg:#fff;--panel:#fff;--fg:#111;--muted:#444;--border:#bbb;--subtle:#ddd;--shadow:none}
+  .filters,.export-card,.notice{display:none!important}
+  body,main{max-width:none;margin:0;padding:0;background:#fff;color:#111}.app-header{padding:0 0 12px;border:0}.period-card{margin-bottom:12px;box-shadow:none}
+  #report-content{display:block!important}.reports-layout{display:block}.summary-grid{margin:0 0 12px}.card,.summary-card{box-shadow:none}
+  .analytics-card{border:0;padding:0}.chart{min-height:0;overflow:visible}.chart svg{width:100%;height:auto}.data-table-details{display:none}
+}

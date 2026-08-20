@@ -341,13 +341,25 @@ export class TrackerService {
   }
 
   async loadMenuData(limit = 50) {
-    const now = this.clock();
-    const dates = Array.from({ length: this.recentDays }, (_, offset) => {
-      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset, 12, 0, 0);
+    const now = this.clock(), dateFor = offset => {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12, 0, 0);
       return entryDateValue(localDateParts(day));
-    });
-    const dateSet = new Set(dates);
-    const months = [...new Set(dates.map(date => date.slice(0, 7)))];
+    };
+    const today = dateFor(0), mondayOffset = (now.getDay() + 6) % 7;
+    const thisWeekStart = dateFor(-mondayOffset), lastWeekStart = dateFor(-mondayOffset - 7), lastWeekEnd = dateFor(-mondayOffset - 1);
+    const thisMonthStart = `${today.slice(0, 7)}-01`;
+    const summaryRanges = [
+      { key: 'today', label: 'Today', startDate: today, endDate: today, displayMs: 2000 },
+      { key: 'this-week', label: 'This week', startDate: thisWeekStart, endDate: today, displayMs: 1000 },
+      { key: 'last-week', label: 'Last week', startDate: lastWeekStart, endDate: lastWeekEnd, displayMs: 1000 },
+      { key: 'this-month', label: 'This month', startDate: thisMonthStart, endDate: today, displayMs: 1000 },
+    ];
+    const dates = Array.from({ length: this.recentDays }, (_, offset) => dateFor(-offset));
+    const dateSet = new Set(dates), earliest = [lastWeekStart, thisMonthStart, dates.at(-1)].sort()[0];
+    const months = [];
+    for (let cursor = new Date(`${earliest.slice(0, 7)}-01T12:00:00`), end = new Date(`${today.slice(0, 7)}-01T12:00:00`); cursor <= end; cursor.setMonth(cursor.getMonth() + 1)) {
+      months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+    }
     const groups = await Promise.all(months.map(async month => {
       const path = monthlyTextPath(this.user, `${month}-01`);
       try {
@@ -355,23 +367,22 @@ export class TrackerService {
         return parseMonthlyText(file.text, { user: this.user, month, path, sha: file.sha });
       } catch (error) { if (isNotFound(error)) return []; throw error; }
     }));
-    const persisted = groups.flat().filter(entry => dateSet.has(startDate(entry)));
-    const state = await this.store.getState();
-    const pendingWrites = state.pendingWrites ?? [];
+    const persisted = groups.flat().filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
+    const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [];
     const pending = pendingWrites.filter(operation => operation.operation === 'completeTimer' && operation.entry
-      && dateSet.has(startDate(operation.entry)) && !persisted.some(entry => sameCompletion(entry, operation)))
+      && startDate(operation.entry) >= earliest && startDate(operation.entry) <= today && !persisted.some(entry => sameCompletion(entry, operation)))
       .map(operation => ({ ...operation.entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true }));
-    const entries = [...persisted, ...pending].sort(newestFirst);
-    const recent = entries.slice(0, limit);
-    const todaySeconds = entries.filter(entry => startDate(entry) === dates[0])
-      .reduce((sum, entry) => sum + Math.max(0, Number(entry.durationSeconds) || 0), 0);
+    const allEntries = [...persisted, ...pending], recent = allEntries.filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit);
+    const summaries = summaryRanges.map(range => ({ ...range, seconds: allEntries
+      .filter(entry => startDate(entry) >= range.startDate && startDate(entry) <= range.endDate)
+      .reduce((sum, entry) => sum + Math.max(0, Number(entry.durationSeconds) || 0), 0) }));
     await this.store.patchState({ recentCache: recent });
     const active = state.activeCache ? {
       issue: state.activeCache.issue, startedAt: state.activeCache.startedAt,
       description: state.activeCache.description || '', issueTitle: state.activeCache.issueTitle || '',
     } : null;
     return {
-      recent, todaySeconds, reportDate: dates[0], active,
+      recent, summaries, todaySeconds: summaries[0].seconds, reportDate: today, active,
       pendingCount: pendingWrites.length,
       pendingWrites: pendingWrites.map(({ id, status, stage }) => ({ id, status, stage })),
     };
