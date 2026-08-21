@@ -56,3 +56,16 @@ test('trusted content-script menu can manage recent entries but cannot access pr
   for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
 });
+
+
+test('GitHub App onboarding and credential operations are extension-page only', () => {
+  const privileged = [
+    'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
+    'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES',
+    'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+  ];
+  for (const type of privileged) {
+    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+  }
+});

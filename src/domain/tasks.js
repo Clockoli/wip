@@ -47,6 +47,8 @@ export function aggregateTrackedTasks(records, { user, metadata = new Map(), act
     const seconds = Number(record.durationSeconds);
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('Invalid tracked task duration');
     const existing = tasks.get(issue.url) ?? { issue, totalSeconds: 0, sessionCount: 0 };
+    const storedTitle = typeof record.issueTitle === 'string' ? record.issueTitle.trim().slice(0, 300) : '';
+    if (storedTitle) existing.title = storedTitle;
     existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(issue.url, existing);
   }
   if (active?.user === user) {
@@ -57,14 +59,18 @@ export function aggregateTrackedTasks(records, { user, metadata = new Map(), act
   }
   return [...tasks.values()].map(task => {
     const details = metadata.get(task.issue.url);
-    const title = typeof details?.title === 'string' && details.title.trim()
-      ? details.title.trim().slice(0, 500)
-      : (task.activeStartedAt && typeof active?.issueTitle === 'string' && active.issueTitle.trim()
-        ? active.issueTitle.trim().slice(0, 500)
-        : `${task.issue.owner}/${task.issue.repo}#${task.issue.number}`);
+    const title = task.title || (task.activeStartedAt && typeof active?.issueTitle === 'string' && active.issueTitle.trim()
+      ? active.issueTitle.trim().slice(0, 300)
+      : (typeof details?.title === 'string' && details.title.trim()
+        ? details.title.trim().slice(0, 300)
+        : `${task.issue.owner}/${task.issue.repo}#${task.issue.number}`));
     const status = ['OPEN', 'CLOSED', 'MERGED'].includes(details?.status) ? details.status : 'UNKNOWN';
+    const stateReason = task.issue.type === 'issue' && status === 'CLOSED' && ['COMPLETED', 'NOT_PLANNED'].includes(details?.stateReason)
+      ? details.stateReason
+      : null;
     return {
       issue: task.issue, title, status, totalSeconds: task.totalSeconds, sessionCount: task.sessionCount,
+      ...(stateReason ? { stateReason } : {}),
       ...(task.activeStartedAt ? { activeStartedAt: task.activeStartedAt } : {}),
     };
   }).sort((a, b) => b.totalSeconds - a.totalSeconds || a.issue.url.localeCompare(b.issue.url));

@@ -1,6 +1,16 @@
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
-const ALL_KEYS = ['config', 'token', 'reportCache', 'taskMetadataCache', CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+const AUTH = 'auth';
+const AUTH_GENERATION = 'authGeneration';
+const DEVICE_ATTEMPT = 'deviceAttempt';
+const PENDING_AUTH = 'pendingAuth';
+const PENDING_AUTH_GENERATION = 'pendingAuthGeneration';
+const ONBOARDING_KEYS = ['onboardingLastVerifiedAt', 'onboardingVerificationStatus'];
+const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', ...ONBOARDING_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+
+function storageFormatError(message) {
+  return Object.assign(new Error(message), { code: 'incompatible_storage_format' });
+}
 
 function requestResult(request) {
   return new Promise((resolve, reject) => {
@@ -86,6 +96,21 @@ export class IndexedDbBackend {
     await done;
     return true;
   }
+
+  async mutateMany(keys, mutate) {
+    const database = await this.open();
+    const transaction = database.transaction('values', 'readwrite');
+    const done = transactionDone(transaction);
+    const objectStore = transaction.objectStore('values');
+    const pairs = await Promise.all(keys.map(async key => [key, await requestResult(objectStore.get(key))]));
+    const current = Object.fromEntries(pairs.filter(([, value]) => value !== undefined));
+    const mutation = mutate(current);
+    if (!mutation) { await done; return false; }
+    for (const key of mutation.delete || []) objectStore.delete(key);
+    for (const [key, value] of Object.entries(mutation.set || {})) objectStore.put(value, key);
+    await done;
+    return mutation.result ?? true;
+  }
 }
 
 function migrateV2PendingWrites(pendingWrites) {
@@ -120,13 +145,28 @@ export class ChromeStore {
   }
 
   async ensureDataVersion(version) {
-    const state = await this.getState();
-    if (state.dataVersion === version) return state;
-    const reset = state.dataVersion === 2 && version === 3
-      ? { activeCache: state.activeCache, recentCache: [], pendingWrites: migrateV2PendingWrites(state.pendingWrites), dataVersion: version }
-      : { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
-    await this.patchState(reset);
-    return { ...state, ...reset };
+    return this.backend.mutateMany(Object.keys(DEFAULT_STATE), values => {
+      const state = { ...structuredClone(DEFAULT_STATE), ...values };
+      if (state.dataVersion === version) return { result: state };
+      if (state.dataVersion > version) {
+        throw storageFormatError(`RepoClock local data version ${state.dataVersion} is newer than supported version ${version}.`);
+      }
+      if (state.dataVersion !== 2 && (state.activeCache || (state.pendingWrites || []).length)) {
+        throw storageFormatError('RepoClock cannot safely migrate accepted active or pending work from this local data version.');
+      }
+      const reset = state.dataVersion === 2 && version === 3
+        ? { activeCache: state.activeCache, recentCache: [], pendingWrites: migrateV2PendingWrites(state.pendingWrites), dataVersion: version }
+        : { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
+      return { set: reset, result: { ...state, ...reset } };
+    });
+  }
+
+  async getOnboardingVerification() {
+    const values = await this.backend.getMany(ONBOARDING_KEYS);
+    return {
+      lastVerifiedAt: values.onboardingLastVerifiedAt ?? null,
+      status: values.onboardingVerificationStatus ?? null,
+    };
   }
 
   async getConfig() {
@@ -141,6 +181,100 @@ export class ChromeStore {
   }
 
   async getConfigurationGeneration() { return (await this.getConfigurationSnapshot()).generation; }
+
+  async getAuthSnapshot() {
+    const values = await this.backend.getMany([AUTH, AUTH_GENERATION, CONFIGURATION_GENERATION, 'token']);
+    const authGeneration = Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0;
+    const configurationGeneration = Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0;
+    const auth = values[AUTH] ?? (values.token ? { mode: 'pat', accessToken: values.token, generation: authGeneration } : null);
+    return { auth, authGeneration, configurationGeneration };
+  }
+
+  async migrateLegacyPatAuth() {
+    return this.backend.mutateMany([AUTH, AUTH_GENERATION, 'token'], values => {
+      if (values[AUTH]) return { result: values[AUTH] };
+      if (!values.token) return { result: null };
+      const generation = (Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0) + 1;
+      const auth = { mode: 'pat', accessToken: values.token, generation };
+      return { set: { [AUTH]: auth, [AUTH_GENERATION]: generation }, delete: ['token'], result: auth };
+    });
+  }
+
+  async getDeviceAttempt() {
+    const values = await this.backend.getMany([DEVICE_ATTEMPT]);
+    return values[DEVICE_ATTEMPT] ?? null;
+  }
+
+  async saveDeviceAttempt(attempt) { await this.backend.setMany({ [DEVICE_ATTEMPT]: attempt }); }
+
+  async replaceDeviceAttempt(attemptId, attempt) {
+    return this.backend.mutateMany([DEVICE_ATTEMPT], values => {
+      if (!values[DEVICE_ATTEMPT] || values[DEVICE_ATTEMPT].id !== attemptId) return { result: false };
+      return { set: { [DEVICE_ATTEMPT]: attempt }, result: true };
+    });
+  }
+
+  async clearDeviceAttempt(attemptId = '') {
+    return this.backend.mutateMany([DEVICE_ATTEMPT], values => {
+      const current = values[DEVICE_ATTEMPT];
+      if (!current || (attemptId && current.id !== attemptId)) return { result: false };
+      return { delete: [DEVICE_ATTEMPT], result: true };
+    });
+  }
+
+  async saveAuthorizedGitHubApp(auth, attemptId) {
+    return this.backend.mutateMany([DEVICE_ATTEMPT, PENDING_AUTH_GENERATION], values => {
+      if (values[DEVICE_ATTEMPT]?.id !== attemptId) return { result: false };
+      const generation = (Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0) + 1;
+      return {
+        set: { [PENDING_AUTH]: { ...auth, candidateId: attemptId, generation }, [PENDING_AUTH_GENERATION]: generation },
+        delete: [DEVICE_ATTEMPT], result: true,
+      };
+    });
+  }
+
+  async getPendingAuthSnapshot() {
+    const values = await this.backend.getMany([PENDING_AUTH, PENDING_AUTH_GENERATION, CONFIGURATION_GENERATION]);
+    const authGeneration = Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0;
+    const configurationGeneration = Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0;
+    return { auth: values[PENDING_AUTH] ?? null, authGeneration, configurationGeneration };
+  }
+
+  async clearPendingGitHubAppAuth() {
+    await this.backend.mutateMany([PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT], values => {
+      const generation = (Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0) + 1;
+      return { set: { [PENDING_AUTH_GENERATION]: generation }, delete: [PENDING_AUTH, DEVICE_ATTEMPT], result: true };
+    });
+  }
+
+  async rotatePendingGitHubAppAuth(expectedAuthGeneration, _expectedConfigurationGeneration, auth) {
+    return this.backend.mutateMany([PENDING_AUTH, PENDING_AUTH_GENERATION, AUTH, AUTH_GENERATION], values => {
+      const pendingGeneration = Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0;
+      if (pendingGeneration === expectedAuthGeneration && values[PENDING_AUTH]?.mode === 'github_app') {
+        const generation = pendingGeneration + 1;
+        return { set: { [PENDING_AUTH]: { ...auth, generation }, [PENDING_AUTH_GENERATION]: generation }, result: true };
+      }
+      // GitHub may consume the old refresh token just before this candidate is promoted.
+      // Redirect only the exact promoted candidate's replacement pair into current auth.
+      const current = values[AUTH];
+      if (pendingGeneration === expectedAuthGeneration + 1 && !values[PENDING_AUTH]
+          && auth.candidateId && current?.mode === 'github_app'
+          && current.candidateId === auth.candidateId) {
+        const generation = (Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0) + 1;
+        return { set: { [AUTH]: { ...auth, generation }, [AUTH_GENERATION]: generation }, result: true };
+      }
+      return { result: false };
+    });
+  }
+
+  async rotateGitHubAppAuth(expectedAuthGeneration, _expectedConfigurationGeneration, auth) {
+    return this.backend.mutateMany([AUTH_GENERATION], values => {
+      const authGeneration = Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0;
+      if (authGeneration !== expectedAuthGeneration) return { result: false };
+      const generation = authGeneration + 1;
+      return { set: { [AUTH]: { ...auth, generation }, [AUTH_GENERATION]: generation }, result: true };
+    });
+  }
 
   async saveConfig(config, token) { await this.backend.setMany({ config, token }); }
 
@@ -165,5 +299,97 @@ export class ChromeStore {
     return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
   }
 
-  async clearConfig() { await this.backend.deleteMany(ALL_KEYS); }
+  async upgradeLegacyRepositoryIdentity(expectedGeneration, expected, patch) {
+    return this.backend.mutateMany(['config', CONFIGURATION_GENERATION], values => {
+      const generation = Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0
+        ? values[CONFIGURATION_GENERATION] : 0;
+      const config = values.config;
+      if (generation !== expectedGeneration || !config || config.repoId
+          || config.owner !== expected.owner || config.repo !== expected.repo
+          || (config.branch || 'main') !== expected.branch) return { result: false };
+      const nextGeneration = generation + 1;
+      return {
+        set: { config: { ...config, ...patch }, [CONFIGURATION_GENERATION]: nextGeneration },
+        result: nextGeneration,
+      };
+    });
+  }
+
+  async savePatConfiguration(config, token, statePatch, identity = {}) {
+    return this.backend.mutateMany([AUTH_GENERATION, PENDING_AUTH_GENERATION, CONFIGURATION_GENERATION], values => {
+      const authGeneration = (Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0) + 1;
+      const pendingAuthGeneration = (Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0) + 1;
+      const configurationGeneration = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      return {
+        set: {
+          [AUTH]: {
+            mode: 'pat', accessToken: token,
+            ...(Number.isSafeInteger(identity.id) && identity.id > 0 ? { githubUserId: identity.id } : {}),
+            ...(identity.login ? { githubLogin: identity.login } : {}),
+            generation: authGeneration,
+          }, [AUTH_GENERATION]: authGeneration,
+          [PENDING_AUTH_GENERATION]: pendingAuthGeneration,
+          config: { ...config, authMode: 'pat' }, ...statePatch, [CONFIGURATION_GENERATION]: configurationGeneration,
+        },
+        delete: ['token', PENDING_AUTH, DEVICE_ATTEMPT, ...ONBOARDING_KEYS], result: configurationGeneration,
+      };
+    });
+  }
+
+  async saveGitHubAppConfiguration(config, statePatch, expectedAuthGeneration) {
+    return this.backend.mutateMany([AUTH, AUTH_GENERATION, CONFIGURATION_GENERATION], values => {
+      const authGeneration = Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0;
+      if (authGeneration !== expectedAuthGeneration || values[AUTH]?.mode !== 'github_app') return { result: false };
+      const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      return { set: { config, ...statePatch, [CONFIGURATION_GENERATION]: generation }, result: generation };
+    });
+  }
+
+  async commitPendingGitHubAppConfiguration(config, statePatch, expectedPendingGeneration) {
+    return this.backend.mutateMany([PENDING_AUTH, PENDING_AUTH_GENERATION, AUTH_GENERATION, CONFIGURATION_GENERATION], values => {
+      const pendingGeneration = Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0;
+      if (pendingGeneration !== expectedPendingGeneration || values[PENDING_AUTH]?.mode !== 'github_app') return { result: false };
+      const authGeneration = (Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0) + 1;
+      const consumedPendingGeneration = pendingGeneration + 1;
+      const configurationGeneration = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      return {
+        set: {
+          [AUTH]: { ...values[PENDING_AUTH], generation: authGeneration }, [AUTH_GENERATION]: authGeneration,
+          [PENDING_AUTH_GENERATION]: consumedPendingGeneration,
+          config, ...statePatch, [CONFIGURATION_GENERATION]: configurationGeneration,
+        },
+        delete: [PENDING_AUTH, 'token'],
+        result: configurationGeneration,
+      };
+    });
+  }
+
+  async removeCurrentAuthentication(expectedAuthGeneration) {
+    return this.backend.mutateMany([AUTH_GENERATION, PENDING_AUTH_GENERATION, CONFIGURATION_GENERATION], values => {
+      const authGeneration = Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0;
+      if (authGeneration !== expectedAuthGeneration) return { result: false };
+      const nextAuthGeneration = authGeneration + 1;
+      const nextPendingGeneration = (Number.isSafeInteger(values[PENDING_AUTH_GENERATION]) && values[PENDING_AUTH_GENERATION] >= 0 ? values[PENDING_AUTH_GENERATION] : 0) + 1;
+      const nextConfigurationGeneration = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      return {
+        set: { [AUTH_GENERATION]: nextAuthGeneration, [PENDING_AUTH_GENERATION]: nextPendingGeneration, [CONFIGURATION_GENERATION]: nextConfigurationGeneration },
+        delete: [AUTH, 'token', PENDING_AUTH, DEVICE_ATTEMPT], result: true,
+      };
+    });
+  }
+
+  async clearConfig() {
+    await this.backend.mutateMany(ALL_KEYS, values => {
+      const next = key => (Number.isSafeInteger(values[key]) && values[key] >= 0 ? values[key] : 0) + 1;
+      return {
+        set: {
+          [AUTH_GENERATION]: next(AUTH_GENERATION),
+          [PENDING_AUTH_GENERATION]: next(PENDING_AUTH_GENERATION),
+          [CONFIGURATION_GENERATION]: next(CONFIGURATION_GENERATION),
+        },
+        delete: ALL_KEYS.filter(key => ![AUTH_GENERATION, PENDING_AUTH_GENERATION, CONFIGURATION_GENERATION].includes(key)),
+        result: true,
+      };
+    });
+  }
 }

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "GitHub Private Time Tracker",
+  "name": "RepoClock",
   "version": "0.1.11",
   "description": "Track time on GitHub issues and pull requests in a private GitHub repository.",
   "permissions": [
@@ -8,14 +8,18 @@
     "activeTab"
   ],
   "host_permissions": [
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://github.com/login/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
   },
   "action": {
-    "default_title": "GitHub Private Time Tracker",
+    "default_title": "RepoClock",
     "default_popup": "src/popup/popup.html"
   },
   "options_page": "src/options/options.html",
@@ -25,6 +29,7 @@
         "https://github.com/*"
       ],
       "js": [
+        "src/domain/recovery-actions.js",
         "src/content/github.js"
       ],
       "run_at": "document_idle"

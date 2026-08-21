@@ -1,0 +1,488 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { InstallationDiscoveryService, RepositoryInitializer } from '../src/services/github-app-onboarding.js';
+
+function notFound() { const error = new Error('not found'); error.status = 404; error.code = 'not_found'; return error; }
+function conflict() { const error = new Error('conflict'); error.status = 409; error.code = 'conflict'; return error; }
+
+function installation(id, overrides = {}) {
+  return {
+    id, account: { id: id * 10, login: `owner-${id}`, type: id === 1 ? 'User' : 'Organization' },
+    repository_selection: 'selected', permissions: { contents: 'write', metadata: 'read' },
+    html_url: `https://github.com/settings/installations/${id}`,
+    ...overrides,
+  };
+}
+function repository(id, overrides = {}) {
+  return {
+    id, name: `repo-${id}`, full_name: `owner/repo-${id}`, private: true,
+    archived: false, disabled: false, default_branch: 'main',
+    owner: { id: 10, login: 'owner', type: 'User' }, permissions: { push: true },
+    ...overrides,
+  };
+}
+
+test('installation discovery paginates both endpoints and returns only effective private write candidates', async () => {
+  const calls = [];
+  const github = { request: async path => {
+    calls.push(path);
+    if (path === '/user/installations?per_page=2&page=1') return { total_count: 3, installations: [installation(1), installation(2, { permissions: { contents: 'read' } })] };
+    if (path === '/user/installations?per_page=2&page=2') return { total_count: 3, installations: [installation(3)] };
+    if (path === '/user/installations/1/repositories?per_page=2&page=1') return { total_count: 3, repositories: [repository(11), repository(12, { private: false })] };
+    if (path === '/user/installations/1/repositories?per_page=2&page=2') return { total_count: 3, repositories: [repository(13, { permissions: { push: false } })] };
+    if (path === '/user/installations/2/repositories?per_page=2&page=1') return { total_count: 1, repositories: [repository(21)] };
+    if (path === '/user/installations/3/repositories?per_page=2&page=1') return { total_count: 2, repositories: [repository(31, { archived: true }), repository(32, { disabled: true })] };
+    throw new Error(`Unexpected ${path}`);
+  } };
+  const result = await new InstallationDiscoveryService({ github, perPage: 2, maxPages: 10, maxRepositories: 20 }).discover();
+  assert.equal(result.installations.length, 3);
+  assert.deepEqual(result.candidates.map(item => item.repoId), [11]);
+  assert.deepEqual(result.repositories.map(item => [item.repoId, item.eligible, item.reasons]), [
+    [11, true, []],
+    [12, false, ['private_required']],
+    [13, false, ['user_write_required']],
+    [21, false, ['app_contents_write_required']],
+    [31, false, ['archived']],
+    [32, false, ['disabled']],
+  ]);
+  assert.equal(calls.length, 6);
+});
+
+test('installation discovery fails closed before exceeding its page or result budget', async () => {
+  let calls = 0;
+  const github = { request: async path => {
+    calls += 1;
+    if (path.startsWith('/user/installations?')) return { total_count: 1, installations: [installation(1)] };
+    return { total_count: 3, repositories: [repository(1), repository(2)] };
+  } };
+  await assert.rejects(
+    () => new InstallationDiscoveryService({ github, perPage: 2, maxPages: 1, maxRepositories: 2 }).discover(),
+    error => error.code === 'repository_discovery_budget',
+  );
+  assert.equal(calls, 2);
+});
+
+test('repository initialization creates a versioned marker and reports a real write', async () => {
+  const writes = [];
+  const github = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+    getText: async () => { throw notFound(); },
+    listRepositoryFiles: async () => ['README.md'],
+    putText: async (path, text, message, sha) => { writes.push({ path, text, message, sha }); return { sha: 'marker-sha' }; },
+  };
+  const result = await new RepositoryInitializer({ github, now: () => new Date('2026-08-20T00:00:00Z') }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'write_verified');
+  assert.equal(result.storageLogin, 'alice');
+  assert.equal(result.repositoryFormatVersion, 1);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, '.repoclock/config.json');
+  assert.equal(writes[0].sha, undefined);
+  assert.deepEqual(JSON.parse(writes[0].text), {
+    repositoryFormatVersion: 1,
+    createdAt: '2026-08-20T00:00:00.000Z',
+    createdBy: { id: 123, login: 'alice' },
+    users: { '123': 'alice' },
+  });
+});
+
+test('repository initialization accepts an existing compatible user mapping without a meaningless commit', async () => {
+  let writes = 0;
+  const marker = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-01T00:00:00.000Z',
+    createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner', '123': 'original-login' },
+  };
+  const github = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+    getText: async () => ({ path: '.repoclock/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }),
+    putText: async () => { writes += 1; },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'renamed-login' });
+  assert.deepEqual(result, { status: 'access_checked', storageLogin: 'original-login', repositoryFormatVersion: 1, repositoryId: 77, branch: 'main' });
+  assert.equal(writes, 0);
+});
+
+test('repository initialization merges a new stable user mapping with SHA protection', async () => {
+  const writes = [];
+  const marker = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-01T00:00:00.000Z',
+    createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner' },
+  };
+  const github = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+    getText: async () => ({ path: '.repoclock/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }),
+    putText: async (path, text, message, sha) => { writes.push({ path, text, message, sha }); return { sha: 'new-sha' }; },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'write_verified');
+  assert.equal(writes[0].sha, 'marker-sha');
+  assert.deepEqual(JSON.parse(writes[0].text).users, { '1': 'owner', '123': 'alice' });
+});
+
+test('repository initialization resolves a concurrent create by validating the winning marker', async () => {
+  const winner = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00.000Z',
+    createdBy: { id: 123, login: 'alice' }, users: { '123': 'alice' },
+  };
+  let reads = 0;
+  const github = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+    listRepositoryFiles: async () => ['README.md'],
+    getText: async () => { reads += 1; if (reads === 1) throw notFound(); return { sha: 'winner', text: JSON.stringify(winner) }; },
+    putText: async () => { throw conflict(); },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'access_checked');
+  assert.equal(result.storageLogin, 'alice');
+  assert.equal(reads, 3);
+});
+
+test('repository initialization rejects incompatible markers and occupied storage paths', async () => {
+  const base = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+  };
+  await assert.rejects(() => new RepositoryInitializer({ github: {
+    ...base, getText: async () => ({ sha: 'x', text: JSON.stringify({ repositoryFormatVersion: 999, users: {} }) }),
+  } }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format');
+  await assert.rejects(() => new RepositoryInitializer({ github: {
+    ...base, getText: async () => { throw notFound(); }, listRepositoryFiles: async () => ['active/not a login.txt'],
+  } }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format');
+});
+
+
+test('repository discovery and validation fail closed when user push permission is absent', async () => {
+  const github = {
+    async request(path) {
+      if (path.startsWith('/user/installations?')) return { total_count: 1, installations: [{ id: 8, account: { id: 80, login: 'acme' }, permissions: { contents: 'write' } }] };
+      return { total_count: 1, repositories: [{ id: 9, name: 'time', full_name: 'acme/time', private: true, archived: false, disabled: false, default_branch: 'main', owner: { id: 80, login: 'acme' } }] };
+    },
+  };
+  const result = await new InstallationDiscoveryService({ github }).discover();
+  assert.equal(result.candidates.length, 0);
+  assert.deepEqual(result.repositories[0].reasons, ['user_write_required']);
+});
+
+test('pre-marker canonical files are parsed strictly before initialization', async () => {
+  const github = {
+    async validateRepository() { return repository(); },
+    async validateBranch() {},
+    async getText(path) {
+      if (path === '.repoclock/config.json') throw notFound();
+      return { text: 'not a valid RepoClock record\n', sha: 'bad' };
+    },
+    async listRepositoryFiles() { return ['active/alice.txt']; },
+    async putText() { throw new Error('must not write'); },
+  };
+  await assert.rejects(() => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format' && /active\/alice\.txt/.test(error.message));
+});
+
+test('empty repositories and branch rules have actionable recovery classifications', async () => {
+  const empty = { async validateRepository() { return repository(); }, async validateBranch() { throw notFound(); } };
+  await assert.rejects(() => new RepositoryInitializer({ github: empty }).initialize({ id: 123, login: 'alice' }), error => error.code === 'empty_repository');
+  const protectedBranch = {
+    async validateRepository() { return repository(); }, async validateBranch() {},
+    async getText() { throw notFound(); }, async listRepositoryFiles() { return []; },
+    async putText() { const error = new Error('ruleset'); error.status = 422; error.code = 'validation'; throw error; },
+  };
+  await assert.rejects(() => new RepositoryInitializer({ github: protectedBranch }).initialize({ id: 123, login: 'alice' }), error => error.code === 'branch_policy_rejected');
+});
+
+
+test('installation discovery enforces aggregate installation and repository-page budgets', async () => {
+  const installations = [installation(1), installation(2)];
+  const installationBudgetClient = { requests: [], request: async function (path) { this.requests.push(path);
+    if (path.startsWith('/user/installations?')) return { installations };
+    throw new Error(`unexpected ${path}`);
+  } };
+  const installationBudget = new InstallationDiscoveryService({ github: installationBudgetClient, maxInstallations: 1 });
+  await assert.rejects(() => installationBudget.discover(), error => error.code === 'repository_discovery_budget');
+  assert.equal(installationBudgetClient.requests.length, 1);
+
+  const pageBudgetClient = { requests: [], request: async function (path) { this.requests.push(path);
+    if (path.startsWith('/user/installations?')) return { installations };
+    if (path.startsWith('/user/installations/1/repositories?')) return { total_count: 0, repositories: [] };
+    if (path.startsWith('/user/installations/2/repositories?')) throw new Error('aggregate budget must stop before this request');
+    throw new Error(`unexpected ${path}`);
+  } };
+  const pageBudget = new InstallationDiscoveryService({ github: pageBudgetClient, maxRepositoryPages: 1 });
+  await assert.rejects(() => pageBudget.discover(), error => error.code === 'repository_discovery_budget');
+  assert.equal(pageBudgetClient.requests.length, 2);
+});
+
+test('installation discovery enforces one aggregate repository-row budget', async () => {
+  const client = { requests: [], request: async function (path) { this.requests.push(path);
+    if (path.startsWith('/user/installations?')) return { installations: [installation(1), installation(2)] };
+    if (path.startsWith('/user/installations/1/repositories?')) return { repositories: [repository(101)] };
+    if (path.startsWith('/user/installations/2/repositories?')) return { repositories: [repository(102)] };
+    throw new Error(`unexpected ${path}`);
+  } };
+  const service = new InstallationDiscoveryService({ github: client, maxRepositories: 1 });
+  await assert.rejects(() => service.discover(), error => error.code === 'repository_discovery_budget');
+});
+
+
+test('repository initialization merges a different concurrent create winner after GitHub 422', async () => {
+  const winner = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00.000Z',
+    createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner' },
+  };
+  let reads = 0;
+  const writes = [];
+  const github = {
+    validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => ({ name: 'main' }),
+    listRepositoryFiles: async () => ['README.md'],
+    getText: async () => { reads += 1; if (reads === 1) throw notFound(); return { sha: 'winner-sha', text: JSON.stringify(winner) }; },
+    putText: async (path, text, message, sha) => {
+      writes.push({ path, text, message, sha });
+      if (writes.length === 1) { const error = new Error('already exists'); error.status = 422; error.code = 'validation'; throw error; }
+      return { sha: 'merged-sha' };
+    },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }, { expectedRepositoryId: 77 });
+  assert.equal(result.status, 'write_verified');
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1].sha, 'winner-sha');
+  assert.deepEqual(JSON.parse(writes[1].text).users, { '1': 'owner', '123': 'alice' });
+});
+
+test('repository initialization rejects a selected repository ID mismatch before writing', async () => {
+  let branchChecks = 0;
+  const github = {
+    validateRepository: async () => ({ id: 88, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
+    validateBranch: async () => { branchChecks += 1; return { name: 'main' }; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }, { expectedRepositoryId: 77 }),
+    error => error.code === 'repository_identity_changed',
+  );
+  assert.equal(branchChecks, 0);
+});
+
+
+test('zero installations is an explicit App-installation-required state', async () => {
+  const github = { request: async path => {
+    assert.match(path, /^\/user\/installations\?/);
+    return { total_count: 0, installations: [] };
+  } };
+  await assert.rejects(
+    () => new InstallationDiscoveryService({ github }).discover(),
+    error => error.code === 'app_installation_required',
+  );
+});
+
+test('internal repositories are unavailable under the private-only first-release policy', async () => {
+  const github = { request: async path => path.startsWith('/user/installations?')
+    ? { total_count: 1, installations: [installation(1)] }
+    : { total_count: 1, repositories: [repository(71, { visibility: 'internal' })] } };
+  const result = await new InstallationDiscoveryService({ github }).discover();
+  assert.equal(result.candidates.length, 0);
+  assert.deepEqual(result.repositories[0].reasons, ['private_required']);
+});
+
+test('persistent create-time 409 without a winning marker is branch policy rejection', async () => {
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => { throw notFound(); }, listRepositoryFiles: async () => [],
+    putText: async () => { throw conflict(); },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }),
+    error => error.code === 'branch_policy_rejected',
+  );
+});
+
+
+test('repository initialization rejects duplicate or inconsistent marker ownership before accepting a mapping', async () => {
+  const base = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}), putText: async () => { throw new Error('must not write'); },
+  };
+  for (const marker of [
+    { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'alice' }, users: { '1': 'alice', '2': 'alice' } },
+    { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'alice' }, users: { '1': 'bob' } },
+  ]) {
+    const github = { ...base, getText: async () => ({ sha: 'marker', text: JSON.stringify(marker) }) };
+    await assert.rejects(
+      () => new RepositoryInitializer({ github }).initialize({ id: 1, login: 'alice' }),
+      error => error.code === 'incompatible_storage_format',
+    );
+  }
+});
+
+test('pre-marker validation rejects non-blob entries and incompatible modes under reserved namespaces', async () => {
+  let writes = 0;
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => { throw notFound(); },
+    listRepositoryEntries: async () => [
+      { path: 'active/vendor', type: 'commit', mode: '160000' },
+      { path: 'times/2026-08/alice.txt', type: 'blob', mode: '120000' },
+    ],
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }),
+    error => error.code === 'incompatible_storage_format',
+  );
+  assert.equal(writes, 0);
+});
+
+test('default-branch initialization rejects a stale discovered branch before marker access', async () => {
+  let branchChecks = 0, markerReads = 0, writes = 0;
+  const github = {
+    validateRepository: async () => repository(77, { default_branch: 'trunk' }),
+    validateBranch: async () => { branchChecks += 1; return {}; },
+    getText: async () => { markerReads += 1; throw notFound(); },
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize(
+      { id: 123, login: 'alice' },
+      { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default' },
+    ),
+    error => error.code === 'repository_branch_changed',
+  );
+  assert.equal(branchChecks, 0); assert.equal(markerReads, 0); assert.equal(writes, 0);
+});
+
+test('marker schema rejects unknown fields and bounded-size or user-count violations', async () => {
+  const valid = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'alice' }, users: { '1': 'alice' } };
+  const base = { validateRepository: async () => repository(77), validateBranch: async () => ({}), putText: async () => { throw new Error('must not write'); } };
+  const variants = [
+    { ...valid, unexpected: true },
+    { ...valid, createdBy: { ...valid.createdBy, unexpected: true } },
+    { ...valid, users: Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [String(index + 1), `user-${index + 1}`])) },
+    `${JSON.stringify(valid)}${' '.repeat(65_536)}`,
+  ];
+  for (const marker of variants) {
+    const text = typeof marker === 'string' ? marker : JSON.stringify(marker);
+    await assert.rejects(
+      () => new RepositoryInitializer({ github: { ...base, getText: async () => ({ sha: 'marker', text }) } }).initialize({ id: 1, login: 'alice' }),
+      error => error.code === 'incompatible_storage_format',
+    );
+  }
+});
+
+test('PAT migration can require the immutable legacy storage login when creating the marker', async () => {
+  const writes = [];
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => {
+      if (path === '.repoclock/config.json') throw notFound();
+      if (path.startsWith('active/')) return { text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-20T00:00:00Z\n', sha: 'a' };
+      return { text: '', sha: 'b' };
+    }, listRepositoryEntries: async () => [
+      { path: 'active/old-login.txt', type: 'blob', mode: '100644' },
+      { path: 'times/2026-08/old-login.txt', type: 'blob', mode: '100644' },
+    ],
+    putText: async (_path, text) => { writes.push(JSON.parse(text)); return { sha: 'marker' }; },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize(
+    { id: 123, login: 'new-login' },
+    { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default', requiredStorageLogin: 'old-login' },
+  );
+  assert.equal(result.storageLogin, 'old-login');
+  assert.deepEqual(writes[0].createdBy, { id: 123, login: 'old-login' });
+  assert.deepEqual(writes[0].users, { '123': 'old-login' });
+});
+
+test('default branch is revalidated after reserved-tree traversal and immediately before marker write', async () => {
+  let validations = 0, writes = 0;
+  const github = {
+    validateRepository: async () => repository(77, { default_branch: ++validations >= 2 ? 'trunk' : 'main' }),
+    validateBranch: async () => ({}), getText: async () => { throw notFound(); }, listRepositoryEntries: async () => [],
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize(
+      { id: 123, login: 'alice' }, { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default' },
+    ),
+    error => error.code === 'repository_branch_changed',
+  );
+  assert.equal(validations, 2);
+  assert.equal(writes, 0);
+});
+
+test('marker update rejects growth beyond the exact user-count ceiling before writing', async () => {
+  const users = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [String(index + 1), `user-${index + 1}`]));
+  const marker = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'user-1' }, users };
+  let writes = 0;
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => ({ text: JSON.stringify(marker), sha: 'marker' }),
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize(
+      { id: 2001, login: 'new-user' }, { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default' },
+    ),
+    error => error.code === 'incompatible_storage_format',
+  );
+  assert.equal(writes, 0);
+});
+
+test('marker update rejects pretty serialization that grows beyond the byte ceiling', async () => {
+  const firstId = 1_000_000_000_000_000;
+  const users = Object.fromEntries(Array.from({ length: 999 }, (_, index) => {
+    const prefix = `u${index + 1}`;
+    return [String(firstId + index), `${prefix}${'x'.repeat(39 - prefix.length)}`];
+  }));
+  const marker = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: firstId, login: users[String(firstId)] }, users };
+  const compact = JSON.stringify(marker);
+  assert.ok(new TextEncoder().encode(compact).byteLength <= 64 * 1024);
+  const expanded = `${JSON.stringify({ ...marker, users: { ...users, 2001: 'new-user' } }, null, 2)}\n`;
+  assert.ok(new TextEncoder().encode(expanded).byteLength > 64 * 1024);
+  let writes = 0;
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => ({ text: compact, sha: 'marker' }),
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize(
+      { id: 2001, login: 'new-user' }, { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default' },
+    ),
+    error => error.code === 'incompatible_storage_format',
+  );
+  assert.equal(writes, 0);
+});
+
+test('repository marker rejects impossible UTC calendar timestamps instead of accepting Date normalization', async () => {
+  const marker = {
+    repositoryFormatVersion: 1,
+    createdAt: '2026-02-31T00:00:00Z',
+    createdBy: { id: 123, login: 'alice' },
+    users: { '123': 'alice' },
+  };
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => ({ sha: 'marker', text: JSON.stringify(marker) }),
+    putText: async () => { throw new Error('must not write'); },
+  };
+  await assert.rejects(
+    () => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }),
+    error => error.code === 'incompatible_storage_format',
+  );
+});
+
+test('pre-marker validation rejects blobs occupying reserved directory roots', async () => {
+  for (const path of ['.repoclock', 'active', 'times']) {
+    let writes = 0;
+    const github = {
+      validateRepository: async () => repository(77), validateBranch: async () => ({}),
+      getText: async () => { throw notFound(); },
+      listRepositoryEntries: async () => [{ path, type: 'blob', mode: '100644' }],
+      putText: async () => { writes += 1; },
+    };
+    await assert.rejects(
+      () => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }),
+      error => error.code === 'incompatible_storage_format',
+    );
+    assert.equal(writes, 0);
+  }
+});
+

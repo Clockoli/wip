@@ -10,7 +10,7 @@ const manifest = JSON.parse(read('manifest.json'));
 if (manifest.manifest_version !== 3) fail('Manifest V3 is required');
 if (Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
 if (manifest.background?.type !== 'module') fail('Background worker must be an ES module');
-if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*'])) fail('API host permissions are broader than expected');
+if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*', 'https://github.com/login/*'])) fail('Host permissions must be limited to the GitHub API and OAuth login endpoints');
 for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab'].includes(permission)) fail(`Unexpected permission: ${permission}`);
 if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 

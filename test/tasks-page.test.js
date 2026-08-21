@@ -7,15 +7,22 @@ const js = fs.readFileSync(new URL('../src/tasks/tasks.js', import.meta.url), 'u
 const css = fs.readFileSync(new URL('../src/tasks/tasks.css', import.meta.url), 'utf8');
 const worker = fs.readFileSync(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const content = fs.readFileSync(new URL('../src/content/github.js', import.meta.url), 'utf8');
+const manifest = fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8');
+const popup = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
 
 test('tasks page is a recent tracked-work list without GitHub issue-list clutter', () => {
   assert.match(html, /<h1>Recently tracked work<\/h1>/);
+  assert.match(html, /<header class="app-header">\s*<h1>Recently tracked work<\/h1>\s*<\/header>/);
+  assert.doesNotMatch(html, /class="eyebrow"/);
   for (const id of ['period', 'task-filter', 'status', 'result-count', 'task-list']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['two-weeks', 'one-month', 'three-months', 'six-months', 'one-year']) assert.match(html, new RegExp(`value="${value}"`));
   assert.match(html, /value="open" selected/);
   assert.doesNotMatch(html, /magnif|octicon-search|pagination|Sort|Assigned to me/i);
   assert.doesNotMatch(html, /labels|comments|assignee/i);
-  assert.match(js, /localStorage\.getItem\(PERIOD_KEY\)/);
+  assert.doesNotMatch(html, /id="settings"/);
+  assert.match(js, /const PERIOD_KEY = 'repoclock\.tasks\.period'/);
+  assert.match(js, /const LEGACY_PERIOD_KEY = 'github-private-time-tracker\.tasks\.period'/);
+  assert.match(js, /localStorage\.getItem\(PERIOD_KEY\) \|\| localStorage\.getItem\(LEGACY_PERIOD_KEY\)/);
   assert.match(js, /localStorage\.setItem\(PERIOD_KEY/);
   assert.match(js, /addEventListener\('input'/);
   assert.match(js, /type:\s*'LOAD_TASKS'/);
@@ -23,6 +30,30 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.match(js, /type:\s*'STOP'/);
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(css, /\.task-row/);
+});
+
+test('visible extension branding is RepoClock and Tasks uses neutral GitHub buttons', () => {
+  for (const surface of [manifest, popup, html, content]) {
+    assert.doesNotMatch(surface, /GitHub Private Time Tracker|Private Time Tracker/);
+  }
+  assert.match(manifest, /"name":\s*"RepoClock"/);
+  assert.match(manifest, /"default_title":\s*"RepoClock"/);
+  assert.match(popup, /<strong>RepoClock<\/strong>/);
+  assert.match(content, /const ROOT_ID = 'repoclock-root'/);
+  assert.match(css, /\.timer-button\{[^}]*border:1px solid var\(--button-default-borderColor-rest\)[^}]*background:var\(--button-default-bgColor-rest\)[^}]*color:var\(--button-default-fgColor-rest\)/);
+  assert.match(css, /\.timer-button:hover\{[^}]*background:var\(--button-default-bgColor-hover\)/);
+  assert.doesNotMatch(css, /\.timer-button\{[^}]*button-primary/);
+  assert.doesNotMatch(html, /class="button primary"/);
+  assert.doesNotMatch(css, /\.button\.primary/);
+  assert.match(css, /\.task-icon\.open\{color:var\(--fgColor-open\)\}/, 'GitHub semantic Open color remains intact');
+});
+
+test('standalone selects use an inset custom caret while the GitHub header caret remains untouched', () => {
+  const reportsCss = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
+  for (const pageCss of [css, reportsCss]) {
+    assert.match(pageCss, /select\{[^}]*appearance:none[^}]*padding-right:32px[^}]*background-position:right 12px center/);
+  }
+  assert.doesNotMatch(content, /trigger-menu[^}]*translateX/);
 });
 
 test('GitHub header uses a separately clickable split trigger and a Reports/Tasks navigation menu', () => {

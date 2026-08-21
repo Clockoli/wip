@@ -2,7 +2,7 @@ import { durationSeconds } from './records.js';
 import { entryDateParts, normalizeIssue, parseIssueUrl, validatePathSegment } from './values.js';
 
 const FIELD_RE = /^([A-Za-z]+):(?: (.*))?$/;
-const ALLOWED_FIELDS = new Set(['URL', 'Start', 'End', 'Description']);
+const ALLOWED_FIELDS = new Set(['URL', 'Title', 'Start', 'End', 'Description']);
 const MONTH_RE = /^(\d{4})-(\d{2})$/;
 
 export function timestampWithTimezone(value) {
@@ -32,6 +32,10 @@ export function localTimestamp(value = new Date()) {
 
 export function normalizePlainDescription(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+}
+
+export function normalizePlainTitle(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
 }
 
 function validateMonth(value) {
@@ -79,10 +83,11 @@ function parseBlock(block, { active = false } = {}) {
   if (!issue) throw new Error('Invalid issue or pull request URL');
   const startedAt = timestampWithTimezone(fields.get('Start'));
   const endedAt = active ? null : timestampWithTimezone(fields.get('End'));
+  const issueTitle = normalizePlainTitle(fields.get('Title') || '');
   const description = normalizePlainDescription(fields.get('Description') || '');
-  if (active) return { issue, startedAt, description };
+  if (active) return { issue, issueTitle, startedAt, description };
   durationSeconds(startedAt, endedAt);
-  return { issue, startedAt, endedAt, description };
+  return { issue, issueTitle, startedAt, endedAt, description };
 }
 
 function splitBlocks(text) {
@@ -102,7 +107,7 @@ export function parseMonthlyText(text, { user, month, path = `times/${validateMo
     entryDateParts(date);
     const createdAt = record.endedAt;
     return {
-      schemaVersion: 1, id: recordId(date, index), user, issue: normalizeIssue(record.issue), entryDate: date,
+      schemaVersion: 1, id: recordId(date, index), user, issue: normalizeIssue(record.issue), issueTitle: record.issueTitle, entryDate: date,
       startedAt: record.startedAt, endedAt: record.endedAt, durationSeconds: durationSeconds(record.startedAt, record.endedAt),
       description: record.description, createdAt, updatedAt: createdAt,
       _path: path, _sha: sha, _index: index,
@@ -112,7 +117,10 @@ export function parseMonthlyText(text, { user, month, path = `times/${validateMo
 
 function serializeRecord(record, { active = false } = {}) {
   const issue = normalizeIssue(record.issue);
-  const lines = [`URL: ${issue.url}`, `Start: ${timestampWithTimezone(record.startedAt)}`];
+  const lines = [`URL: ${issue.url}`];
+  const issueTitle = normalizePlainTitle(record.issueTitle);
+  if (issueTitle) lines.push(`Title: ${issueTitle}`);
+  lines.push(`Start: ${timestampWithTimezone(record.startedAt)}`);
   if (!active) {
     timestampWithTimezone(record.endedAt);
     durationSeconds(record.startedAt, record.endedAt);
@@ -135,7 +143,7 @@ export function parseActiveText(text, { user, path = activeTextPath(user), sha =
   if (blocks.length !== 1) throw new Error('Active timer file must contain exactly one timer');
   const record = parseBlock(blocks[0], { active: true });
   return {
-    schemaVersion: 1, user, issue: normalizeIssue(record.issue), entryDate: record.startedAt.slice(0, 10),
+    schemaVersion: 1, user, issue: normalizeIssue(record.issue), issueTitle: record.issueTitle, entryDate: record.startedAt.slice(0, 10),
     startedAt: record.startedAt, description: record.description, createdAt: record.startedAt,
     _path: path, _sha: sha,
   };

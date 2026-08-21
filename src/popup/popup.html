@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Time Tracker</title><link rel="stylesheet" href="popup.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RepoClock</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <header><div><strong>Private Time Tracker</strong><div id="sync-status" class="muted"></div></div><button id="settings" class="icon" title="Settings">⚙</button></header>
+  <header><div><strong>RepoClock</strong><div id="sync-status" class="muted"></div></div><button id="settings" class="icon" title="Settings">⚙</button></header>
   <main>
     <div id="error" class="error" role="alert"></div>
     <section id="conflicts" hidden></section>
-    <section id="setup" hidden><p>Configure a private GitHub repository and fine-grained token.</p><button id="setup-button" class="primary">Open Settings</button></section>
+    <section id="setup" hidden><p>Connect GitHub and choose a private storage repository.</p><button id="setup-button" class="primary">Connect GitHub</button></section>
     <section id="active" hidden>
       <div class="label">Running</div><a id="active-issue" target="_blank" rel="noreferrer"></a><div id="active-title" class="muted"></div><div id="elapsed" class="elapsed">00:00:00</div>
       <label>Description <input id="stop-description" maxlength="2000" placeholder="Optional"></label>

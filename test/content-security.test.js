@@ -23,22 +23,37 @@ test('time tracker uses a native-style GitHub header menu instead of a floating 
 });
 
 test('header menu exposes recent-entry management without exposing the token', () => {
-  for (const type of ['LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SYNC', 'OPEN_REPORTS', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
+  for (const type of ['LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SYNC', 'OPEN_REPORTS', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
+  assert.doesNotMatch(source, /MOVE_BOUNDARY|time-boundary/, 'the main panel no longer exposes between-row drag mutations');
   assert.doesNotMatch(source, /type:\s*['"]GET_STATE['"]/);
   assert.doesNotMatch(source, /token/i);
 });
 
 
-test('time adjustment controls require trusted pointer input and keyboard support', () => {
-  assert.match(source, /pointerdown/);
-  assert.match(source, /pointermove/);
-  assert.match(source, /pointerup/);
-  assert.match(source, /ArrowLeft/);
-  assert.match(source, /ArrowRight/);
-  assert.match(source, /12 \* 60/);
-  assert.doesNotMatch(source, /Drag ±12h/);
+test('time adjustment controls use focused wheel and keyboard input without page-level drag handlers', () => {
+  assert.match(source, /addEventListener\('wheel'/);
+  assert.match(source, /passive: false/);
+  assert.match(source, /field\.getRootNode\?\.\(\)/);
+  assert.match(source, /root\?\.activeElement \?\? document\.activeElement/);
+  assert.match(source, /ArrowUp/);
+  assert.match(source, /ArrowDown/);
+  assert.match(source, /PageUp/);
+  assert.match(source, /PageDown/);
+  assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
 });
 
 test('successful Sync and refresh clears a stale boundary conflict message', () => {
   assert.match(source, /errorText = ''; renderUi\(\); await send\(\{ type: 'SYNC' \}\)[\s\S]*refreshState\(true, true\)/);
+});
+
+
+test('grouped recent records reveal contextual actions and large accessible time controls without boundary elements', () => {
+  assert.match(source, /entry-actions/);
+  assert.match(source, /entry-delete/);
+  assert.match(source, /\.entry-actions\s*\{[^}]*opacity:0[^}]*pointer-events:none/);
+  assert.match(source, /\.entry-record:hover \.entry-actions,\.entry-record:focus-within \.entry-actions,\.entry-actions\.dirty\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
+  assert.match(source, /\.time-value\s*\{[^}]*font:700 26px/);
+  assert.match(source, /aria-label', `\$\{label\} hour`/);
+  assert.match(source, /aria-label', `\$\{label\} minute`/);
+  assert.doesNotMatch(source, /time-boundary|bindBoundaryVisibility|drag-line|drag-grip/);
 });

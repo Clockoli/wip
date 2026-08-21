@@ -1,25 +1,119 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private Time Tracker Settings</title><link rel="stylesheet" href="options.css"></head>
-<body><main>
-  <h1>Private Time Tracker</h1>
-  <p>Time records are written only to the private repository below. <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to that repository with <strong>Contents: Read and write</strong>.</p>
-  <div id="message" role="status"></div>
-  <form id="settings-form">
-    <fieldset><legend>Private time-data repository</legend>
-      <div class="grid"><label>Owner<input id="owner" required maxlength="39" autocomplete="off" placeholder="acme"></label><label>Repository<input id="repo" required maxlength="100" autocomplete="off" placeholder="time-data"></label></div>
-      <label>Branch<input id="branch" required value="main" maxlength="100" autocomplete="off"></label>
-    </fieldset>
-    <fieldset><legend>Authentication</legend>
-      <label>Fine-grained GitHub token<input id="token" type="password" required autocomplete="off" spellcheck="false"></label>
-      <p class="help">Stored in Chrome extension-local storage. It is never exposed to GitHub pages, URLs, analytics, or the time-data files.</p>
-    </fieldset>
-    <fieldset><legend>Tracking policy</legend>
-      <label>Allowed issue owners<input id="allowed-owners" autocomplete="off" placeholder="acme, partner-org"></label>
-      <p class="help">Comma-separated. If empty, only the time-data repository owner is allowed.</p>
-      <label>Recent-entry window (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
-    </fieldset>
-    <button id="save" type="submit">Validate and save</button>
-  </form>
-</main><script type="module" src="options.js"></script></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RepoClock Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="mark" aria-hidden="true">RC</div>
+    <div><h1>RepoClock</h1><p>Private time tracking stored in a GitHub repository you control.</p></div>
+  </header>
+
+  <div id="message" role="status" aria-live="polite"></div>
+
+  <section class="card" aria-labelledby="connection-title">
+    <div class="card-heading">
+      <div><h2 id="connection-title">Connect GitHub</h2><p>Authorize RepoClock, choose where to install it, then select one private repository.</p></div>
+      <span id="connection-status" class="badge">Not connected</span>
+    </div>
+
+    <div id="build-warning" class="notice error-notice" hidden>
+      This development build does not yet include the public RepoClock GitHub App client ID. Personal access token compatibility remains available below.
+    </div>
+    <div id="recovery-actions" class="notice" hidden>
+      <div class="actions">
+        <button id="recovery-connect" type="button">Connect GitHub</button>
+        <a id="recovery-grant" target="_blank" rel="noreferrer">Grant access</a>
+        <button id="recovery-choose" type="button" class="secondary">Choose another repository</button>
+        <button id="recovery-retry" type="button" class="secondary">Retry</button>
+      </div>
+    </div>
+
+    <div id="connected" hidden>
+      <dl class="summary">
+        <div><dt>Account</dt><dd id="connected-account">—</dd></div>
+        <div><dt>Repository</dt><dd id="connected-repository">—</dd></div>
+        <div><dt>Branch</dt><dd id="connected-branch">—</dd></div>
+        <div><dt>Storage</dt><dd id="connected-storage">—</dd></div>
+      </dl>
+      <div class="actions">
+        <a id="open-repository" target="_blank" rel="noreferrer">Open repository</a>
+        <button id="check-access" type="button" class="secondary">Check access</button>
+        <button id="change-connection" type="button" class="secondary">Change connection</button>
+        <button id="disconnect" type="button" class="danger">Disconnect this browser</button>
+        <a id="revoke" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Revoke on GitHub</a>
+      </div>
+      <p class="help">Disconnect removes this browser’s local credentials only. Revoking on GitHub affects the authorization outside RepoClock.</p>
+    </div>
+
+    <div id="onboarding">
+      <ol class="steps" aria-label="Connection decisions">
+        <li><strong>Authorize RepoClock</strong><span>No token creation or credential copying.</span></li>
+        <li><strong>Install or review access</strong><span>Choose the account or organization and repository scope on GitHub.</span></li>
+        <li><strong>Select a repository</strong><span>RepoClock validates private, writable storage before switching.</span></li>
+      </ol>
+      <p class="help">GitHub may ask for a device code, sign-in, SSO, organization approval, installation, or repository selection.</p>
+
+      <div id="authorize-panel">
+        <button id="authorize" type="button">Authorize with GitHub</button>
+      </div>
+
+      <div id="device-panel" class="notice" hidden>
+        <p>Enter this one-time code on the GitHub page:</p>
+        <div class="device-row"><code id="device-code"></code><button id="copy-code" type="button" class="secondary compact">Copy</button></div>
+        <p id="device-wait" class="help">Waiting for authorization…</p>
+        <div class="actions"><a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a><button id="cancel-device" type="button" class="link-button">Cancel</button></div>
+      </div>
+
+      <div id="repository-panel" hidden>
+        <div class="actions repository-actions">
+          <a id="install-app" target="_blank" rel="noreferrer">Install or review RepoClock access</a>
+          <a id="new-repository" target="_blank" rel="noreferrer">Create a private repository</a>
+          <button id="refresh-repositories" type="button" class="secondary">Check again</button>
+        </div>
+        <fieldset><legend>Private writable repositories</legend><label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label><div id="repository-list" class="repository-list"></div></fieldset>
+        <fieldset class="policy-grid"><legend>Recent entries</legend>
+          <label>Recent entries shown in the main panel (days)<input id="app-recent-days" type="number" min="1" max="31" value="7" required></label>
+          <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
+          <p class="help">Track any GitHub issue or pull request.</p>
+        </fieldset>
+        <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
+        <button id="cancel-app-setup" type="button" class="link-button">Cancel GitHub App setup</button>
+      </div>
+    </div>
+  </section>
+
+  <details id="advanced-pat" class="card advanced">
+    <summary>Personal access token compatibility</summary>
+    <p>Use this advanced path for an existing PAT configuration or environments where the GitHub App cannot be installed. RepoClock never displays a stored token.</p>
+    <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
+    <form id="settings-form">
+      <fieldset><legend>Private time-data repository</legend>
+        <div class="grid"><label>Owner<input id="owner" required maxlength="39" autocomplete="off" placeholder="acme"></label><label>Repository<input id="repo" required maxlength="100" autocomplete="off" placeholder="time-data"></label></div>
+        <label>Branch<input id="branch" required value="main" maxlength="100" autocomplete="off"></label>
+      </fieldset>
+      <fieldset><legend>Authentication</legend>
+        <label>Fine-grained GitHub token<input id="token" type="password" required autocomplete="off" spellcheck="false"></label>
+        <p class="help">Stored only in extension-local IndexedDB. It is never exposed to GitHub pages, URLs, analytics, or time-data files.</p>
+      </fieldset>
+      <fieldset><legend>Recent entries</legend>
+        <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
+        <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
+        <p class="help">Track any GitHub issue or pull request.</p>
+      </fieldset>
+      <button id="save" type="submit">Validate and use PAT</button>
+    </form>
+    <hr>
+    <h3>Local data</h3>
+    <p class="help">Clear this browser’s RepoClock settings and credentials without deleting repository data or revoking GitHub authorization. Active timers and pending writes must be resolved first.</p>
+    <button id="clear-local" type="button" class="danger">Clear local configuration</button>
+  </details>
+</main>
+<script src="../domain/recovery-actions.js"></script>
+<script type="module" src="options.js"></script>
+</body>
 </html>

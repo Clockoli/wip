@@ -6,7 +6,8 @@
   "description": "Private GitHub-backed issue time tracking Chrome extension",
   "scripts": {
     "test": "node --test",
-    "check": "node scripts/validate-extension.js && node --check src/background/service-worker.js && node --check src/content/github.js && node --check src/popup/popup.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js"
+    "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/github.js && node --check src/popup/popup.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
+    "package": "python3 scripts/build-release.py"
   },
   "engines": {
     "node": ">=20"

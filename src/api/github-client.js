@@ -18,6 +18,9 @@ export class GitHubAuthenticationError extends GitHubApiError {
 export class GitHubPermissionError extends GitHubApiError {
   constructor(message = 'The token does not have access to the configured repository.') { super(message, 403, 'permission'); }
 }
+export class GitHubOrganizationApprovalError extends GitHubApiError {
+  constructor(message = 'This organization must approve RepoClock before its installations are available.') { super(message, 403, 'org_approval_required'); }
+}
 export class GitHubRateLimitError extends GitHubApiError {
   constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403) { super(message, status, 'rate_limit'); }
 }
@@ -32,6 +35,11 @@ function rateLimitMessage(response) {
     return `GitHub API rate limit exceeded. Try again after ${new Date(reset * 1000).toISOString()}.`;
   }
   return 'GitHub API rate limit exceeded. Wait a few minutes and try again.';
+}
+
+function isBranchPolicyRejection(body) {
+  const detail = `${body?.message ?? ''} ${JSON.stringify(body?.errors ?? '')}`;
+  return /protected branch|repository rule|ruleset|rule violations?|changes? (?:must|are required to) be made through a pull request/i.test(detail);
 }
 
 function isRateLimited(response, body) {
@@ -61,29 +69,44 @@ function encodePath(path) {
 }
 
 export class GitHubClient {
-  constructor({ token, owner, repo, branch = 'main', fetchImpl = fetch }) {
-    if (!token || typeof token !== 'string') throw new Error('GitHub token is required');
-    this.token = token;
-    this.owner = validateOwner(owner);
-    this.repo = validateRepo(repo);
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch }) {
+    if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
+    this.token = token || '';
+    this.credentialProvider = credentialProvider;
+    const hasOwner = owner !== undefined && owner !== null && owner !== '';
+    const hasRepo = repo !== undefined && repo !== null && repo !== '';
+    if (hasOwner !== hasRepo) throw new Error('GitHub repository owner and name must be provided together');
+    this.owner = hasOwner ? validateOwner(owner) : '';
+    this.repo = hasRepo ? validateRepo(repo) : '';
     this.branch = validateBranch(String(branch || 'main'));
+    if (expectedRepositoryId !== undefined && expectedRepositoryId !== null
+        && (!Number.isSafeInteger(expectedRepositoryId) || expectedRepositoryId <= 0)) throw new Error('Invalid expected GitHub repository ID');
+    if (!['default', 'custom'].includes(branchMode)) throw new Error('Invalid GitHub branch mode');
+    this.expectedRepositoryId = expectedRepositoryId;
+    this.branchMode = branchMode;
     this.fetchImpl = fetchImpl.bind(globalThis);
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
 
   async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
-    const response = await this.fetchImpl(`https://api.github.com${path}`, {
+    const requestWithToken = token => this.fetchImpl(`https://api.github.com${path}`, {
       ...options,
       cache: 'no-store',
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         'X-GitHub-Api-Version': '2022-11-28',
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
     });
+    let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
+    let response = await requestWithToken(token);
+    if (response.status === 401 && this.credentialProvider) {
+      token = await this.credentialProvider.getAccessToken({ forceRefresh: true, rejectedToken: token });
+      response = await requestWithToken(token);
+    }
     if (allowNotModified && response.status === 304) {
       return { body: null, status: response.status, headers: response.headers, notModified: true };
     }
@@ -92,32 +115,51 @@ export class GitHubClient {
     if (!response.ok) {
       if (response.status === 401) throw new GitHubAuthenticationError();
       if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status);
-      if (response.status === 403) throw new GitHubPermissionError();
+      if (response.status === 403) {
+        const detail = String(body?.message || '').slice(0, 500);
+        if (/organi[sz]ation[\s\S]{0,120}(?:approval|approve)|(?:approval|approve)[\s\S]{0,120}organi[sz]ation|third-party application access policy/i.test(detail)) {
+          throw new GitHubOrganizationApprovalError();
+        }
+        throw new GitHubPermissionError();
+      }
       if (response.status === 404) throw new GitHubNotFoundError();
       if (response.status === 409) throw new GitHubConflictError();
-      if (response.status === 422) throw new GitHubValidationError();
+      if (response.status === 422) {
+        if (options.method && isBranchPolicyRejection(body)) {
+          throw new GitHubApiError('GitHub branch or repository rules rejected this write.', 422, 'branch_policy_rejected');
+        }
+        throw new GitHubValidationError();
+      }
       throw new GitHubApiError(`GitHub request failed (${response.status})`, response.status);
     }
     return { body, status: response.status, headers: response.headers, notModified: false };
   }
-
   async request(path, options = {}) {
     return (await this.requestDetailed(path, options)).body;
   }
 
   contentUrl(path) {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for content operations');
     return `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/contents/${encodePath(path)}`;
   }
 
-  async getAuthenticatedUser() {
+  async getAuthenticatedIdentity() {
     const user = await this.request('/user');
-    return user.login;
+    if (!Number.isSafeInteger(user?.id) || user.id <= 0 || typeof user?.login !== 'string' || !user.login) {
+      throw new GitHubApiError('GitHub returned an invalid authenticated user identity.', 502, 'invalid_github_response');
+    }
+    return { id: user.id, login: user.login };
   }
+
+  async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
 
   async validateRepository() {
     const repo = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`);
-    if (repo.private !== true) throw new GitHubValidationError(`${this.owner}/${this.repo} must be a private repository.`);
-    if (repo.permissions && repo.permissions.push === false) throw new GitHubPermissionError(`You do not have write access to ${this.owner}/${this.repo}.`);
+    if (repo.private !== true) throw new GitHubApiError(`${this.owner}/${this.repo} must be a private repository.`, 422, 'private_required');
+    if (repo.archived === true || repo.disabled === true) {
+      throw new GitHubApiError(`${this.owner}/${this.repo} is not writable.`, 422, 'repository_unavailable');
+    }
+    if (repo.permissions?.push !== true) throw new GitHubApiError(`You do not have write access to ${this.owner}/${this.repo}.`, 403, 'user_write_required');
     return repo;
   }
 
@@ -125,10 +167,61 @@ export class GitHubClient {
     return this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/branches/${encodeURIComponent(this.branch)}`);
   }
 
+  assertCanonicalCoordinates(repository) {
+    const canonicalName = typeof repository?.full_name === 'string' ? repository.full_name : '';
+    if (!canonicalName || canonicalName.toLowerCase() !== `${this.owner}/${this.repo}`.toLowerCase()) {
+      throw new GitHubApiError('The configured GitHub repository coordinates changed.', 404, 'repository_coordinates_changed');
+    }
+  }
+
+  async assertConfiguredBranch(repository) {
+    if (this.branchMode === 'default') {
+      if (repository.default_branch !== this.branch) {
+        throw new GitHubApiError('The configured GitHub default branch changed.', 404, 'repository_branch_changed');
+      }
+      return;
+    }
+    try { await this.validateBranch(); }
+    catch (error) {
+      if (error?.status === 404) throw new GitHubApiError('The configured GitHub branch changed.', 404, 'repository_branch_changed');
+      throw error;
+    }
+  }
+
+  async assertDestinationReachable() {
+    if (this.expectedRepositoryId === null) {
+      throw new GitHubApiError('The configured GitHub repository identity has not been verified.', 409, 'repository_identity_unverified');
+    }
+    const repository = await this.validateRepository();
+    if (this.expectedRepositoryId !== undefined && repository.id !== this.expectedRepositoryId) {
+      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    }
+    if (this.expectedRepositoryId !== undefined) this.assertCanonicalCoordinates(repository);
+    await this.assertConfiguredBranch(repository);
+    return repository;
+  }
+
   async getText(path, { signal } = {}) {
     const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`, { signal });
     if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
+  }
+
+  async listRepositoryEntries({ signal } = {}) {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for repository inspection');
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const ref = await this.request(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`, { signal });
+    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(ref?.object?.sha)}`, { signal });
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit?.tree?.sha)}?recursive=1`, { signal });
+    if (tree.truncated || !Array.isArray(tree.tree)) throw new GitHubApiError('Repository tree is invalid or too large to validate safely', 422);
+    return tree.tree.map(item => ({
+      path: String(item?.path || ''), type: String(item?.type || ''), mode: String(item?.mode || ''),
+      ...(typeof item?.sha === 'string' ? { sha: item.sha } : {}),
+    })).sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  async listRepositoryFiles(options = {}) {
+    return (await this.listRepositoryEntries(options)).filter(item => item.type === 'blob').map(item => item.path).sort();
   }
 
   async listTextFilesSnapshot(prefix = '', { etag = '', signal } = {}) {
@@ -175,8 +268,18 @@ export class GitHubClient {
     }
     for (let offset = 0; offset < requested.length; offset += size) {
       const batch = requested.slice(offset, offset + size);
-      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title state url } ... on PullRequest { title state url } } }`).join('\n');
-      const body = await this.request('/graphql', { method: 'POST', signal, body: JSON.stringify({ query: `query TrackedTasks {\n${fields}\n}` }) });
+      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title state stateReason url } ... on PullRequest { title state url } } }`).join('\n');
+      let body;
+      try {
+        body = await this.request('/graphql', { method: 'POST', signal, body: JSON.stringify({ query: `query TrackedTasks {\n${fields}\n}` }) });
+      } catch (error) {
+        if (!(error instanceof GitHubAuthenticationError)) throw error;
+        // GitHub Apps may return 401 when the token is valid but the App lacks
+        // source-repository permission. Confirm the user token independently;
+        // if it is healthy, metadata is unavailable rather than authentication.
+        await this.request('/user', { signal });
+        continue;
+      }
       if (!body?.data && body?.errors?.length) throw new GitHubApiError('GitHub could not load tracked task details', 422);
       for (let index = 0; index < batch.length; index += 1) {
         const issue = batch[index], node = body?.data?.[`task${index}`]?.issueOrPullRequest;
@@ -184,14 +287,32 @@ export class GitHubClient {
         if (!node || node.__typename !== expectedType || node.url !== issue.url || typeof node.title !== 'string') continue;
         const status = String(node.state || '').toUpperCase();
         if (!['OPEN', 'CLOSED', 'MERGED'].includes(status)) continue;
-        metadata.set(issue.url, { title: node.title, status });
+        const stateReason = expectedType === 'Issue' && status === 'CLOSED'
+          ? String(node.stateReason || 'COMPLETED').toUpperCase()
+          : null;
+        if (stateReason && !['COMPLETED', 'NOT_PLANNED'].includes(stateReason)) continue;
+        metadata.set(issue.url, { title: node.title, status, ...(stateReason ? { stateReason } : {}) });
       }
     }
     return metadata;
   }
 
+  async assertStableDestinationForWrite() {
+    if (this.expectedRepositoryId === undefined) return;
+    if (this.expectedRepositoryId === null) {
+      throw new GitHubApiError('The configured GitHub repository identity has not been verified.', 409, 'repository_identity_unverified');
+    }
+    const repository = await this.validateRepository();
+    if (repository.id !== this.expectedRepositoryId) {
+      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    }
+    this.assertCanonicalCoordinates(repository);
+    await this.assertConfiguredBranch(repository);
+  }
+
   async putText(path, text, message, sha) {
     if (typeof text !== 'string') throw new Error('Text content is required');
+    await this.assertStableDestinationForWrite();
     const payload = { message, content: encodeBase64Utf8(text), branch: this.branch, ...(sha ? { sha } : {}) };
     const body = await this.request(this.contentUrl(path), { method: 'PUT', body: JSON.stringify(payload) });
     return { sha: body.content?.sha, commitSha: body.commit?.sha };
@@ -199,11 +320,13 @@ export class GitHubClient {
 
   async deleteFile(path, message, sha) {
     if (!sha) throw new Error('SHA is required to delete a file');
+    await this.assertStableDestinationForWrite();
     return this.request(this.contentUrl(path), { method: 'DELETE', body: JSON.stringify({ message, sha, branch: this.branch }) });
   }
 
   async updateTextsAtomic(changes, message) {
     if (!Array.isArray(changes) || changes.length < 2) throw new Error('At least two file changes are required');
+    await this.assertStableDestinationForWrite();
     const unique = new Set();
     for (const change of changes) {
       encodePath(change.path);
@@ -234,7 +357,11 @@ export class GitHubClient {
     const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
     const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });
     try { await this.request(updateRefPath, { method: 'PATCH', body: JSON.stringify({ sha: nextCommit.sha, force: false }) }); }
-    catch (error) { if (error?.status === 409 || error?.status === 422) throw new GitHubConflictError(); throw error; }
+    catch (error) {
+      if (error?.code === 'branch_policy_rejected') throw error;
+      if (error?.status === 409 || error?.status === 422) throw new GitHubConflictError();
+      throw error;
+    }
     return { commitSha: nextCommit.sha, blobShas };
   }
 

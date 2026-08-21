@@ -34,6 +34,14 @@ test('tracked tasks deduplicate sessions by canonical issue or PR and sort by to
   ]);
 });
 
+test('persisted record titles are used without display-time metadata resolution', () => {
+  const storedIssue = issue(8);
+  const stored = { user: 'alice', issue: storedIssue, issueTitle: 'Stored ranking regression', durationSeconds: 120 };
+  const tasks = aggregateTrackedTasks([stored], { user: 'alice', metadata: new Map([[storedIssue.url, { title: 'Fresh API title', status: 'OPEN' }]]) });
+  assert.equal(tasks[0].title, 'Stored ranking regression');
+  assert.equal(tasks[0].status, 'OPEN', 'metadata still supplies issue state without replacing the persisted title');
+});
+
 test('tracked task aggregation keeps inaccessible metadata as a safe canonical fallback', () => {
   const task = issue(7, 'issue', 'private');
   assert.deepEqual(aggregateTrackedTasks([record(task, 60, '2026-08-20')], { user: 'alice' }), [{
@@ -46,10 +54,10 @@ test('active-only work is included without baking elapsed time into completed to
   const tasks = aggregateTrackedTasks([], {
     user: 'alice',
     active: { user: 'alice', issue: activeIssue, startedAt: '2026-08-20T10:00:00.000Z', issueTitle: 'Running review' },
-    metadata: new Map([[activeIssue.url, { title: 'Hydrated review', status: 'OPEN' }]]),
+    metadata: new Map([[activeIssue.url, { title: 'Running review', status: 'OPEN' }]]),
   });
   assert.deepEqual(tasks, [{
-    issue: activeIssue, title: 'Hydrated review', status: 'OPEN', totalSeconds: 0, sessionCount: 0,
+    issue: activeIssue, title: 'Running review', status: 'OPEN', totalSeconds: 0, sessionCount: 0,
     activeStartedAt: '2026-08-20T10:00:00.000Z',
   }]);
 });
@@ -74,4 +82,17 @@ test('running elapsed time participates in total-time ordering without mutating 
   assert.equal(effectiveTrackedSeconds(second, { active, now: '2026-08-20T10:20:00.000Z' }), 4200);
   assert.deepEqual(sortTrackedTasks([first, second], { active, now: '2026-08-20T10:20:00.000Z' }).map(task => task.issue.number), [2, 1]);
   assert.equal(second.totalSeconds, 3000);
+});
+
+
+test('closed issue state reasons preserve GitHub completed and not-planned semantics', () => {
+  const completed = issue(10), notPlanned = issue(11);
+  const tasks = aggregateTrackedTasks([
+    record(completed, 60, '2026-08-20'), record(notPlanned, 30, '2026-08-20'),
+  ], { user: 'alice', metadata: new Map([
+    [completed.url, { title: 'Done', status: 'CLOSED', stateReason: 'COMPLETED' }],
+    [notPlanned.url, { title: 'Skipped', status: 'CLOSED', stateReason: 'NOT_PLANNED' }],
+  ]) });
+  assert.equal(tasks.find(task => task.issue.url === completed.url).stateReason, 'COMPLETED');
+  assert.equal(tasks.find(task => task.issue.url === notPlanned.url).stateReason, 'NOT_PLANNED');
 });

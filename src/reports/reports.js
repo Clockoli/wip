@@ -24,8 +24,15 @@ function localDateValue(date = new Date()) {
 }
 
 function setError(error = '') {
-  $('error').textContent = error?.message || String(error || '');
-  $('error').hidden = !$('error').textContent;
+  const root = $('error'), text = error?.message || String(error || '');
+  root.replaceChildren(document.createTextNode(text));
+  const recovery = globalThis.RepoClockRecovery.actionFor(error?.code), label = recovery?.label || '';
+  if (label) {
+    const action = document.createElement('button'); action.type = 'button'; action.className = 'button secondary'; action.textContent = label;
+    action.addEventListener('click', () => { if (recovery.kind === 'retry') void loadRange(state.range || currentRange()); else void send({ type: 'OPEN_OPTIONS' }); });
+    root.append(document.createTextNode(' '), action);
+  }
+  root.hidden = !text;
 }
 
 function svg(tag, attributes = {}, text = '') {
@@ -57,10 +64,18 @@ function selectedFilters() {
   return { people: [...state.people], repositories: [...state.repositories], emptyMeansNone: true };
 }
 
+const DATA_COLOR_TOKENS = [
+  '--data-blue-color-emphasis', '--data-green-color-emphasis', '--data-purple-color-emphasis',
+  '--data-orange-color-emphasis', '--data-pink-color-emphasis', '--data-teal-color-emphasis',
+  '--data-red-color-emphasis', '--data-yellow-color-emphasis', '--data-coral-color-emphasis',
+  '--data-lime-color-emphasis', '--data-auburn-color-emphasis', '--data-gray-color-emphasis',
+];
+
 function colorMap(series) {
-  const dark = globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches;
-  const lightness = dark ? 67 : 38;
-  return new Map(series.map((item, index) => [item.key, `hsl(${Math.round(index * 137.508) % 360} 68% ${lightness}%)`]));
+  return new Map(series.map((item, index) => [
+    item.key,
+    `var(${DATA_COLOR_TOKENS[index % DATA_COLOR_TOKENS.length]})`,
+  ]));
 }
 
 function renderFacet(container, options, selected, query, rerender) {
@@ -240,6 +255,10 @@ $('download-csv').addEventListener('click', event => downloadTimesheet('csv', ev
 $('download-json').addEventListener('click', event => downloadTimesheet('json', event));
 $('download-pdf').addEventListener('click', event => { event.preventDefault(); if (!$('download-pdf').classList.contains('disabled')) window.print(); });
 
+const colorScheme = matchMedia('(prefers-color-scheme: dark)');
+colorScheme.addEventListener('change', () => {
+  if (state.range && !state.loading && !$('report-content').hidden) render();
+});
 
 const initial = periodRange('this-week', localDateValue());
 $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;

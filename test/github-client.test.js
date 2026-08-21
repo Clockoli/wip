@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
 import {
   GitHubClient,
   GitHubConflictError,
@@ -167,19 +169,24 @@ test('GitHub client returns task metadata in bounded GraphQL batches', async () 
     const query = JSON.parse(options.body).query;
     assert.match(query, /issueOrPullRequest\(number: 1\)/);
     assert.match(query, /issueOrPullRequest\(number: 2\)/);
+    assert.match(query, /issueOrPullRequest\(number: 3\)/);
+    assert.match(query, /on Issue \{ title state stateReason url \}/);
     return response(200, { data: {
       task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Fix indexing', state: 'OPEN', url: 'https://github.com/acme/app/issues/1' } },
       task1: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Ship reports', state: 'MERGED', url: 'https://github.com/acme/app/pull/2' } },
+      task2: { issueOrPullRequest: { __typename: 'Issue', title: 'Won’t implement', state: 'CLOSED', stateReason: 'NOT_PLANNED', url: 'https://github.com/acme/app/issues/3' } },
     } });
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   const issues = [
     { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
     { type: 'pull_request', owner: 'acme', repo: 'app', number: 2, url: 'https://github.com/acme/app/pull/2' },
+    { type: 'issue', owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3' },
   ];
   assert.deepEqual(await client.getTaskMetadata(issues), new Map([
     [issues[0].url, { title: 'Fix indexing', status: 'OPEN' }],
     [issues[1].url, { title: 'Ship reports', status: 'MERGED' }],
+    [issues[2].url, { title: 'Won’t implement', status: 'CLOSED', stateReason: 'NOT_PLANNED' }],
   ]));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.github.com/graphql');
@@ -197,7 +204,7 @@ test('task metadata rejects a GraphQL node whose URL or type does not match the 
 test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global receiver', async () => {
   const workerFetch = async function () {
     if (this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'WorkerGlobalScope': Illegal invocation");
-    return response(200, { login: 'alice' });
+    return response(200, { id: 123, login: 'alice' });
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: workerFetch });
   assert.equal(await client.getAuthenticatedUser(), 'alice');
@@ -215,4 +222,297 @@ test('task metadata enforces a total GraphQL request budget before fetching', as
   }));
   await assert.rejects(() => client.getTaskMetadata(issues, { batchSize: 1, maxRequests: 2 }), /metadata request budget/i);
   assert.equal(calls, 0);
+});
+
+
+test('GitHub client obtains dynamic credentials and retries one 401 with a refreshed token', async () => {
+  const calls = [], tokenCalls = [];
+  const credentialProvider = {
+    async getAccessToken(options = {}) {
+      tokenCalls.push(options);
+      return options.forceRefresh ? 'access-new' : 'access-old';
+    },
+  };
+  const client = new GitHubClient({
+    credentialProvider, owner: 'acme', repo: 'time-data',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, authorization: options.headers.Authorization });
+      return options.headers.Authorization === 'Bearer access-old'
+        ? response(401, { message: 'Bad credentials' })
+        : response(200, { id: 123, login: 'alice' });
+    },
+  });
+  assert.equal(await client.getAuthenticatedUser(), 'alice');
+  assert.deepEqual(calls.map(call => call.authorization), ['Bearer access-old', 'Bearer access-new']);
+  assert.deepEqual(tokenCalls, [{}, { forceRefresh: true, rejectedToken: 'access-old' }]);
+});
+
+test('GitHub client retries authentication only once', async () => {
+  let fetches = 0, tokenCalls = 0;
+  const client = new GitHubClient({
+    credentialProvider: { getAccessToken: async ({ forceRefresh = false } = {}) => { tokenCalls += 1; return forceRefresh ? 'new' : 'old'; } },
+    owner: 'acme', repo: 'time-data',
+    fetchImpl: async () => { fetches += 1; return response(401, { message: 'Bad credentials' }); },
+  });
+  await assert.rejects(() => client.getAuthenticatedUser(), error => error.code === 'authentication');
+  assert.equal(fetches, 2);
+  assert.equal(tokenCalls, 2);
+});
+
+test('metadata access rejection degrades to unavailable when the same token still authenticates', async () => {
+  const calls = [];
+  const provider = { getAccessToken: async ({ forceRefresh = false } = {}) => forceRefresh ? 'refreshed' : 'current' };
+  const client = new GitHubClient({
+    credentialProvider: provider, owner: 'storage', repo: 'time-data',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, authorization: options.headers.Authorization });
+      if (url.endsWith('/graphql')) return response(401, { message: 'Resource not accessible by integration' });
+      if (url.endsWith('/user')) return response(200, { id: 123, login: 'alice' });
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+  const issue = { type: 'issue', owner: 'private-source', repo: 'app', number: 1, url: 'https://github.com/private-source/app/issues/1' };
+  assert.deepEqual(await client.getTaskMetadata([issue]), new Map());
+  assert.equal(calls.filter(call => call.url.endsWith('/graphql')).length, 2, 'one refresh retry');
+  assert.equal(calls.filter(call => call.url.endsWith('/user')).length, 1, 'known-access endpoint validates authentication');
+});
+
+
+test('GitHub client supports user-scoped API requests without a selected repository', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    credentialProvider: { getAccessToken: async () => 'access' },
+    fetchImpl: async (url, options) => { calls.push({ url, options }); return response(200, { total_count: 0, installations: [] }); },
+  });
+  assert.deepEqual(await client.request('/user/installations?per_page=100&page=1'), { total_count: 0, installations: [] });
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer access');
+  assert.throws(() => client.contentUrl('x.txt'), /repository is required/i);
+});
+
+test('GitHub client lists all repository blob paths for compatible storage inspection', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main',
+    fetchImpl: async url => {
+      calls.push(url);
+      if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+      if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+      if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
+        { path: 'README.md', type: 'blob', mode: '100644' }, { path: 'active/alice.txt', type: 'blob', mode: '100644' }, { path: 'times', type: 'tree', mode: '040000' },
+      ] });
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+  assert.deepEqual(await client.listRepositoryEntries(), [
+    { path: 'active/alice.txt', type: 'blob', mode: '100644' },
+    { path: 'README.md', type: 'blob', mode: '100644' },
+    { path: 'times', type: 'tree', mode: '040000' },
+  ]);
+  assert.equal(calls.length, 3);
+});
+
+test('repository validation rejects archived and disabled repositories', async () => {
+  for (const property of ['archived', 'disabled']) {
+    const client = new GitHubClient({
+      token: 'secret', owner: 'acme', repo: 'time-data',
+      fetchImpl: async () => response(200, { private: true, permissions: { push: true }, [property]: true }),
+    });
+    await assert.rejects(() => client.validateRepository(), /not writable/i);
+  }
+});
+
+
+test('destination reachability verifies stable repository ID and default-branch provenance without an extra branch request', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'trunk', expectedRepositoryId: 42, branchMode: 'default',
+    fetchImpl: async url => { calls.push(url); return response(200, { id: 42, full_name: 'acme/time-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } }); },
+  });
+  assert.equal((await client.assertDestinationReachable()).id, 42);
+  assert.equal(calls.length, 1);
+
+  const movedIdentity = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'trunk', expectedRepositoryId: 42, branchMode: 'default',
+    fetchImpl: async () => response(200, { id: 99, full_name: 'acme/time-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } }),
+  });
+  await assert.rejects(() => movedIdentity.assertDestinationReachable(), error => error.code === 'repository_identity_changed' && error.status === 404);
+});
+
+test('destination reachability rejects a renamed default branch and validates a custom branch', async () => {
+  const renamed = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', expectedRepositoryId: 42, branchMode: 'default',
+    fetchImpl: async () => response(200, { id: 42, full_name: 'acme/time-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } }),
+  });
+  await assert.rejects(() => renamed.assertDestinationReachable(), error => error.code === 'repository_branch_changed' && error.status === 404);
+
+  const calls = [];
+  const custom = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'release', expectedRepositoryId: 42, branchMode: 'custom',
+    fetchImpl: async url => {
+      calls.push(url);
+      if (url.endsWith('/repos/acme/time-data')) return response(200, { id: 42, full_name: 'acme/time-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } });
+      if (url.endsWith('/branches/release')) return response(200, { name: 'release' });
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+  await custom.assertDestinationReachable();
+  assert.equal(calls.length, 2);
+});
+
+
+test('organization approval 403 remains distinct from repository permission denial', async () => {
+  const client = new GitHubClient({ token: 'x', fetchImpl: async () => response(403, {
+    message: 'This organization requires approval for this GitHub App.',
+    documentation_url: 'https://docs.github.com/apps/using-github-apps/reviewing-and-revoking-authorization-of-github-apps',
+  }) });
+  await assert.rejects(() => client.request('/user/installations'), error => error.code === 'org_approval_required' && error.status === 403);
+});
+
+test('mutating content requests verify the configured stable repository ID before writing', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', expectedRepositoryId: 77,
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (url.endsWith('/repos/acme/time-data') && !options.method) return response(200, { id: 88, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+      throw new Error('must not write to mismatched coordinates');
+    },
+  });
+  await assert.rejects(
+    () => client.putText('active/alice.txt', 'Start: now\n', 'start'),
+    error => error.code === 'repository_identity_changed',
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, undefined);
+});
+
+test('explicit missing user push permission emits choose-repository recovery code', async () => {
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data',
+    fetchImpl: async () => response(200, { id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: false } }),
+  });
+  await assert.rejects(() => client.validateRepository(), error => error.code === 'user_write_required' && error.status === 403);
+});
+
+test('custom branch and canonical coordinates are revalidated before every mutation', async () => {
+  const branchCalls = [];
+  const custom = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data', branch: 'release', expectedRepositoryId: 77, branchMode: 'custom',
+    fetchImpl: async (url, options = {}) => {
+      branchCalls.push({ url, options });
+      if (url.endsWith('/repos/acme/time-data')) return response(200, { id: 77, name: 'time-data', full_name: 'acme/time-data', owner: { login: 'acme' }, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+      if (url.endsWith('/branches/release')) return response(200, { name: 'release' });
+      if (options.method === 'PUT') return response(200, { content: { sha: 'new' }, commit: { sha: 'commit' } });
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+  await custom.putText('active/alice.txt', 'Start: now\n', 'start');
+  assert.ok(branchCalls.some(call => call.url.endsWith('/branches/release')));
+  assert.equal(branchCalls.at(-1).options.method, 'PUT');
+
+  const renameCalls = [];
+  const renamed = new GitHubClient({
+    token: 'secret', owner: 'old-owner', repo: 'old-repo', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    fetchImpl: async (url, options = {}) => {
+      renameCalls.push({ url, options });
+      return response(200, { id: 77, name: 'new-repo', full_name: 'new-owner/new-repo', owner: { login: 'new-owner' }, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+    },
+  });
+  await assert.rejects(() => renamed.putText('active/alice.txt', 'Start: now\n', 'start'), error => error.code === 'repository_coordinates_changed');
+  assert.equal(renameCalls.length, 1);
+  assert.equal(renameCalls[0].options.method, undefined);
+});
+
+const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
+function recoveryFor(code) {
+  const context = { globalThis: null, Set, Object, String };
+  context.globalThis = context;
+  vm.runInNewContext(recoverySource, context);
+  return context.RepoClockRecovery.actionFor(code);
+}
+
+test('destination reachability fails closed on canonical coordinate drift before confirming file absence', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret', owner: 'old', repo: 'time', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      return response(200, { id: 77, full_name: 'new/time', private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+    },
+  });
+  await assert.rejects(() => client.assertDestinationReachable(), error => error.code === 'repository_coordinates_changed');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, undefined);
+});
+
+test('runtime repository-state failures produce choose-repository recovery', async () => {
+  const states = [
+    [{ private: false, archived: false, disabled: false }, 'private_required'],
+    [{ private: true, archived: true, disabled: false }, 'repository_unavailable'],
+    [{ private: true, archived: false, disabled: true }, 'repository_unavailable'],
+  ];
+  for (const [state, code] of states) {
+    const client = new GitHubClient({
+      token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+      fetchImpl: async () => response(200, { id: 77, full_name: 'acme/time', default_branch: 'main', permissions: { push: true }, ...state }),
+    });
+    await assert.rejects(() => client.putText('active/alice.txt', 'Start: now\n', 'start'), error => {
+      assert.equal(error.code, code);
+      assert.equal(recoveryFor(error.code).kind, 'choose');
+      assert.equal(recoveryFor(error.code).label, 'Choose another repository');
+      return true;
+    });
+  }
+});
+
+test('documented branch-policy rejections map to choose while genuine ref races remain conflicts', async () => {
+  const policy = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    fetchImpl: async (url, options = {}) => {
+      if (url.endsWith('/repos/acme/time') && !options.method) return response(200, { id: 77, full_name: 'acme/time', private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+      return response(422, { message: 'Protected branch update failed for refs/heads/main.' });
+    },
+  });
+  for (const operation of [
+    () => policy.putText('active/alice.txt', 'Start: now\n', 'start'),
+    () => policy.deleteFile('active/alice.txt', 'clear', 'old-sha'),
+  ]) {
+    await assert.rejects(operation, error => {
+      assert.equal(error.code, 'branch_policy_rejected');
+      assert.equal(recoveryFor(error.code).kind, 'choose');
+      assert.equal(recoveryFor(error.code).label, 'Choose another repository');
+      return true;
+    });
+  }
+
+  async function atomicClient(finalResponse) {
+    return new GitHubClient({
+      token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+      fetchImpl: async (url, options = {}) => {
+        if (url.endsWith('/repos/acme/time') && !options.method) return response(200, { id: 77, full_name: 'acme/time', private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
+        if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+        if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+        if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [{ path: 'a.txt', type: 'blob', sha: 'old' }] });
+        if (url.endsWith('/git/blobs')) return response(201, { sha: 'blob-new' });
+        if (url.endsWith('/git/trees')) return response(201, { sha: 'tree-new' });
+        if (url.endsWith('/git/commits')) return response(201, { sha: 'commit-new' });
+        if (url.endsWith('/git/refs/heads/main')) return finalResponse;
+        throw new Error(`Unexpected ${url}`);
+      },
+    });
+  }
+  const changes = [{ path: 'a.txt', sha: 'old', text: 'new' }, { path: 'b.txt', sha: null, text: 'b' }];
+  await assert.rejects(
+    () => atomicClient(response(422, { message: 'Repository rule violations found.' })).then(client => client.updateTextsAtomic(changes, 'move')),
+    error => error.code === 'branch_policy_rejected' && recoveryFor(error.code).kind === 'choose',
+  );
+  await assert.rejects(
+    () => atomicClient(response(422, { message: 'Reference update failed due to a stale ref.' })).then(client => client.updateTextsAtomic(changes, 'move')),
+    error => error instanceof GitHubConflictError,
+  );
+});
+
+test('runtime mutations fail closed when stable repository identity has not been upgraded', async () => {
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: null, fetchImpl: async () => { throw new Error('must not reach GitHub'); } });
+  await assert.rejects(() => client.putText('active/alice.txt', 'Start: now\n', 'start'), error => error.code === 'repository_identity_unverified');
 });

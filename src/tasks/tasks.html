@@ -8,15 +8,11 @@
 </head>
 <body>
   <header class="app-header">
-    <div>
-      <p class="eyebrow">GitHub Private Time Tracker</p>
-      <h1>Recently tracked work</h1>
-      <p id="source" class="muted">Loading configured repository…</p>
-    </div>
-    <button id="settings" class="button secondary" type="button">Settings</button>
+    <h1>Recently tracked work</h1>
   </header>
 
   <main>
+    <p id="source" class="muted source">Loading configured repository…</p>
     <section class="toolbar" aria-label="Task filters">
       <input id="task-filter" type="text" autocomplete="off" placeholder="Filter by title, repository, or number" aria-label="Filter tracked work">
       <label>Status
@@ -41,7 +37,7 @@
     <div id="loading" class="notice" role="status">Loading tracked work from GitHub…</div>
     <div id="setup" class="notice" hidden>
       Configure a private time-data repository before opening tracked work.
-      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+      <button id="setup-settings" class="button" type="button">Open Settings</button>
     </div>
 
     <section id="tasks-content" class="tasks-card" hidden aria-labelledby="result-count">
@@ -50,6 +46,7 @@
       <p id="empty" class="empty" hidden>No tracked work matches these filters.</p>
     </section>
   </main>
-  <script type="module" src="tasks.js"></script>
+  <script src="../domain/recovery-actions.js"></script>
+<script type="module" src="tasks.js"></script>
 </body>
 </html>

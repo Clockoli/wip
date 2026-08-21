@@ -1,5 +1,10 @@
 import { entryDateParts, entryDateValue, localDateParts, normalizeIssue, utcDateParts, validateEntryId, validatePathSegment } from './values.js';
 
+
+function normalizeIssueTitle(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
+}
+
 export function toIso(value) {
   if (typeof value === 'string') {
     validateTimestamp(value);
@@ -42,7 +47,7 @@ export function buildActiveTimer({ user, issue, startedAt, entryId, description 
     description: String(description ?? '').slice(0, 2000),
     createdAt: started,
   };
-  if (issueTitle) normalized.issueTitle = String(issueTitle).slice(0, 300);
+  normalized.issueTitle = normalizeIssueTitle(issueTitle);
   return normalized;
 }
 
@@ -57,7 +62,7 @@ export function validateActiveTimer(active) {
   validateTimestamp(active.createdAt, 'createdAt timestamp');
   if (new Date(active.createdAt).getTime() !== new Date(active.startedAt).getTime()) throw new Error('Active timer createdAt must equal startedAt');
   if (typeof active.description !== 'string' || active.description.length > 2000) throw new Error('Invalid active timer description');
-  if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle.length > 300)) throw new Error('Invalid active timer issue title');
+  if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle !== normalizeIssueTitle(active.issueTitle))) throw new Error('Invalid active timer issue title');
   return active;
 }
 
@@ -78,7 +83,7 @@ export function buildEntry({ active, id, endedAt, now = endedAt, description = a
     description: String(description ?? '').slice(0, 2000),
     createdAt: created,
     updatedAt: created,
-    ...(active.issueTitle ? { issueTitle: String(active.issueTitle).slice(0, 300) } : {}),
+    issueTitle: normalizeIssueTitle(active.issueTitle),
   };
 }
 
@@ -96,16 +101,18 @@ export function validateEntry(entry) {
   if (!Number.isInteger(entry.durationSeconds) || entry.durationSeconds !== computed) throw new Error('Duration does not match timestamps');
   if (new Date(entry.updatedAt).getTime() < new Date(entry.createdAt).getTime()) throw new Error('updatedAt must not be before createdAt');
   if (typeof entry.description !== 'string' || entry.description.length > 2000) throw new Error('Invalid description');
-  if (entry.issueTitle !== undefined && (typeof entry.issueTitle !== 'string' || entry.issueTitle.length > 300)) throw new Error('Invalid issue title');
+  if (entry.issueTitle !== undefined && (typeof entry.issueTitle !== 'string' || entry.issueTitle !== normalizeIssueTitle(entry.issueTitle))) throw new Error('Invalid issue title');
   return entry;
 }
 
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
+  const issue = normalizeIssue(edits.issue ?? entry.issue);
   const next = {
     ...entry,
     entryDate: entry.entryDate ?? entryDateValue(utcDateParts(new Date(entry.startedAt))),
-    issue: normalizeIssue(edits.issue ?? entry.issue),
+    issue,
+    issueTitle: normalizeIssueTitle(edits.issueTitle ?? (issue.url === entry.issue.url ? entry.issueTitle : '')),
     startedAt: toIso(edits.startedAt ?? entry.startedAt),
     endedAt: toIso(edits.endedAt ?? entry.endedAt),
     description: String(edits.description ?? entry.description).slice(0, 2000),

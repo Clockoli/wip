@@ -14,7 +14,7 @@ class MemoryStore {
 }
 
 class FakeGitHub {
-  constructor() { this.files = new Map(); this.reads = []; this.writes = []; this.deletes = []; this.atomicWrites = []; this.serial = 0; }
+  constructor() { this.files = new Map(); this.reads = []; this.writes = []; this.deletes = []; this.atomicWrites = []; this.metadataReads = []; this.metadata = new Map(); this.serial = 0; }
   notFound() { const error = new Error('not found'); error.status = 404; error.code = 'not_found'; return error; }
   conflict() { const error = new Error('conflict'); error.status = 409; error.code = 'conflict'; return error; }
   async getText(path) {
@@ -31,6 +31,8 @@ class FakeGitHub {
     const current = this.files.get(path); if (!current) throw this.notFound(); if (current.sha !== sha) throw this.conflict();
     this.files.delete(path); this.deletes.push({ path, message, sha }); return {};
   }
+  async assertDestinationReachable() { return true; }
+  async getTaskMetadata(issues) { this.metadataReads.push(structuredClone(issues)); return new Map(issues.flatMap(item => this.metadata.has(item.url) ? [[item.url, this.metadata.get(item.url)]] : [])); }
   async updateTextsAtomic(changes, message) {
     for (const change of changes) {
       const current = this.files.get(change.path);
@@ -62,15 +64,48 @@ function service(options = {}) {
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
 }
 
-test('start writes one readable active text file without user or generated metadata', async () => {
+test('start writes one readable active text file with its durable issue title', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
-  const result = await tracker.start(issue, 'ignored title', 'Investigating');
+  const result = await tracker.start(issue, 'Ranking regression', 'Investigating');
   assert.equal(result._path, 'active/alice.txt');
   const file = github.files.get('active/alice.txt');
-  assert.match(file.text, /^URL: https:\/\/github\.com\/acme\/frontend\/issues\/123\nStart: .*?(?:Z|[+-]\d{2}:\d{2})\nDescription: Investigating\n$/);
+  assert.match(file.text, /^URL: https:\/\/github\.com\/acme\/frontend\/issues\/123\nTitle: Ranking regression\nStart: .*?(?:Z|[+-]\d{2}:\d{2})\nDescription: Investigating\n$/);
   assert.equal(new Date(parseActiveText(file.text, { user: 'alice' }).startedAt).getTime(), new Date('2026-08-18T09:00:00Z').getTime());
-  assert.doesNotMatch(file.text, /user|schema|title/i);
+  assert.doesNotMatch(file.text, /user|schema/i);
+  assert.equal(parseActiveText(file.text, { user: 'alice' }).issueTitle, 'Ranking regression');
   assert.equal(parseActiveText(file.text, { user: 'alice' }).issue.number, 123);
+});
+
+test('recent load backfills missing issue titles once with the current SHA', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.txt';
+  const untitled = entry('2026-08-18T08:00:00+00:00', '2026-08-18T09:00:00+00:00');
+  seedText(github, path, serializeMonthlyText([untitled]), 'daily');
+  github.metadata.set(issue.url, { title: 'Ranking regression', status: 'OPEN' });
+  const tracker = service({ github, store, recentDays: 1, clock: () => new Date('2026-08-18T12:00:00Z') });
+
+  const first = await tracker.loadMenuData(50);
+  assert.equal(first.recent[0].issueTitle, 'Ranking regression');
+  assert.equal(github.metadataReads.length, 1);
+  assert.equal(github.writes.length, 1);
+  assert.equal(github.writes[0].sha, 'daily');
+  assert.match(github.files.get(path).text, /Title: Ranking regression/);
+
+  const second = await tracker.loadMenuData(50);
+  assert.equal(second.recent[0].issueTitle, 'Ranking regression');
+  assert.equal(github.metadataReads.length, 1, 'persisted titles are not resolved again');
+  assert.equal(github.writes.length, 1, 'persisted titles are not rewritten again');
+});
+
+test('recent load persists a current-page title into a legacy active timer with its current SHA', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), legacy = active('2026-08-18T08:00:00+00:00');
+  seedText(github, 'active/alice.txt', serializeActiveText(legacy), 'active-sha');
+  store.value.activeCache = { ...legacy, issueTitle: '', _path: 'active/alice.txt', _sha: 'active-sha' };
+  const data = await service({ github, store, recentDays: 1, clock: () => new Date('2026-08-18T12:00:00Z') })
+    .loadMenuData(50, { knownTitles: new Map([[issue.url, 'Ranking regression']]) });
+  assert.equal(data.active.issueTitle, 'Ranking regression');
+  assert.equal(github.writes.at(-1).path, 'active/alice.txt');
+  assert.equal(github.writes.at(-1).sha, 'active-sha');
+  assert.match(github.files.get('active/alice.txt').text, /Title: Ranking regression/);
 });
 
 test('an unsupported queued stage is preserved instead of clearing active or losing the completion', async () => {
@@ -309,9 +344,12 @@ test('edit rejects a stale monthly-file SHA before writing', async () => {
 
 test('deleting one record keeps the monthly file; deleting the last removes it', async () => {
   const github = new FakeGitHub(), path = 'times/2026-08/alice.txt'; seedText(github, path, serializeMonthlyText([entry('2026-08-18T08:00:00+00:00', '2026-08-18T09:00:00+00:00'), entry('2026-08-18T10:00:00+00:00', '2026-08-18T11:00:00+00:00')]), 'one');
-  const tracker = service({ github }); await tracker.deleteEntry({ path, originalSha: 'one', index: 0 });
+  const tracker = service({ github }); const first = await tracker.deleteEntry({ path, originalSha: 'one', index: 0 });
+  assert.equal(first.deleted, true); assert.equal(first.entries.length, 1);
+  assert.equal(first.entries[0]._sha, github.files.get(path).sha); assert.equal(first.entries[0]._index, 0);
   assert.equal(parseMonthlyText(github.files.get(path).text, { user: 'alice', month: '2026-08' }).length, 1);
-  await tracker.deleteEntry({ path, originalSha: github.files.get(path).sha, index: 0 });
+  const second = await tracker.deleteEntry({ path, originalSha: first.entries[0]._sha, index: first.entries[0]._index });
+  assert.deepEqual(second, { deleted: true, entries: [] });
   assert.equal(github.files.has(path), false); assert.equal(github.deletes.length, 1);
 });
 
@@ -414,9 +452,11 @@ test('malformed monthly text fails visibly instead of silently hiding the whole 
   await assert.rejects(() => service({ github, recentDays: 1 }).loadRecent(), /issue|timestamp/i);
 });
 
-test('issue-owner policy still applies to starts and edits', async () => {
+test('tracking accepts a valid GitHub issue from any owner', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
-  await assert.rejects(() => tracker.start({ type: 'issue', owner: 'evil', repo: 'x', number: 1, url: 'https://github.com/evil/x/issues/1' }), /not allowed/i);
+  const other = { type: 'issue', owner: 'other-org', repo: 'x', number: 1, url: 'https://github.com/other-org/x/issues/1' };
+  const started = await tracker.start(other, 'Cross-organization task');
+  assert.equal(started.issue.url, other.url);
 });
 
 
@@ -458,4 +498,25 @@ test('active refresh forwards cancellation and cannot patch cache after abort', 
     error => error?.name === 'AbortError',
   );
   assert.equal(store.value.activeCache, null);
+});
+
+
+test('repository-level 404 during clearActive preserves the queue and escapes for stable-ID recovery', async () => {
+  class RenamedRepositoryGitHub extends FakeGitHub {
+    async deleteFile() { throw this.notFound(); }
+    async getText() { throw this.notFound(); }
+    async assertDestinationReachable() { throw this.notFound(); }
+  }
+  const github = new RenamedRepositoryGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const old = active('2026-08-18T08:00:00+00:00');
+  const completed = entry(old.startedAt, '2026-08-18T09:00:00+00:00');
+  const operation = { operation: 'completeTimer', id: fixedId, status: 'pending', retryCount: 0, stage: 'clearActive',
+    monthlyPath: 'times/2026-08/alice.txt', entry: completed, activeSnapshot: old, activeSha: 'old-sha', queuedAt: completed.endedAt, lastError: '' };
+  store.value.pendingWrites = [operation];
+  store.value.activeCache = { ...old, _path: 'active/alice.txt', _sha: 'old-sha' };
+  await assert.rejects(() => tracker.syncPending(), error => error.code === 'not_found');
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].stage, 'clearActive');
+  assert.equal(store.value.activeCache.startedAt, old.startedAt);
+  assert.equal(store.value.recentCache.length, 0);
 });

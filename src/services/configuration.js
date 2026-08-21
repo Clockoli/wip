@@ -8,13 +8,14 @@ function normalizePayload(payload = {}) {
   const repo = validateRepo(String(payload.repo || '').trim());
   const branch = validateBranch(String(payload.branch || 'main').trim());
   const recentDays = Number(payload.recentDays);
-  if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent-entry window must be between 1 and 31 days');
+  if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
   const token = String(payload.token || '').trim();
   if (!token || token.length > 1000) throw new Error('GitHub token is required');
-  const requestedOwners = Array.isArray(payload.allowedIssueOwners) ? payload.allowedIssueOwners : [];
-  const allowedIssueOwners = [...new Set((requestedOwners.length ? requestedOwners : [owner]).map(value => validateOwner(String(value).trim())))];
-  if (allowedIssueOwners.length > 100) throw new Error('Too many allowed issue owners');
-  return { config: { owner, repo, branch, recentDays, allowedIssueOwners }, token };
+  return { config: { owner, repo, branch, recentDays }, token };
+}
+
+function repositoryConfigurationError(message, code) {
+  return Object.assign(new Error(message), { code });
 }
 
 function destinationChanged(previous, next) {
@@ -22,41 +23,131 @@ function destinationChanged(previous, next) {
 }
 
 export class ConfigurationService {
-  constructor({ store, githubFactory }) { this.store = store; this.githubFactory = githubFactory; }
+  constructor({ store, githubFactory, credentialProvider = null }) {
+    this.store = store;
+    this.githubFactory = githubFactory;
+    this.credentialProvider = credentialProvider;
+  }
 
-  async previousActive(previousConfig, previousToken, state) {
+  repositoryIdentity(repository, config) {
+    if (!Number.isSafeInteger(repository?.id) || repository.id <= 0) {
+      throw repositoryConfigurationError(
+        'GitHub returned an invalid stable repository identity.', 'repository_identity_unverified',
+      );
+    }
+    const canonical = typeof repository.full_name === 'string' ? repository.full_name : '';
+    if (!canonical || canonical.toLowerCase() !== `${config.owner}/${config.repo}`.toLowerCase()) {
+      throw repositoryConfigurationError(
+        'GitHub returned different canonical repository coordinates.', 'repository_coordinates_changed',
+      );
+    }
+    return repository.id;
+  }
+
+  async ensureRepositoryIdentity() {
+    const snapshot = await this.store.getConfigurationSnapshot();
+    const config = snapshot.config;
+    if (!config || config.repoId) return config;
+    const credentials = this.credentialProvider ? { credentialProvider: this.credentialProvider } : { token: snapshot.token };
+    const github = this.githubFactory({ ...credentials, owner: config.owner, repo: config.repo, branch: config.branch || 'main' });
+    const repository = await github.validateRepository();
+    const repoId = this.repositoryIdentity(repository, config);
+    await github.validateBranch();
+    const patch = { repoId, branchMode: 'custom', visibility: 'private' };
+    const saved = await this.store.upgradeLegacyRepositoryIdentity(
+      snapshot.generation,
+      { owner: config.owner, repo: config.repo, branch: config.branch || 'main' },
+      patch,
+    );
+    if (saved !== false) return { ...config, ...patch };
+    const current = (await this.store.getConfigurationSnapshot()).config;
+    if (current?.repoId) return current;
+    throw new Error('Repository configuration changed while its stable identity was being verified.');
+  }
+
+  async previousActive(previousConfig, previousAuth, previousToken, state) {
     if (state.activeCache) return state.activeCache;
-    if (!previousConfig || !previousToken) return null;
-    const github = this.githubFactory({ token: previousToken, ...previousConfig });
+    if (!previousConfig || (!previousToken && !this.credentialProvider)) return null;
+    const credentials = previousAuth?.mode === 'github_app' && this.credentialProvider
+      ? { credentialProvider: this.credentialProvider }
+      : { token: previousToken };
+    const github = this.githubFactory({
+      ...credentials, ...previousConfig,
+      expectedRepositoryId: previousConfig.repoId || null,
+      branchMode: previousConfig.branchMode || 'custom',
+    });
     const user = state.user || await github.getAuthenticatedUser();
-    try { const path = activeTextPath(user), file = await github.getText(path); return parseActiveText(file.text, { user, path, sha: file.sha }); }
-    catch (error) { if (isNotFound(error)) return null; throw error; }
+    try {
+      const path = activeTextPath(user), file = await github.getText(path);
+      return parseActiveText(file.text, { user, path, sha: file.sha });
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+      await github.assertDestinationReachable();
+      return null;
+    }
   }
 
   async save(payload) {
-    const { config, token } = normalizePayload(payload);
-    const github = this.githubFactory({ token, ...config });
-    const [user] = await Promise.all([github.getAuthenticatedUser(), github.validateRepository(), github.validateBranch()]);
+    await this.ensureRepositoryIdentity();
+    const { config: requestedConfig, token } = normalizePayload(payload);
+    const github = this.githubFactory({ token, ...requestedConfig });
+    const [identity, repository] = await Promise.all([
+      github.getAuthenticatedIdentity(), github.validateRepository(), github.validateBranch(),
+    ]);
+    const repoId = this.repositoryIdentity(repository, requestedConfig);
 
-    // This method is invoked by the service worker's SerialExecutor. Reading state
-    // after remote validation closes the previous settings-vs-Stop race window.
-    const [{ config: previousConfig, token: previousToken }, state] = await Promise.all([this.store.getConfigurationSnapshot(), this.store.getState()]);
-    let previousUser = state.user;
-    if (!previousUser && previousConfig && previousToken) {
-      previousUser = await this.githubFactory({ token: previousToken, ...previousConfig }).getAuthenticatedUser();
+    // Read accepted local state only after remote validation closes the
+    // validation-vs-Start/Stop race.
+    const [configurationSnapshot, state, authSnapshot] = await Promise.all([
+      this.store.getConfigurationSnapshot(), this.store.getState(),
+      this.store.getAuthSnapshot ? this.store.getAuthSnapshot() : Promise.resolve({ auth: null }),
+    ]);
+    const { config: previousConfig } = configurationSnapshot;
+    const previousToken = configurationSnapshot.token || authSnapshot.auth?.accessToken || '';
+    let previousIdentity = Number.isSafeInteger(authSnapshot.auth?.githubUserId)
+      ? { id: authSnapshot.auth.githubUserId, login: authSnapshot.auth.githubLogin || '' }
+      : null;
+    if (!previousIdentity && previousConfig && previousToken) {
+      previousIdentity = await this.githubFactory({ token: previousToken, ...previousConfig }).getAuthenticatedIdentity();
     }
-    const changesDestination = destinationChanged(previousConfig, config);
-    const changesUser = Boolean(previousUser && previousUser !== user);
-    if (changesDestination || changesUser) {
-      if ((state.pendingWrites || []).length) throw new Error('Sync pending entries before changing the time-data repository or GitHub user.');
-      if (await this.previousActive(previousConfig, previousToken, { ...state, user: previousUser })) throw new Error('Stop the active timer before changing the time-data repository or GitHub user.');
+    const previousStorageLogin = previousConfig?.storageLogin || state.user || previousIdentity?.login || '';
+    const changesDestination = destinationChanged(previousConfig, requestedConfig)
+      || Boolean(previousConfig?.repoId && previousConfig.repoId !== repoId);
+    const changesUser = Boolean(previousIdentity && previousIdentity.id !== identity.id);
+    const changesAuthMode = Boolean(authSnapshot.auth && authSnapshot.auth.mode !== 'pat');
+    if (changesAuthMode && (!previousIdentity || changesUser)) {
+      throw new Error('The GitHub App and personal access token belong to different GitHub accounts or their stable identity could not be verified.');
+    }
+    const protectedTransition = changesDestination || changesUser || changesAuthMode;
+    if (protectedTransition) {
+      if ((state.pendingWrites || []).length) throw new Error('Sync pending entries before changing GitHub authentication, the time-data repository, or GitHub user.');
+      if (await this.previousActive(previousConfig, authSnapshot.auth, previousToken, { ...state, user: previousStorageLogin })) {
+        throw new Error('Stop the active timer before changing GitHub authentication, the time-data repository, or GitHub user.');
+      }
     }
 
-    await this.store.saveConfiguration(config, token, {
-      user, activeCache: null, recentCache: [], pendingWrites: state.pendingWrites ?? [], dataVersion: 3,
+    const preservesDataIdentity = Boolean(previousConfig) && !changesDestination && !changesUser;
+    const preservedConfig = preservesDataIdentity ? Object.fromEntries(
+      ['storageLogin', 'installationId', 'repositoryFormatVersion']
+        .filter(key => previousConfig[key] !== undefined)
+        .map(key => [key, previousConfig[key]]),
+    ) : {};
+    const config = {
+      ...requestedConfig, ...preservedConfig,
+      repoId, branchMode: 'custom', visibility: 'private',
+    };
+    const statePatch = {
+      user: preservesDataIdentity ? previousStorageLogin : identity.login,
+      activeCache: preservesDataIdentity ? state.activeCache : null,
+      recentCache: preservesDataIdentity ? (state.recentCache || []) : [],
+      pendingWrites: preservesDataIdentity ? (state.pendingWrites ?? []) : [],
+      dataVersion: 3,
       taskMetadataCache: null,
-      ...((changesDestination || changesUser) ? { reportCache: null } : {}),
-    });
-    return { user, config };
+      ...(!preservesDataIdentity ? { reportCache: null } : {}),
+    };
+    if (this.store.savePatConfiguration) await this.store.savePatConfiguration(config, token, statePatch, identity);
+    else await this.store.saveConfiguration(config, token, statePatch);
+    return { user: identity.login, config };
   }
+
 }

@@ -1,11 +1,13 @@
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 
-function readEntry(value, now, ttlMs) {
+function readEntry(value, issue, now, ttlMs) {
   if (!value || !Number.isFinite(value.fetchedAt) || now - value.fetchedAt < 0 || now - value.fetchedAt >= ttlMs) return { fresh: false, details: null };
   if (value.details === null) return { fresh: true, details: null };
   const details = value.details;
   if (!details || typeof details.title !== 'string' || !['OPEN', 'CLOSED', 'MERGED'].includes(details.status)) return { fresh: false, details: null };
-  return { fresh: true, details: { title: details.title.slice(0, 500), status: details.status } };
+  const stateReason = ['COMPLETED', 'NOT_PLANNED'].includes(details.stateReason) ? details.stateReason : null;
+  if (issue?.type === 'issue' && details.status === 'CLOSED' && !stateReason) return { fresh: false, details: null };
+  return { fresh: true, details: { title: details.title.slice(0, 500), status: details.status, ...(stateReason ? { stateReason } : {}) } };
 }
 
 export class TaskMetadataService {
@@ -23,7 +25,7 @@ export class TaskMetadataService {
     const cachedEntries = cached?.entries && typeof cached.entries === 'object' ? cached.entries : {};
     const entries = {}, metadata = new Map(), missing = [];
     for (const issue of issues) {
-      const entry = readEntry(cachedEntries[issue.url], now, this.ttlMs);
+      const entry = readEntry(cachedEntries[issue.url], issue, now, this.ttlMs);
       if (!entry.fresh) missing.push(issue);
       else {
         entries[issue.url] = cachedEntries[issue.url];

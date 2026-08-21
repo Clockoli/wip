@@ -9,7 +9,8 @@ const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url
 const entry = {
   schemaVersion: 1, id: '20260818000000000000000000', user: 'alice', issue, entryDate: '2026-08-18',
   startedAt: '2026-08-18T08:00:00-07:00', endedAt: '2026-08-18T09:15:30-07:00', durationSeconds: 4530,
-  description: 'Investigated ranking', createdAt: '2026-08-18T09:15:30-07:00', updatedAt: '2026-08-18T09:15:30-07:00',
+  description: 'Investigated ranking', issueTitle: 'Ranking regression',
+  createdAt: '2026-08-18T09:15:30-07:00', updatedAt: '2026-08-18T09:15:30-07:00',
 };
 
 test('monthly path identifies month and GitHub user without storing user in content', () => {
@@ -29,7 +30,10 @@ test('monthly text round-trips records from different days in the same month', (
   assert.equal(parsed[0]._index, 0);
   assert.equal(parsed[0]._sha, 'monthly-sha');
   assert.equal(parsed[0].durationSeconds, 4530);
+  assert.equal(parsed[0].issueTitle, 'Ranking regression');
+  assert.match(text, /Title: Ranking regression/);
   assert.equal(parsed[1].issue.type, 'pull_request');
+  assert.equal(parsed[1].issueTitle, 'Ranking regression');
 });
 
 test('monthly text rejects malformed, duplicate, unknown, and timezone-free fields', () => {
@@ -51,13 +55,23 @@ test('monthly text derives its month from the path rather than trusting context'
   assert.throws(() => parseMonthlyText(text, { user: 'alice', month: '2026-08', path: 'times/2026-09/alice.txt' }), /path month.*context month|monthly file month/i);
 });
 
-test('active text is readable and omits user and generated metadata', () => {
-  const active = { schemaVersion: 1, user: 'alice', issue, startedAt: '2026-08-18T08:00:00-07:00', description: 'Working', createdAt: '2026-08-18T08:00:00-07:00' };
+test('active text is readable and retains the issue title without generated metadata', () => {
+  const active = { schemaVersion: 1, user: 'alice', issue, issueTitle: 'Ranking regression', startedAt: '2026-08-18T08:00:00-07:00', description: 'Working', createdAt: '2026-08-18T08:00:00-07:00' };
   const text = serializeActiveText(active);
-  assert.equal(text, 'URL: https://github.com/acme/frontend/issues/123\nStart: 2026-08-18T08:00:00-07:00\nDescription: Working\n');
+  assert.equal(text, 'URL: https://github.com/acme/frontend/issues/123\nTitle: Ranking regression\nStart: 2026-08-18T08:00:00-07:00\nDescription: Working\n');
   const parsed = parseActiveText(text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
   assert.equal(parsed.entryDate, '2026-08-18');
+  assert.equal(parsed.issueTitle, 'Ranking regression');
   assert.equal(parsed._sha, 'active-sha');
+});
+
+test('legacy text without Title remains readable and titles are normalized to one bounded line', () => {
+  const legacy = 'URL: https://github.com/acme/frontend/issues/123\nStart: 2026-08-18T08:00:00-07:00\nEnd: 2026-08-18T09:00:00-07:00\n';
+  assert.equal(parseMonthlyText(legacy, { user: 'alice', month: '2026-08' })[0].issueTitle, '');
+  const text = serializeMonthlyText([{ ...entry, issueTitle: `  line one\nline two ${'x'.repeat(400)}  ` }]);
+  const parsed = parseMonthlyText(text, { user: 'alice', month: '2026-08' })[0];
+  assert.equal(parsed.issueTitle, `line one line two ${'x'.repeat(282)}`);
+  assert.equal(parsed.issueTitle.length, 300);
 });
 
 test('descriptions are normalized to one manually editable line', () => {

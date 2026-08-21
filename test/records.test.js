@@ -20,12 +20,14 @@ test('entry edits preserve identity and recompute duration', () => {
   const edited = applyEntryEdits(entry, {
     issue: { ...issue, number: 124, url: 'https://github.com/acme/frontend/issues/124' },
     startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:15:00.000Z', description: '<img onerror=alert(1)>',
+    issueTitle: '  New   issue\ttitle  ',
   }, '2026-08-18T10:00:00.000Z');
   assert.equal(edited.id, entry.id);
   assert.equal(edited.user, entry.user);
   assert.equal(edited.entryDate, '2026-08-18');
   assert.equal(edited.durationSeconds, 4500);
   assert.equal(edited.description, '<img onerror=alert(1)>');
+  assert.equal(edited.issueTitle, 'New issue title');
   assert.throws(() => applyEntryEdits(entry, { ...edited, endedAt: '2026-08-18T07:00:00.000Z' }), /end/i);
 });
 
