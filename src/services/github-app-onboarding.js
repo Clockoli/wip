@@ -121,7 +121,8 @@ export class InstallationDiscoveryService {
           defaultBranch: String(repo.default_branch || ''),
           appPermissions: { ...installation.permissions },
           userPermissions: { ...(repo.permissions || {}) },
-          eligible: reasons.length === 0,
+          eligible: reasons.every(reason => reason === 'initialized_default_branch_required'),
+          needsInitialization: reasons.includes('initialized_default_branch_required'),
           reasons,
         });
       }
@@ -241,6 +242,15 @@ async function validateExistingFiles(github, entries) {
   }
 }
 
+function markerText(user, storageLogin, now) {
+  return `${JSON.stringify({
+    repositoryFormatVersion: REPOSITORY_FORMAT_VERSION,
+    createdAt: new Date(now()).toISOString(),
+    createdBy: { id: user.id, login: storageLogin },
+    users: { [String(user.id)]: storageLogin },
+  }, null, 2)}\n`;
+}
+
 function result(status, storageLogin, repository, selectedBranch = repository.default_branch) {
   return {
     status,
@@ -261,7 +271,7 @@ export class RepositoryInitializer {
     if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validLogin(user?.login)) throw new OnboardingError('GitHub returned an invalid user identity.', 'invalid_github_response');
     const storageLogin = requiredStorageLogin || user.login;
     if (!validLogin(storageLogin)) throw new OnboardingError('The existing RepoClock storage login is invalid.', 'incompatible_storage_format');
-    const validateFreshRepository = async () => {
+    const validateFreshRepository = async ({ allowEmpty = false, acceptCreatedDefaultBranch = false } = {}) => {
       const fresh = await this.github.validateRepository();
       if (expectedRepositoryId !== undefined && fresh.id !== expectedRepositoryId) {
         throw new OnboardingError('The selected repository identity changed during validation. Refresh repository access and choose it again.', 'repository_identity_changed');
@@ -269,19 +279,35 @@ export class RepositoryInitializer {
       if (fresh.private !== true) throw new OnboardingError('RepoClock requires a private repository.', 'private_required');
       if (fresh.archived === true || fresh.disabled === true) throw new OnboardingError('The selected repository is not writable.', 'repository_unavailable');
       if (fresh.permissions?.push !== true) throw new OnboardingError('Your GitHub account cannot write to this repository.', 'user_write_required');
-      if (!fresh.default_branch) throw new OnboardingError('Initialize the private repository with a README before using RepoClock.', 'empty_repository');
-      if (branchMode === 'default' && selectedBranch && selectedBranch !== fresh.default_branch) {
+      if (!allowEmpty && !fresh.default_branch) throw new OnboardingError('RepoClock could not create the first commit in this empty repository. Open it on GitHub, add a README, then try again.', 'empty_repository');
+      if (!acceptCreatedDefaultBranch && branchMode === 'default' && fresh.default_branch && selectedBranch && selectedBranch !== fresh.default_branch) {
         throw new OnboardingError('The repository default branch changed during setup. Check access and select the repository again.', 'repository_branch_changed');
       }
       return fresh;
     };
-    const repository = await validateFreshRepository();
+    let repository = await validateFreshRepository({ allowEmpty: true });
+    const initializeEmptyRepository = async () => {
+      const text = markerText(user, storageLogin, this.now);
+      parseMarker(text);
+      try {
+        await this.github.putInitialText(MARKER_PATH, text, 'Initialize RepoClock storage');
+        repository = await validateFreshRepository({ acceptCreatedDefaultBranch: true });
+        return result('write_verified', storageLogin, repository, repository.default_branch);
+      } catch (initializationError) {
+        if (isNotFound(initializationError)) {
+          throw new OnboardingError('RepoClock could not create the first commit. Open the repository on GitHub, choose “Add a README”, commit it to the default branch, then return here and try again.', 'empty_repository');
+        }
+        throw initializationError;
+      }
+    };
+    if (!repository.default_branch && branchMode === 'default') return initializeEmptyRepository();
     try { await this.github.validateBranch(); }
     catch (error) {
+      if (isNotFound(error) && branchMode === 'default') return initializeEmptyRepository();
       if (isNotFound(error) && selectedBranch && selectedBranch !== repository.default_branch) {
         throw new OnboardingError('The existing custom branch is unavailable to the RepoClock GitHub App. Resolve the branch or choose another repository.', 'custom_branch_unverified');
       }
-      if (isNotFound(error)) throw new OnboardingError('Initialize the private repository with a default branch, then check again.', 'empty_repository');
+      if (isNotFound(error)) throw new OnboardingError('The selected branch is unavailable. Choose another repository or branch.', 'custom_branch_unverified');
       throw error;
     }
 

@@ -28,7 +28,6 @@
       <div class="actions">
         <button id="recovery-connect" type="button">Connect GitHub</button>
         <a id="recovery-grant" target="_blank" rel="noreferrer">Grant access</a>
-        <button id="recovery-choose" type="button" class="secondary">Choose another repository</button>
         <button id="recovery-retry" type="button" class="secondary">Retry</button>
       </div>
     </div>
@@ -36,18 +35,16 @@
     <div id="connected" hidden>
       <dl class="summary">
         <div><dt>Account</dt><dd id="connected-account">—</dd></div>
-        <div><dt>Repository</dt><dd id="connected-repository">—</dd></div>
+        <div><dt>Repository</dt><dd id="connected-repository"><a id="connected-repository-link" target="_blank" rel="noreferrer">—</a></dd></div>
         <div><dt>Branch</dt><dd id="connected-branch">—</dd></div>
         <div><dt>Storage</dt><dd id="connected-storage">—</dd></div>
       </dl>
       <div class="actions">
-        <a id="open-repository" target="_blank" rel="noreferrer">Open repository</a>
-        <button id="check-access" type="button" class="secondary">Check access</button>
-        <button id="change-connection" type="button" class="secondary">Change connection</button>
+        <button id="change-connection" type="button" class="secondary">Change data repository</button>
         <button id="disconnect" type="button" class="danger">Disconnect this browser</button>
-        <a id="revoke" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Revoke on GitHub</a>
+        <a id="revoke" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Revoke RepoClock authorization on GitHub</a>
       </div>
-      <p class="help">Disconnect removes this browser’s local credentials only. Revoking on GitHub affects the authorization outside RepoClock.</p>
+      <p class="help"><strong>Disconnect this browser</strong> removes only this browser’s local sign-in. <strong>Revoke RepoClock authorization on GitHub</strong> removes RepoClock’s sign-in approval from your GitHub account. Neither action deletes repository data; revoking authorization also does not uninstall the GitHub App from repositories.</p>
     </div>
 
     <div id="onboarding">
@@ -97,7 +94,7 @@
             </div>
             <div class="choice-card">
               <strong>Create a dedicated data repository</strong>
-              <p>GitHub opens with <strong>repoclock-data</strong> and private visibility prefilled. Keep it private and add a README so it has a default branch. Then grant RepoClock access to it.</p>
+              <p>GitHub opens with <strong>repoclock-data</strong> and private visibility prefilled. Create it, then grant RepoClock access. RepoClock watches for it. If the repository is empty, RepoClock will create the first commit automatically.</p>
               <a id="new-repository" class="button-link secondary-link" target="_blank" rel="noreferrer">Create repoclock-data on GitHub</a>
             </div>
           </div>
@@ -111,8 +108,8 @@
           <h3 id="repository-step-title">Choose and validate the data repository</h3>
           <p>This repository stores RepoClock records. It does not have to contain the issues or pull requests you track.</p>
           <fieldset>
-            <legend>Private writable repositories</legend>
-            <p class="help">Selectable repositories are private repositories granted to the RepoClock GitHub App where your GitHub account can write. Other granted repositories may appear disabled with the reason they cannot be used.</p>
+            <legend>Choose where RepoClock should save your time data</legend>
+            <p class="help">Choose a private repository you gave RepoClock access to. If RepoClock cannot use one, it will tell you why.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>

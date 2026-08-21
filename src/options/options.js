@@ -10,6 +10,10 @@ let discoveryPromise = null;
 let githubHandoff = false;
 let discoveryStatus = 'idle';
 let setupCancelled = false;
+let repositoryMonitorTimer = null;
+let repositoryMonitorDeadline = 0;
+let repositoryMonitorLastError = null;
+let repositoryMonitorRetryPending = false;
 
 function message(text, kind = '') {
   $('message').textContent = text;
@@ -42,15 +46,14 @@ function showRecovery(error = null) {
   const recovery = globalThis.RepoClockRecovery.actionFor(error?.code);
   const actions = $('recovery-actions');
   const connect = recovery?.kind === 'connect';
-  const grant = recovery?.kind === 'grant';
-  const choose = ['choose', 'repair'].includes(recovery?.kind);
+  const reviewAccess = ['grant', 'choose', 'repair'].includes(recovery?.kind);
   const retry = recovery?.kind === 'retry';
+  const reviewUrl = githubUrl(state?.installationUrl);
   $('recovery-connect').hidden = !connect;
-  $('recovery-grant').hidden = !grant || !githubUrl(state?.installationUrl);
-  $('recovery-choose').textContent = recovery?.label || 'Choose another repository';
-  $('recovery-choose').hidden = !choose;
+  $('recovery-grant').textContent = 'Review repository access on GitHub';
+  $('recovery-grant').hidden = !reviewAccess || !reviewUrl;
   $('recovery-retry').hidden = !retry;
-  actions.hidden = !(connect || (grant && githubUrl(state?.installationUrl)) || choose || retry);
+  actions.hidden = !(connect || (reviewAccess && reviewUrl) || retry);
 }
 
 function isAppAuthorized() {
@@ -91,7 +94,7 @@ function renderState() {
 
   if (state.config) {
     $('connected-account').textContent = state.auth?.githubLogin || (state.auth?.mode === 'pat' ? 'Personal access token' : '—');
-    $('connected-repository').textContent = `${state.config.owner}/${state.config.repo}`;
+    $('connected-repository-link').textContent = `${state.config.owner}/${state.config.repo}`;
     $('connected-branch').textContent = state.config.branch || 'main';
     const verification = state.verificationStatus === 'write_verified' ? 'Write verified'
       : state.verificationStatus === 'access_checked' ? 'Access checked' : 'Not checked';
@@ -108,7 +111,7 @@ function renderState() {
   setLink('install-app', state.installationUrl);
   setLink('review-repository-access', state.installationUrl);
   setLink('new-repository', state.newRepositoryUrl);
-  setLink('open-repository', state.trackingRepositoryUrl);
+  setLink('connected-repository-link', state.trackingRepositoryUrl);
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
   else $('device-panel').hidden = true;
@@ -187,30 +190,25 @@ function renderRepositoryList() {
     empty.textContent = repositories.length ? 'No repository matches this search.' : 'No repositories are visible. Install RepoClock or grant repository access on GitHub, then check again.';
     root.append(empty); return;
   }
-  const groups = new Map();
   for (const repository of visible) {
-    const groupName = repository.accountLogin || repository.owner;
-    if (!groups.has(groupName)) groups.set(groupName, []);
-    groups.get(groupName).push(repository);
-  }
-  for (const [accountLogin, values] of groups) {
-    const group = document.createElement('section'); group.className = 'repository-group';
-    const heading = document.createElement('h3'); heading.textContent = accountLogin; group.append(heading);
-    for (const repository of values) {
-      const label = document.createElement('label');
-      label.className = `repository-option${repository.eligible ? '' : ' unavailable'}`;
-      const radio = document.createElement('input');
-      radio.type = 'radio'; radio.name = 'repository'; radio.disabled = !repository.eligible;
-      radio.value = `${repository.installationId}:${repository.repoId}`;
-      radio.checked = selectedRepository?.installationId === repository.installationId && selectedRepository?.repoId === repository.repoId;
-      const copy = document.createElement('span');
-      const name = document.createElement('strong'); name.textContent = repository.repo;
+    const label = document.createElement('label');
+    label.className = `repository-option${repository.eligible ? '' : ' unavailable'}`;
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'repository'; radio.disabled = !repository.eligible;
+    radio.value = `${repository.installationId}:${repository.repoId}`;
+    radio.checked = selectedRepository?.installationId === repository.installationId && selectedRepository?.repoId === repository.repoId;
+    const copy = document.createElement('span');
+    const name = document.createElement('strong'); name.textContent = repository.fullName;
+    copy.append(name);
+    if (repository.needsInitialization || !repository.eligible) {
       const details = document.createElement('small');
-      details.textContent = repository.eligible ? `Private · ${repository.defaultBranch} · Contents: write` : `Unavailable · ${repositoryReason(repository)}`;
-      copy.append(name, details); label.append(radio, copy); group.append(label);
-      radio.addEventListener('change', () => { selectedRepository = repository; $('connect-repository').disabled = false; });
+      details.textContent = repository.needsInitialization
+        ? 'Empty repository — RepoClock will create the first commit automatically.'
+        : `Unavailable · ${repositoryReason(repository)}`;
+      copy.append(details);
     }
-    root.append(group);
+    label.append(radio, copy); root.append(label);
+    radio.addEventListener('change', () => { selectedRepository = repository; $('connect-repository').disabled = false; });
   }
 }
 
@@ -229,13 +227,14 @@ function renderRepositories(result) {
   renderOnboardingProgress();
 }
 
-async function discoverRepositories() {
+async function discoverRepositories({ monitoring = false } = {}) {
   if (discoveryPromise) return discoveryPromise;
   discoveryStatus = 'loading';
   renderOnboardingProgress();
   discoveryPromise = (async () => {
     $('refresh-repositories').disabled = true;
-    message('Refreshing RepoClock installation and repository access…'); showRecovery();
+    if (!monitoring) message('Refreshing RepoClock installation and repository access…');
+    showRecovery();
     try {
       const result = await send({ type: 'DISCOVER_REPOSITORIES' });
       discoveryStatus = 'ready';
@@ -253,7 +252,7 @@ async function discoverRepositories() {
     } catch (error) {
       discoveryStatus = 'error';
       renderOnboardingProgress();
-      message(error.message, 'error');
+      if (!monitoring) message(error.message, 'error');
       throw error;
     } finally {
       $('refresh-repositories').disabled = false;
@@ -261,6 +260,53 @@ async function discoverRepositories() {
     }
   })();
   return discoveryPromise;
+}
+
+function stopRepositoryMonitoring() {
+  clearTimeout(repositoryMonitorTimer);
+  repositoryMonitorTimer = null;
+  repositoryMonitorDeadline = 0;
+}
+
+async function monitorRepositories() {
+  if (!repositoryMonitorDeadline || state?.ready) {
+    stopRepositoryMonitoring();
+    return;
+  }
+  if (Date.now() >= repositoryMonitorDeadline) {
+    const detail = repositoryMonitorLastError?.message ? ` Last error: ${repositoryMonitorLastError.message}` : '';
+    stopRepositoryMonitoring();
+    repositoryMonitorRetryPending = true;
+    discoveryStatus = 'error';
+    renderOnboardingProgress();
+    message(`RepoClock stopped checking after five minutes.${detail} Review repository access on GitHub, then select Retry.`, 'error');
+    showRecovery({ code: 'repository_monitor_timeout' });
+    return;
+  }
+  try {
+    const result = await discoverRepositories({ monitoring: true });
+    if (result.candidates.some(repository => repository.repo === 'repoclock-data')) {
+      repositoryMonitorLastError = null;
+      repositoryMonitorRetryPending = false;
+      stopRepositoryMonitoring();
+      message('repoclock-data is ready. Validate it to finish setup.', 'success');
+      return;
+    }
+  } catch (error) {
+    repositoryMonitorLastError = error;
+    message(`Could not check GitHub: ${error.message} RepoClock will keep retrying.`, 'error');
+    showRecovery(error);
+  }
+  repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 2500);
+}
+
+function startRepositoryMonitoring() {
+  stopRepositoryMonitoring();
+  repositoryMonitorLastError = null;
+  repositoryMonitorRetryPending = false;
+  repositoryMonitorDeadline = Date.now() + (5 * 60 * 1000);
+  message('Waiting for repoclock-data and RepoClock access…');
+  repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 1500);
 }
 
 async function refreshState() {
@@ -294,7 +340,6 @@ $('copy-code').addEventListener('click', async () => {
 $('refresh-repositories').addEventListener('click', () => void discoverRepositories().catch(() => {}));
 $('refresh-repository-access').addEventListener('click', () => void discoverRepositories().catch(() => {}));
 $('repository-search').addEventListener('input', renderRepositoryList);
-$('check-access').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
 $('change-connection').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
 
 $('connect-repository').addEventListener('click', async () => {
@@ -305,7 +350,7 @@ $('connect-repository').addEventListener('click', async () => {
       installationId: selectedRepository.installationId, repoId: selectedRepository.repoId,
       recentDays: Number($('recent-days').value),
     } });
-    showOnboarding = false; await refreshState();
+    stopRepositoryMonitoring(); showOnboarding = false; await refreshState();
     message(result.status === 'write_verified' ? 'Connected. RepoClock verified a repository write.' : 'Connected. Existing RepoClock storage was validated without an unnecessary write.', 'success');
   } catch (error) { message(error.message, 'error'); showRecovery(error); $('connect-repository').disabled = false; }
 });
@@ -316,7 +361,7 @@ $('cancel-app-setup').addEventListener('click', async () => {
   try {
     await send({ type: 'CANCEL_GITHUB_APP_SETUP' });
     repositories = []; selectedRepository = null; discoveryStatus = 'idle';
-    setupCancelled = true; showOnboarding = false;
+    stopRepositoryMonitoring(); setupCancelled = true; showOnboarding = false;
     await refreshState();
     message('GitHub App setup cancelled. Existing settings were preserved.');
   } catch (error) { message(error.message, 'error'); }
@@ -333,7 +378,7 @@ $('resume-setup').addEventListener('click', () => {
 $('disconnect').addEventListener('click', async () => {
   if (!window.confirm('Disconnect this browser? RepoClock will preserve local tracking data and the repository configuration.')) return;
   $('disconnect').disabled = true;
-  try { await send({ type: 'DISCONNECT_GITHUB_APP' }); setupCancelled = false; showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
+  try { stopRepositoryMonitoring(); await send({ type: 'DISCONNECT_GITHUB_APP' }); setupCancelled = false; showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
   catch (error) { message(error.message, 'error'); }
   finally { $('disconnect').disabled = false; }
 });
@@ -343,7 +388,7 @@ $('clear-local').addEventListener('click', async () => {
   $('clear-local').disabled = true;
   try {
     await send({ type: 'CLEAR_LOCAL_CONFIGURATION' });
-    repositories = []; selectedRepository = null; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
+    stopRepositoryMonitoring(); repositories = []; selectedRepository = null; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
     await refreshState();
     message('Local RepoClock configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
   } catch (error) { message(error.message, 'error'); }
@@ -351,9 +396,10 @@ $('clear-local').addEventListener('click', async () => {
 });
 
 
-for (const id of ['install-app', 'review-repository-access', 'new-repository', 'open-device-page', 'recovery-grant']) {
+for (const id of ['install-app', 'review-repository-access', 'open-device-page', 'recovery-grant']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
+$('new-repository').addEventListener('click', () => { githubHandoff = true; startRepositoryMonitoring(); });
 async function rediscoverAfterGitHubHandoff() {
   if (!githubHandoff || document.visibilityState !== 'visible') return;
   githubHandoff = false;
@@ -364,8 +410,22 @@ async function rediscoverAfterGitHubHandoff() {
 window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
 document.addEventListener('visibilitychange', () => void rediscoverAfterGitHubHandoff());
 $('recovery-connect').addEventListener('click', () => $('authorize').click());
-$('recovery-choose').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
-$('recovery-retry').addEventListener('click', () => void discoverRepositories().catch(() => {}));
+$('recovery-retry').addEventListener('click', () => {
+  if (repositoryMonitorRetryPending) {
+    startRepositoryMonitoring();
+    clearTimeout(repositoryMonitorTimer);
+    repositoryMonitorTimer = null;
+    void monitorRepositories();
+    return;
+  }
+  if (repositoryMonitorDeadline) {
+    clearTimeout(repositoryMonitorTimer);
+    repositoryMonitorTimer = null;
+    void monitorRepositories();
+    return;
+  }
+  void discoverRepositories().catch(() => {});
+});
 
 $('display-form').addEventListener('submit', async event => {
   event.preventDefault();

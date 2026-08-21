@@ -516,3 +516,43 @@ test('runtime mutations fail closed when stable repository identity has not been
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: null, fetchImpl: async () => { throw new Error('must not reach GitHub'); } });
   await assert.rejects(() => client.putText('active/alice.txt', 'Start: now\n', 'start'), error => error.code === 'repository_identity_unverified');
 });
+
+
+test('guarded first commit fails closed if the repository gains or changes its default branch', async () => {
+  const calls = [];
+  const repository = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } };
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'repoclock-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repository);
+      if (!options.method && url.endsWith('/branches/main')) return response(404, { message: 'Not Found' });
+      throw new Error('must not write after the default branch changes');
+    },
+  });
+  await assert.rejects(
+    () => client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage'),
+    error => error.code === 'repository_branch_changed',
+  );
+  assert.equal(calls.length, 1);
+});
+
+test('GitHub client can make the guarded first commit in an empty repository without naming a nonexistent branch', async () => {
+  const calls = [];
+  const repository = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'repoclock-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repository);
+      if (!options.method && url.endsWith('/branches/main')) return response(404, { message: 'Not Found' });
+      return response(201, { content: { sha: 'marker' }, commit: { sha: 'initial' } });
+    },
+  });
+  await client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage');
+  assert.equal(calls.length, 3);
+  const payload = JSON.parse(calls[2].options.body);
+  assert.equal(payload.branch, undefined);
+  assert.equal(payload.message, 'Initialize RepoClock storage');
+  assert.equal(calls[2].options.method, 'PUT');
+});

@@ -80,7 +80,7 @@ export class OnboardingCoordinator {
     const requiredStorageLogin = migratingPat
       ? (previousConfig?.storageLogin || before.user || migrationIdentity.login)
       : '';
-    let selectedBranch = candidate.defaultBranch;
+    let selectedBranch = candidate.defaultBranch || 'main';
     let branchMode = 'default';
     const sameRepository = previousConfig && (previousConfig.repoId
       ? previousConfig.repoId === candidate.repoId
@@ -129,7 +129,7 @@ export class OnboardingCoordinator {
     const config = {
       owner: candidate.owner,
       repo: candidate.repo,
-      branch: selectedBranch,
+      branch: initialization.branch || selectedBranch,
       branchMode,
       repoId: candidate.repoId,
       installationId: candidate.installationId,

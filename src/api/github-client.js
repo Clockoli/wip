@@ -310,6 +310,27 @@ export class GitHubClient {
     await this.assertConfiguredBranch(repository);
   }
 
+  async putInitialText(path, text, message) {
+    if (typeof text !== 'string') throw new Error('Text content is required');
+    const repository = await this.validateRepository();
+    if (this.expectedRepositoryId !== undefined && repository.id !== this.expectedRepositoryId) {
+      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    }
+    if (this.expectedRepositoryId !== undefined) this.assertCanonicalCoordinates(repository);
+    if (this.branchMode === 'default' && repository.default_branch) {
+      throw new GitHubApiError('The repository gained or changed its default branch during setup.', 409, 'repository_branch_changed');
+    }
+    try {
+      await this.validateBranch();
+      throw new GitHubConflictError();
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+    }
+    const payload = { message, content: encodeBase64Utf8(text) };
+    const body = await this.request(this.contentUrl(path), { method: 'PUT', body: JSON.stringify(payload) });
+    return { sha: body.content?.sha, commitSha: body.commit?.sha };
+  }
+
   async putText(path, text, message, sha) {
     if (typeof text !== 'string') throw new Error('Text content is required');
     await this.assertStableDestinationForWrite();

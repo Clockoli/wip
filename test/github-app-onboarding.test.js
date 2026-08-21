@@ -181,7 +181,7 @@ test('pre-marker canonical files are parsed strictly before initialization', asy
 });
 
 test('empty repositories and branch rules have actionable recovery classifications', async () => {
-  const empty = { async validateRepository() { return repository(); }, async validateBranch() { throw notFound(); } };
+  const empty = { async validateRepository() { return repository(); }, async validateBranch() { throw notFound(); }, async putInitialText() { throw notFound(); } };
   await assert.rejects(() => new RepositoryInitializer({ github: empty }).initialize({ id: 123, login: 'alice' }), error => error.code === 'empty_repository');
   const protectedBranch = {
     async validateRepository() { return repository(); }, async validateBranch() {},
@@ -486,3 +486,35 @@ test('pre-marker validation rejects blobs occupying reserved directory roots', a
   }
 });
 
+
+
+test('empty private writable repositories remain selectable for automatic initialization', async () => {
+  const github = { request: async path => path.startsWith('/user/installations?')
+    ? { total_count: 1, installations: [installation(1)] }
+    : { total_count: 1, repositories: [repository(91, { default_branch: null })] } };
+  const result = await new InstallationDiscoveryService({ github }).discover();
+  assert.equal(result.repositories[0].needsInitialization, true);
+  assert.equal(result.repositories[0].eligible, true);
+  assert.deepEqual(result.candidates.map(value => value.repoId), [91]);
+});
+
+test('repository initialization makes the first commit automatically when the selected repository is empty', async () => {
+  let validations = 0;
+  const writes = [];
+  const github = {
+    validateRepository: async () => ({
+      id: 77, full_name: 'owner/repo-77', private: true, archived: false, disabled: false,
+      default_branch: validations++ === 0 ? null : 'main', permissions: { push: true },
+    }),
+    putInitialText: async (path, text, message) => { writes.push({ path, text, message }); return { sha: 'marker', commitSha: 'initial' }; },
+    validateBranch: async () => { throw new Error('must not validate a branch before the first commit'); },
+    getText: async () => { throw new Error('must not read before the first commit'); },
+  };
+  const result = await new RepositoryInitializer({ github, now: () => new Date('2026-08-21T00:00:00Z') })
+    .initialize({ id: 123, login: 'alice' }, { expectedRepositoryId: 77, selectedBranch: 'main', branchMode: 'default' });
+  assert.equal(result.status, 'write_verified');
+  assert.equal(result.branch, 'main');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, '.repoclock/config.json');
+  assert.deepEqual(JSON.parse(writes[0].text).users, { '123': 'alice' });
+});

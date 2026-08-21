@@ -6,6 +6,7 @@ const source = await readFile(new URL('../src/options/options.html', import.meta
 const script = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
 const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const recovery = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
 
 test('settings links directly to fine-grained token creation', () => {
   assert.match(source, /href="https:\/\/github\.com\/settings\/personal-access-tokens"/);
@@ -110,11 +111,18 @@ test('local reset instructions explain how to protect unsynced work', () => {
   assert.doesNotMatch(source, /Active timers and pending writes must be resolved first/i);
 });
 
-test('settings exposes local disconnect and GitHub-side recovery separately', () => {
+test('connected settings use one clear repository action and explain local versus GitHub disconnects', () => {
+  assert.match(source, /id="connected-repository"[^>]*><a id="connected-repository-link"/);
+  assert.doesNotMatch(source, /id="open-repository"|Open repository/i);
+  assert.doesNotMatch(source, /id="check-access"|Check access/i);
+  assert.match(source, /id="change-connection"[^>]*>Change data repository</i);
+  assert.match(source, /Revoke RepoClock authorization on GitHub/i);
+  assert.match(source, /sign-in approval/i);
+  assert.match(source, /Neither action deletes repository data/i);
   assert.match(source, /id="disconnect"/);
   assert.match(source, /id="clear-local"/);
-  assert.match(source, /Revoke on GitHub/i);
   assert.match(script, /DISCONNECT_GITHUB_APP/);
+  assert.match(styles, /\.danger:hover\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/);
 });
 
 
@@ -126,15 +134,22 @@ test('Device Flow cancellation bypasses the tracker mutation executor and shares
 });
 
 
-test('repository onboarding is grouped, searchable, and automatically checks again after GitHub handoff', () => {
+test('repository onboarding uses full names and monitors GitHub after repository creation', () => {
   assert.match(source, /id="repository-search"/);
   assert.match(source, /id="refresh-repositories"[^>]*>Refresh repository access</);
-  assert.match(script, /accountLogin/);
-  assert.match(script, /repository-group/);
-  assert.match(script, /discoveryPromise/);
+  assert.match(script, /name\.textContent = repository\.fullName/);
+  assert.doesNotMatch(script, /name\.textContent = repository\.repo/);
+  assert.doesNotMatch(script, /Private ·.*Contents: write/);
+  assert.match(script, /startRepositoryMonitoring/);
+  assert.match(script, /setTimeout\(.*monitorRepositories/s);
+  assert.match(script, /new-repository.*startRepositoryMonitoring/s);
   assert.match(script, /visibilitychange/);
   assert.match(script, /addEventListener\('focus'/);
-  assert.match(script, /githubHandoff/);
+  assert.doesNotMatch(script, /catch \{ \/\* Keep watching/);
+  assert.match(script, /Could not check GitHub.*keep retrying/i);
+  assert.match(script, /stopped checking after five minutes/i);
+  assert.match(script, /repository_monitor_timeout/);
+  assert.match(script, /repositoryMonitorRetryPending/);
 });
 
 test('repository reasons and recovery actions use user-facing contracts', () => {
@@ -145,7 +160,8 @@ test('repository reasons and recovery actions use user-facing contracts', () => 
     assert.match(recovery, new RegExp(code));
   }
   assert.match(script, /RepoClockRecovery\.actionFor/);
-  for (const label of ['Grant access', 'Choose another repository', 'Connect GitHub', 'Retry']) assert.match(source, new RegExp(label));
+  for (const label of ['Review repository access on GitHub', 'Connect GitHub', 'Retry']) assert.match(source, new RegExp(label));
+  assert.doesNotMatch(source, /id="recovery-choose"|Choose another repository/i);
 });
 
 test('connected storage summary distinguishes write verification from access checking', () => {
@@ -180,4 +196,13 @@ test('compliance documentation matches any-owner tracking and durable Title stor
   const compliance = await readFile(new URL('../docs/spec-compliance.md', import.meta.url), 'utf8');
   assert.doesNotMatch(compliance, /configurable allowlist/i);
   assert.match(compliance, /optional one-line `Title`/i);
+});
+
+
+test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
+  assert.match(source, /Choose where RepoClock should save your time data/i);
+  assert.doesNotMatch(source, /Selectable repositories are private repositories granted/i);
+  assert.match(source, /RepoClock will create the first commit automatically/i);
+  assert.match(styles, /#message\.error\{[^}]*position:fixed/);
+  assert.match(styles, /#message\.error\{[^}]*z-index:/);
 });
