@@ -64,7 +64,7 @@ test('onboarding renders one active step, keeps cancel below it, and names repos
   assert.match(script, /element\.hidden = number !== step/);
   assert.match(source, /Choose access on GitHub/i);
   assert.match(source, /Refresh repository access/i);
-  assert.match(source, /Checks GitHub for newly installed or changed RepoClock access/i);
+  assert.match(source, /Creating a repository does not grant RepoClock access to it/i);
   assert.match(source, /Create repoclock-data on GitHub/i);
   assert.match(source, /id="repository-recovery"/);
   assert.match(source, /id="review-repository-access"/);
@@ -140,6 +140,12 @@ test('Device Flow cancellation bypasses the tracker mutation executor and shares
   assert.match(worker, /const attempt = \(\) => direct \? handle\(message, sender\) : executor\.run/);
 });
 
+
+test('repository creation monitoring explains the separate App grant without blinking refresh', () => {
+  assert.match(script, /RepoClock still cannot see repoclock-data.*Only select repositories.*add repoclock-data.*Automatic checking will continue/is);
+  assert.match(script, /if \(!monitoring\) \$\('refresh-repositories'\)\.disabled = true/);
+  assert.match(script, /if \(!monitoring\) \$\('refresh-repositories'\)\.disabled = false/);
+});
 
 test('repository onboarding uses full names and monitors GitHub after repository creation', () => {
   assert.match(source, /id="repository-search"/);

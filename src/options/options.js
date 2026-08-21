@@ -236,7 +236,7 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
   discoveryStatus = 'loading';
   renderOnboardingProgress();
   discoveryPromise = (async () => {
-    $('refresh-repositories').disabled = true;
+    if (!monitoring) $('refresh-repositories').disabled = true;
     if (!monitoring) message('Refreshing RepoClock installation and repository access…');
     showRecovery();
     try {
@@ -259,7 +259,7 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
       if (!monitoring) message(error.message, 'error');
       throw error;
     } finally {
-      $('refresh-repositories').disabled = false;
+      if (!monitoring) $('refresh-repositories').disabled = false;
       discoveryPromise = null;
     }
   })();
@@ -300,6 +300,7 @@ async function monitorRepositories() {
       message('repoclock-data is ready. Validate it to finish setup.', 'success');
       return;
     }
+    message('RepoClock still cannot see repoclock-data. On GitHub, choose access, select Only select repositories, and add repoclock-data. Automatic checking will continue.');
   } catch (error) {
     if (error.code === 'repository_monitor_timeout') {
       finishRepositoryMonitoring();
