@@ -17,7 +17,7 @@
 
   <section class="card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title">Connect GitHub</h2><p>Complete three guided steps to connect RepoClock to one private data repository.</p></div>
+      <div><h2 id="connection-title">Connect GitHub</h2><p>Complete four guided steps to connect RepoClock to one private data repository.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
@@ -50,12 +50,13 @@
     <div id="onboarding">
       <div id="onboarding-flow">
         <div class="setup-progress" aria-live="polite">
-          <span>Step <span id="current-step">1</span> of 3</span>
+          <span>Step <span id="current-step">1</span> of 4</span>
           <div class="progress-track" aria-hidden="true"><span id="progress-fill"></span></div>
         </div>
         <div id="completed-steps" class="completed-steps">
           <p id="device-complete" hidden><span aria-hidden="true">✓</span> Device activation complete<span id="device-account"></span></p>
           <p id="access-complete" hidden><span aria-hidden="true">✓</span> <span id="repository-choice-summary">Repository setup option chosen</span></p>
+          <p id="repository-access-complete" hidden><span aria-hidden="true">✓</span> Repository access found</p>
         </div>
 
         <section id="device-step" class="onboarding-step" aria-labelledby="device-step-title">
@@ -93,8 +94,8 @@
           <p class="help">GitHub opens a prefilled form. Review it and select <strong>Create repository</strong>. Repository creation does not grant RepoClock access; that is Step 3.</p>
         </section>
 
-        <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
-          <h3 id="repository-step-title" tabindex="-1">Give RepoClock access to a data repository</h3>
+        <section id="repository-access-step" class="onboarding-step" aria-labelledby="repository-access-step-title" hidden>
+          <h3 id="repository-access-step-title" tabindex="-1">Give RepoClock access to a data repository</h3>
           <p>Grant RepoClock access to the newly created repository or an existing private repository. Choose <strong>Only select repositories</strong> on GitHub.</p>
           <div class="actions repository-actions">
             <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose repository access on GitHub</a>
@@ -102,13 +103,19 @@
           </div>
           <p class="help">RepoClock checks automatically when you return from GitHub. Use this only if the repository does not appear after you save access.</p>
           <button id="change-repository-setup" type="button" class="link-button">Change repository setup</button>
+        </section>
+
+        <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
+          <h3 id="repository-step-title" tabindex="-1">Choose and validate the data repository</h3>
+          <p>RepoClock detected repository access. Choose the private repository that should store RepoClock data.</p>
           <fieldset>
             <legend>Repository RepoClock can access</legend>
-            <p class="help">Choose the private repository that should store RepoClock data. It does not have to contain the issues or pull requests you track.</p>
+            <p class="help">It does not have to contain the issues or pull requests you track. Unavailable repositories include the reason they cannot be used.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
           <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
+          <button id="change-repository-access" type="button" class="link-button">Change repository access</button>
         </section>
 
         <div class="setup-footer">

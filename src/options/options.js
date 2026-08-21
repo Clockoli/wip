@@ -16,6 +16,7 @@ let repositoryMonitorLastError = null;
 let repositoryMonitorRetryPending = false;
 let repositoryMonitorExpectedName = '';
 let repositoryChoiceMade = false;
+let repositoryAccessDetected = false;
 let repositoryChoiceMode = '';
 let renderedOnboardingStep = null;
 let repositoryChoiceSummary = 'Repository setup option chosen';
@@ -70,15 +71,16 @@ function renderOnboardingProgress() {
   const step = onboardingStep({
     authorized,
     repositoryChoiceMade,
+    repositoryAccessDetected,
     deviceAttempt: Boolean(state?.deviceAttempt),
     discoveryStatus,
     repositories,
   });
   $('current-step').textContent = String(step);
-  $('progress-fill').style.width = `${(step / 3) * 100}%`;
+  $('progress-fill').style.width = `${(step / 4) * 100}%`;
   const previousStep = renderedOnboardingStep;
   renderedOnboardingStep = step;
-  for (const [number, id] of [[1, 'device-step'], [2, 'access-step'], [3, 'repository-step']]) {
+  for (const [number, id] of [[1, 'device-step'], [2, 'access-step'], [3, 'repository-access-step'], [4, 'repository-step']]) {
     const element = $(id);
     element.hidden = number !== step;
   }
@@ -86,9 +88,10 @@ function renderOnboardingProgress() {
   $('device-account').textContent = authorized && (state?.candidateAuth?.githubLogin || state?.auth?.githubLogin)
     ? ` as ${state.candidateAuth?.githubLogin || state.auth?.githubLogin}` : '';
   $('access-complete').hidden = step < 3;
+  $('repository-access-complete').hidden = step < 4;
   $('repository-choice-summary').textContent = repositoryChoiceSummary;
   if (previousStep !== null && previousStep !== step) {
-    queueMicrotask(() => $({ 1: 'device-step-title', 2: 'access-step-title', 3: 'repository-step-title' }[step]).focus());
+    queueMicrotask(() => $({ 1: 'device-step-title', 2: 'access-step-title', 3: 'repository-access-step-title', 4: 'repository-step-title' }[step]).focus());
   }
 }
 
@@ -227,7 +230,13 @@ function renderRepositories(result) {
   const previousSelection = selectedRepository;
   repositories = result.repositories;
   if (repositories.length && !repositoryChoiceMade) { repositoryChoiceMade = true; repositoryChoiceMode = 'existing'; repositoryChoiceSummary = 'Using an existing repository'; }
-  selectedRepository = repositories.find(repository => previousSelection
+  repositoryAccessDetected = repositoryChoiceMode === 'create'
+    ? repositories.some(repository => repository.repo === 'repoclock-data')
+    : repositories.length > 0;
+  const expectedRepository = repositoryChoiceMode === 'create'
+    ? repositories.find(repository => repository.repo === 'repoclock-data' && repository.eligible)
+    : null;
+  selectedRepository = expectedRepository || repositories.find(repository => previousSelection
     && repository.installationId === previousSelection.installationId
     && repository.repoId === previousSelection.repoId
     && repository.eligible) || selectOnlyEligibleRepository(repositories);
@@ -254,12 +263,17 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
       const result = await bounded(send({ type: 'DISCOVER_REPOSITORIES' }));
       discoveryStatus = 'ready';
       renderRepositories(result);
-      if (result.candidates.length === 1) {
-        message('One eligible data repository was found and selected automatically. Validate it to finish setup.', 'success');
-      } else if (result.candidates.length > 1) {
-        message('Choose the private repository that should store RepoClock data.');
+      const relevantCandidates = repositoryChoiceMode === 'create'
+        ? result.candidates.filter(repository => repository.repo === 'repoclock-data')
+        : result.candidates;
+      if (!repositoryAccessDetected && repositoryChoiceMode === 'create') {
+        message('RepoClock still cannot see repoclock-data. Grant that repository access on GitHub; automatic checking will continue.');
+      } else if (relevantCandidates.length === 1) {
+        message('Repository access was detected and the eligible data repository was selected automatically. Validate it to finish setup.', 'success');
+      } else if (relevantCandidates.length > 1) {
+        message('Repository access was detected. Choose the private repository that should store RepoClock data.');
       } else if (result.repositories.length) {
-        message('RepoClock found repository access, but none can be used yet. Review each repository below for the reason.');
+        message('Repository access was detected, but none can be used yet. Review each repository below for the reason.');
       } else {
         message('Device activation is complete—nothing went wrong. Next, choose access on GitHub for a private data repository.');
       }
@@ -305,15 +319,18 @@ async function monitorRepositories() {
   }
   try {
     const result = await discoverRepositories({ monitoring: true, deadline: repositoryMonitorDeadline });
-    const ready = repositoryMonitorExpectedName
-      ? result.candidates.some(repository => repository.repo === repositoryMonitorExpectedName)
-      : result.candidates.length > 0;
-    if (ready) {
-      const target = repositoryMonitorExpectedName || 'Repository access';
+    const accessedRepository = repositoryMonitorExpectedName
+      ? result.repositories.find(repository => repository.repo === repositoryMonitorExpectedName)
+      : result.repositories[0];
+    if (accessedRepository) {
       repositoryMonitorLastError = null;
       repositoryMonitorRetryPending = false;
       stopRepositoryMonitoring();
-      message(`${target} is ready. Validate it to finish setup.`, 'success');
+      message(selectedRepository
+        ? 'Repository access was detected. Validate the selected repository to finish setup.'
+        : result.candidates.length
+          ? 'Repository access was detected. Choose the repository RepoClock should use.'
+          : 'Repository access was detected, but the repository cannot be used yet. Review its availability reason.');
       return;
     }
     message(repositoryMonitorExpectedName
@@ -349,6 +366,7 @@ async function refreshState() {
   state.deviceAttempt = resumedAttempt || state.deviceAttempt;
   if (!isAppAuthorized()) {
     repositories = [];
+    repositoryAccessDetected = false;
     selectedRepository = null;
     discoveryStatus = 'idle';
   }
@@ -391,7 +409,7 @@ $('cancel-app-setup').addEventListener('click', async () => {
   $('cancel-app-setup').disabled = true;
   try {
     await send({ type: 'CANCEL_GITHUB_APP_SETUP' });
-    repositories = []; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle';
+    repositories = []; repositoryAccessDetected = false; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle';
     stopRepositoryMonitoring(); setupCancelled = true; showOnboarding = false;
     await refreshState();
     message('GitHub App setup cancelled. Existing settings were preserved.');
@@ -419,7 +437,7 @@ $('clear-local').addEventListener('click', async () => {
   $('clear-local').disabled = true;
   try {
     await send({ type: 'CLEAR_LOCAL_CONFIGURATION' });
-    stopRepositoryMonitoring(); repositories = []; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
+    stopRepositoryMonitoring(); repositories = []; repositoryAccessDetected = false; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
     await refreshState();
     message('Local RepoClock configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
   } catch (error) { message(error.message, 'error'); }
@@ -438,6 +456,15 @@ $('new-repository').addEventListener('click', () => {
   githubHandoff = true;
   renderOnboardingProgress();
   startRepositoryMonitoring('repoclock-data');
+});
+$('change-repository-access').addEventListener('click', () => {
+  stopRepositoryMonitoring();
+  repositories = [];
+  repositoryAccessDetected = false;
+  selectedRepository = null;
+  discoveryStatus = 'idle';
+  renderOnboardingProgress();
+  message('Review or change repository access on GitHub.');
 });
 $('change-repository-setup').addEventListener('click', () => {
   stopRepositoryMonitoring();

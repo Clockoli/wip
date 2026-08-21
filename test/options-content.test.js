@@ -42,7 +42,7 @@ test('normal settings route is GitHub App onboarding with resumable authorizatio
 });
 
 test('onboarding names and explains Device activation without hiding GitHub safety warnings', () => {
-  assert.match(source, /Step <span id="current-step">1<\/span> of 3/i);
+  assert.match(source, /Step <span id="current-step">1<\/span> of 4/i);
   assert.match(source, /Device activation/i);
   assert.match(source, /only use the code after you start Device activation/i);
   assert.match(source, /RepoClock by RepoClock/i);
@@ -73,17 +73,26 @@ test('Step 2 creates a template-backed data repository or skips to existing-repo
 });
 
 test('Step 3 grants App access to the new or an existing repository', () => {
-  assert.match(source, /id="repository-step"[\s\S]*Give RepoClock access to a data repository/i);
+  assert.match(source, /id="repository-access-step"[\s\S]*Give RepoClock access to a data repository/i);
   assert.match(source, /newly created repository or an existing private repository/i);
   assert.match(source, /id="install-app"[\s\S]*Choose repository access on GitHub/i);
-  assert.ok(source.indexOf('id="install-app"') > source.indexOf('id="repository-step"'));
+  assert.ok(source.indexOf('id="install-app"') > source.indexOf('id="repository-access-step"'));
+});
+
+
+test('detected repository access advances to Step 4 for selection and validation', () => {
+  assert.match(source, /Step <span id="current-step">1<\/span> of 4/);
+  assert.match(source, /id="repository-step"[\s\S]*Choose and validate the data repository/i);
+  assert.match(source, /id="repository-access-complete"[\s\S]*Repository access found/i);
+  assert.match(script, /\[4, 'repository-step'\]/);
+  assert.match(script, /4: 'repository-step-title'/);
 });
 
 test('onboarding renders one active step, keeps cancel below it, and names repository actions precisely', () => {
-  for (const id of ['device-step', 'access-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
+  for (const id of ['device-step', 'access-step', 'repository-access-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
   assert.match(script, /onboardingStep/);
   assert.match(script, /element\.hidden = number !== step/);
-  for (const id of ['device-step-title', 'access-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
+  for (const id of ['device-step-title', 'access-step-title', 'repository-access-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
   assert.match(script, /previousStep !== null && previousStep !== step[\s\S]*focus\(\)/);
   assert.match(source, /Choose repository access on GitHub/i);
   assert.match(source, /Check for repository access now/i);
@@ -184,7 +193,12 @@ test('repository onboarding uses full names and monitors GitHub after repository
   assert.match(script, /install-app.*startRepositoryMonitoring/s);
   assert.match(script, /repositoryChoiceMode === 'create' \? 'repoclock-data' : ''/);
   assert.match(script, /startRepositoryMonitoring\('repoclock-data'\)/);
-  assert.match(script, /result\.candidates\.length > 0/);
+  assert.match(script, /repositoryAccessDetected = repositoryChoiceMode === 'create'/);
+  assert.match(script, /repositories\.some\(repository => repository\.repo === 'repoclock-data'\)/);
+  assert.match(script, /expectedRepository = repositoryChoiceMode === 'create'[\s\S]*repository\.repo === 'repoclock-data' && repository\.eligible/);
+  assert.match(script, /const accessedRepository = repositoryMonitorExpectedName/);
+  assert.match(script, /relevantCandidates = repositoryChoiceMode === 'create'/);
+  assert.match(script, /still cannot see repoclock-data.*Grant that repository access/i);
   assert.match(script, /still cannot see an eligible repository/i);
   assert.match(script, /visibilitychange/);
   assert.match(script, /addEventListener\('focus'/);
