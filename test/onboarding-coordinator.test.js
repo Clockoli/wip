@@ -74,6 +74,35 @@ test('validated repository selection atomically commits pending App auth over th
   assert.deepEqual(store.commits[0].patch.pendingWrites, []);
 });
 
+test('repository selection automatically follows a default branch created during setup', async () => {
+  const store = new MemoryStore({ pending: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 1 } });
+  const initializedCandidate = { ...candidate, defaultBranch: 'trunk' };
+  let discoveries = 0, initializations = 0;
+  const githubOptions = [];
+  const c = new OnboardingCoordinator({
+    store,
+    currentCredentialProvider: { getAccessToken: async () => 'current' },
+    pendingCredentialProvider: { getAccessToken: async () => 'pending' },
+    discoveryFactory: () => ({ discover: async () => {
+      discoveries += 1;
+      const current = discoveries === 1 ? candidate : initializedCandidate;
+      return { installations: [], repositories: [current], candidates: [current] };
+    } }),
+    githubFactory: options => { githubOptions.push(options); return { options }; },
+    initializerFactory: () => ({ initialize: async () => {
+      initializations += 1;
+      if (initializations === 1) throw Object.assign(new Error('branch appeared'), { code: 'repository_branch_changed' });
+      return { status: 'write_verified', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'trunk' };
+    } }),
+  });
+  const result = await c.selectRepository({ installationId: 88, repoId: 77 });
+  assert.equal(result.config.branch, 'trunk');
+  assert.equal(discoveries, 2);
+  assert.equal(initializations, 2);
+  assert.deepEqual(githubOptions.map(options => options.branch), ['main', 'trunk']);
+  assert.equal(store.commits.length, 1);
+});
+
 test('repository selection re-discovers IDs and rejects a caller-supplied inaccessible repository', async () => {
   const store = new MemoryStore({ pending: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 1 } });
   await assert.rejects(() => coordinator(store).selectRepository({ installationId: 999, repoId: 777 }), error => error.code === 'repository_access_required');

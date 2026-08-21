@@ -80,9 +80,7 @@ export class InstallationDiscoveryService {
   async discover() {
     const rawInstallations = await this.pages('/user/installations', 'installations', { maxItems: this.maxInstallations });
     const installations = rawInstallations.map(installationValue);
-    if (!installations.length) {
-      throw new OnboardingError('Install RepoClock on a private repository, then check again.', 'app_installation_required');
-    }
+    if (!installations.length) return { installations: [], repositories: [], candidates: [] };
     const repositories = [];
     let repositoryPageRequests = 0;
     const countRepositoryPage = () => {

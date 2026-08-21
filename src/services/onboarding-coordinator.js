@@ -56,7 +56,7 @@ export class OnboardingCoordinator {
     }
     const auth = await this.authContext();
     const discovery = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
-    const candidate = discovery.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
+    let candidate = discovery.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
     if (!candidate) throw new OnboardingError('RepoClock no longer has access to the selected repository.', 'repository_access_required');
 
     const [{ config: previousConfig }, before] = await Promise.all([
@@ -108,18 +108,40 @@ export class OnboardingCoordinator {
     const changing = auth.source === 'pending' || changedDestination(previousConfig, candidate, selectedBranch);
     await this.assertSafeTransition(previousConfig, before, changing);
 
-    const github = this.githubFactory({
-      credentialProvider: auth.credentialProvider,
-      owner: candidate.owner, repo: candidate.repo, branch: selectedBranch,
-      expectedRepositoryId: candidate.repoId, branchMode,
-    });
-    const initialization = await this.initializerFactory({ github }).initialize({
-      id: auth.snapshot.auth.githubUserId,
-      login: auth.snapshot.auth.githubLogin,
-    }, {
-      expectedRepositoryId: candidate.repoId, selectedBranch, branchMode,
-      ...(requiredStorageLogin ? { requiredStorageLogin } : {}),
-    });
+    const initialize = async () => {
+      const github = this.githubFactory({
+        credentialProvider: auth.credentialProvider,
+        owner: candidate.owner, repo: candidate.repo, branch: selectedBranch,
+        expectedRepositoryId: candidate.repoId, branchMode,
+      });
+      return this.initializerFactory({ github }).initialize({
+        id: auth.snapshot.auth.githubUserId,
+        login: auth.snapshot.auth.githubLogin,
+      }, {
+        expectedRepositoryId: candidate.repoId, selectedBranch, branchMode,
+        ...(requiredStorageLogin ? { requiredStorageLogin } : {}),
+      });
+    };
+    let initialization;
+    try {
+      initialization = await initialize();
+    } catch (error) {
+      if (error?.code !== 'repository_branch_changed' || branchMode !== 'default') throw error;
+      const refreshed = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
+      const refreshedCandidate = refreshed.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
+      if (!refreshedCandidate?.defaultBranch) {
+        throw new OnboardingError('GitHub is still finishing repository setup. Wait a moment, then validate again.', 'onboarding_superseded');
+      }
+      candidate = refreshedCandidate;
+      selectedBranch = refreshedCandidate.defaultBranch;
+      try { initialization = await initialize(); }
+      catch (retryError) {
+        if (retryError?.code === 'repository_branch_changed') {
+          throw new OnboardingError('GitHub is still finishing repository setup. Wait a moment, then validate again.', 'onboarding_superseded');
+        }
+        throw retryError;
+      }
+    }
 
     // Close the validation-vs-Start/Stop race before committing the transition.
     const after = await this.store.ensureDataVersion(3);

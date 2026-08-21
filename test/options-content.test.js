@@ -51,6 +51,13 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /did not install RepoClock on any repository/i);
 });
 
+
+test('expected post-activation repository setup is neutral rather than an error', async () => {
+  const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(onboarding, /Install RepoClock on a private repository, then check again/);
+  assert.match(script, /Device activation is complete—nothing went wrong.*choose access on GitHub/i);
+});
+
 test('onboarding renders one active step, keeps cancel below it, and names repository actions precisely', () => {
   for (const id of ['device-step', 'access-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
   assert.match(script, /onboardingStep/);

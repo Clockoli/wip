@@ -250,7 +250,7 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
       } else if (result.repositories.length) {
         message('RepoClock found repository access, but none can be used yet. Review each repository below for the reason.');
       } else {
-        message('');
+        message('Device activation is complete—nothing went wrong. Next, choose access on GitHub for a private data repository.');
       }
       return result;
     } catch (error) {

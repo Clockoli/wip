@@ -264,15 +264,14 @@ test('repository initialization rejects a selected repository ID mismatch before
 });
 
 
-test('zero installations is an explicit App-installation-required state', async () => {
+test('zero installations is a normal post-activation state with no repositories yet', async () => {
   const github = { request: async path => {
     assert.match(path, /^\/user\/installations\?/);
     return { total_count: 0, installations: [] };
   } };
-  await assert.rejects(
-    () => new InstallationDiscoveryService({ github }).discover(),
-    error => error.code === 'app_installation_required',
-  );
+  assert.deepEqual(await new InstallationDiscoveryService({ github }).discover(), {
+    installations: [], repositories: [], candidates: [],
+  });
 });
 
 test('internal repositories are unavailable under the private-only first-release policy', async () => {
