@@ -109,6 +109,18 @@ test('configuration generation and metadata invalidation commit atomically', asy
   });
 });
 
+test('display preference updates only recentDays and rotates configuration generation', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const config = { owner: 'acme', repo: 'time', branch: 'main', recentDays: 7, repoId: 77 };
+  await store.saveConfiguration(config, 'token-one', { recentCache: [{ id: 'accepted' }], pendingWrites: [{ id: 'pending' }] });
+  const generation = await store.updateDisplayPreferences({ recentDays: 14 });
+  assert.equal(generation, 2);
+  assert.deepEqual((await store.getConfigurationSnapshot()).config, { ...config, recentDays: 14 });
+  assert.deepEqual((await store.getState()).recentCache, [{ id: 'accepted' }]);
+  assert.deepEqual((await store.getState()).pendingWrites, [{ id: 'pending' }]);
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 0 }), /between 1 and 31/i);
+});
+
 test('stale task loads cannot repopulate metadata after a configuration generation change', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time' }, 'token-one', { taskMetadataCache: null });

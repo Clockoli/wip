@@ -23,6 +23,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/domain/tasks.js',
   'src/domain/ulid.js',
   'src/domain/values.js',
+  'src/options/onboarding-flow.js',
   'src/options/options.css',
   'src/options/options.html',
   'src/options/options.js',

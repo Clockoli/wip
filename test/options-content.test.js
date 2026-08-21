@@ -27,7 +27,7 @@ test('normal settings route is GitHub App onboarding with resumable authorizatio
   assert.match(source, /id="install-app"/);
   assert.match(source, /id="repository-list"/);
   assert.match(source, /id="connect-repository"/);
-  assert.match(source, /GitHub may ask/i);
+  assert.match(source, /GitHub keeps these approvals separate/i);
   assert.doesNotMatch(source, /exactly three|three clicks|three actions/i);
   assert.match(script, /START_DEVICE_FLOW/);
   assert.match(script, /RESUME_DEVICE_FLOW/);
@@ -40,9 +40,36 @@ test('normal settings route is GitHub App onboarding with resumable authorizatio
   assert.match(script, /user_write_required: 'your account cannot write'/);
 });
 
+test('onboarding names and explains Device activation without hiding GitHub safety warnings', () => {
+  assert.match(source, /Step <span id="current-step">1<\/span> of 3/i);
+  assert.match(source, /Device activation/i);
+  assert.match(source, /only use the code after you start Device activation/i);
+  assert.match(source, /RepoClock by RepoClock/i);
+  assert.match(source, /Act on your behalf/i);
+  assert.match(source, /limited API calls/i);
+  assert.match(source, /did not install RepoClock on any repository/i);
+});
+
+test('onboarding renders one active step, keeps cancel below it, and names repository actions precisely', () => {
+  for (const id of ['device-step', 'access-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
+  assert.match(script, /onboardingStep/);
+  assert.match(script, /element\.hidden = number !== step/);
+  assert.match(source, /Choose access on GitHub/i);
+  assert.match(source, /Refresh repository access/i);
+  assert.match(source, /Checks GitHub for newly installed or changed RepoClock access/i);
+  assert.match(source, /Create repoclock-data on GitHub/i);
+  assert.match(source, /id="repository-recovery"/);
+  assert.match(source, /id="review-repository-access"/);
+  assert.match(source, /id="refresh-repository-access"/);
+  assert.match(script, /\$\('repository-recovery'\)\.hidden = result\.candidates\.length > 0/);
+  assert.ok(source.indexOf('id="cancel-app-setup"') > source.indexOf('id="repository-step"'));
+});
+
 test('PAT setup remains an explicit advanced compatibility path without direct credential storage access', () => {
   assert.match(source, /<details[^>]*id="advanced-pat"/);
-  assert.match(source, /Personal access token compatibility/i);
+  assert.match(source, /Don’t want to install the GitHub App\?/i);
+  assert.doesNotMatch(source, /Personal access token compatibility/i);
+  assert.match(source, /Use a personal access token instead/i);
   assert.doesNotMatch(script, /ChromeStore|chrome\.storage|indexedDB/);
   assert.match(script, /SAVE_CONFIG/);
 });
@@ -53,6 +80,34 @@ test('settings allows every GitHub issue and clearly scopes the recent-entry win
   assert.match(source, /Recent entries shown in the main panel \(days\)/i);
   assert.match(source, /only controls how many past days appear in the main tracking panel/i);
   assert.match(source, /Track any GitHub issue or pull request/i);
+});
+
+test('saved display preferences remain available while GitHub authentication is disconnected', () => {
+  assert.match(script, /\$\('display-settings'\)\.hidden = !state\.config/);
+  assert.doesNotMatch(script, /\$\('display-settings'\)\.hidden = !state\.ready/);
+});
+
+test('recent-entry display preference is independent from GitHub App and PAT authentication', () => {
+  const patStart = source.indexOf('<details id="advanced-pat"');
+  const patEnd = source.indexOf('</details>', patStart);
+  const patSection = source.slice(patStart, patEnd);
+  assert.match(source, /<section[^>]*id="display-settings"/);
+  assert.equal((source.match(/id="recent-days"/g) || []).length, 1);
+  assert.doesNotMatch(patSection, /Recent entries|id="recent-days"/i);
+  assert.doesNotMatch(source, /id="app-recent-days"/);
+  assert.match(script, /UPDATE_DISPLAY_PREFERENCES/);
+});
+
+test('PAT transitions explain exactly how to finish pending synchronization', async () => {
+  const configuration = await readFile(new URL('../src/services/configuration.js', import.meta.url), 'utf8');
+  assert.match(configuration, /Open RepoClock and finish syncing its pending changes before changing GitHub authentication/);
+  assert.doesNotMatch(configuration, /Sync pending entries before changing GitHub authentication/);
+});
+
+test('local reset instructions explain how to protect unsynced work', () => {
+  assert.match(source, /stop any running timer/i);
+  assert.match(source, /use Sync.*no pending changes remain/is);
+  assert.doesNotMatch(source, /Active timers and pending writes must be resolved first/i);
 });
 
 test('settings exposes local disconnect and GitHub-side recovery separately', () => {
@@ -73,7 +128,7 @@ test('Device Flow cancellation bypasses the tracker mutation executor and shares
 
 test('repository onboarding is grouped, searchable, and automatically checks again after GitHub handoff', () => {
   assert.match(source, /id="repository-search"/);
-  assert.match(source, /id="refresh-repositories"[^>]*>Check again</);
+  assert.match(source, /id="refresh-repositories"[^>]*>Refresh repository access</);
   assert.match(script, /accountLogin/);
   assert.match(script, /repository-group/);
   assert.match(script, /discoveryPromise/);

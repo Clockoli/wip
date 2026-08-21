@@ -7,7 +7,7 @@ function changedDestination(previous, candidate, selectedBranch = candidate.defa
 }
 
 function transitionError(state) {
-  if ((state.pendingWrites || []).length) return new OnboardingError('Sync pending entries before changing GitHub authentication or the time-data repository.', 'migration_blocked');
+  if ((state.pendingWrites || []).length) return new OnboardingError('Open RepoClock and finish syncing its pending changes before changing GitHub authentication or the data repository.', 'migration_blocked');
   if (state.activeCache) return new OnboardingError('Stop the active timer before changing GitHub authentication or the time-data repository.', 'migration_blocked');
   return null;
 }

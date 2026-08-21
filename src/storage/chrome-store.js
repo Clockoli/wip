@@ -299,6 +299,22 @@ export class ChromeStore {
     return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
   }
 
+  async updateDisplayPreferences({ recentDays }) {
+    const normalized = Number(recentDays);
+    if (!Number.isInteger(normalized) || normalized < 1 || normalized > 31) {
+      throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
+    }
+    return this.backend.mutateMany(['config', CONFIGURATION_GENERATION], values => {
+      if (!values.config) throw new Error('Connect a repository before saving display settings');
+      const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0
+        ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      return {
+        set: { config: { ...values.config, recentDays: normalized }, [CONFIGURATION_GENERATION]: generation },
+        result: generation,
+      };
+    });
+  }
+
   async upgradeLegacyRepositoryIdentity(expectedGeneration, expected, patch) {
     return this.backend.mutateMany(['config', CONFIGURATION_GENERATION], values => {
       const generation = Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0

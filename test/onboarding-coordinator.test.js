@@ -93,6 +93,13 @@ test('auth or destination transition is blocked by local or remote active work a
   }
 });
 
+test('blocked transitions explain exactly how to protect running and unsynced work', async () => {
+  const active = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { activeCache: { startedAt: 'x' } } });
+  await assert.rejects(() => coordinator(active).clearLocalConfiguration(), /stop the active timer/i);
+  const pending = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { pendingWrites: [{ id: 'one' }] } });
+  await assert.rejects(() => coordinator(pending).clearLocalConfiguration(), /open RepoClock.*finish syncing.*pending changes/i);
+});
+
 test('disconnect is local, generation-checked, and refuses to discard active or pending work', async () => {
   for (const state of [{ activeCache: { startedAt: 'x' } }, { pendingWrites: [{ id: 'one' }] }]) {
     const store = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, state });
@@ -107,7 +114,7 @@ test('disconnect is local, generation-checked, and refuses to discard active or 
 
 test('explicit local reset uses the same active and pending-work safety gate', async () => {
   const blocked = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { pendingWrites: [{ id: 'one' }] } });
-  await assert.rejects(() => coordinator(blocked).clearLocalConfiguration(), /sync pending/i);
+  await assert.rejects(() => coordinator(blocked).clearLocalConfiguration(), /finish syncing.*pending changes/i);
   assert.equal(blocked.clears, 0);
   const safe = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' } });
   assert.deepEqual(await coordinator(safe).clearLocalConfiguration(), { cleared: true, remoteDataDeleted: false });

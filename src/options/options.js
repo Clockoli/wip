@@ -1,3 +1,5 @@
+import { onboardingStep, selectOnlyEligibleRepository } from './onboarding-flow.js';
+
 const $ = id => document.getElementById(id);
 let state = null;
 let repositories = [];
@@ -6,6 +8,8 @@ let pollTimer = null;
 let showOnboarding = false;
 let discoveryPromise = null;
 let githubHandoff = false;
+let discoveryStatus = 'idle';
+let setupCancelled = false;
 
 function message(text, kind = '') {
   $('message').textContent = text;
@@ -49,13 +53,40 @@ function showRecovery(error = null) {
   actions.hidden = !(connect || (grant && githubUrl(state?.installationUrl)) || choose || retry);
 }
 
+function isAppAuthorized() {
+  return state?.candidateAuth?.mode === 'github_app' || state?.auth?.mode === 'github_app';
+}
+
+function renderOnboardingProgress() {
+  const authorized = isAppAuthorized();
+  const step = onboardingStep({
+    authorized,
+    deviceAttempt: Boolean(state?.deviceAttempt),
+    discoveryStatus,
+    repositories,
+  });
+  $('current-step').textContent = String(step);
+  $('progress-fill').style.width = `${(step / 3) * 100}%`;
+  for (const [number, id] of [[1, 'device-step'], [2, 'access-step'], [3, 'repository-step']]) {
+    const element = $(id);
+    element.hidden = number !== step;
+  }
+  $('device-complete').hidden = step === 1;
+  $('device-account').textContent = authorized && (state?.candidateAuth?.githubLogin || state?.auth?.githubLogin)
+    ? ` as ${state.candidateAuth?.githubLogin || state.auth?.githubLogin}` : '';
+  $('access-complete').hidden = step < 3;
+}
+
 function renderState() {
   const connected = state.ready && !showOnboarding;
   $('connected').hidden = !connected;
   $('onboarding').hidden = connected;
+  $('display-settings').hidden = !state.config;
+  $('onboarding-flow').hidden = setupCancelled;
+  $('setup-cancelled').hidden = !setupCancelled;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
-  $('connection-status').textContent = state.ready ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Authorized' : 'Not connected');
+  $('connection-status').textContent = state.ready ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${state.ready ? ' ready' : ''}`;
 
   if (state.config) {
@@ -69,21 +100,23 @@ function renderState() {
     $('repo').value = state.config.repo || '';
     $('branch').value = state.config.branch || 'main';
     $('recent-days').value = state.config.recentDays || 7;
-    $('app-recent-days').value = state.config.recentDays || 7;
   }
+  $('save-display').disabled = !state.config;
   setLink('revoke', state.authorizationSettingsUrl);
   setLink('recovery-grant', state.installationUrl);
   $('revoke').hidden = state.auth?.mode !== 'github_app';
   setLink('install-app', state.installationUrl);
+  setLink('review-repository-access', state.installationUrl);
   setLink('new-repository', state.newRepositoryUrl);
   setLink('open-repository', state.trackingRepositoryUrl);
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
   else $('device-panel').hidden = true;
-  const authorizedForApp = state.candidateAuth?.mode === 'github_app' || state.auth?.mode === 'github_app';
-  $('repository-panel').hidden = !authorizedForApp;
   $('authorize-panel').hidden = Boolean(state.deviceAttempt || state.candidateAuth);
-  if (authorizedForApp && !repositories.length && !state.deviceAttempt) void discoverRepositories().catch(() => {});
+  renderOnboardingProgress();
+  if (!connected && !setupCancelled && isAppAuthorized() && discoveryStatus === 'idle' && !state.deviceAttempt) {
+    void discoverRepositories().catch(() => {});
+  }
 }
 
 function renderDeviceAttempt(attempt) {
@@ -113,7 +146,8 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
-      message(`Authorized as ${result.githubLogin}. Choose where RepoClock may store time records.`, 'success');
+      message(`Device activation complete for ${result.githubLogin}. Next, give RepoClock access to a data repository.`, 'success');
+      discoveryStatus = 'idle';
       await refreshState();
       await discoverRepositories().catch(() => {});
       return;
@@ -181,27 +215,46 @@ function renderRepositoryList() {
 }
 
 function renderRepositories(result) {
+  const previousSelection = selectedRepository;
   repositories = result.repositories;
-  selectedRepository = null;
-  $('connect-repository').disabled = true;
+  selectedRepository = repositories.find(repository => previousSelection
+    && repository.installationId === previousSelection.installationId
+    && repository.repoId === previousSelection.repoId
+    && repository.eligible) || selectOnlyEligibleRepository(repositories);
+  $('connect-repository').disabled = !selectedRepository;
   $('repository-search').value = '';
   $('repository-search-label').hidden = repositories.length < 10;
+  $('repository-recovery').hidden = result.candidates.length > 0;
   renderRepositoryList();
+  renderOnboardingProgress();
 }
 
 async function discoverRepositories() {
   if (discoveryPromise) return discoveryPromise;
+  discoveryStatus = 'loading';
+  renderOnboardingProgress();
   discoveryPromise = (async () => {
     $('refresh-repositories').disabled = true;
-    message('Checking installations and private repositories…'); showRecovery();
+    message('Refreshing RepoClock installation and repository access…'); showRecovery();
     try {
       const result = await send({ type: 'DISCOVER_REPOSITORIES' });
+      discoveryStatus = 'ready';
       renderRepositories(result);
-      message(result.candidates.length ? 'Select a private writable repository.' : 'No eligible repository yet. Grant access or create a private repository, then check again.', result.candidates.length ? '' : 'error');
-      if (!result.candidates.length) showRecovery({ code: 'repository_access_required' });
+      if (result.candidates.length === 1) {
+        message('One eligible data repository was found and selected automatically. Validate it to finish setup.', 'success');
+      } else if (result.candidates.length > 1) {
+        message('Choose the private repository that should store RepoClock data.');
+      } else if (result.repositories.length) {
+        message('RepoClock found repository access, but none can be used yet. Review each repository below for the reason.');
+      } else {
+        message('');
+      }
       return result;
     } catch (error) {
-      message(error.message, 'error'); showRecovery(error); throw error;
+      discoveryStatus = 'error';
+      renderOnboardingProgress();
+      message(error.message, 'error');
+      throw error;
     } finally {
       $('refresh-repositories').disabled = false;
       discoveryPromise = null;
@@ -216,14 +269,19 @@ async function refreshState() {
   ]);
   state = nextState;
   state.deviceAttempt = resumedAttempt || state.deviceAttempt;
+  if (!isAppAuthorized()) {
+    repositories = [];
+    selectedRepository = null;
+    discoveryStatus = 'idle';
+  }
   renderState();
 }
 
 $('authorize').addEventListener('click', async () => {
-  $('authorize').disabled = true; message('Starting GitHub authorization…');
+  setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
   try {
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
-    state.deviceAttempt = attempt; renderDeviceAttempt(attempt); message('Complete authorization on GitHub.');
+    state.deviceAttempt = attempt; renderDeviceAttempt(attempt); message('Enter the code on GitHub only because you started Device activation here.');
   } catch (error) { message(error.message, 'error'); }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
@@ -233,16 +291,11 @@ $('copy-code').addEventListener('click', async () => {
   catch { message('Could not copy automatically. Select the code and copy it.', 'error'); }
 });
 
-$('cancel-device').addEventListener('click', async () => {
-  clearTimeout(pollTimer);
-  try { await send({ type: 'CANCEL_DEVICE_FLOW', attemptId: state.deviceAttempt?.attemptId }); await refreshState(); message('Authorization cancelled.'); }
-  catch (error) { message(error.message, 'error'); }
-});
-
 $('refresh-repositories').addEventListener('click', () => void discoverRepositories().catch(() => {}));
+$('refresh-repository-access').addEventListener('click', () => void discoverRepositories().catch(() => {}));
 $('repository-search').addEventListener('input', renderRepositoryList);
-$('check-access').addEventListener('click', () => { showOnboarding = true; renderState(); void discoverRepositories().catch(() => {}); });
-$('change-connection').addEventListener('click', () => { showOnboarding = true; renderState(); void discoverRepositories().catch(() => {}); });
+$('check-access').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
+$('change-connection').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
 
 $('connect-repository').addEventListener('click', async () => {
   if (!selectedRepository) return;
@@ -250,7 +303,7 @@ $('connect-repository').addEventListener('click', async () => {
   try {
     const result = await send({ type: 'SELECT_REPOSITORY', payload: {
       installationId: selectedRepository.installationId, repoId: selectedRepository.repoId,
-      recentDays: Number($('app-recent-days').value),
+      recentDays: Number($('recent-days').value),
     } });
     showOnboarding = false; await refreshState();
     message(result.status === 'write_verified' ? 'Connected. RepoClock verified a repository write.' : 'Connected. Existing RepoClock storage was validated without an unnecessary write.', 'success');
@@ -258,14 +311,29 @@ $('connect-repository').addEventListener('click', async () => {
 });
 
 $('cancel-app-setup').addEventListener('click', async () => {
-  try { await send({ type: 'CANCEL_GITHUB_APP_SETUP' }); repositories = []; showOnboarding = false; await refreshState(); message('GitHub App setup cancelled. Existing settings were preserved.'); }
-  catch (error) { message(error.message, 'error'); }
+  clearTimeout(pollTimer);
+  $('cancel-app-setup').disabled = true;
+  try {
+    await send({ type: 'CANCEL_GITHUB_APP_SETUP' });
+    repositories = []; selectedRepository = null; discoveryStatus = 'idle';
+    setupCancelled = true; showOnboarding = false;
+    await refreshState();
+    message('GitHub App setup cancelled. Existing settings were preserved.');
+  } catch (error) { message(error.message, 'error'); }
+  finally { $('cancel-app-setup').disabled = false; }
+});
+
+$('resume-setup').addEventListener('click', () => {
+  setupCancelled = false;
+  showOnboarding = true;
+  discoveryStatus = 'idle';
+  renderState();
 });
 
 $('disconnect').addEventListener('click', async () => {
   if (!window.confirm('Disconnect this browser? RepoClock will preserve local tracking data and the repository configuration.')) return;
   $('disconnect').disabled = true;
-  try { await send({ type: 'DISCONNECT_GITHUB_APP' }); showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
+  try { await send({ type: 'DISCONNECT_GITHUB_APP' }); setupCancelled = false; showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
   catch (error) { message(error.message, 'error'); }
   finally { $('disconnect').disabled = false; }
 });
@@ -275,7 +343,7 @@ $('clear-local').addEventListener('click', async () => {
   $('clear-local').disabled = true;
   try {
     await send({ type: 'CLEAR_LOCAL_CONFIGURATION' });
-    repositories = []; selectedRepository = null; showOnboarding = true;
+    repositories = []; selectedRepository = null; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
     await refreshState();
     message('Local RepoClock configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
   } catch (error) { message(error.message, 'error'); }
@@ -283,7 +351,7 @@ $('clear-local').addEventListener('click', async () => {
 });
 
 
-for (const id of ['install-app', 'new-repository', 'open-device-page', 'recovery-grant']) {
+for (const id of ['install-app', 'review-repository-access', 'new-repository', 'open-device-page', 'recovery-grant']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
 async function rediscoverAfterGitHubHandoff() {
@@ -296,8 +364,24 @@ async function rediscoverAfterGitHubHandoff() {
 window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
 document.addEventListener('visibilitychange', () => void rediscoverAfterGitHubHandoff());
 $('recovery-connect').addEventListener('click', () => $('authorize').click());
-$('recovery-choose').addEventListener('click', () => { showOnboarding = true; renderState(); void discoverRepositories().catch(() => {}); });
+$('recovery-choose').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; discoveryStatus = 'idle'; renderState(); });
 $('recovery-retry').addEventListener('click', () => void discoverRepositories().catch(() => {}));
+
+$('display-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!state?.config) return;
+  $('save-display').disabled = true;
+  message('Saving display settings…');
+  try {
+    const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
+      recentDays: Number($('recent-days').value),
+    } });
+    state.config = result.config;
+    $('recent-days').value = result.config.recentDays;
+    message('Display settings saved.', 'success');
+  } catch (error) { message(error.message || 'Could not save display settings.', 'error'); }
+  finally { $('save-display').disabled = !state?.config; }
+});
 
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault(); message('Validating the PAT and private repository…'); $('save').disabled = true;

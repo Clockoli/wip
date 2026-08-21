@@ -17,12 +17,12 @@
 
   <section class="card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title">Connect GitHub</h2><p>Authorize RepoClock, choose where to install it, then select one private repository.</p></div>
+      <div><h2 id="connection-title">Connect GitHub</h2><p>Complete three guided steps to connect RepoClock to one private data repository.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
     <div id="build-warning" class="notice error-notice" hidden>
-      This development build does not yet include the public RepoClock GitHub App client ID. Personal access token compatibility remains available below.
+      This development build does not yet include the public RepoClock GitHub App client ID. The personal access token option remains available below.
     </div>
     <div id="recovery-actions" class="notice" hidden>
       <div class="actions">
@@ -51,45 +51,106 @@
     </div>
 
     <div id="onboarding">
-      <ol class="steps" aria-label="Connection decisions">
-        <li><strong>Authorize RepoClock</strong><span>No token creation or credential copying.</span></li>
-        <li><strong>Install or review access</strong><span>Choose the account or organization and repository scope on GitHub.</span></li>
-        <li><strong>Select a repository</strong><span>RepoClock validates private, writable storage before switching.</span></li>
-      </ol>
-      <p class="help">GitHub may ask for a device code, sign-in, SSO, organization approval, installation, or repository selection.</p>
-
-      <div id="authorize-panel">
-        <button id="authorize" type="button">Authorize with GitHub</button>
-      </div>
-
-      <div id="device-panel" class="notice" hidden>
-        <p>Enter this one-time code on the GitHub page:</p>
-        <div class="device-row"><code id="device-code"></code><button id="copy-code" type="button" class="secondary compact">Copy</button></div>
-        <p id="device-wait" class="help">Waiting for authorization…</p>
-        <div class="actions"><a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a><button id="cancel-device" type="button" class="link-button">Cancel</button></div>
-      </div>
-
-      <div id="repository-panel" hidden>
-        <div class="actions repository-actions">
-          <a id="install-app" target="_blank" rel="noreferrer">Install or review RepoClock access</a>
-          <a id="new-repository" target="_blank" rel="noreferrer">Create a private repository</a>
-          <button id="refresh-repositories" type="button" class="secondary">Check again</button>
+      <div id="onboarding-flow">
+        <div class="setup-progress" aria-live="polite">
+          <span>Step <span id="current-step">1</span> of 3</span>
+          <div class="progress-track" aria-hidden="true"><span id="progress-fill"></span></div>
         </div>
-        <fieldset><legend>Private writable repositories</legend><label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label><div id="repository-list" class="repository-list"></div></fieldset>
-        <fieldset class="policy-grid"><legend>Recent entries</legend>
-          <label>Recent entries shown in the main panel (days)<input id="app-recent-days" type="number" min="1" max="31" value="7" required></label>
-          <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
-          <p class="help">Track any GitHub issue or pull request.</p>
-        </fieldset>
-        <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
-        <button id="cancel-app-setup" type="button" class="link-button">Cancel GitHub App setup</button>
+        <div id="completed-steps" class="completed-steps">
+          <p id="device-complete" hidden><span aria-hidden="true">✓</span> Device activation complete<span id="device-account"></span></p>
+          <p id="access-complete" hidden><span aria-hidden="true">✓</span> Repository access found</p>
+        </div>
+
+        <section id="device-step" class="onboarding-step" aria-labelledby="device-step-title">
+          <h3 id="device-step-title">Device activation</h3>
+          <p>Device activation securely signs this RepoClock extension in to GitHub without asking you to create or paste a personal access token.</p>
+          <div class="explanation">
+            <strong>Why GitHub warns about device codes</strong>
+            <p>Only use the code after you start Device activation in this extension. GitHub warns against codes sent by someone else because they could connect an app you did not choose. RepoClock requests this one-time code directly from GitHub and shows it here. On GitHub, verify that the page names <strong>RepoClock by RepoClock</strong>. If you did not start this process, cancel it.</p>
+          </div>
+          <div class="explanation">
+            <strong>What “Act on your behalf” means here</strong>
+            <p>This is GitHub’s standard wording for limited API calls made with your approval. RepoClock can verify your GitHub identity, find RepoClock installations you can access, and—only after you grant a repository—read and write that repository’s contents. It cannot access repositories you do not grant or change your account or organization settings.</p>
+            <p class="help">During beta, GitHub may say RepoClock is new or has few users. That is an age and adoption notice, not an additional permission.</p>
+          </div>
+
+          <div id="authorize-panel">
+            <button id="authorize" type="button">Start device activation</button>
+          </div>
+
+          <div id="device-panel" class="notice" hidden>
+            <p><strong>Because you just started Device activation here, you can enter this code on GitHub:</strong></p>
+            <div class="device-row"><code id="device-code"></code><button id="copy-code" type="button" class="secondary compact">Copy</button></div>
+            <p id="device-wait" class="help">Waiting for GitHub…</p>
+            <div class="actions"><a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a></div>
+          </div>
+        </section>
+
+        <section id="access-step" class="onboarding-step" aria-labelledby="access-step-title" hidden>
+          <h3 id="access-step-title">Give RepoClock access to a data repository</h3>
+          <p>Device activation is complete. It verified your identity, but it did not install RepoClock on any repository. GitHub keeps these approvals separate so you control exactly where RepoClock may store time records.</p>
+          <div class="choice-grid">
+            <div class="choice-card">
+              <strong>Use an existing private repository</strong>
+              <p>On GitHub, install RepoClock or review its installation. Choose <strong>Only select repositories</strong> and grant one repository.</p>
+              <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose access on GitHub</a>
+            </div>
+            <div class="choice-card">
+              <strong>Create a dedicated data repository</strong>
+              <p>GitHub opens with <strong>repoclock-data</strong> and private visibility prefilled. Keep it private and add a README so it has a default branch. Then grant RepoClock access to it.</p>
+              <a id="new-repository" class="button-link secondary-link" target="_blank" rel="noreferrer">Create repoclock-data on GitHub</a>
+            </div>
+          </div>
+          <div class="refresh-access">
+            <button id="refresh-repositories" type="button" class="secondary">Refresh repository access</button>
+            <p class="help">Checks GitHub for newly installed or changed RepoClock access. RepoClock also checks automatically when you return from GitHub.</p>
+          </div>
+        </section>
+
+        <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
+          <h3 id="repository-step-title">Choose and validate the data repository</h3>
+          <p>This repository stores RepoClock records. It does not have to contain the issues or pull requests you track.</p>
+          <fieldset>
+            <legend>Private writable repositories</legend>
+            <p class="help">Selectable repositories are private repositories granted to the RepoClock GitHub App where your GitHub account can write. Other granted repositories may appear disabled with the reason they cannot be used.</p>
+            <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
+            <div id="repository-list" class="repository-list"></div>
+          </fieldset>
+          <div id="repository-recovery" class="refresh-access" hidden>
+            <a id="review-repository-access" class="button-link secondary-link" target="_blank" rel="noreferrer">Review repository access on GitHub</a>
+            <button id="refresh-repository-access" type="button" class="secondary">Refresh repository access</button>
+          </div>
+          <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
+        </section>
+
+        <div class="setup-footer">
+          <button id="cancel-app-setup" type="button" class="link-button">Cancel GitHub App setup</button>
+        </div>
+      </div>
+
+      <div id="setup-cancelled" class="cancelled-state" hidden>
+        <h3>Setup cancelled</h3>
+        <p>The pending device activation and uncommitted GitHub App setup were removed. Existing RepoClock settings were preserved.</p>
+        <button id="resume-setup" type="button" class="secondary">Resume setup</button>
       </div>
     </div>
   </section>
 
+  <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
+    <div class="card-heading">
+      <div><h2 id="display-title">Display</h2><p>Choose how much recent activity appears in the main tracking panel.</p></div>
+    </div>
+    <form id="display-form">
+      <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
+      <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
+      <p class="help">Track any GitHub issue or pull request.</p>
+      <button id="save-display" type="submit" disabled>Save display settings</button>
+    </form>
+  </section>
+
   <details id="advanced-pat" class="card advanced">
-    <summary>Personal access token compatibility</summary>
-    <p>Use this advanced path for an existing PAT configuration or environments where the GitHub App cannot be installed. RepoClock never displays a stored token.</p>
+    <summary>Don’t want to install the GitHub App?</summary>
+    <p><strong>Use a personal access token instead.</strong> This advanced option is for existing PAT setups or environments where the GitHub App cannot be installed. RepoClock never displays a stored token.</p>
     <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
     <form id="settings-form">
       <fieldset><legend>Private time-data repository</legend>
@@ -100,16 +161,11 @@
         <label>Fine-grained GitHub token<input id="token" type="password" required autocomplete="off" spellcheck="false"></label>
         <p class="help">Stored only in extension-local IndexedDB. It is never exposed to GitHub pages, URLs, analytics, or time-data files.</p>
       </fieldset>
-      <fieldset><legend>Recent entries</legend>
-        <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
-        <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
-        <p class="help">Track any GitHub issue or pull request.</p>
-      </fieldset>
       <button id="save" type="submit">Validate and use PAT</button>
     </form>
     <hr>
     <h3>Local data</h3>
-    <p class="help">Clear this browser’s RepoClock settings and credentials without deleting repository data or revoking GitHub authorization. Active timers and pending writes must be resolved first.</p>
+    <p class="help">Clear this browser’s RepoClock settings and credentials without deleting repository data or revoking GitHub authorization. Before clearing, stop any running timer and use Sync in RepoClock until no pending changes remain. This prevents losing work that exists only in this browser.</p>
     <button id="clear-local" type="button" class="danger">Clear local configuration</button>
   </details>
 </main>

@@ -329,6 +329,11 @@ async function handle(message, sender) {
     await store.ensureDataVersion(3);
     return configuration.save(message.payload);
   }
+  if (message.type === 'UPDATE_DISPLAY_PREFERENCES') {
+    const generation = await store.updateDisplayPreferences(message.payload || {});
+    const { config } = await store.getConfigurationSnapshot();
+    return { config, generation };
+  }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
@@ -377,7 +382,7 @@ async function handle(message, sender) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type);
   const readOnly = reportReadOnly || ['LOAD_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {
