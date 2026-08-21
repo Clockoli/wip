@@ -122,7 +122,7 @@ function renderState() {
   $('save-display').disabled = !state.config;
   setLink('revoke', state.authorizationSettingsUrl);
   setLink('recovery-grant', state.installationUrl);
-  $('revoke').hidden = state.auth?.mode !== 'github_app';
+  $('revoke-action').hidden = state.auth?.mode !== 'github_app';
   setLink('install-app', state.installationUrl);
   setLink('new-repository', state.newRepositoryUrl);
   setLink('connected-repository-link', state.trackingRepositoryUrl);
@@ -140,16 +140,21 @@ function renderDeviceAttempt(attempt) {
   $('device-panel').hidden = false;
   $('authorize-panel').hidden = true;
   if (attempt.status === 'requesting') {
-    $('device-code').textContent = 'Requesting code…';
+    $('device-code').value = 'Requesting code…';
+    $('copy-code').disabled = true;
+    $('device-done').hidden = true;
     setLink('open-device-page', '');
     $('device-wait').textContent = 'Starting secure GitHub authorization…';
     schedulePoll(attempt);
     return;
   }
-  $('device-code').textContent = attempt.userCode;
+  $('device-code').value = attempt.userCode;
+  $('copy-code').disabled = false;
+  $('device-done').hidden = false;
+  $('device-done').disabled = false;
   setLink('open-device-page', attempt.verificationUri);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
-  $('device-wait').textContent = `Waiting for GitHub authorization · code expires in ${Math.ceil(seconds / 60)} min`;
+  $('device-wait').textContent = `RepoClock checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
   schedulePoll(attempt);
 }
 
@@ -179,6 +184,7 @@ async function poll(attemptId) {
       message(error.message, 'error');
       return;
     }
+    $('device-wait').textContent = `${error.message} Retrying authorization…`;
     message(`${error.message} Retrying authorization…`, 'error');
     pollTimer = setTimeout(() => void poll(attemptId), 5000);
   }
@@ -377,14 +383,42 @@ $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
   try {
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
-    state.deviceAttempt = attempt; renderDeviceAttempt(attempt); message('Enter the code on GitHub only because you started Device activation here.');
+    state.deviceAttempt = attempt;
+    renderDeviceAttempt(attempt);
+    try {
+      await navigator.clipboard.writeText(attempt.userCode);
+    } catch {
+      $('device-code').focus();
+      $('device-code').select();
+      message('The code is ready, but RepoClock could not copy it automatically. Copy it here before opening GitHub.', 'error');
+      return;
+    }
+    githubHandoff = true;
+    await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
+    message('Device code copied. Paste it on GitHub, authorize RepoClock, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
   } catch (error) { message(error.message, 'error'); }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
 
 $('copy-code').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('device-code').textContent); message('Device code copied.', 'success'); }
-  catch { message('Could not copy automatically. Select the code and copy it.', 'error'); }
+  try { await navigator.clipboard.writeText($('device-code').value); message('Device code copied.', 'success'); }
+  catch { $('device-code').focus(); $('device-code').select(); message('Could not copy automatically. The code is selected; copy it with your keyboard.', 'error'); }
+});
+
+$('device-done').addEventListener('click', async () => {
+  const attemptId = state?.deviceAttempt?.attemptId;
+  if (!attemptId) return;
+  clearTimeout(pollTimer);
+  $('device-done').disabled = true;
+  $('device-wait').textContent = 'Checking GitHub authorization now…';
+  message('Checking GitHub authorization now…');
+  try {
+    await poll(attemptId);
+    if (state?.deviceAttempt?.attemptId === attemptId && !$('message').classList.contains('error')) {
+      $('device-wait').textContent = 'GitHub has not confirmed authorization yet. RepoClock will check again automatically.';
+      message('GitHub has not confirmed authorization yet. RepoClock will check again automatically.');
+    }
+  } finally { $('device-done').disabled = !state?.deviceAttempt; }
 });
 
 $('refresh-repositories').addEventListener('click', () => void discoverRepositories().catch(() => {}));
@@ -486,6 +520,11 @@ $('skip-repository-creation').addEventListener('click', () => {
 async function rediscoverAfterGitHubHandoff() {
   if (!githubHandoff || document.visibilityState !== 'visible') return;
   githubHandoff = false;
+  if (state?.deviceAttempt?.attemptId) {
+    clearTimeout(pollTimer);
+    await poll(state.deviceAttempt.attemptId);
+    return;
+  }
   if (state?.candidateAuth?.mode === 'github_app' || state?.auth?.mode === 'github_app') {
     await discoverRepositories().catch(() => {});
   }

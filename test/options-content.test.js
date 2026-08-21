@@ -51,6 +51,27 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /Repository creation does not grant RepoClock access/i);
 });
 
+test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
+  assert.match(source, /id="authorize"[^>]*>Copy code and open GitHub<\/button>/i);
+  assert.match(source, /RepoClock copies the one-time code to your clipboard before GitHub opens/i);
+  assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
+  assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"[^>]*>Copy<\/button>/i);
+  assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
+  assert.match(source, /id="device-wait"[^>]*aria-live="polite"/i);
+  assert.match(source, /RepoClock checks automatically every few seconds/i);
+  assert.match(script, /\$\('device-done'\)\.disabled = false/);
+  assert.match(script, /\$\('device-wait'\)\.textContent = 'Checking GitHub authorization now…'/);
+  assert.match(script, /\$\('device-wait'\)\.textContent = 'GitHub has not confirmed authorization yet.*check again automatically/);
+  assert.match(script, /GitHub has not confirmed authorization yet.*check again automatically/i);
+  assert.match(script, /state\?\.deviceAttempt\?\.attemptId === attemptId && !\$\('message'\)\.classList\.contains\('error'\)/);
+  assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
+  assert.match(script, /OPEN_DEVICE_FLOW_PAGE/);
+  assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
+  assert.match(worker, /START_DEVICE_FLOW'\) return deviceFlow\(\)\.start\(\);[\s\S]*OPEN_DEVICE_FLOW_PAGE[\s\S]*deviceFlow\(\)\.resume\(\)[\s\S]*attempt\.attemptId[\s\S]*chrome\.tabs\.create/);
+  const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
+  assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
+});
+
 
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
@@ -151,18 +172,22 @@ test('local reset instructions explain how to protect unsynced work', () => {
   assert.doesNotMatch(source, /Active timers and pending writes must be resolved first/i);
 });
 
-test('connected settings use one clear repository action and explain local versus GitHub disconnects', () => {
+test('connected settings render each action as a button with its own explanation', () => {
   assert.match(source, /id="connected-repository"[^>]*><a id="connected-repository-link"/);
   assert.doesNotMatch(source, /id="open-repository"|Open repository/i);
   assert.doesNotMatch(source, /id="check-access"|Check access/i);
-  assert.match(source, /id="change-connection"[^>]*>Change data repository</i);
-  assert.match(source, /Revoke RepoClock authorization on GitHub/i);
-  assert.match(source, /sign-in approval/i);
-  assert.match(source, /Neither action deletes repository data/i);
-  assert.match(source, /id="disconnect"/);
+  assert.match(source, /class="connected-actions"/);
+  assert.match(source, /id="change-connection"[^>]*>Change data repository<\/button>[\s\S]*id="change-connection-help"[^>]*>[^<]*different private data repository/i);
+  assert.match(source, /id="disconnect"[^>]*>Disconnect this browser<\/button>[\s\S]*id="disconnect-help"[^>]*>[^<]*local sign-in/i);
+  assert.match(source, /id="revoke-action"[^>]*class="connected-action"[\s\S]*id="revoke"[^>]*class="button-link danger-link"[^>]*>Revoke RepoClock authorization on GitHub<\/a>[\s\S]*id="revoke-help"[^>]*>[^<]*sign-in approval/i);
+  assert.match(script, /\$\('revoke-action'\)\.hidden = state\.auth\?\.mode !== 'github_app'/);
+  assert.match(source, /does not uninstall the GitHub App/i);
+  assert.match(source, /does not delete repository data/i);
   assert.match(source, /id="clear-local"/);
   assert.match(script, /DISCONNECT_GITHUB_APP/);
-  assert.match(styles, /\.danger:hover\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/);
+  assert.match(styles, /\.connected-actions\{[^}]*repeat\(auto-fit,minmax\(/);
+  assert.match(styles, /\.connected-action button,\.connected-action \.button-link\{[^}]*min-height/);
+  assert.match(styles, /\.danger-link:hover\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/);
 });
 
 

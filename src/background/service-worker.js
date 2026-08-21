@@ -264,7 +264,7 @@ function deviceFlow() {
 }
 
 const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
-  'START_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP',
+  'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP',
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
@@ -307,10 +307,14 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
-  if (message.type === 'START_DEVICE_FLOW') {
-    const attempt = await deviceFlow().start();
-    await chrome.tabs.create({ url: attempt.verificationUri });
-    return attempt;
+  if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
+  if (message.type === 'OPEN_DEVICE_FLOW_PAGE') {
+    const attempt = await deviceFlow().resume();
+    if (!attempt || attempt.attemptId !== String(message.attemptId || '')) throw new Error('The Device activation attempt is no longer available.');
+    const url = new URL(attempt.verificationUri);
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com') throw new Error('GitHub returned an invalid Device activation URL.');
+    await chrome.tabs.create({ url: url.href });
+    return { opened: true };
   }
   if (message.type === 'RESUME_DEVICE_FLOW') return deviceFlow().resume();
   if (message.type === 'POLL_DEVICE_FLOW') return deviceFlow().poll(String(message.attemptId || ''));

@@ -39,12 +39,20 @@
         <div><dt>Branch</dt><dd id="connected-branch">—</dd></div>
         <div><dt>Storage</dt><dd id="connected-storage">—</dd></div>
       </dl>
-      <div class="actions">
-        <button id="change-connection" type="button" class="secondary">Change data repository</button>
-        <button id="disconnect" type="button" class="danger">Disconnect this browser</button>
-        <a id="revoke" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Revoke RepoClock authorization on GitHub</a>
+      <div class="connected-actions">
+        <div class="connected-action">
+          <button id="change-connection" type="button" class="secondary" aria-describedby="change-connection-help">Change data repository</button>
+          <p id="change-connection-help" class="help">Choose and validate a different private data repository. This does not delete data from the current repository.</p>
+        </div>
+        <div class="connected-action">
+          <button id="disconnect" type="button" class="danger" aria-describedby="disconnect-help">Disconnect this browser</button>
+          <p id="disconnect-help" class="help">Remove only this browser’s local sign-in. Repository data and GitHub authorization remain unchanged.</p>
+        </div>
+        <div id="revoke-action" class="connected-action">
+          <a id="revoke" class="button-link danger-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer" aria-describedby="revoke-help">Revoke RepoClock authorization on GitHub</a>
+          <p id="revoke-help" class="help">Remove RepoClock’s sign-in approval from your GitHub account. This does not uninstall the GitHub App. It does not delete repository data.</p>
+        </div>
       </div>
-      <p class="help"><strong>Disconnect this browser</strong> removes only this browser’s local sign-in. <strong>Revoke RepoClock authorization on GitHub</strong> removes RepoClock’s sign-in approval from your GitHub account. Neither action deletes repository data; revoking authorization also does not uninstall the GitHub App from repositories.</p>
     </div>
 
     <div id="onboarding">
@@ -73,14 +81,18 @@
           </div>
 
           <div id="authorize-panel">
-            <button id="authorize" type="button">Start device activation</button>
+            <button id="authorize" type="button">Copy code and open GitHub</button>
+            <p class="help">RepoClock copies the one-time code to your clipboard before GitHub opens, so you can paste it immediately.</p>
           </div>
 
           <div id="device-panel" class="notice" hidden>
             <p><strong>Because you just started Device activation here, you can enter this code on GitHub:</strong></p>
-            <div class="device-row"><code id="device-code"></code><button id="copy-code" type="button" class="secondary compact">Copy</button></div>
-            <p id="device-wait" class="help">Waiting for GitHub…</p>
-            <div class="actions"><a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a></div>
+            <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
+            <p id="device-wait" class="help" aria-live="polite">RepoClock checks automatically every few seconds.</p>
+            <div class="actions">
+              <button id="device-done" type="button">Done on GitHub—check now</button>
+              <a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a>
+            </div>
           </div>
         </section>
 
