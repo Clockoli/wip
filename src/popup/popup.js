@@ -59,11 +59,17 @@ function renderConflicts(pending) {
   const conflicts = pending.filter(item => item.status === 'conflict');
   show('conflicts', conflicts.length > 0);
   for (const item of conflicts) {
-    const activeConflict = item.stage === 'clearActive' || item.stage === 'verifyActive';
-    const title = document.createElement('strong'); title.textContent = activeConflict ? 'Newer GitHub timer preserved' : 'Entry path conflict';
-    const detail = document.createElement('p'); detail.className = 'muted'; detail.textContent = item.lastError || (activeConflict ? 'The active timer changed on another device.' : 'Repair or remove the conflicting entry in GitHub, then retry.');
-    const acknowledge = document.createElement('button'); acknowledge.className = 'primary'; acknowledge.textContent = activeConflict ? 'Keep newer timer' : 'Retry entry sync';
-    acknowledge.addEventListener('click', async () => { try { await send({ type: 'RESOLVE_PENDING', id: item.id }); await load(true); } catch (error) { setError(error); } });
+    const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
+    const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
+    const title = document.createElement('strong'); title.textContent = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved' : 'Entry path conflict';
+    const detail = document.createElement('p'); detail.className = 'muted'; detail.textContent = item.lastError || (unsaved
+      ? 'Discarding removes this unsaved completion.' : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
+        : 'Repair or remove the conflicting entry in GitHub, then retry.');
+    const acknowledge = document.createElement('button'); acknowledge.className = 'primary'; acknowledge.textContent = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer' : 'Retry entry sync';
+    acknowledge.addEventListener('click', async () => {
+      if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
+      try { await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) }); await load(true); } catch (error) { setError(error); }
+    });
     root.append(title, detail, acknowledge);
   }
 }

@@ -31,12 +31,12 @@ Deferred by the specification: manual entries, Firefox packaging, reminders, and
 3. Enable **Developer mode**.
 4. Click **Load unpacked** and choose this repository root.
 5. Open the extension’s **Settings**.
-6. For normal GitHub App onboarding, register the public RepoClock GitHub App values in `src/config/github-app.js`, then choose **Connect GitHub**, authorize the device code, install the App on selected private repositories, and select the time-data repository.
+6. For normal GitHub App onboarding, choose **Connect GitHub**, authorize the device code, install the public [RepoClock GitHub App](https://github.com/apps/repoclock) on selected private repositories, and select the time-data repository.
 7. For legacy compatibility, expand **Personal access token compatibility** and use a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens) restricted to the repository with **Contents: Read and write**.
 
 The Settings **Recent entries shown in the main panel (days)** value affects display only; tracking accepts any valid GitHub issue or pull request, and reports are not limited by that setting.
 
-The GitHub App `client_id` and App slug are public configuration, not secrets. Do not add a client secret, App private key, JWT, or installation token to the extension. The data repository must already exist and allow direct commits to its selected branch. See [docs/time-data-repository.md](docs/time-data-repository.md). The selected Version 1 defaults and requirement mapping are documented in [docs/spec-compliance.md](docs/spec-compliance.md).
+The organization-owned GitHub App's `client_id` and slug are public configuration, not secrets. Do not add a client secret, App private key, JWT, or installation token to the extension. The data repository must already exist and allow direct commits to its selected branch. See [docs/time-data-repository.md](docs/time-data-repository.md). The selected Version 1 defaults and requirement mapping are documented in [docs/spec-compliance.md](docs/spec-compliance.md).
 
 ## Usage
 

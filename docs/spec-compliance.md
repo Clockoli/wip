@@ -14,11 +14,11 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Manual entries | Deferred to MVP 1.1 |
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
 | Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly-file read per represented month; globally sorted by editable start timestamp; maximum 50 returned |
-| External issue owners | Configurable allowlist; defaults to the time-data repository owner |
+| Issue owners | Any canonical GitHub issue or pull request may be tracked |
 | Storage | One configured private GitHub repository and canonical branch |
 | Deletion | Allowed after explicit confirmation, with Git history retained |
 | Long entries | Warning above 12 hours |
-| Issue title | Captured from the GitHub issue page when available |
+| Issue title | Captured when available and persisted as a bounded optional `Title` field |
 | Active state | `active/{login}.txt` is deleted after a successful Stop |
 | Authentication | Backend-free GitHub App Device Flow; fine-grained PAT retained as an advanced compatibility/migration path |
 
@@ -38,11 +38,11 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 - Canonical identity is the stable numeric GitHub user ID; `.repoclock/config.json` maps it to the validated storage login used in canonical file names.
 - Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM}/{login}.txt`.
-- Each persisted block contains only canonical `URL`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
+- Each persisted block contains canonical `URL`, an optional one-line `Title`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
 - Duration is recomputed from `End - Start` and is never persisted or based on render ticks.
 - A parsed record's array index is only a hint. Edits/deletes also carry the original persisted fields and locate the unique matching block, so manual reordering does not retarget an operation.
 - Changing Start to another local month moves the block between monthly files. Multi-file edits and boundary moves verify the branch tree and publish one atomic Git commit.
-- Stop verifies that a reachable remote active timer still matches the cache before queueing; retry accepts exact intended content; if another device already cleared the active timer, one unique same-URL/same-Start completion is treated as that concurrent Stop.
+- Stop verifies that a reachable remote active timer still matches the cache before queueing; retry accepts exact intended content; if another device already cleared the active timer, one unique same-URL/same-Start completion with the same durable title is treated as that concurrent Stop.
 - The active file is deleted with its known SHA and conflicts are re-read before any retry, preserving newer timers.
 - Same-destination settings changes preserve pending writes; repository/user changes are blocked while a write or active timer exists.
 - Repository coordinates, branch, issue data, dates, timestamps, paths, and manually maintained text fields are validated before use.

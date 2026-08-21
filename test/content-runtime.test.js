@@ -318,6 +318,41 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
 });
 
 
+test('missing-active conflicts explicitly warn before discarding an unsaved completion', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = []; let confirmed = false;
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const pending = { id: 'pending-1', status: 'conflict', stage: 'verifyActive', conflictReason: 'active_missing_no_completion' };
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    confirm(message) { confirmed = /discard this unsaved completion/i.test(message); return true; }, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(createdNodes.some(node => node.textContent === 'Completion was not saved'));
+  assert.ok(createdNodes.some(node => /no matching completion exists/i.test(node.textContent)));
+  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard unsaved completion').at(-1);
+  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(confirmed, true);
+  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
+    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'discard_unsaved_completion' });
+});
+
 test('header control mounts before the avatar in GitHub current top-nav-right header', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
@@ -382,6 +417,11 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
       else if (message.type === 'EDIT_ENTRY') {
         editAttempts += 1;
+        assert.equal(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true,
+          'all detailed time fields are locked while Save is in flight');
+        assert.equal(createdNodes.filter(node => node.tag === 'input' && (node.required || node.maxLength === 300)).slice(-2).every(node => node.disabled), true,
+          'issue and title fields are locked while Save is in flight');
+        assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).disabled, true);
         callback(editAttempts === 1 ? { ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } }
           : { ok: true, data: { ...entry, ...message.payload.edits } });
       }
@@ -533,6 +573,11 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
+      else if (message.type === 'EDIT_ENTRY') {
+        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), true,
+          'the complete current and sibling inline editors are locked while Save time is in flight');
+        callback({ ok: true, data: {} });
+      }
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},

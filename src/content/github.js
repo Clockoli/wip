@@ -115,13 +115,13 @@
   }
 
   function scrollableTimePicker(label, original, draft = null, { compact = false, onChange = () => {} } = {}) {
-    const initial = timestampParts(original), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`);
+    const initial = timestampParts(original), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
-    const dateField = el('input'); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
+    const dateField = el('input'); controls.push(dateField); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
     const values = el('div', undefined, 'time-picker-values');
     const fieldClass = compact ? 'time-value inline-time-value' : 'time-value';
-    const hourField = el('input'); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = `${fieldClass} time-hour`; hourField.setAttribute('aria-label', `${label} hour`);
-    const minuteField = el('input'); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = `${fieldClass} time-minute`; minuteField.setAttribute('aria-label', `${label} minute`);
+    const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = `${fieldClass} time-hour`; hourField.setAttribute('aria-label', `${label} hour`);
+    const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = `${fieldClass} time-minute`; minuteField.setAttribute('aria-label', `${label} minute`);
     const currentDraft = () => ({ date: dateField.value, hour: hourField.value, minute: minuteField.value });
     const updateSpinbutton = (field, unitLabel, maximum) => {
       field.setAttribute('role', 'spinbutton'); field.setAttribute('aria-valuemin', '0'); field.setAttribute('aria-valuemax', String(maximum));
@@ -150,7 +150,7 @@
     const unit = (field, unitLabel, step, maximum) => {
       const column = el('div', undefined, 'time-unit');
       const increase = button('⌃', 'time-step', async () => { shift(step); }); increase.setAttribute('aria-label', `Increase ${label} ${unitLabel}`); increase.title = `Increase ${unitLabel}`;
-      const decrease = button('⌄', 'time-step', async () => { shift(-step); }); decrease.setAttribute('aria-label', `Decrease ${label} ${unitLabel}`); decrease.title = `Decrease ${unitLabel}`;
+      const decrease = button('⌄', 'time-step', async () => { shift(-step); }); controls.push(increase, decrease); decrease.setAttribute('aria-label', `Decrease ${label} ${unitLabel}`); decrease.title = `Decrease ${unitLabel}`;
       updateSpinbutton(field, unitLabel, maximum);
       field.addEventListener('input', () => { updateSpinbutton(field, unitLabel, maximum); changed(); });
       field.addEventListener('keydown', event => {
@@ -172,7 +172,7 @@
     values.append(unit(hourField, 'hour', 60, 23), el('span', ':', 'time-colon'), unit(minuteField, 'minute', 5, 59));
     group.append(dateField, values);
     if (!compact) group.append(el('div', 'Scroll or use ↑/↓', 'time-hint'));
-    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original) };
+    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
   function timestampAtOriginalOffset(original, instant) {
@@ -325,7 +325,7 @@
 
   function renderEditor(container) {
     const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Edit entry'));
-    header.append(button('Cancel', 'link-button', async () => { editing = null; editingDraft = null; renderUi(); }));
+    const cancelEdit = button('Cancel', 'link-button', async () => { editing = null; editingDraft = null; renderUi(); }); header.append(cancelEdit);
     const draft = editingDraft?.id === editing.id ? editingDraft : null;
     const form = el('form');
     const issueField = el('input'); issueField.required = true; issueField.value = draft?.issueText ?? issueLabel(editing.issue);
@@ -353,11 +353,15 @@ The previous version remains in Git history.`)) return;
       catch (error) { node.disabled = false; setError(error); }
     });
     const save = el('button', 'Save', 'primary'); save.type = 'submit';
+    const setEditorDisabled = disabled => {
+      for (const control of [cancelEdit, issueField, titleField, description, remove, save]) control.disabled = disabled;
+      startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled);
+    };
     actions.append(remove, save); form.append(actions);
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (!event.isTrusted) return;
       editingDraft = { id: editing.id, issueText: issueField.value, issueTitle: titleField.value, titleEdited, start: startPicker.draft(), stop: stopPicker.draft(), description: description.value };
-      save.disabled = true;
+      setEditorDisabled(true);
       try {
         const match = issueField.value.trim().match(/^([^/# ]+)\/([^/# ]+)#([1-9]\d*)$/);
         if (!match) throw new Error('Use owner/repository#number.');
@@ -368,7 +372,7 @@ The previous version remains in Git history.`)) return;
         if (new Date(endedAt).getTime() < new Date(startedAt).getTime()) throw new Error('Stop time must not be before Start time.');
         await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing), edits: { issue, issueTitle: titleField.value, startedAt, endedAt, description: description.value } } });
         editing = null; editingDraft = null; recentLoaded = false; await refreshState(false, true);
-      } catch (error) { save.disabled = false; setError(error); }
+      } catch (error) { setEditorDisabled(false); setError(error); }
     });
     container.append(header, form);
   }
@@ -478,7 +482,7 @@ The previous version remains in Git history.`)) return;
     save.hidden = !draft; cancel.hidden = !draft;
     const separator = el('span', '–', 'inline-time-separator');
     range.append(day, startPicker.node, separator, stopPicker.node, duration);
-    return { node: range, save, cancel };
+    return { node: range, save, cancel, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
   }
 
   function recentRecord(entry, overlaps) {
@@ -495,6 +499,7 @@ The previous version remains in Git history.`)) return;
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(inlineMutation);
       for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
+      inline.setDisabled(disabled);
       actions.append(inline.cancel, inline.save, edit, remove);
       if (!inline.save.hidden) actions.classList.add('dirty');
       top.append(inline.node, actions);
@@ -538,12 +543,21 @@ The previous version remains in Git history.`)) return;
   function renderPendingConflicts(container) {
     const conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict');
     for (const item of conflicts) {
-      const activeConflict = item.stage === 'clearActive' || item.stage === 'verifyActive';
+      const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
+      const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
       const box = el('div', undefined, 'conflict');
-      box.append(el('strong', activeConflict ? 'Newer GitHub timer preserved' : 'Entry path conflict'));
-      box.append(el('div', activeConflict ? 'The active timer changed on another device.' : 'Repair or remove the conflicting entry in GitHub, then retry.', 'muted'));
-      box.append(button(activeConflict ? 'Keep newer timer' : 'Retry entry sync', 'secondary wide', async () => {
-        await send({ type: 'RESOLVE_PENDING', id: item.id });
+      const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved' : 'Entry path conflict';
+      const detail = item.conflictReason === 'active_missing_no_completion'
+        ? 'The active timer is gone and no matching completion exists. Discarding removes this unsaved completion.'
+        : item.conflictReason === 'active_changed_no_completion'
+          ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
+          : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
+            : 'Repair or remove the conflicting entry in GitHub, then retry.';
+      const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer' : 'Retry entry sync';
+      box.append(el('strong', title), el('div', detail, 'muted'));
+      box.append(button(label, 'secondary wide', async () => {
+        if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
+        await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
         recentLoaded = false;
         await refreshState(true, true);
       }));

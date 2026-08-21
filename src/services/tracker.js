@@ -4,7 +4,7 @@ import { createUlid } from '../domain/ulid.js';
 import { entryDateValue, localDateParts, normalizeIssue, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 export class TrackerConflictError extends Error {
-  constructor(message) { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; }
+  constructor(message, reason = '') { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; this.reason = reason; }
 }
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
@@ -12,10 +12,11 @@ function isConflict(error) { return error?.status === 409 || error?.code === 'co
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
 function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
 function sameTimer(a, b) { return Boolean(a && b) && a.issue?.url === b.issue?.url && a.startedAt === b.startedAt; }
+function sameDurableTitle(a, b) { return normalizePlainTitle(a?.issueTitle) === normalizePlainTitle(b?.issueTitle); }
+function sameDurableTimer(a, b) { return sameTimer(a, b) && sameDurableTitle(a, b); }
 function sameCompletion(entry, operation) {
   const expected = operation.entry;
-  return Boolean(entry && expected) && entry.issue?.url === expected.issue?.url && entry.startedAt === expected.startedAt
-    && entry.endedAt === expected.endedAt && entry.description === expected.description;
+  return sameDurableTimer(entry, expected) && entry.endedAt === expected.endedAt && entry.description === expected.description;
 }
 function matchesOriginal(entry, original) {
   return Boolean(entry && original) && entry.issue?.url === original.issueUrl && String(entry.issueTitle || '') === String(original.issueTitle || '')
@@ -124,14 +125,14 @@ export class TrackerService {
       if (!cached || !isRetryableReadFailure(error)) throw error;
       active = cached; activeVerified = false;
     }
-    if (cached && active && !sameTimer(cached, active)) throw new TrackerConflictError('The active timer changed on another device. Reload before stopping.');
+    if (cached && active && !sameDurableTimer(cached, active)) throw new TrackerConflictError('The active timer changed on another device. Reload before stopping.');
     const candidate = active || cached;
-    const existing = (state.pendingWrites ?? []).find(operation => operation.operation === 'completeTimer' && sameTimer(operation.activeSnapshot, candidate));
+    const existing = (state.pendingWrites ?? []).find(operation => operation.operation === 'completeTimer' && sameDurableTimer(operation.activeSnapshot, candidate));
     if (existing) { await this.store.patchState({ activeCache: null }); return { entry: existing.entry, pending: true }; }
     if (!active && cached) {
       validateActiveTimer(cached);
       const file = await this.readMonthly(monthlyTextPath(this.user, cached.entryDate));
-      const matches = file.entries.filter(entry => sameTimer(entry, cached));
+      const matches = file.entries.filter(entry => sameDurableTimer(entry, cached));
       if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that another device stopped. Reload before continuing.');
       if (matches.length === 1) {
         const adopted = matches[0];
@@ -159,7 +160,7 @@ export class TrackerService {
     const next = await this.store.getState();
     const pending = (next.pendingWrites ?? []).some(item => item.id === id);
     const exact = (next.recentCache ?? []).find(item => sameCompletion(item, operation));
-    const sameStart = (next.recentCache ?? []).filter(item => sameTimer(item, operation.activeSnapshot));
+    const sameStart = (next.recentCache ?? []).filter(item => sameDurableTimer(item, operation.activeSnapshot));
     const persisted = exact || (sameStart.length === 1 ? sameStart[0] : entry);
     return { entry: persisted, pending };
   }
@@ -190,7 +191,7 @@ export class TrackerService {
     try {
       const file = await this.github.getText(path), active = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
       await this.store.patchState({ activeCache: active });
-      if (sameTimer(active, operation.activeSnapshot)) { operation.activeSha = file.sha; return 'matching'; }
+      if (sameDurableTimer(active, operation.activeSnapshot)) { operation.activeSha = file.sha; return 'matching'; }
       return 'changed';
     } catch (error) {
       await this.confirmFileMissing(error);
@@ -201,7 +202,7 @@ export class TrackerService {
   async completionAlreadySaved(file, operation) {
     const exact = file.entries.find(entry => sameCompletion(entry, operation));
     if (exact) return exact;
-    const sameStart = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+    const sameStart = file.entries.filter(entry => sameDurableTimer(entry, operation.entry));
     if (!sameStart.length) return null;
     const activeState = await this.activeStateFor(operation);
     if (activeState === 'missing' && sameStart.length === 1) return sameStart[0];
@@ -235,9 +236,9 @@ export class TrackerService {
     if (!sha) {
       try {
         const file = await this.github.getText(path), remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-        if (!sameTimer(remote, operation.activeSnapshot)) {
+        if (!sameDurableTimer(remote, operation.activeSnapshot)) {
           await this.store.patchState({ activeCache: remote });
-          throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.');
+          throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.', 'completion_saved_newer_timer');
         }
         sha = file.sha;
       } catch (error) { await this.confirmFileMissing(error); return; }
@@ -251,12 +252,12 @@ export class TrackerService {
         let file;
         try { file = await this.github.getText(path); } catch (readError) { await this.confirmFileMissing(readError); return; }
         const remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-        if (!sameTimer(remote, operation.activeSnapshot)) {
+        if (!sameDurableTimer(remote, operation.activeSnapshot)) {
           await this.store.patchState({ activeCache: remote });
-          throw new TrackerConflictError('The active timer changed while it was being cleared. The newer timer was preserved.');
+          throw new TrackerConflictError('The active timer changed while it was being cleared. The newer timer was preserved.', 'completion_saved_newer_timer');
         }
         try { await this.github.deleteFile(path, `timer: clear ${this.user}`, file.sha); return; }
-        catch (retryError) { if (isConflict(retryError)) throw new TrackerConflictError('The active timer changed while it was being cleared.'); throw retryError; }
+        catch (retryError) { if (isConflict(retryError)) throw new TrackerConflictError('The active timer changed while it was being cleared.', 'completion_saved_newer_timer'); throw retryError; }
       }
       throw error;
     }
@@ -272,15 +273,21 @@ export class TrackerService {
         }
         if (operation.stage === 'verifyActive') {
           const activeState = await this.activeStateFor(operation);
-          if (activeState === 'changed') throw new TrackerConflictError('The active timer changed on another device before this completion could be verified. No completion was saved.');
-          if (activeState === 'missing') {
+          if (activeState === 'missing' || activeState === 'changed') {
             const file = await this.readMonthly(operation.monthlyPath);
-            const matches = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+            const matches = file.entries.filter(entry => sameDurableTimer(entry, operation.entry));
             if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that disappeared during verification. Reload before continuing.');
-            if (matches.length === 0) throw new TrackerConflictError('The active timer no longer exists and no matching completion was found. No completion was saved.');
-            operation.entry = matches[0]; operation.stage = 'clearActive'; operation.lastError = '';
+            if (matches.length === 0) {
+              const missing = activeState === 'missing';
+              throw new TrackerConflictError(
+                missing ? 'The active timer no longer exists and no matching completion was found. No completion was saved.'
+                  : 'The active timer changed on another device and no matching completion was found. No completion was saved.',
+                missing ? 'active_missing_no_completion' : 'active_changed_no_completion',
+              );
+            }
+            operation.entry = matches[0]; operation.stage = 'clearActive'; operation.lastError = ''; operation.conflictReason = '';
           } else {
-            operation.stage = 'appendMonthly'; operation.lastError = '';
+            operation.stage = 'appendMonthly'; operation.lastError = ''; operation.conflictReason = '';
           }
           await this.store.patchState({ pendingWrites: queue });
         }
@@ -294,13 +301,14 @@ export class TrackerService {
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
         const recentCache = [operation.entry, ...(latest.recentCache ?? []).filter(item =>
-          !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
+          !sameCompletion(item, operation) && !(item._pending && sameDurableTimer(item, operation.activeSnapshot)))]
           .sort(newestFirst).slice(0, 50);
         await this.store.patchState({ pendingWrites: queue, activeCache: null, recentCache });
       } catch (error) {
         operation.retryCount = (operation.retryCount ?? 0) + 1;
         operation.lastError = error.message || 'GitHub is temporarily unreachable';
         operation.status = error instanceof TrackerConflictError ? 'conflict' : 'pending';
+        operation.conflictReason = error instanceof TrackerConflictError ? (error.reason || '') : '';
         await this.store.patchState({ pendingWrites: queue });
         if (isNotFound(error)) throw error;
       }
@@ -308,20 +316,20 @@ export class TrackerService {
     return queue;
   }
 
-  async resolvePendingConflict(id) {
+  async resolvePendingConflict(id, action = '') {
     validateEntryId(id);
     const state = await this.store.getState();
     const operation = (state.pendingWrites ?? []).find(item => item.id === id);
     if (!operation || operation.status !== 'conflict') throw new Error('Only a pending conflict can be resolved');
     if (operation.stage === 'clearActive' || operation.stage === 'verifyActive') {
       const active = await this.refreshActive();
-      const changed = Boolean(active && !sameTimer(active, operation.activeSnapshot));
-      if (operation.stage === 'verifyActive' && !active) {
+      const changed = Boolean(active && !sameDurableTimer(active, operation.activeSnapshot));
+      if (operation.stage === 'verifyActive' && (!active || changed)) {
         const file = await this.readMonthly(operation.monthlyPath);
-        const matches = file.entries.filter(entry => sameTimer(entry, operation.activeSnapshot));
+        const matches = file.entries.filter(entry => sameDurableTimer(entry, operation.entry));
         if (matches.length > 1) throw new TrackerConflictError('Multiple completed entries match the timer that disappeared during verification. Reload before continuing.');
         if (matches.length === 1) {
-          operation.entry = matches[0]; operation.stage = 'clearActive'; operation.status = 'pending'; operation.lastError = '';
+          operation.entry = matches[0]; operation.stage = 'clearActive'; operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
           await this.store.patchState({ pendingWrites: state.pendingWrites });
           const remaining = await this.syncPending();
           return { resolved: !remaining.some(item => item.id === id) };
@@ -329,8 +337,11 @@ export class TrackerService {
       }
       const canAcknowledge = !active || changed;
       if (canAcknowledge) {
+        if (operation.stage === 'verifyActive' && action !== 'discard_unsaved_completion') {
+          throw new Error('An explicit discard action is required because this completion was not saved.');
+        }
         const pendingWrites = (state.pendingWrites ?? []).filter(item => item.id !== id);
-        const retained = (state.recentCache ?? []).filter(item => !(item._pending && sameTimer(item, operation.activeSnapshot)));
+        const retained = (state.recentCache ?? []).filter(item => !(item._pending && sameDurableTimer(item, operation.activeSnapshot)));
         const recentCache = (operation.stage === 'clearActive'
           ? [operation.entry, ...retained.filter(item => !sameCompletion(item, operation))]
           : retained).sort(newestFirst).slice(0, 50);
@@ -464,7 +475,7 @@ export class TrackerService {
     return {
       recent, summaries, todaySeconds: summaries[0].seconds, reportDate: today, active,
       pendingCount: pendingWrites.length,
-      pendingWrites: pendingWrites.map(({ id, status, stage }) => ({ id, status, stage })),
+      pendingWrites: pendingWrites.map(({ id, status, stage, conflictReason }) => ({ id, status, stage, ...(conflictReason ? { conflictReason } : {}) })),
     };
   }
 

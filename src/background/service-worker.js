@@ -346,7 +346,7 @@ async function handle(message, sender) {
       } : null;
       return {
         configured: true, active, pendingCount: state.pendingWrites.length,
-        pendingWrites: state.pendingWrites.map(({ id, status, stage }) => ({ id, status, stage })),
+        pendingWrites: state.pendingWrites.map(({ id, status, stage, conflictReason }) => ({ id, status, stage, ...(conflictReason ? { conflictReason } : {}) })),
       };
     }
     return { configured: true, ...state };
@@ -369,7 +369,7 @@ async function handle(message, sender) {
     case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
     case 'MOVE_BOUNDARY': return tracker.moveBoundary(message.payload);
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
-    case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id);
+    case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id, message.action || '');
     default: throw new Error('Unknown extension message');
   }
 }

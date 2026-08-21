@@ -1,8 +1,7 @@
 // Public GitHub App configuration. The client ID and slug are not secrets.
-// A release build must replace the empty values after the RepoClock GitHub App
-// is registered with Device Flow and expiring user tokens enabled.
-export const GITHUB_APP_CLIENT_ID = '';
-export const GITHUB_APP_SLUG = '';
+// Never add a client secret, private key, or installation token here.
+export const GITHUB_APP_CLIENT_ID = 'Iv23likdAVTSplt9U2oW';
+export const GITHUB_APP_SLUG = 'repoclock';
 
 export function githubAppInstallationUrl() {
   return GITHUB_APP_SLUG ? `https://github.com/apps/${encodeURIComponent(GITHUB_APP_SLUG)}/installations/new` : '';
