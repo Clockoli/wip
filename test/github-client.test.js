@@ -518,14 +518,16 @@ test('runtime mutations fail closed when stable repository identity has not been
 });
 
 
-test('guarded first commit fails closed if the repository gains or changes its default branch', async () => {
+test('guarded first commit fails closed if a default branch appears after the configured ref check', async () => {
   const calls = [];
-  const repository = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: 'trunk', permissions: { push: true } };
+  let repositoryReads = 0;
+  const empty = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
+  const initialized = { ...empty, default_branch: 'trunk' };
   const client = new GitHubClient({
     token: 'secret', owner: 'acme', repo: 'repoclock-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
-      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repository);
+      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repositoryReads++ === 0 ? empty : initialized);
       if (!options.method && url.endsWith('/branches/main')) return response(404, { message: 'Not Found' });
       throw new Error('must not write after the default branch changes');
     },
@@ -534,7 +536,8 @@ test('guarded first commit fails closed if the repository gains or changes its d
     () => client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage'),
     error => error.code === 'repository_branch_changed',
   );
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(call => call.options.method === 'PUT'), false);
 });
 
 test('GitHub client can make the guarded first commit in an empty repository without naming a nonexistent branch', async () => {
@@ -550,9 +553,9 @@ test('GitHub client can make the guarded first commit in an empty repository wit
     },
   });
   await client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage');
-  assert.equal(calls.length, 3);
-  const payload = JSON.parse(calls[2].options.body);
+  assert.equal(calls.length, 4);
+  const payload = JSON.parse(calls[3].options.body);
   assert.equal(payload.branch, undefined);
   assert.equal(payload.message, 'Initialize RepoClock storage');
-  assert.equal(calls[2].options.method, 'PUT');
+  assert.equal(calls[3].options.method, 'PUT');
 });

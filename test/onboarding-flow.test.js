@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { onboardingStep, selectOnlyEligibleRepository } from '../src/options/onboarding-flow.js';
+import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 
 test('progressive onboarding exposes only the next incomplete step', () => {
   assert.equal(onboardingStep({ authorized: false, discoveryStatus: 'idle', repositories: [] }), 1);
@@ -19,4 +19,13 @@ test('one eligible repository is selected automatically but multiple choices rem
   assert.equal(selectOnlyEligibleRepository([unavailable, eligible]), eligible);
   assert.equal(selectOnlyEligibleRepository([eligible, { ...eligible, repoId: 10 }]), null);
   assert.equal(selectOnlyEligibleRepository([unavailable]), null);
+});
+
+
+test('repository discovery deadline rejects a permanently pending request', async () => {
+  const pending = new Promise(() => {});
+  await assert.rejects(
+    () => settleBeforeDeadline(pending, 5, () => Object.assign(new Error('monitor timed out'), { code: 'repository_monitor_timeout' })),
+    error => error.code === 'repository_monitor_timeout',
+  );
 });

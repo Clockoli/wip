@@ -1,4 +1,4 @@
-import { onboardingStep, selectOnlyEligibleRepository } from './onboarding-flow.js';
+import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -227,8 +227,12 @@ function renderRepositories(result) {
   renderOnboardingProgress();
 }
 
-async function discoverRepositories({ monitoring = false } = {}) {
-  if (discoveryPromise) return discoveryPromise;
+async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
+  const remaining = deadline ? deadline - Date.now() : 30_000;
+  const timeoutMs = Math.max(0, Math.min(30_000, remaining));
+  const timeoutCode = deadline && remaining <= 30_000 ? 'repository_monitor_timeout' : 'github_discovery_timeout';
+  const bounded = promise => settleBeforeDeadline(promise, timeoutMs, () => Object.assign(new Error('GitHub did not respond in time.'), { code: timeoutCode }));
+  if (discoveryPromise) return bounded(discoveryPromise);
   discoveryStatus = 'loading';
   renderOnboardingProgress();
   discoveryPromise = (async () => {
@@ -236,7 +240,7 @@ async function discoverRepositories({ monitoring = false } = {}) {
     if (!monitoring) message('Refreshing RepoClock installation and repository access…');
     showRecovery();
     try {
-      const result = await send({ type: 'DISCOVER_REPOSITORIES' });
+      const result = await bounded(send({ type: 'DISCOVER_REPOSITORIES' }));
       discoveryStatus = 'ready';
       renderRepositories(result);
       if (result.candidates.length === 1) {
@@ -268,23 +272,27 @@ function stopRepositoryMonitoring() {
   repositoryMonitorDeadline = 0;
 }
 
+function finishRepositoryMonitoring() {
+  const detail = repositoryMonitorLastError?.message ? ` Last error: ${repositoryMonitorLastError.message}` : '';
+  stopRepositoryMonitoring();
+  repositoryMonitorRetryPending = true;
+  discoveryStatus = 'error';
+  renderOnboardingProgress();
+  message(`RepoClock stopped checking after five minutes.${detail} Review repository access on GitHub, then select Retry.`, 'error');
+  showRecovery({ code: 'repository_monitor_timeout' });
+}
+
 async function monitorRepositories() {
   if (!repositoryMonitorDeadline || state?.ready) {
     stopRepositoryMonitoring();
     return;
   }
   if (Date.now() >= repositoryMonitorDeadline) {
-    const detail = repositoryMonitorLastError?.message ? ` Last error: ${repositoryMonitorLastError.message}` : '';
-    stopRepositoryMonitoring();
-    repositoryMonitorRetryPending = true;
-    discoveryStatus = 'error';
-    renderOnboardingProgress();
-    message(`RepoClock stopped checking after five minutes.${detail} Review repository access on GitHub, then select Retry.`, 'error');
-    showRecovery({ code: 'repository_monitor_timeout' });
+    finishRepositoryMonitoring();
     return;
   }
   try {
-    const result = await discoverRepositories({ monitoring: true });
+    const result = await discoverRepositories({ monitoring: true, deadline: repositoryMonitorDeadline });
     if (result.candidates.some(repository => repository.repo === 'repoclock-data')) {
       repositoryMonitorLastError = null;
       repositoryMonitorRetryPending = false;
@@ -293,6 +301,10 @@ async function monitorRepositories() {
       return;
     }
   } catch (error) {
+    if (error.code === 'repository_monitor_timeout') {
+      finishRepositoryMonitoring();
+      return;
+    }
     repositoryMonitorLastError = error;
     message(`Could not check GitHub: ${error.message} RepoClock will keep retrying.`, 'error');
     showRecovery(error);

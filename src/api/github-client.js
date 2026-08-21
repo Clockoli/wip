@@ -326,6 +326,14 @@ export class GitHubClient {
     } catch (error) {
       if (error?.status !== 404) throw error;
     }
+    const latestRepository = await this.validateRepository();
+    if (this.expectedRepositoryId !== undefined && latestRepository.id !== this.expectedRepositoryId) {
+      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    }
+    if (this.expectedRepositoryId !== undefined) this.assertCanonicalCoordinates(latestRepository);
+    if (this.branchMode === 'default' && latestRepository.default_branch) {
+      throw new GitHubApiError('The repository gained or changed its default branch during setup.', 409, 'repository_branch_changed');
+    }
     const payload = { message, content: encodeBase64Utf8(text) };
     const body = await this.request(this.contentUrl(path), { method: 'PUT', body: JSON.stringify(payload) });
     return { sha: body.content?.sha, commitSha: body.commit?.sha };
