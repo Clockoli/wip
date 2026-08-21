@@ -5,10 +5,10 @@ import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } fr
 test('progressive onboarding exposes only the next incomplete step', () => {
   assert.equal(onboardingStep({ authorized: false, discoveryStatus: 'idle', repositories: [] }), 1);
   assert.equal(onboardingStep({ authorized: false, deviceAttempt: true, discoveryStatus: 'idle', repositories: [] }), 1);
-  assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'idle', repositories: [] }), 2);
-  assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'loading', repositories: [] }), 2);
-  assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'ready', repositories: [] }), 2);
-  assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'error', repositories: [] }), 2);
+  assert.equal(onboardingStep({ authorized: true, repositoryChoiceMade: false, discoveryStatus: 'idle', repositories: [] }), 2);
+  assert.equal(onboardingStep({ authorized: true, repositoryChoiceMade: false, discoveryStatus: 'ready', repositories: [] }), 2);
+  assert.equal(onboardingStep({ authorized: true, repositoryChoiceMade: true, discoveryStatus: 'idle', repositories: [] }), 3);
+  assert.equal(onboardingStep({ authorized: true, repositoryChoiceMade: true, discoveryStatus: 'ready', repositories: [] }), 3);
   assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'ready', repositories: [{ repoId: 6, eligible: false, reasons: ['private_required'] }] }), 3);
   assert.equal(onboardingStep({ authorized: true, discoveryStatus: 'ready', repositories: [{ repoId: 7, eligible: true }] }), 3);
 });

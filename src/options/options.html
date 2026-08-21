@@ -55,11 +55,11 @@
         </div>
         <div id="completed-steps" class="completed-steps">
           <p id="device-complete" hidden><span aria-hidden="true">✓</span> Device activation complete<span id="device-account"></span></p>
-          <p id="access-complete" hidden><span aria-hidden="true">✓</span> Repository access found</p>
+          <p id="access-complete" hidden><span aria-hidden="true">✓</span> <span id="repository-choice-summary">Repository setup option chosen</span></p>
         </div>
 
         <section id="device-step" class="onboarding-step" aria-labelledby="device-step-title">
-          <h3 id="device-step-title">Device activation</h3>
+          <h3 id="device-step-title" tabindex="-1">Device activation</h3>
           <p>Device activation securely signs this RepoClock extension in to GitHub without asking you to create or paste a personal access token.</p>
           <div class="explanation">
             <strong>Why GitHub warns about device codes</strong>
@@ -84,39 +84,30 @@
         </section>
 
         <section id="access-step" class="onboarding-step" aria-labelledby="access-step-title" hidden>
-          <h3 id="access-step-title">Give RepoClock access to a data repository</h3>
-          <p>Device activation is complete. It verified your identity, but it did not install RepoClock on any repository. GitHub keeps these approvals separate so you control exactly where RepoClock may store time records.</p>
-          <div class="choice-grid">
-            <div class="choice-card">
-              <strong>Use an existing private repository</strong>
-              <p>On GitHub, install RepoClock or review its installation. Choose <strong>Only select repositories</strong> and grant one repository.</p>
-              <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose access on GitHub</a>
-            </div>
-            <div class="choice-card">
-              <strong>Create a dedicated data repository</strong>
-              <p>GitHub opens with <strong>repoclock-data</strong> and private visibility prefilled. Create it, then grant RepoClock access. RepoClock watches for it. If the repository is empty, RepoClock will create the first commit automatically.</p>
-              <a id="new-repository" class="button-link secondary-link" target="_blank" rel="noreferrer">Create repoclock-data on GitHub</a>
-            </div>
+          <h3 id="access-step-title" tabindex="-1">Create a dedicated data repository</h3>
+          <p>GitHub will create a private <strong>repoclock-data</strong> repository from RepoClock’s template, including the directory structure and starter files.</p>
+          <div class="actions repository-actions">
+            <a id="new-repository" class="button-link" target="_blank" rel="noreferrer">Create repoclock-data on GitHub</a>
+            <button id="skip-repository-creation" type="button" class="secondary">I already have a repository</button>
           </div>
-          <div class="refresh-access">
-            <button id="refresh-repositories" type="button" class="secondary">Refresh repository access</button>
-            <p class="help">Creating a repository does not grant RepoClock access to it. On GitHub, add the repository to the RepoClock installation; RepoClock then checks automatically.</p>
-          </div>
+          <p class="help">GitHub opens a prefilled form. Review it and select <strong>Create repository</strong>. Repository creation does not grant RepoClock access; that is Step 3.</p>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
-          <h3 id="repository-step-title">Choose and validate the data repository</h3>
-          <p>This repository stores RepoClock records. It does not have to contain the issues or pull requests you track.</p>
+          <h3 id="repository-step-title" tabindex="-1">Give RepoClock access to a data repository</h3>
+          <p>Grant RepoClock access to the newly created repository or an existing private repository. Choose <strong>Only select repositories</strong> on GitHub.</p>
+          <div class="actions repository-actions">
+            <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose repository access on GitHub</a>
+            <button id="refresh-repositories" type="button" class="secondary">Check for repository access now</button>
+          </div>
+          <p class="help">RepoClock checks automatically when you return from GitHub. Use this only if the repository does not appear after you save access.</p>
+          <button id="change-repository-setup" type="button" class="link-button">Change repository setup</button>
           <fieldset>
-            <legend>Choose where RepoClock should save your time data</legend>
-            <p class="help">Choose a private repository you gave RepoClock access to. If RepoClock cannot use one, it will tell you why.</p>
+            <legend>Repository RepoClock can access</legend>
+            <p class="help">Choose the private repository that should store RepoClock data. It does not have to contain the issues or pull requests you track.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
-          <div id="repository-recovery" class="refresh-access" hidden>
-            <a id="review-repository-access" class="button-link secondary-link" target="_blank" rel="noreferrer">Review repository access on GitHub</a>
-            <button id="refresh-repository-access" type="button" class="secondary">Refresh repository access</button>
-          </div>
           <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
         </section>
 

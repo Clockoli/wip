@@ -205,7 +205,7 @@ async function validateExistingFiles(github, entries) {
     if (entry.type !== 'blob' || entry.mode !== '100644') {
       throw new OnboardingError(`The repository contains an incompatible RepoClock tree entry at ${path || '(unknown path)'}.`, 'incompatible_storage_format');
     }
-    if (path === MARKER_PATH) continue;
+    if (path === MARKER_PATH || ['.repoclock/.gitkeep', 'active/.gitkeep', 'times/.gitkeep'].includes(path)) continue;
     if (path.startsWith('.repoclock/')) throw new OnboardingError('The repository contains an incompatible RepoClock control path.', 'incompatible_storage_format');
     if (path.startsWith('active/')) {
       if (!/^active\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.txt$/.test(path)) {

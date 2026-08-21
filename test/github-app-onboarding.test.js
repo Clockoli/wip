@@ -312,6 +312,27 @@ test('repository initialization rejects duplicate or inconsistent marker ownersh
   }
 });
 
+test('template repository placeholders are accepted before creating the user marker', async () => {
+  const writes = [];
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => { assert.equal(path, '.repoclock/config.json'); throw notFound(); },
+    listRepositoryEntries: async () => [
+      { path: '.repoclock', type: 'tree', mode: '040000' },
+      { path: '.repoclock/.gitkeep', type: 'blob', mode: '100644' },
+      { path: 'active', type: 'tree', mode: '040000' },
+      { path: 'active/.gitkeep', type: 'blob', mode: '100644' },
+      { path: 'times', type: 'tree', mode: '040000' },
+      { path: 'times/.gitkeep', type: 'blob', mode: '100644' },
+    ],
+    putText: async (...args) => { writes.push(args); return { sha: 'marker' }; },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'write_verified');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0], '.repoclock/config.json');
+});
+
 test('pre-marker validation rejects non-blob entries and incompatible modes under reserved namespaces', async () => {
   let writes = 0;
   const github = {
