@@ -138,28 +138,30 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const navigationCheck = intervals.at(-1);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].refresh, true);
+  assert.deepEqual(messages, [
+    { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'GET_PAGE_STATE', refresh: true },
+  ]);
 
   for (let index = 0; index < 100; index += 1) {
     location.href = `https://github.com/acme/app/issues/1?noise=${index}#${index}`;
     navigationCheck();
   }
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 1);
+  assert.equal(messages.length, 2);
 
   location.pathname = '/acme/app/issues/2';
   location.href = 'https://github.com/acme/app/issues/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].refresh, false);
+  assert.equal(messages.length, 3);
+  assert.equal(messages[2].refresh, false);
 
   location.pathname = '/acme/app/pull/2';
   location.href = 'https://github.com/acme/app/pull/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 3);
+  assert.equal(messages.length, 4);
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   assert.equal(actions.children.at(-2)?.id, 'repoclock-root');
   assert.equal(actions.children.at(-1), avatarSlot);
@@ -203,7 +205,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
-        callback({ ok: true, data: { configured: true, active: pageRequests === 1 ? active : null, pendingCount: 0 } });
+        callback({ ok: true, data: { configured: true, active: pageRequests <= 2 ? active : null, pendingCount: 0 } });
       } else if (message.type === 'STOP') callback({ ok: true, data: { pending: false } });
       else callback({ ok: true, data: {} });
     } } },
@@ -223,7 +225,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   await stop.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   const pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 1);
+  assert.equal(pageStateMessages.length, 2, 'only the initial cached and remote active reads occur');
   assert.deepEqual(messages.findLast(message => message.type === 'LOAD_RECENT'), { type: 'LOAD_RECENT', menuData: true, taskUrl: active.issue.url, taskTitle: '' });
 });
 
@@ -384,7 +386,10 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   assert.equal(right.children[0], topBarActions);
   assert.equal(right.children.at(-2)?.id, 'repoclock-root');
   assert.equal(right.children.at(-1), avatarSlot);
-  assert.deepEqual(messages, [{ type: 'GET_PAGE_STATE', refresh: true }]);
+  assert.deepEqual(messages, [
+    { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'GET_PAGE_STATE', refresh: true },
+  ]);
 });
 
 
@@ -465,14 +470,19 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   const shadowHost = new FakeNode('div');
   document.activeElement = shadowHost;
   stopMinute.getRootNode = () => ({ activeElement: stopMinute });
+  const stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
+  const validStopDate = stopDate.value; stopDate.value = ''; stopDate.oninput({});
+  let invalidDatePrevented = false;
+  stopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { invalidDatePrevented = true; } });
+  assert.equal(invalidDatePrevented, false, 'an invalid date does not capture panel scrolling');
+  stopDate.value = validStopDate; stopDate.oninput({});
   let prevented = false;
   stopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, false, 'a tiny trackpad delta does not consume page scrolling');
+  assert.equal(prevented, true, 'a focused valid time field contains the whole wheel gesture so the panel does not scroll');
   assert.equal(stopMinute.value, '59');
   stopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
   assert.equal(stopMinute.value, '00', 'one accumulated wheel threshold advances exactly one minute across midnight');
-  const stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
   assert.equal(stopDate.value, '2026-08-19', 'cross-midnight scrolling advances the Stop date');
 
   const titleDraft = createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1);
@@ -489,6 +499,78 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRY');
   assert.equal(editMessage.payload.edits.startedAt, entry.startedAt, 'unchanged Start keeps its original wall time, seconds, milliseconds, and offset');
   assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:00:27.123-07:00');
+});
+
+
+test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const cached = {
+    schemaVersion: 1, id: '20260818000000000000000000', user: 'alice',
+    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Cached entry',
+    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Cached entry',
+    entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
+    durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
+    _path: 'times/2026-08/alice.txt', _sha: 'cached', _index: 0,
+  };
+  const refreshed = { ...cached, taskTitle: 'Refreshed entry', issueTitle: 'Refreshed entry', _sha: 'fresh' };
+  let replyCachedState, replyRemoteState, replyRecent;
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') {
+        if (message.refresh) replyRemoteState = callback;
+        else replyCachedState = callback;
+      } else if (message.type === 'LOAD_RECENT') replyRecent = callback;
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+
+  assert.deepEqual(messages[0], { type: 'GET_PAGE_STATE', refresh: false }, 'initial rendering reads local cache before remote active state');
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true });
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false, 'the panel waits only for the local configured snapshot');
+
+  replyCachedState({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 1, 'the open panel automatically starts one recent refresh');
+  assert.equal(messages.some(message => message.type === 'GET_PAGE_STATE' && message.refresh), false,
+    'fresh entries are requested before the slower remote active refresh');
+  assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Cached entry')),
+    'cached entries are visible before either remote request finishes');
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, true,
+    'cached mutation controls stay locked until their current SHA is refreshed');
+  assert.equal(createdNodes.some(node => node.textContent === 'Open the menu again to load entries.'), false);
+
+  replyRecent({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, true,
+    'a failed automatic refresh keeps stale cached mutation controls locked');
+  assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length, 1,
+    'remote active refresh continues after the cached-first menu attempt');
+  replyRemoteState({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
+  const retrying = retry.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'Retry starts one new fresh load');
+  replyRecent({ ok: true, data: { recent: [refreshed], reportDate: '2026-08-18', todaySeconds: 3600, active: null, pendingCount: 0, pendingWrites: [] } });
+  await retrying;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Refreshed entry')));
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, false,
+    'fresh entries become editable only after a successful retry');
 });
 
 
@@ -603,7 +685,7 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
   firstStopMinute.getRootNode = () => ({ activeElement: firstStopMinute });
   let prevented = false;
   firstStopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, false);
+  assert.equal(prevented, true, 'focused inline time contains the whole wheel gesture');
   assert.equal(firstStopMinute.value, '00');
   firstStopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
@@ -622,7 +704,7 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
   secondStartMinute.getRootNode = () => ({ activeElement: secondStartMinute });
   let startPrevented = false;
   secondStartMinute.onwheel({ deltaY: 1, deltaMode: 0, preventDefault() { startPrevented = true; } });
-  assert.equal(startPrevented, false);
+  assert.equal(startPrevented, true, 'focused linked time contains the whole wheel gesture');
   assert.equal(secondStartMinute.value, '30');
   secondStartMinute.onwheel({ deltaY: 79, deltaMode: 0, preventDefault() { startPrevented = true; } });
   assert.equal(startPrevented, true);

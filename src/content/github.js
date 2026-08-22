@@ -17,7 +17,9 @@
   let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
   let recent = [];
   let recentLoaded = false;
+  let recentFresh = false;
   let loadingRecent = false;
+  let recentLoad = null;
   let editing = null;
   let editingDraft = null;
   const inlineDrafts = new Map();
@@ -115,7 +117,7 @@
     return seconds;
   }
 
-  function applyMenuData(data) {
+  function applyMenuData(data, fresh = true) {
     recent = Array.isArray(data) ? data : data?.recent ?? [];
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
     const fallbackTodaySeconds = Array.isArray(data)
@@ -129,6 +131,12 @@
       pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
     };
     recentLoaded = true;
+    recentFresh = fresh;
+  }
+
+  function applyPageState(data) {
+    pageState = data;
+    if (!recentLoaded && Array.isArray(data?.recent) && data.recent.length) applyMenuData(data.recent, false);
   }
 
   function timestampParts(value) {
@@ -196,6 +204,8 @@
       field.addEventListener('wheel', event => {
         const root = field.getRootNode?.();
         if ((root?.activeElement ?? document.activeElement) !== field || !event.deltaY) return;
+        try { value(); } catch { return; }
+        event.preventDefault();
         const now = Date.now(), direction = Math.sign(event.deltaY);
         if (now - lastWheelAt > 400 || Math.sign(wheelRemainder) !== direction) wheelRemainder = 0;
         lastWheelAt = now;
@@ -204,7 +214,7 @@
         if (Math.abs(wheelRemainder) < WHEEL_THRESHOLD) return;
         const amount = wheelRemainder < 0 ? step : -step;
         wheelRemainder = 0;
-        if (shift(amount)) event.preventDefault();
+        shift(amount);
       }, { passive: false });
       if (compact) { increase.textContent = '+'; decrease.textContent = '−'; column.append(decrease, field, increase); }
       else column.append(increase, field, decrease);
@@ -365,12 +375,22 @@
     return next;
   }
 
+  function refreshRecent() {
+    if (recentLoad) return recentLoad;
+    recentFresh = false; loadingRecent = true; renderUi();
+    let load;
+    load = send(recentRequest()).then(data => applyMenuData(data, true)).finally(() => {
+      if (recentLoad === load) {
+        recentLoad = null; loadingRecent = false; renderUi();
+      }
+    });
+    recentLoad = load;
+    return load;
+  }
+
   async function refreshState(refresh = false, loadEntries = false) {
-    if (loadEntries) {
-      loadingRecent = true; renderUi();
-      try { applyMenuData(await send(recentRequest())); }
-      finally { loadingRecent = false; }
-    } else pageState = await send({ type: 'GET_PAGE_STATE', refresh });
+    if (loadEntries) return refreshRecent();
+    applyPageState(await send({ type: 'GET_PAGE_STATE', refresh }));
     renderUi();
   }
 
@@ -602,7 +622,7 @@ The previous version remains in Git history.`)) return;
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions');
       const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(inlineMutation);
+      const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
       for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
       inline.setDisabled(disabled);
       actions.append(inline.cancel, inline.save, edit, remove);
@@ -633,8 +653,8 @@ The previous version remains in Git history.`)) return;
       catch (error) { node.disabled = false; setError(error); }
     });
     refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
-    if (loadingRecent) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
-    if (!recentLoaded) { container.append(el('div', 'Open the menu again to load entries.', 'muted')); return; }
+    if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
+    if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recent.length) { container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
     const entries = [...recent].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     const overlaps = overlappingEntries(entries);
@@ -793,7 +813,7 @@ The previous version remains in Git history.`)) return;
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .active-link { display:inline-block } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d1d9e0b3) } .section-head { margin-bottom:7px }
-      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-unit { display:grid; grid-template-rows:30px 48px 30px; width:62px } .time-step { display:grid; place-items:center; min-width:44px; min-height:30px; padding:0; border-color:transparent; background:transparent; color:var(--fgColor-accent,#0969da); font-size:18px; line-height:1 } .time-step:hover { background:var(--button-invisible-bgColor-hover,#818b981a) } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .time-hint { margin-top:7px; color:var(--fgColor-muted,#59636e); font-size:11px; line-height:1.3; text-align:center }
+      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-unit { display:grid; grid-template-rows:30px 48px 30px; width:62px } .time-step { display:grid; place-items:center; min-width:44px; min-height:30px; padding:0; border-color:transparent; background:transparent; color:var(--fgColor-accent,#0969da); font-size:18px; line-height:1; opacity:0; pointer-events:none } .time-unit:focus-within .time-step { opacity:1; pointer-events:auto } .time-step:hover { background:var(--button-invisible-bgColor-hover,#818b981a) } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .time-hint { margin-top:7px; color:var(--fgColor-muted,#59636e); font-size:11px; line-height:1.3; text-align:center }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
       .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-title { display:block; margin-bottom:5px; color:var(--fgColor-default,#1f2328); font-size:16px; font-weight:650; line-height:1.35; overflow-wrap:anywhere } .entry-title:hover { color:var(--fgColor-accent,#0969da) } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:grid; grid-template-columns:1fr; align-items:center; gap:6px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .entry-day { font-weight:650 } .compact-time-picker { display:grid; grid-template-columns:3rem minmax(0,1fr); align-items:center; min-width:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:600; white-space:normal } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { justify-content:flex-start; gap:3px } .compact-time-picker .time-unit { display:grid; grid-template-columns:24px 38px 24px; grid-template-rows:32px; width:86px } .compact-time-picker .time-step { min-width:24px; min-height:32px; height:32px; font-size:15px } .compact-time-picker .time-value { width:38px; height:32px; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { display:none; color:var(--fgColor-muted,#59636e) } .inline-duration { margin-left:0; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
@@ -813,10 +833,8 @@ The previous version remains in Git history.`)) return;
       if (!activatedTask) return;
       navigationOpen = false; menuOpen = !menuOpen; editing = null; editingDraft = null; errorText = ''; renderUi();
       if (menuOpen && pageState.configured) {
-        loadingRecent = true; renderUi();
-        try { applyMenuData(await send(recentRequest())); }
-        catch (error) { errorText = error.message; errorCode = error.code || 'error'; }
-        finally { loadingRecent = false; renderUi(); }
+        try { await refreshRecent(); }
+        catch (error) { setError(error); }
       }
     });
     const arrow = el('button', undefined, 'trigger trigger-menu'); arrow.type = 'button'; arrow.setAttribute('aria-label', 'Open time tracker pages');
@@ -834,16 +852,25 @@ The previous version remains in Git history.`)) return;
     if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; navigationOpen = false; return; }
     if (!mountInHeader()) return;
     renderUi();
-    try { pageState = await send({ type: 'GET_PAGE_STATE', refresh }); errorText = ''; }
+    try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false })); errorText = ''; }
     catch (error) { errorText = error.message; errorCode = error.code || 'error'; }
     renderUi();
+    if (menuOpen && pageState.configured) {
+      try { await refreshRecent(); }
+      catch (error) { setError(error); }
+    }
+    if (refresh) {
+      try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
+      catch (error) { setError(error); return; }
+      renderUi();
+    }
   }
 
   function navigationCheck() {
     const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; editing = null; editingDraft = null; menuOpen = false; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; editing = null; editingDraft = null; menuOpen = false; navigationOpen = false;
       void render(firstRender);
     } else if (route) {
       const target = headerTarget();
@@ -856,12 +883,14 @@ The previous version remains in Git history.`)) return;
     mountInHeader();
     renderUi();
     refreshPopupTask().then(async () => {
-      pageState = await send({ type: 'GET_PAGE_STATE', refresh: true });
+      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
+      renderUi();
       if (pageState.configured) {
-        loadingRecent = true; renderUi();
-        try { applyMenuData(await send(recentRequest())); }
-        finally { loadingRecent = false; }
+        try { await refreshRecent(); }
+        catch (error) { setError(error); }
       }
+      try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
+      catch (error) { setError(error); return; }
       renderUi();
     }).catch(setError);
   } else {

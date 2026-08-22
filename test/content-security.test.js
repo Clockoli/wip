@@ -39,6 +39,7 @@ test('time adjustment controls use focused wheel and keyboard input without page
   assert.match(source, /ArrowDown/);
   assert.match(source, /PageUp/);
   assert.match(source, /PageDown/);
+  assert.match(source, /event\.preventDefault\(\)[\s\S]*wheelRemainder \+=/, 'a focused valid time field contains sub-threshold wheel movement');
   assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
 });
 
@@ -53,6 +54,8 @@ test('grouped recent records reveal contextual actions and large accessible time
   assert.match(source, /\.entry-actions\s*\{[^}]*opacity:0[^}]*pointer-events:none/);
   assert.match(source, /\.entry-record:hover \.entry-actions,\.entry-record:focus-within \.entry-actions,\.entry-actions\.dirty\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
   assert.match(source, /\.time-value\s*\{[^}]*font:700 26px/);
+  assert.match(source, /\.time-step\s*\{[^}]*opacity:0[^}]*pointer-events:none/);
+  assert.match(source, /\.time-unit:focus-within \.time-step\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
   assert.match(source, /aria-label', `\$\{label\} hour`/);
   assert.match(source, /aria-label', `\$\{label\} minute`/);
   assert.doesNotMatch(source, /time-boundary|bindBoundaryVisibility|drag-line|drag-grip/);

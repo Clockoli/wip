@@ -356,7 +356,7 @@ async function handle(message, sender) {
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const { config, auth } = await configuredSnapshot();
     if (!config || !auth) return message.type === 'GET_PAGE_STATE'
-      ? { configured: false, active: null, pendingCount: 0 }
+      ? { configured: false, active: null, pendingCount: 0, recent: [] }
       : { configured: false, active: null, recent: [], pendingWrites: [] };
     const { tracker } = await context();
     const state = await tracker.getState({ refresh: Boolean(message.refresh) });
@@ -367,7 +367,8 @@ async function handle(message, sender) {
         description: state.active.description || '', issueTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
       } : null;
       return {
-        configured: true, active, pendingCount: state.pendingWrites.length,
+        configured: true, active, recent: state.recent,
+        pendingCount: state.pendingWrites.length,
         pendingWrites: state.pendingWrites.map(({ id, status, stage, conflictReason }) => ({ id, status, stage, ...(conflictReason ? { conflictReason } : {}) })),
       };
     }

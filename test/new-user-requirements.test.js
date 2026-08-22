@@ -8,6 +8,7 @@ const optionsJs = await readFile(new URL('src/options/options.js', root), 'utf8'
 const optionsCss = await readFile(new URL('src/options/options.css', root), 'utf8');
 const popupHtml = await readFile(new URL('src/popup/popup.html', root), 'utf8');
 const content = await readFile(new URL('src/content/github.js', root), 'utf8');
+const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
 test('repository access step has one GitHub action and mode-specific instructions', () => {
   assert.doesNotMatch(optionsHtml, /Check for repository access now/i);
@@ -85,6 +86,16 @@ test('tracker copy and navigation use URL tasks without item terminology', () =>
   assert.match(content, /taskUrl/);
   assert.match(content, /Task URL/);
 });
+
+test('opening the tracker renders cached entries and refreshes them without a second open', () => {
+  assert.match(serviceWorker, /configured: true, active, recent: state\.recent/);
+  assert.match(content, /if \(!recentLoaded && Array\.isArray\(data\?\.recent\) && data\.recent\.length\) applyMenuData\(data\.recent, false\)/);
+  assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
+  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
+  assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
+  assert.doesNotMatch(content, /Open the menu again to load entries/);
+});
+
 
 test('focused minute wheel input accumulates trackpad movement and changes one minute at a time', () => {
   assert.match(content, /WHEEL_THRESHOLD/);

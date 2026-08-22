@@ -43,7 +43,7 @@ The GitHub split control survives GitHub's client-side navigation and mounts nex
 
 ## Recent entries
 
-The main panel loads up to 50 recent entries from the configured display window. The display window defaults to seven local calendar days and can be set from 1 to 31 days.
+The main panel shows cached entries immediately when available and refreshes them automatically. It loads up to 50 recent entries from the configured display window. The display window defaults to seven local calendar days and can be set from 1 to 31 days.
 
 Changing this setting does not alter stored data or limit reports. Recent data is read by monthly file rather than one API request per record.
 
@@ -51,8 +51,8 @@ Changing this setting does not alter stored data or limit reports. Recent data i
 
 Each completed row has Start and Stop hour/minute controls.
 
-- Type values, use arrow buttons or keys, or scroll while the value is focused.
-- Wheel movement passes through a threshold and changes at most one visible minute per raw event.
+- Type values, use arrow buttons or keys, or scroll while the value is focused. The `−` and `+` controls appear only for the focused hour or minute.
+- A focused valid value contains the wheel gesture so the panel remains still. Wheel movement passes through a threshold and changes at most one visible minute per raw event.
 - A correction remains a local draft until **Save time** is selected.
 - All relevant row controls are disabled while a mutation is in flight.
 - Validation or network errors keep the draft available for correction or retry.

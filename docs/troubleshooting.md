@@ -146,7 +146,7 @@ RepoClock could not prove that the timer was completed. It reports the missing-a
 
 ### Scrolling does not change the minute immediately
 
-This is intentional. RepoClock accumulates a deliberate amount of wheel/trackpad movement and changes one minute at a time. Normal scrolling should continue until a valid step occurs. Click or focus the value first, or type the minute directly.
+This is intentional. RepoClock accumulates a deliberate amount of wheel/trackpad movement and changes one minute at a time. Click or focus the value first. While a valid time value is focused, RepoClock keeps the panel still and contains the entire wheel gesture; `−` and `+` appear for that value. You can also type the minute directly.
 
 ### Editing one row changed a neighboring row
 
