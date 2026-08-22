@@ -166,14 +166,15 @@
   }
 
   function scrollableTimePicker(label, original, draft = null, { compact = false, onChange = () => {} } = {}) {
-    const initial = timestampParts(original), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
+    let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
+    const initial = timestampParts(template), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
     const dateField = el('input'); controls.push(dateField); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
     const values = el('div', undefined, 'time-picker-values');
     const fieldClass = compact ? 'time-value inline-time-value' : 'time-value';
     const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = `${fieldClass} time-hour`; hourField.setAttribute('aria-label', `${label} hour`);
     const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = `${fieldClass} time-minute`; minuteField.setAttribute('aria-label', `${label} minute`);
-    const currentDraft = () => ({ date: dateField.value, hour: hourField.value, minute: minuteField.value });
+    const currentDraft = () => ({ date: dateField.value, hour: hourField.value, minute: minuteField.value, timestamp: template });
     const updateSpinbutton = (field, unitLabel, maximum) => {
       field.setAttribute('role', 'spinbutton'); field.setAttribute('aria-valuemin', '0'); field.setAttribute('aria-valuemax', String(maximum));
       const text = String(field.value), numeric = Number(text), valid = /^\d{1,2}$/.test(text) && Number.isInteger(numeric) && numeric >= 0 && numeric <= maximum;
@@ -189,10 +190,10 @@
       const hourValid = updateSpinbutton(hourField, 'hour', 23), minuteValid = updateSpinbutton(minuteField, 'minute', 59);
       return hourValid && minuteValid;
     };
-    const value = () => { if (!refreshSpinbuttons()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(original, dateField.value, hourField.value, minuteField.value); };
+    const value = () => { if (!refreshSpinbuttons()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value); };
     const changed = () => onChange(currentDraft());
     const applyTimestamp = (timestamp, notify = true) => {
-      const parts = timestampParts(timestamp); dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshSpinbuttons();
+      const parts = timestampParts(timestamp); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshSpinbuttons();
       if (notify) changed();
     };
     const shift = minutes => {
@@ -243,7 +244,8 @@
     if (!match || !Number.isFinite(instant)) throw new Error('Invalid timestamp offset.');
     const offset = match[1] === 'Z' ? 0 : (match[2] === '+' ? 1 : -1) * (Number(match[3]) * 60 + Number(match[4]));
     const date = new Date(instant + offset * 60_000), pad = (number, width = 2) => String(number).padStart(width, '0');
-    return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}${match[1]}`;
+    const milliseconds = date.getUTCMilliseconds(), fraction = milliseconds || timestampParts(original).fraction ? `.${pad(milliseconds, 3)}` : '';
+    return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}${fraction}${match[1]}`;
   }
 
   function titleFromPage() {
@@ -529,6 +531,23 @@ The previous version remains in Git history.`)) return;
     return overlaps;
   }
 
+  function entryWithInlineDraft(entry) {
+    const draft = inlineDrafts.get(entryKey(entry));
+    if (!draft) return entry;
+    try {
+      return {
+        ...entry,
+        startedAt: timestampFromTimeParts(draft.start.timestamp || entry.startedAt, draft.start.date, draft.start.hour, draft.start.minute),
+        endedAt: timestampFromTimeParts(draft.stop.timestamp || entry.endedAt, draft.stop.date, draft.stop.hour, draft.stop.minute),
+      };
+    } catch { return entry; }
+  }
+
+  function refreshOverlapWarnings() {
+    const overlaps = overlappingEntries(recent.map(entryWithInlineDraft));
+    for (const [key, editor] of inlineEditors) editor.setOverlap?.(overlaps.has(key));
+  }
+
   function mergeDraftGroup(group, previousGroup) {
     if (!previousGroup || previousGroup === group) return;
     for (const [key, draft] of inlineDrafts) if (draft.group === previousGroup) inlineDrafts.set(key, { ...draft, group });
@@ -588,6 +607,7 @@ The previous version remains in Git history.`)) return;
       const group = inlineDrafts.get(key)?.group || key;
       updateDraft(group);
       linkCrossedTimeBoundaries(entry, boundary, group);
+      refreshOverlapWarnings();
     };
     startPicker = scrollableTimePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: () => remember('start') });
     stopPicker = scrollableTimePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: () => remember('stop') });
@@ -625,15 +645,22 @@ The previous version remains in Git history.`)) return;
   }
 
   function recentRecord(entry, overlaps) {
-    const overlapping = overlaps.has(entryKey(entry));
-    const record = el('div', undefined, `entry-record${overlapping ? ' entry-overlap' : ''}`);
-    if (overlapping) record.append(el('div', 'Overlaps another entry', 'overlap-warning'));
+    const key = entryKey(entry), overlapping = overlaps.has(key);
+    const record = el('div', undefined, 'entry-record');
+    const warning = el('div', 'Overlaps another entry', 'overlap-warning');
+    const setOverlap = active => {
+      record.classList[active ? 'add' : 'remove']('entry-overlap');
+      if (active && !warning.parentElement) record.prepend(warning);
+      else if (!active) warning.remove();
+    };
+    setOverlap(overlapping);
     const top = el('div', undefined, 'entry-row');
     if (entry._pending) {
       const meta = el('div', recentMeta(entry), 'entry-meta');
       const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; top.append(meta, pending);
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions');
+      const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
@@ -669,7 +696,7 @@ The previous version remains in Git history.`)) return;
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recent.length) { container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
     const entries = [...recent].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-    const overlaps = overlappingEntries(entries);
+    const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
     let group = [];
     for (const entry of entries) {
       if (group.length && !sameTask(group[0], entry)) { container.append(recentGroup(group, overlaps)); group = []; }
@@ -827,7 +854,7 @@ The previous version remains in Git history.`)) return;
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-unit { display:grid; grid-template-rows:30px 48px 30px; width:62px } .time-step { display:grid; place-items:center; min-width:44px; min-height:30px; padding:0; border-color:transparent; background:transparent; color:var(--fgColor-accent,#0969da); font-size:18px; line-height:1; opacity:0; pointer-events:none } .time-unit:focus-within .time-step { opacity:1; pointer-events:auto } .time-step:hover { background:var(--button-invisible-bgColor-hover,#818b981a) } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .time-hint { margin-top:7px; color:var(--fgColor-muted,#59636e); font-size:11px; line-height:1.3; text-align:center }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .inline-time-meta { display:flex; align-items:center; justify-content:space-between; gap:8px } .entry-day { font-weight:650; white-space:nowrap } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:center; gap:5px; width:100%; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:3px; white-space:nowrap } .compact-time-picker .time-unit { position:relative; display:block; width:38px; height:32px; flex:0 0 38px } .compact-time-picker .time-unit:focus-within { height:88px } .compact-time-picker .time-step { position:absolute; z-index:3; left:0; min-width:38px; min-height:24px; width:38px; height:24px; padding:0; border-color:var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff); font-size:15px; box-shadow:var(--shadow-resting-small,0 1px 0 #1f23280a) } .compact-time-picker .time-step:first-child { top:0 } .compact-time-picker .time-step:last-child { bottom:0 } .compact-time-picker .time-value { position:absolute; top:50%; left:0; width:38px; height:32px; margin:0; padding:2px; transform:translateY(-50%); border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { display:inline; color:var(--fgColor-muted,#59636e); font-weight:650 } .inline-duration { margin-left:0; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .inline-time-line { gap:2px } .compact-time-picker .time-picker-values { gap:1px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions.dirty { flex-basis:100%; justify-content:flex-end } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .inline-time-meta { display:flex; align-items:center; justify-content:space-between; gap:8px } .entry-day { font-weight:650; white-space:nowrap } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:center; gap:5px; width:100%; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:3px; white-space:nowrap } .compact-time-picker .time-unit { position:relative; display:block; width:38px; height:32px; flex:0 0 38px } .compact-time-picker .time-unit:focus-within { height:88px } .compact-time-picker .time-step { position:absolute; z-index:3; left:0; min-width:38px; min-height:24px; width:38px; height:24px; padding:0; border-color:var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff); font-size:15px; box-shadow:var(--shadow-resting-small,0 1px 0 #1f23280a) } .compact-time-picker .time-step:first-child { top:0 } .compact-time-picker .time-step:last-child { bottom:0 } .compact-time-picker .time-value { position:absolute; top:50%; left:0; width:38px; height:32px; margin:0; padding:2px; transform:translateY(-50%); border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { display:inline; color:var(--fgColor-muted,#59636e); font-weight:650 } .inline-duration { margin-left:0; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .inline-time-line { gap:2px } .compact-time-picker .time-picker-values { gap:1px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
     if (popupMode) {
       shadow.append(style, renderMenu());

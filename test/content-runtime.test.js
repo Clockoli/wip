@@ -767,6 +767,72 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
   assert.equal(mirroredEdit.payload.entries[1].edits.endedAt, '2026-08-21T14:29:00+00:00');
 });
 
+test('wheel-linked newer Start and previous Stop save as touching intervals without an overlap warning', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
+  const makeEntry = (id, number, start, end, index) => ({
+    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
+    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
+    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+  });
+  let entries = [
+    makeEntry('older', 7, '2026-08-21T14:00:00.111+00:00', '2026-08-21T15:00:43.324+00:00', 0),
+    makeEntry('newer', 8, '2026-08-21T15:00:06.768+00:00', '2026-08-21T16:00:00.999+00:00', 1),
+  ];
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
+      else if (message.type === 'EDIT_ENTRIES') {
+        for (const request of message.payload.entries) {
+          const position = entries.findIndex(entry => entry._index === request.index);
+          entries[position] = { ...entries[position], ...request.edits,
+            entryDate: request.edits.startedAt.slice(0, 10),
+            durationSeconds: (new Date(request.edits.endedAt) - new Date(request.edits.startedAt)) / 1000,
+            _sha: 'saved' };
+        }
+        callback({ ok: true, data: entries });
+      } else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const visibleOverlapWarnings = () => createdNodes.filter(node => node.className.includes('overlap-warning') && node.isConnected);
+  assert.equal(visibleOverlapWarnings().length, 2, 'a seconds-only overlap is initially visible even though both boundaries display 15:00');
+
+  const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
+  const newerStartMinute = values[1];
+  newerStartMinute.getRootNode = () => ({ activeElement: newerStartMinute });
+  newerStartMinute.onwheel({ deltaY: 80, deltaMode: 0, preventDefault() {} });
+  assert.equal(newerStartMinute.value, '59');
+  assert.equal(values[7].value, '59', 'the older Stop mirrors the newer Start immediately');
+  assert.equal(visibleOverlapWarnings().length, 0, 'linked wheel drafts clear the stale overlap warning before Save');
+  const save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
+    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
+  ]);
+  assert.equal(visibleOverlapWarnings().length, 0,
+    'the refreshed linked result remains endpoint-touching, not overlapping');
+});
+
 test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };

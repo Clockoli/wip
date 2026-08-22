@@ -76,6 +76,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);
   assert.match(content, /@media\(max-width:340px\) \{ \.inline-time-line \{ gap:2px \} \.compact-time-picker \.time-picker-values \{ gap:1px \} \}/,
     'the minimum supported panel width tightens only spacing, never wraps the time range');
+  assert.match(content, /\.entry-actions\.dirty \{[^}]*flex-basis:100%[^}]*justify-content:flex-end/,
+    'Save/Cancel move below the time range instead of squeezing From, the separator, and To together');
   assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);
   assert.doesNotMatch(content, /\.compact-time-picker legend \{[^}]*position:static/);
   assert.match(content, /\.compact-time-picker \.time-unit:focus-within \{[^}]*height:88px/,
