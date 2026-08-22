@@ -130,7 +130,7 @@ Stop the current timer before starting another one. Pending completions must be 
 
 ## 4. Correct a record
 
-Recent rows contain direct Start and Stop controls.
+Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
 - Focus an hour or minute and use the arrow keys, type a value, or scroll deliberately.
 - Small trackpad movements are accumulated so they do not jump through many minutes.
@@ -144,7 +144,7 @@ If moving a boundary crosses the adjacent record, RepoClock changes the matching
 
 Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
 
-- **Tasks** groups your sessions by task URL, adds the running session, and provides search, period, status, and inline Start/Stop controls.
+- **Tasks** groups your sessions by task URL, displays URL and optional title as a search-style result, adds the running session, and provides search, period, status, and inline Start/Stop actions.
 - **Reports** reads the selected period across the data repository and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF.
 
 ## 6. Optional settings

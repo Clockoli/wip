@@ -12,7 +12,10 @@ const popup = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url
 
 test('tasks page is a recent tracked-work list without GitHub issue-list clutter', () => {
   assert.match(html, /<h1>Recently tracked work<\/h1>/);
-  assert.match(html, /<header class="app-header">\s*<h1>Recently tracked work<\/h1>\s*<\/header>/);
+  assert.match(html, /class="brand-name">RepoClock<\/div>/);
+  assert.match(html, /<header class="app-header">[\s\S]*RepoClock[\s\S]*<h1>Recently tracked work<\/h1>[\s\S]*<\/header>/);
+  assert.doesNotMatch(html, /id="source"/);
+  assert.doesNotMatch(js, /result\.sourceRepository|result\.branch/);
   assert.doesNotMatch(html, /class="eyebrow"/);
   for (const id of ['period', 'task-filter', 'status', 'result-count', 'task-list']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['two-weeks', 'one-month', 'three-months', 'six-months', 'one-year']) assert.match(html, new RegExp(`value="${value}"`));
@@ -30,6 +33,18 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.match(js, /type:\s*'STOP'/);
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(css, /\.task-row/);
+  assert.match(js, /className = 'task-url'/);
+  assert.match(js, /className = 'task-title'/);
+  assert.match(css, /\.task-url\{[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/);
+  assert.match(css, /\.task-title\{[^}]*color:var\(--fgColor-accent\)/);
+  assert.match(css, /\.task-copy\.untitled \.task-url\{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
+    'an untitled maximum-length URL remains a single clamped primary link');
+  assert.match(js, /url\.title = task\.taskUrl/,
+    'the full untitled URL remains available without expanding the row');
+  assert.match(css, /\.task-title\{[^}]*-webkit-line-clamp:2/,
+    'maximum-length task titles are limited to two result lines');
+  assert.match(js, /title\.title = task\.title/,
+    'the full clamped task title remains available without expanding the row');
 });
 
 test('visible extension branding is RepoClock and Tasks uses neutral GitHub buttons', () => {

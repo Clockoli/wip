@@ -71,7 +71,26 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /Time tracker panel\. Scroll for more content/);
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
   assert.ok(content.includes("shadow?.querySelector?.('.time-value')?.focus?.()"));
-  assert.match(content, /compact-time-picker \.time-unit \{ display:grid; grid-template-columns:24px 38px 24px/);
+  assert.match(content, /const timeLine = el\('div', undefined, 'inline-time-line'\)/);
+  assert.match(content, /timeLine\.append\(startPicker\.node, separator, stopPicker\.node\)/);
+  assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);
+  assert.match(content, /@media\(max-width:340px\) \{ \.inline-time-line \{ gap:2px \} \.compact-time-picker \.time-picker-values \{ gap:1px \} \}/,
+    'the minimum supported panel width tightens only spacing, never wraps the time range');
+  assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);
+  assert.doesNotMatch(content, /\.compact-time-picker legend \{[^}]*position:static/);
+  assert.match(content, /\.compact-time-picker \.time-unit:focus-within \{[^}]*height:88px/,
+    'focused compact units reserve vertical space for their controls without widening the time line');
+  assert.match(content, /\.compact-time-picker \.time-step:first-child \{ top:0 \}/);
+  assert.match(content, /\.compact-time-picker \.time-step:last-child \{ bottom:0 \}/);
+  assert.doesNotMatch(content, /\.compact-time-picker \.time-step:first-child \{ right:calc\(100% \+ 2px\) \}/);
+  assert.match(content, /\.task-result-untitled \.task-url \{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
+    'untitled URLs stay clamped even at the 2,048-character identity limit');
+  assert.match(content, /url\.title = taskUrl/,
+    'the full clamped URL remains exposed as native accessible text');
+  assert.match(content, /\.task-title \{[^}]*-webkit-line-clamp:2/,
+    'maximum-length optional titles are limited to two result lines');
+  assert.match(content, /title\.title = taskTitle/,
+    'the full clamped title remains exposed as native accessible text');
 });
 
 

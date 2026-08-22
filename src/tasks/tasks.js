@@ -131,12 +131,16 @@ function render() {
   for (const task of tasks) {
     const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
     const main = document.createElement('div'); main.className = 'task-main'; main.append(taskIcon(task));
-    const copy = document.createElement('div'); copy.className = 'task-copy';
-    const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.taskUrl;
+    const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
+    const url = document.createElement(task.title ? 'div' : 'a'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
+    if (!task.title) { url.href = task.taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
+    copy.append(url);
+    if (task.title) {
+      const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; copy.append(title);
+    }
     const subline = document.createElement('div'); subline.className = 'task-subline';
-    if (task.title) { const name = document.createElement('span'); name.className = 'task-name'; name.textContent = task.title; subline.append(name); }
     const status = document.createElement('span'); status.className = `status ${taskVisualStatus(task)}`; status.textContent = statusLabel(task); subline.append(status);
-    copy.append(title, subline); main.append(copy);
+    copy.append(subline); main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
     const total = document.createElement('span'); total.className = 'tracked-time'; total.textContent = `${formatDuration(taskTotalSeconds(task))} tracked`;
     actions.append(total, makeTimerButton(task)); row.append(main, actions); list.append(row);
@@ -161,9 +165,8 @@ async function load() {
     const result = await send({ type: 'LOAD_TASKS', payload: range });
     if (requestId !== state.requestId) return;
     state.configured = Boolean(result.configured);
-    if (!state.configured) { $('setup').hidden = false; $('source').textContent = 'No time-data repository configured'; return; }
+    if (!state.configured) { $('setup').hidden = false; return; }
     state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
-    $('source').textContent = `${result.sourceRepository} · ${result.branch} · ${range.startDate} to ${range.endDate}`;
     $('tasks-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
   finally { if (requestId === state.requestId) $('loading').hidden = true; }

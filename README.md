@@ -61,7 +61,7 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Optional descriptions, up to 2,000 characters.
 - Live elapsed time and rotating totals for Today, This week, Last week, and This month.
 - Recent entries labeled Today, Yesterday, or by weekday.
-- Direct Start/Stop hour and minute correction in the main panel.
+- Direct one-line `HH : MM - HH : MM` time correction in the main panel.
 - Focused wheel controls keep the panel still, accumulate trackpad movement behind a threshold, and change one minute at a time.
 - Automatic adjacent-boundary repair: moving Start into the previous interval moves the previous Stop; moving Stop into the next interval moves the next Start. The linked records are saved atomically.
 - Full **Edit** for URL, optional title, Start, Stop, and description.
@@ -76,7 +76,7 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Period filters from two weeks to one year.
 - Open, Closed, and All status filters; GitHub issue/PR status is enriched when available.
 - Totals include completed sessions and the currently running session.
-- Inline Start/Stop controls.
+- Inline one-line time-range controls.
 
 ### Reports and billing
 

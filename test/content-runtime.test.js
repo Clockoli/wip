@@ -97,6 +97,45 @@ function makeModernHeader() {
 
 const documentNodes = new Map();
 
+test('task result rendering clamps maximum untitled URLs and titles without losing their full values', async () => {
+  const exposedSource = source.replace("function taskResult(value, className = '') {", "globalThis.__taskResult = function taskResult(value, className = '') {");
+  assert.notEqual(exposedSource, source, 'taskResult is exposed only inside this renderer contract test');
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1' };
+  const { actions } = makeHeader();
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, URL,
+    chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(exposedSource, { filename: 'src/content/github.js' }).runInContext(context);
+
+  const maximumUrl = `https://example.com/${'a'.repeat(2028)}`;
+  assert.equal(maximumUrl.length, 2048);
+  const untitled = context.__taskResult({ taskUrl: maximumUrl, taskTitle: '' });
+  assert.equal(untitled.classList.contains('task-result-untitled'), true);
+  assert.equal(untitled.children.length, 1);
+  assert.equal(untitled.children[0].tag, 'a');
+  assert.equal(untitled.children[0].textContent, maximumUrl);
+  assert.equal(untitled.children[0].title, maximumUrl);
+  assert.equal(untitled.children[0].href, maximumUrl);
+
+  const maximumTitle = 'T'.repeat(300);
+  const titled = context.__taskResult({ taskUrl: 'https://example.com/task', taskTitle: maximumTitle });
+  assert.equal(titled.children.length, 2);
+  assert.equal(titled.children[1].textContent, maximumTitle);
+  assert.equal(titled.children[1].title, maximumTitle);
+  await new Promise(resolve => setTimeout(resolve, 0));
+});
+
 test('query/hash churn cannot trigger authenticated GitHub refreshes', async () => {
   const intervals = [];
   const messages = [];
@@ -439,8 +478,16 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  const recentLink = createdNodes.filter(node => node.tag === 'a' && node.href === entry.issue.url).at(-1);
-  assert.equal(recentLink.textContent, 'https://github.com/acme/app/issues/7 · Make ranking deterministic');
+  const recentLinks = createdNodes.filter(node => node.tag === 'a' && node.href === entry.issue.url);
+  const recentUrl = createdNodes.findLast(node => node.className.includes('task-url') && node.textContent === entry.issue.url);
+  const recentTitle = recentLinks.findLast(node => node.className.includes('task-title'));
+  assert.equal(recentUrl.textContent, 'https://github.com/acme/app/issues/7');
+  assert.equal(recentTitle.textContent, 'Make ranking deterministic');
+  assert.ok(createdNodes.findLast(node => node.className.includes('task-result')), 'URL and title share a Google-style task result block');
+  const inlineTimeLine = createdNodes.findLast(node => node.className.includes('inline-time-line'));
+  assert.ok(inlineTimeLine, 'Start and Stop controls share one no-wrap time line');
+  assert.deepEqual(inlineTimeLine.children.map(node => node.className), ['time-picker compact-time-picker', 'inline-time-separator', 'time-picker compact-time-picker']);
+  assert.equal(inlineTimeLine.children[1].textContent, '-');
   const inlineTimeValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
   assert.deepEqual(inlineTimeValues.slice(-4).map(node => node.value), ['08', '00', '23', '58'],
     'the list exposes Start and Stop in their stored offset wall time');
@@ -613,8 +660,10 @@ test('consecutive records for one task share one task header and keep separate t
 
   const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href));
   assert.equal(taskLinks.length, 3, 'two adjacent records for issue 7 render one shared task header');
-  assert.deepEqual(taskLinks.map(node => node.textContent), [issue(7).url + ' · Issue 7', issue(8).url + ' · Issue 8', issue(7).url + ' · Issue 7'],
-    'the same task receives a new header after a different task interrupts the sequence');
+  assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 8', 'Issue 7'],
+    'the same task receives a new title link after a different task interrupts the sequence');
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).map(node => node.textContent),
+    [issue(7).url, issue(8).url, issue(7).url], 'each grouped title retains its canonical URL source line');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);

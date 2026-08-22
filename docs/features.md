@@ -49,7 +49,7 @@ Changing this setting does not alter stored data or limit reports. Recent data i
 
 ### Direct time correction
 
-Each completed row has Start and Stop hour/minute controls.
+Each completed row has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology.
 
 - Type values, use arrow buttons or keys, or scroll while the value is focused. The `−` and `+` controls appear only for the focused hour or minute.
 - A focused valid value contains the wheel gesture so the panel remains still. Wheel movement passes through a threshold and changes at most one visible minute per raw event.
@@ -84,7 +84,8 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 - GitHub issue/PR status and state reason are shown when metadata is available.
 - Generic URL tasks appear under Open and All as `Tracked URL`; they are not presented as confirmed GitHub Open issues.
 - Completed and running time participate in ordering.
-- Inline Start/Stop controls use the same serialized timer state as the popup.
+- The task URL appears as a compact source line, with the optional title as the prominent link below it. Untitled tasks show the URL as the primary link without duplication.
+- Inline time-range controls use the same serialized timer state as the popup.
 
 The page reads only the current user's monthly paths before hydrating GitHub issue/PR metadata. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 
