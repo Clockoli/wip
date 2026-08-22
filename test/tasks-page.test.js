@@ -38,7 +38,7 @@ test('visible extension branding is RepoClock and Tasks uses neutral GitHub butt
   }
   assert.match(manifest, /"name":\s*"RepoClock"/);
   assert.match(manifest, /"default_title":\s*"RepoClock"/);
-  assert.match(popup, /<strong>RepoClock<\/strong>/);
+  assert.match(content, /heading\.append\(el\('strong', 'RepoClock'\)/);
   assert.match(content, /const ROOT_ID = 'repoclock-root'/);
   assert.match(css, /\.timer-button\{[^}]*border:1px solid var\(--button-default-borderColor-rest\)[^}]*background:var\(--button-default-bgColor-rest\)[^}]*color:var\(--button-default-fgColor-rest\)/);
   assert.match(css, /\.timer-button:hover\{[^}]*background:var\(--button-default-bgColor-hover\)/);

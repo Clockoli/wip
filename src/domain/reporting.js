@@ -1,6 +1,7 @@
+import { billableMinorForRecord, rateMinorForUser } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
-const METRICS = new Set(['total-time', 'avg-time', 'task-count']);
+const METRICS = new Set(['total-time', 'avg-time', 'task-count', 'billable-amount']);
 const MONTH_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
 const MONTH_LABELS = new Map();
 
@@ -132,15 +133,16 @@ function axisPart(record, axis) {
   return taskPart(record);
 }
 
-function metricValue(metric, seconds, count) {
+function metricValue(metric, seconds, count, billableMinor = 0) {
   if (metric === 'task-count') return count;
   if (metric === 'avg-time') return count ? seconds / count : 0;
+  if (metric === 'billable-amount') return billableMinor;
   return seconds;
 }
 
 function segmentValue(metric, aggregate, bucketTaskCount) {
   if (metric === 'avg-time') return bucketTaskCount ? aggregate.seconds / bucketTaskCount : 0;
-  return metricValue(metric, aggregate.seconds, aggregate.taskCount);
+  return metricValue(metric, aggregate.seconds, aggregate.taskCount, aggregate.billableMinor);
 }
 
 export function buildAnalytics(records, options = {}) {
@@ -155,8 +157,9 @@ export function buildAnalytics(records, options = {}) {
     const bucketPart = axisPart(record, horizontalAxis), seriesPart = axisPart(record, stackBy);
     series.set(seriesPart.key, seriesPart);
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
-    const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, tasks: new Set() };
-    cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1; cell.tasks.add(record.issue.url);
+    const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, billableMinor: 0, tasks: new Set() };
+    cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1;
+    cell.billableMinor += billableMinorForRecord(record, options.rates || {}); cell.tasks.add(record.issue.url);
     bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -168,12 +171,12 @@ export function buildAnalytics(records, options = {}) {
     const segments = [...bucket.values.entries()].map(([key, aggregate]) => {
       const item = series.get(key), taskCount = aggregate.tasks.size;
       return {
-        ...item, seconds: aggregate.seconds, count: aggregate.count, taskCount,
+        ...item, seconds: aggregate.seconds, count: aggregate.count, taskCount, billableMinor: aggregate.billableMinor,
         averageValue: metricValue('avg-time', aggregate.seconds, taskCount),
         value: segmentValue(metric, { ...aggregate, taskCount }, bucketTasks.size),
       };
     }).sort((a, b) => a.label.localeCompare(b.label));
-    const totalValue = metric === 'task-count'
+    const totalValue = ['task-count', 'billable-amount'].includes(metric)
       ? segments.reduce((sum, segment) => sum + segment.value, 0)
       : metricValue(metric, bucketSeconds, bucketTasks.size);
     return { key: bucket.key, label: bucket.label, totalValue, segments };
@@ -195,7 +198,7 @@ function hms(seconds) {
   return [Math.floor(value / 3600), Math.floor(value % 3600 / 60), value % 60].map(item => String(item).padStart(2, '0')).join(':');
 }
 
-export function exportTimesheet(records, { format, startDate, endDate }) {
+export function exportTimesheet(records, { format, startDate, endDate, rates = null, currency = 'USD' }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   const entries = ordered.map(record => ({
@@ -208,10 +211,17 @@ export function exportTimesheet(records, { format, startDate, endDate }) {
     end: record.endedAt,
     duration: hms(record.durationSeconds),
     durationSeconds: record.durationSeconds,
+    ...(rates ? {
+      hourlyRate: rateMinorForUser(record.user, rates) === null ? '' : (rateMinorForUser(record.user, rates) / 100).toFixed(2),
+      billableAmount: rateMinorForUser(record.user, rates) === null ? '' : (billableMinorForRecord(record, rates) / 100).toFixed(2),
+      currency,
+    } : {}),
     description: record.description || '',
   }));
   if (format === 'csv') {
-    const rows = [['Person', 'Repository', 'Type', 'Number', 'URL', 'Start', 'End', 'Duration', 'Duration seconds', 'Description']];
+    const rows = [rates
+      ? ['Person', 'Repository', 'Type', 'Number', 'URL', 'Start', 'End', 'Duration', 'Duration seconds', 'Hourly rate', 'Billable amount', 'Currency', 'Description']
+      : ['Person', 'Repository', 'Type', 'Number', 'URL', 'Start', 'End', 'Duration', 'Duration seconds', 'Description']];
     for (const entry of entries) rows.push(Object.values(entry));
     return `${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
   }

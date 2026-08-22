@@ -108,26 +108,25 @@
 
         <section id="repository-access-step" class="onboarding-step" aria-labelledby="repository-access-step-title" hidden>
           <h3 id="repository-access-step-title" tabindex="-1">Give RepoClock access to a data repository</h3>
-          <p>Grant RepoClock access to the newly created repository or an existing private repository. Choose <strong>Only select repositories</strong> on GitHub.</p>
+          <p id="repository-access-instruction">On GitHub, choose <strong>Only select repositories</strong> and add the private repository that will store RepoClock data.</p>
           <div class="actions repository-actions">
             <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose repository access on GitHub</a>
-            <button id="refresh-repositories" type="button" class="secondary">Check for repository access now</button>
           </div>
-          <p class="help">RepoClock checks automatically when you return from GitHub. Use this only if the repository does not appear after you save access.</p>
+          <p class="help">RepoClock checks automatically when you return from GitHub.</p>
           <button id="change-repository-setup" type="button" class="link-button">Change repository setup</button>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Choose and validate the data repository</h3>
-          <p>RepoClock detected repository access. Choose the private repository that should store RepoClock data.</p>
+          <p id="repository-step-instruction">RepoClock detected repository access. Choose the private repository that should store RepoClock data.</p>
           <fieldset>
-            <legend>Repository RepoClock can access</legend>
-            <p class="help">It does not have to contain the issues or pull requests you track. Unavailable repositories include the reason they cannot be used.</p>
+            <legend id="repository-choice-legend">Repositories RepoClock can use for data storage</legend>
+            <p class="help">This repository stores RepoClock time data. It can be separate from the repositories whose tasks you track. Unavailable repositories include the reason they cannot be used.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
           <button id="connect-repository" type="button" disabled>Validate and use selected repository</button>
-          <button id="change-repository-access" type="button" class="link-button">Change repository access</button>
+          <button id="change-repository-access" type="button" class="secondary">Change repository access</button>
         </section>
 
         <div class="setup-footer">
@@ -150,9 +149,41 @@
     <form id="display-form">
       <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
       <p class="help">This only controls how many past days appear in the main tracking panel. It does not limit tracking or reports.</p>
-      <p class="help">Track any GitHub issue or pull request.</p>
+      <p class="help">Track any GitHub task, whether it is an issue or pull request.</p>
       <button id="save-display" type="submit" disabled>Save display settings</button>
     </form>
+  </section>
+
+  <section id="billing-settings" class="card" aria-labelledby="billing-title">
+    <div class="card-heading">
+      <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user.</p></div>
+    </div>
+    <p class="help"><strong>Rates stay only in this browser’s extension-local storage.</strong> RepoClock never writes rates or calculated money to the data repository.</p>
+    <form id="billing-form">
+      <label>Currency code<input id="billing-currency" required maxlength="3" value="USD" autocomplete="off" aria-describedby="currency-help"></label>
+      <p id="currency-help" class="help">Use one three-letter currency code, such as USD, EUR, or GBP, for all rates.</p>
+      <div class="rate-heading" aria-hidden="true"><span>GitHub user</span><span>Hourly rate</span><span></span></div>
+      <div id="rates-list" class="rates-list"></div>
+      <div class="actions billing-actions">
+        <button id="add-rate" type="button" class="secondary">Add person</button>
+        <button id="save-billing" type="submit">Save billable rates</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="settings-backup" class="card" aria-labelledby="settings-backup-title">
+    <div class="card-heading">
+      <div><h2 id="settings-backup-title">Local settings backup</h2><p>Export or import RepoClock settings as a readable JSON text file.</p></div>
+    </div>
+    <p class="help">The file includes display settings, billable rates, currency, and repository coordinates. GitHub credentials, Device Flow codes, active timers, pending writes, and tracked time are never exported. Repository coordinates are reference-only on import; importing does not reconnect GitHub or change the current data repository.</p>
+    <div id="settings-export-reminder" class="notice" hidden>
+      <strong>Your local settings changed.</strong> Export an updated backup so they are easy to restore on this browser or another device.
+    </div>
+    <div class="actions">
+      <button id="export-settings" type="button" class="secondary">Export settings</button>
+      <label class="file-action">Import settings<input id="import-settings-file" type="file" accept="application/json,text/plain,.json"></label>
+      <button id="import-settings" type="button" class="secondary" disabled>Import selected file</button>
+    </div>
   </section>
 
   <details id="advanced-pat" class="card advanced">

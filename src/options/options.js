@@ -1,4 +1,5 @@
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
+import { rateMajorToMinor, rateMinorToMajor } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -20,6 +21,7 @@ let repositoryAccessDetected = false;
 let repositoryChoiceMode = '';
 let renderedOnboardingStep = null;
 let repositoryChoiceSummary = 'Repository setup option chosen';
+let localPreferences = null;
 
 function message(text, kind = '') {
   $('message').textContent = text;
@@ -90,6 +92,9 @@ function renderOnboardingProgress() {
   $('access-complete').hidden = step < 3;
   $('repository-access-complete').hidden = step < 4;
   $('repository-choice-summary').textContent = repositoryChoiceSummary;
+  $('repository-access-instruction').textContent = repositoryChoiceMode === 'create'
+    ? 'On GitHub, choose Only select repositories and add repoclock-data.'
+    : 'On GitHub, choose Only select repositories and add your existing private data repository.';
   if (previousStep !== null && previousStep !== step) {
     queueMicrotask(() => $({ 1: 'device-step-title', 2: 'access-step-title', 3: 'repository-access-step-title', 4: 'repository-step-title' }[step]).focus());
   }
@@ -210,11 +215,14 @@ function renderRepositoryList() {
     empty.textContent = repositories.length ? 'No repository matches this search.' : 'No repositories are visible. Install RepoClock or grant repository access on GitHub, then check again.';
     root.append(empty); return;
   }
+  const eligible = visible.filter(repository => repository.eligible);
+  const singleEligibleRepository = eligible.length === 1 && visible.length === 1;
   for (const repository of visible) {
     const label = document.createElement('label');
-    label.className = `repository-option${repository.eligible ? '' : ' unavailable'}`;
+    label.className = `repository-option${singleEligibleRepository ? ' single' : ''}${repository.eligible ? '' : ' unavailable'}`;
     const radio = document.createElement('input');
     radio.type = 'radio'; radio.name = 'repository'; radio.disabled = !repository.eligible;
+    radio.hidden = singleEligibleRepository;
     radio.value = `${repository.installationId}:${repository.repoId}`;
     radio.checked = selectedRepository?.installationId === repository.installationId && selectedRepository?.repoId === repository.repoId;
     const copy = document.createElement('span');
@@ -246,6 +254,14 @@ function renderRepositories(result) {
     && repository.installationId === previousSelection.installationId
     && repository.repoId === previousSelection.repoId
     && repository.eligible) || selectOnlyEligibleRepository(repositories);
+  const eligibleRepositories = repositories.filter(repository => repository.eligible);
+  const singleEligibleRepository = eligibleRepositories.length === 1 && repositories.length === 1;
+  $('repository-step-instruction').textContent = singleEligibleRepository
+    ? `RepoClock detected access to ${eligibleRepositories[0].fullName}. Validate it as the repository that stores RepoClock data.`
+    : 'RepoClock detected repository access. Choose the private repository that should store RepoClock data.';
+  $('repository-choice-legend').textContent = singleEligibleRepository
+    ? 'Data repository RepoClock can access'
+    : 'Repositories RepoClock can use for data storage';
   $('connect-repository').disabled = !selectedRepository;
   $('repository-search').value = '';
   $('repository-search-label').hidden = repositories.length < 10;
@@ -262,7 +278,6 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
   discoveryStatus = 'loading';
   renderOnboardingProgress();
   discoveryPromise = (async () => {
-    if (!monitoring) $('refresh-repositories').disabled = true;
     if (!monitoring) message('Refreshing RepoClock installation and repository access…');
     showRecovery();
     try {
@@ -290,7 +305,6 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
       if (!monitoring) message(error.message, 'error');
       throw error;
     } finally {
-      if (!monitoring) $('refresh-repositories').disabled = false;
       discoveryPromise = null;
     }
   })();
@@ -364,6 +378,51 @@ function startRepositoryMonitoring(expectedName = '') {
   repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 1500);
 }
 
+function addRateRow(login = '', minorPerHour = 0) {
+  const row = document.createElement('div'); row.className = 'rate-row';
+  const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
+  const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
+  loginLabel.append(loginInput);
+  const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate';
+  const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.inputMode = 'decimal'; rateInput.placeholder = '100.00'; rateInput.value = rateMinorToMajor(minorPerHour);
+  rateLabel.append(rateInput);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
+  remove.addEventListener('click', () => row.remove());
+  row.append(loginLabel, rateLabel, remove); $('rates-list').append(row);
+}
+
+function renderLocalPreferences(preferences) {
+  localPreferences = preferences;
+  $('billing-currency').value = preferences.currency;
+  $('rates-list').replaceChildren();
+  for (const [login, rate] of Object.entries(preferences.rates || {})) addRateRow(login, rate);
+  if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
+  if (!state?.config) $('recent-days').value = preferences.recentDays || 7;
+  $('settings-export-reminder').hidden = !preferences.exportRecommended;
+}
+
+async function refreshLocalPreferences() {
+  renderLocalPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
+}
+
+function billingPayload() {
+  const rates = {};
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    const login = row.querySelector('.rate-login').value.trim();
+    const value = row.querySelector('.rate-value').value.trim();
+    if (!login && !value) continue;
+    if (!login || !value) throw new Error('Enter both a GitHub user and an hourly rate');
+    rates[login] = rateMajorToMinor(value);
+  }
+  return { currency: $('billing-currency').value.trim().toUpperCase(), rates };
+}
+
+function downloadText(text, filename) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json;charset=utf-8' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 async function refreshState() {
   const [nextState, resumedAttempt] = await Promise.all([
     send({ type: 'GET_ONBOARDING_STATE' }), send({ type: 'RESUME_DEVICE_FLOW' }),
@@ -421,7 +480,6 @@ $('device-done').addEventListener('click', async () => {
   } finally { $('device-done').disabled = !state?.deviceAttempt; }
 });
 
-$('refresh-repositories').addEventListener('click', () => void discoverRepositories().catch(() => {}));
 $('repository-search').addEventListener('input', renderRepositoryList);
 $('change-connection').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; repositoryChoiceMade = true; repositoryChoiceMode = 'existing'; repositoryChoiceSummary = 'Using an existing repository'; discoveryStatus = 'idle'; renderState(); });
 
@@ -560,9 +618,47 @@ $('display-form').addEventListener('submit', async event => {
     } });
     state.config = result.config;
     $('recent-days').value = result.config.recentDays;
-    message('Display settings saved.', 'success');
+    renderLocalPreferences(result.preferences);
+    message('Display settings saved. Export an updated local settings backup.', 'success');
   } catch (error) { message(error.message || 'Could not save display settings.', 'error'); }
   finally { $('save-display').disabled = !state?.config; }
+});
+
+$('add-rate').addEventListener('click', () => addRateRow());
+$('billing-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('save-billing').disabled = true; message('Saving billable rates…');
+  try {
+    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
+    await refreshLocalPreferences();
+    message('Billable rates saved locally. Export an updated settings backup.', 'success');
+  } catch (error) { message(error.message || 'Could not save billable rates.', 'error'); }
+  finally { $('save-billing').disabled = false; }
+});
+$('export-settings').addEventListener('click', async () => {
+  $('export-settings').disabled = true;
+  try {
+    const result = await send({ type: 'EXPORT_SETTINGS' });
+    downloadText(result.text, `repoclock-settings-${new Date().toISOString().slice(0, 10)}.json`);
+    await send({ type: 'MARK_SETTINGS_EXPORTED', revision: result.revision });
+    await refreshLocalPreferences();
+    message('Local settings backup exported. GitHub credentials and tracked data were not included.', 'success');
+  } catch (error) { message(error.message || 'Could not export settings.', 'error'); }
+  finally { $('export-settings').disabled = false; }
+});
+$('import-settings-file').addEventListener('change', () => { $('import-settings').disabled = !$('import-settings-file').files?.length; });
+$('import-settings').addEventListener('click', async () => {
+  const file = $('import-settings-file').files?.[0];
+  if (!file) return;
+  if (file.size > 262_144) { message('Settings file is too large.', 'error'); return; }
+  $('import-settings').disabled = true;
+  try {
+    const result = await send({ type: 'IMPORT_SETTINGS', text: await file.text() });
+    if (state?.config) state.config.recentDays = result.recentDays;
+    $('recent-days').value = result.recentDays;
+    await refreshLocalPreferences();
+    message('Local settings imported. GitHub remains connected only if it was already connected.', 'success');
+  } catch (error) { message(error.message || 'Could not import settings.', 'error'); }
+  finally { $('import-settings-file').value = ''; $('import-settings').disabled = true; }
 });
 
 $('settings-form').addEventListener('submit', async event => {
@@ -579,4 +675,4 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().catch(error => message(error.message, 'error'));
+refreshState().then(refreshLocalPreferences).catch(error => message(error.message, 'error'));

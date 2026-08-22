@@ -39,6 +39,7 @@ test('content-script START accepts a matching canonical pull request page', () =
 
 test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('DELETE_ENTRY', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));

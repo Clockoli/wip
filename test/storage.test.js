@@ -373,3 +373,41 @@ test('legacy repository identity upgrade is one generation-checked atomic mutati
   assert.equal(snapshot.config.repoId, 77);
   assert.equal(snapshot.config.branchMode, 'custom');
 });
+
+
+test('billable rates and settings export stay local, version changes, and import atomically', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
+  assert.deepEqual(await store.getLocalPreferences(), {
+    recentDays: 7, currency: 'USD', rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
+  });
+  const saved = await store.saveBillingSettings({ currency: 'EUR', rates: { alice: 12500 } });
+  assert.equal(saved.revision, 1);
+  assert.equal((await store.getLocalPreferences()).exportRecommended, true);
+  const exported = await store.exportSettings();
+  assert.doesNotMatch(exported.text, /secret/);
+  assert.deepEqual(JSON.parse(exported.text).billing, { currency: 'EUR', rates: { alice: 12500 } });
+  assert.equal(await store.markSettingsExported(exported.revision), true);
+  assert.equal((await store.getLocalPreferences()).exportRecommended, false);
+  const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));
+  assert.equal(imported.recentDays, 12);
+  assert.equal((await store.getConfigurationSnapshot()).config.recentDays, 12);
+  assert.equal((await store.getLocalPreferences()).exportRecommended, true);
+});
+
+
+test('legacy branch promotion is atomic and refuses to redirect accepted work', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', repoId: 7 }, 'token', { user: 'alice', activeCache: null, pendingWrites: [], recentCache: [{ id: 'old' }] });
+  let snapshot = await store.getConfigurationSnapshot();
+  await backend.setMany({ activeCache: { startedAt: '2026-08-22T10:00:00Z' } });
+  assert.equal(await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'repoclock/users/123', defaultBranch: 'main', storageBranchVersion: 1 }), false);
+  await backend.setMany({ activeCache: null });
+  const promoted = await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'repoclock/users/123', defaultBranch: 'main', storageBranchVersion: 1 });
+  assert.ok(promoted > snapshot.generation);
+  snapshot = await store.getConfigurationSnapshot();
+  assert.equal(snapshot.config.branch, 'repoclock/users/123');
+  assert.equal(snapshot.config.defaultBranch, 'main');
+  assert.equal(snapshot.config.storageBranchVersion, 1);
+  assert.deepEqual((await store.getState()).recentCache, []);
+});

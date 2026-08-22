@@ -135,3 +135,41 @@ test('current-user loading refreshes a legacy size-less cache before byte prefli
   assert.equal(github.snapshots.at(-1).etag, '', 'legacy cache must be refreshed so tree blob sizes are known before reads');
   assert.ok(cache.value.files.every(file => Number.isSafeInteger(file.size)));
 });
+
+
+test('repository reports merge personal and legacy records for migrated users without copied duplicates', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub();
+  primary.repositoryKey = 'acme/time-data@main';
+  personal.repositoryKey = 'acme/time-data@repoclock/users/123';
+  primary.files.set('times/2026-08/alice.txt', { sha: A, text: monthly(
+    block('https://github.com/acme/app/issues/1', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
+    block('https://github.com/acme/app/issues/8', '2026-08-17T13:00:00+00:00', '2026-08-17T14:00:00+00:00'),
+  ) });
+  personal.files.set('times/2026-08/alice.txt', { sha: 'd'.repeat(40), text: monthly(
+    block('https://github.com/acme/app/issues/1', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
+    block('https://github.com/acme/app/issues/9', '2026-08-17T08:00:00+00:00', '2026-08-17T09:30:00+00:00'),
+  ) });
+  const clients = new Map([['main', primary], ['repoclock/users/123', personal]]);
+  for (const client of clients.values()) client.forBranch = branch => clients.get(branch);
+  primary.listBranches = async prefix => ['repoclock/users/123'].filter(branch => branch.startsWith(prefix));
+  personal.listBranches = primary.listBranches;
+  personal.getText = async path => ({ path, sha: 'e'.repeat(40), text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  const cacheValues = new Map();
+  const cache = {
+    async getReportCache(key) { return structuredClone(cacheValues.get(key) || null); },
+    async saveReportCache(value) { cacheValues.set(value.repositoryKey, structuredClone(value)); },
+  };
+  const legacyRecords = await new ReportService({ github: primary }).loadRange(
+    { startDate: '2026-08-17', endDate: '2026-08-17' },
+  );
+  assert.deepEqual(legacyRecords.map(record => record.issue.number), [1, 2, 8]);
+  const records = await new ReportService({ github: personal, cache }).loadRepositoryRange(
+    { startDate: '2026-08-17', endDate: '2026-08-17' }, { defaultBranch: 'main' },
+  );
+  assert.deepEqual(records.map(record => [record.user, record.issue.number, record.durationSeconds]), [
+    ['alice', 9, 5400],
+    ['alice', 1, 3600],
+    ['bob', 2, 7200],
+    ['alice', 8, 3600],
+  ]);
+});

@@ -1,11 +1,25 @@
 import { parseMonthlyText, parseMonthlyTextPath } from '../domain/monthly-text.js';
 import { entryDateParts, validatePathSegment } from '../domain/values.js';
+import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
 const DEFAULT_USER_BUDGET = Object.freeze({ maxFiles: 13, maxBytes: 20 * 1024 * 1024, maxRecords: 100000 });
 
 function withoutStorageMetadata(record) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')));
+}
+
+function reportRecordKey(record) {
+  return [record.user.toLowerCase(), record.issue.url, record.startedAt, record.endedAt].join('\u0000');
+}
+
+function mergeReportRecords(primary, fallback) {
+  const merged = new Map();
+  for (const record of [...primary, ...fallback]) {
+    const key = reportRecordKey(record);
+    if (!merged.has(key)) merged.set(key, record);
+  }
+  return [...merged.values()];
 }
 
 function emptyCache(repositoryKey) {
@@ -45,6 +59,25 @@ export class ReportService {
 
   async saveCache(value) {
     await this.cache?.saveReportCache?.(value);
+  }
+
+  async loadRepositoryRange(range, { defaultBranch = null, signal } = {}) {
+    if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+      return this.loadRange(range, { signal });
+    }
+    const defaultGithub = this.github.forBranch(defaultBranch, 'default');
+    const users = await discoverUserStorageBranches(defaultGithub, { signal });
+    if (!users.length) return new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency }).loadRange(range, { signal });
+    const legacy = await new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency }).loadRange(range, { signal });
+    const personalRecords = [];
+    for (const user of users) {
+      signal?.throwIfAborted();
+      const personal = await new ReportService({ github: user.github, cache: this.cache, concurrency: this.concurrency })
+        .loadUserRange(range, user.login, { signal });
+      personalRecords.push(...personal);
+    }
+    return mergeReportRecords(personalRecords, legacy)
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }
 
   async loadUserRange(range, user, options = {}, budgets = {}) {

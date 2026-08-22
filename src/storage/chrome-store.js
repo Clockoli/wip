@@ -1,3 +1,4 @@
+import { normalizeBillingSettings, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
@@ -6,7 +7,16 @@ const DEVICE_ATTEMPT = 'deviceAttempt';
 const PENDING_AUTH = 'pendingAuth';
 const PENDING_AUTH_GENERATION = 'pendingAuthGeneration';
 const ONBOARDING_KEYS = ['onboardingLastVerifiedAt', 'onboardingVerificationStatus'];
-const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', ...ONBOARDING_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+const BILLING_SETTINGS = 'billingSettings';
+const LOCAL_RECENT_DAYS = 'localRecentDays';
+const SETTINGS_REVISION = 'settingsRevision';
+const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
+const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
+const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+
+function generationValue(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 function storageFormatError(message) {
   return Object.assign(new Error(message), { code: 'incompatible_storage_format' });
@@ -276,14 +286,42 @@ export class ChromeStore {
     });
   }
 
+  async promoteToUserStorageBranch(expectedGeneration, expected, patch) {
+    return this.backend.mutateMany(
+      ['config', CONFIGURATION_GENERATION, 'activeCache', 'pendingWrites', 'recentCache', 'reportCache', 'taskMetadataCache'],
+      values => {
+        const config = values.config, generation = generationValue(values[CONFIGURATION_GENERATION]);
+        if (generation !== expectedGeneration || !config
+            || config.owner !== expected.owner || config.repo !== expected.repo || config.branch !== expected.branch
+            || values.activeCache || (values.pendingWrites || []).length) return { result: false };
+        return {
+          set: {
+            config: { ...config, ...structuredClone(patch) },
+            [CONFIGURATION_GENERATION]: generation + 1,
+            recentCache: [], reportCache: null, taskMetadataCache: null,
+          },
+          result: generation + 1,
+        };
+      },
+    );
+  }
+
   async saveConfig(config, token) { await this.backend.setMany({ config, token }); }
 
   async getReportCache(repositoryKey) {
     const { reportCache = null } = await this.backend.getMany(['reportCache']);
-    return reportCache?.repositoryKey === repositoryKey ? reportCache : null;
+    if (reportCache?.repositoryKey === repositoryKey) return reportCache;
+    return reportCache?.version === 2 && reportCache.entries?.[repositoryKey] || null;
   }
 
-  async saveReportCache(reportCache) { await this.backend.setMany({ reportCache }); }
+  async saveReportCache(value) {
+    await this.backend.mutateMany(['reportCache'], current => {
+      const existing = current.reportCache?.version === 2 && current.reportCache.entries
+        ? current.reportCache.entries
+        : current.reportCache?.repositoryKey ? { [current.reportCache.repositoryKey]: current.reportCache } : {};
+      return { set: { reportCache: { version: 2, entries: { ...existing, [value.repositoryKey]: value } } }, result: true };
+    });
+  }
 
   async getTaskMetadataCache(repositoryKey) {
     const { taskMetadataCache = null } = await this.backend.getMany(['taskMetadataCache']);
@@ -299,19 +337,69 @@ export class ChromeStore {
     return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
   }
 
+  async getLocalPreferences() {
+    const values = await this.backend.getMany(['config', ...SETTINGS_KEYS]);
+    const billing = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
+    const revision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
+    const exportedRevision = Number.isSafeInteger(values[SETTINGS_EXPORTED_REVISION]) && values[SETTINGS_EXPORTED_REVISION] >= 0 ? values[SETTINGS_EXPORTED_REVISION] : 0;
+    const recentDays = Number(values.config?.recentDays ?? values[LOCAL_RECENT_DAYS] ?? 7);
+    return { recentDays, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision };
+  }
+
+  async saveBillingSettings(value) {
+    const billing = normalizeBillingSettings(value);
+    return this.backend.mutateMany([BILLING_SETTINGS, SETTINGS_REVISION], values => {
+      const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
+      return { set: { [BILLING_SETTINGS]: billing, [SETTINGS_REVISION]: revision }, result: { ...billing, revision, exportRecommended: true } };
+    });
+  }
+
   async updateDisplayPreferences({ recentDays }) {
     const normalized = Number(recentDays);
     if (!Number.isInteger(normalized) || normalized < 1 || normalized > 31) {
       throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
     }
-    return this.backend.mutateMany(['config', CONFIGURATION_GENERATION], values => {
+    return this.backend.mutateMany(['config', CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
       if (!values.config) throw new Error('Connect a repository before saving display settings');
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0
         ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       return {
-        set: { config: { ...values.config, recentDays: normalized }, [CONFIGURATION_GENERATION]: generation },
+        set: { config: { ...values.config, recentDays: normalized }, [LOCAL_RECENT_DAYS]: normalized, [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision },
         result: generation,
       };
+    });
+  }
+
+  async importSettings(text) {
+    const imported = parseSettingsImport(text);
+    return this.backend.mutateMany(['config', CONFIGURATION_GENERATION, ...SETTINGS_KEYS], values => {
+      const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
+      const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
+      const set = {
+        [BILLING_SETTINGS]: imported.billing, [LOCAL_RECENT_DAYS]: imported.recentDays,
+        [SETTINGS_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
+      };
+      if (values.config) set.config = { ...values.config, recentDays: imported.recentDays };
+      return { set, result: { ...imported, revision, exportRecommended: true } };
+    });
+  }
+
+  async exportSettings() {
+    const values = await this.backend.getMany(['config', BILLING_SETTINGS, LOCAL_RECENT_DAYS, SETTINGS_REVISION]);
+    const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
+    return {
+      text: settingsExportText({ config, billing: values[BILLING_SETTINGS] || {} }),
+      revision: Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0,
+    };
+  }
+
+  async markSettingsExported(revision) {
+    const expected = Number(revision);
+    return this.backend.mutateMany([SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION], values => {
+      const current = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
+      if (!Number.isSafeInteger(expected) || expected !== current) return { result: false };
+      return { set: { [SETTINGS_EXPORTED_REVISION]: current }, result: true };
     });
   }
 

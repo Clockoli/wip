@@ -399,7 +399,7 @@ export class TrackerService {
       }]));
       return files.map(file => saved.get(file.path) ?? file);
     } catch (error) {
-      if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while missing issue titles were being saved. Reload.');
+      if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while missing task titles were being saved. Reload.');
       throw error;
     }
   }
@@ -411,14 +411,14 @@ export class TrackerService {
     const path = activeTextPath(this.user);
     try {
       const file = await this.github.getText(path), remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-      if (!sameTimer(remote, active)) throw new TrackerConflictError('The active timer changed while its missing issue title was being saved. Reload.');
+      if (!sameTimer(remote, active)) throw new TrackerConflictError('The active timer changed while its missing task title was being saved. Reload.');
       if (remote.issueTitle) return remote;
       const result = await this.github.putText(path, serializeActiveText({ ...remote, issueTitle }), `timer: add missing title ${this.user}`, file.sha);
       const saved = parseActiveText(serializeActiveText({ ...remote, issueTitle }), { user: this.user, path, sha: result.sha });
       await this.store.patchState({ activeCache: saved });
       return saved;
     } catch (error) {
-      if (isConflict(error)) throw new TrackerConflictError('The active timer changed while its missing issue title was being saved. Reload.');
+      if (isConflict(error)) throw new TrackerConflictError('The active timer changed while its missing task title was being saved. Reload.');
       throw error;
     }
   }

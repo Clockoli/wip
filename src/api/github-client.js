@@ -167,6 +167,47 @@ export class GitHubClient {
     return this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/branches/${encodeURIComponent(this.branch)}`);
   }
 
+  forBranch(branch, branchMode = 'custom') {
+    return new GitHubClient({
+      token: this.token, credentialProvider: this.credentialProvider,
+      owner: this.owner, repo: this.repo, branch,
+      expectedRepositoryId: this.expectedRepositoryId,
+      branchMode, fetchImpl: this.fetchImpl,
+    });
+  }
+
+  async ensureBranch(branch, sourceBranch = this.branch) {
+    const target = validateBranch(String(branch));
+    const source = validateBranch(String(sourceBranch));
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const refPath = name => `${base}/git/ref/heads/${encodeURIComponent(name)}`;
+    await this.assertStableDestinationForWrite();
+    try { await this.request(refPath(target)); return { branch: target, created: false }; }
+    catch (error) { if (error?.status !== 404) throw error; }
+    const sourceRef = await this.request(refPath(source));
+    const sha = sourceRef?.object?.sha;
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) throw new GitHubApiError('GitHub returned an invalid source branch reference.', 502, 'invalid_github_response');
+    try {
+      await this.request(`${base}/git/refs`, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${target}`, sha }) });
+      return { branch: target, created: true };
+    } catch (error) {
+      if (error?.status !== 422 && error?.code !== 'validation') throw error;
+      try { await this.request(refPath(target)); return { branch: target, created: false }; }
+      catch { throw error; }
+    }
+  }
+
+  async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
+    const normalized = String(prefix || '');
+    validateBranch(`${normalized}probe`);
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
+    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('RepoClock user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
+    const fullPrefix = `refs/heads/${normalized}`;
+    return body.map(item => String(item?.ref || '')).filter(ref => ref.startsWith(fullPrefix))
+      .map(ref => validateBranch(ref.slice('refs/heads/'.length))).sort();
+  }
+
   assertCanonicalCoordinates(repository) {
     const canonicalName = typeof repository?.full_name === 'string' ? repository.full_name : '';
     if (!canonicalName || canonicalName.toLowerCase() !== `${this.owner}/${this.repo}`.toLowerCase()) {

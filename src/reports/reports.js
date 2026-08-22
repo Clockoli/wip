@@ -2,11 +2,12 @@ import {
   buildAnalytics, buildFacets, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename,
 } from '../domain/reporting.js';
+import { billableMinorTotal, rateMinorForUser } from '../domain/local-settings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, sourceRepository: '', branch: '', loading: false, requestId: 0, analytics: null,
+  records: [], range: null, sourceRepository: '', branch: '', billing: { currency: 'USD', rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
 };
 
@@ -42,10 +43,15 @@ function svg(tag, attributes = {}, text = '') {
   return node;
 }
 
-const METRIC_LABELS = { 'total-time': 'Total time', 'avg-time': 'Avg time', 'task-count': 'Task count' };
+const METRIC_LABELS = { 'total-time': 'Total time', 'avg-time': 'Avg time', 'task-count': 'Task count', 'billable-amount': 'Billable amount' };
 const AXIS_LABELS = { day: 'Day', week: 'Week', month: 'Month', person: 'Person', repository: 'Repository', task: 'Task' };
 
+function formatMoney(minor, currency = state.billing.currency) {
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format((Number(minor) || 0) / 100);
+}
+
 function formatMetricValue(value, metric, { tooltip = false } = {}) {
+  if (metric === 'billable-amount') return formatMoney(value);
   if (metric === 'task-count') {
     const count = Math.round(value);
     return tooltip ? `${count} ${count === 1 ? 'task' : 'tasks'}` : String(count);
@@ -103,10 +109,12 @@ function renderFacet(container, options, selected, query, rerender) {
 function renderSummary(filtered) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   $('summary-time').textContent = formatClockDuration(total);
+  $('summary-money').textContent = formatMoney(billableMinorTotal(filtered, state.billing.rates));
   $('summary-entries').textContent = String(filtered.length);
   $('summary-people').textContent = String(new Set(filtered.map(record => record.user)).size);
   $('summary-repositories').textContent = String(new Set(filtered.map(record => `${record.issue.owner}/${record.issue.repo}`)).size);
-  $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)}`;
+  const missingRates = [...new Set(filtered.map(record => record.user).filter(user => rateMinorForUser(user, state.billing.rates) === null))];
+  $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${formatMoney(billableMinorTotal(filtered, state.billing.rates))}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
 }
 
 function renderAnalyticsTable(analytics) {
@@ -138,7 +146,7 @@ function renderChart(analytics) {
   if (!analytics.buckets.length) {
     const empty = document.createElement('div'); empty.className = 'chart-empty'; empty.textContent = 'No data matches these filters.'; container.append(empty); return;
   }
-  const width = Math.max(720, analytics.buckets.length * 92 + 100), height = 400;
+  const width = Math.max(320, analytics.buckets.length * 92 + 100), height = 400;
   const margin = { top: 24, right: 20, bottom: 104, left: 66 }, plotWidth = width - margin.left - margin.right, plotHeight = height - margin.top - margin.bottom;
   const metricLabel = METRIC_LABELS[analytics.metric];
   const chart = svg('svg', { width, height, viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': `Stacked bar chart of ${metricLabel.toLowerCase()}` });
@@ -188,6 +196,7 @@ function render() {
     metric: $('metric').value,
     horizontalAxis: $('horizontal-axis').value,
     stackBy: $('stack-by').value,
+    rates: state.billing.rates,
   });
   renderChart(state.analytics);
   setDownloadsAvailable(Boolean(filtered.length));
@@ -202,6 +211,7 @@ async function loadRange(range) {
     if (requestId !== state.requestId) return;
     if (!result.configured) { $('setup').hidden = false; return; }
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
+    state.billing = { currency: result.billing?.currency || 'USD', rates: result.billing?.rates || {} };
     state.people = new Set(result.records.map(record => record.user));
     state.repositories = new Set(result.records.map(record => `${record.issue.owner}/${record.issue.repo}`));
     $('report-content').hidden = false; render();
@@ -245,7 +255,10 @@ function downloadTimesheet(format, event) {
   event.preventDefault();
   const filtered = filterReportRecords(state.records, selectedFilters());
   if (!state.range || !filtered.length) return;
-  const content = exportTimesheet(filtered, { format, startDate: state.range.startDate, endDate: state.range.endDate });
+  const content = exportTimesheet(filtered, {
+    format, startDate: state.range.startDate, endDate: state.range.endDate,
+    rates: state.billing.rates, currency: state.billing.currency,
+  });
   const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
   const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');
   anchor.href = url; anchor.download = reportFilename(format, state.range.startDate, state.range.endDate); anchor.click();

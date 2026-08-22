@@ -1,5 +1,6 @@
 import { activeTextPath, parseActiveText } from '../domain/monthly-text.js';
 import { validateBranch, validateOwner, validateRepo } from '../domain/values.js';
+import { ensureUserStorageBranch } from './user-storage-branch.js';
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 
@@ -19,14 +20,15 @@ function repositoryConfigurationError(message, code) {
 }
 
 function destinationChanged(previous, next) {
-  return Boolean(previous) && (previous.owner !== next.owner || previous.repo !== next.repo || previous.branch !== next.branch);
+  return Boolean(previous) && (previous.owner !== next.owner || previous.repo !== next.repo || (previous.defaultBranch || previous.branch) !== next.branch);
 }
 
 export class ConfigurationService {
-  constructor({ store, githubFactory, credentialProvider = null }) {
+  constructor({ store, githubFactory, credentialProvider = null, userBranchProvisioner = ensureUserStorageBranch }) {
     this.store = store;
     this.githubFactory = githubFactory;
     this.credentialProvider = credentialProvider;
+    this.userBranchProvisioner = userBranchProvisioner;
   }
 
   repositoryIdentity(repository, config) {
@@ -63,6 +65,39 @@ export class ConfigurationService {
     const current = (await this.store.getConfigurationSnapshot()).config;
     if (current?.repoId) return current;
     throw new Error('Repository configuration changed while its stable identity was being verified.');
+  }
+
+  async ensurePersonalStorageBranch() {
+    const existing = await this.ensureRepositoryIdentity();
+    if (!existing || existing.storageBranchVersion === 1) return existing;
+    const [snapshot, authSnapshot, state] = await Promise.all([
+      this.store.getConfigurationSnapshot(), this.store.getAuthSnapshot(), this.store.getState(),
+    ]);
+    const config = snapshot.config;
+    if (!config || config.storageBranchVersion === 1 || state.activeCache || (state.pendingWrites || []).length) return config;
+    if (!snapshot.token && !authSnapshot.auth?.accessToken) return config;
+    const credentials = authSnapshot.auth?.mode === 'github_app' && this.credentialProvider
+      ? { credentialProvider: this.credentialProvider }
+      : { token: snapshot.token || authSnapshot.auth?.accessToken };
+    const sourceBranch = config.defaultBranch || config.branch;
+    const github = this.githubFactory({ ...credentials, ...config, branch: sourceBranch, branchMode: 'custom', expectedRepositoryId: config.repoId || null });
+    const identity = Number.isSafeInteger(authSnapshot.auth?.githubUserId)
+      ? { id: authSnapshot.auth.githubUserId, login: authSnapshot.auth.githubLogin || config.storageLogin || state.user }
+      : await github.getAuthenticatedIdentity();
+    const storageLogin = config.storageLogin || state.user || identity.login;
+    const initialRemoteActive = await this.previousActive(config, authSnapshot.auth, snapshot.token, state);
+    if (initialRemoteActive) return config;
+    const personal = await this.userBranchProvisioner(github, { id: identity.id, login: storageLogin }, sourceBranch);
+    const remoteActive = await this.previousActive(config, authSnapshot.auth, snapshot.token, state);
+    if (remoteActive) return config;
+    const generation = await this.store.promoteToUserStorageBranch(snapshot.generation, {
+      owner: config.owner, repo: config.repo, branch: config.branch,
+    }, {
+      branch: personal.branch, defaultBranch: sourceBranch, branchMode: 'custom',
+      storageLogin, storageBranchVersion: 1,
+    });
+    if (generation !== false) return { ...config, branch: personal.branch, defaultBranch: sourceBranch, branchMode: 'custom', storageLogin, storageBranchVersion: 1 };
+    return (await this.store.getConfigurationSnapshot()).config;
   }
 
   async previousActive(previousConfig, previousAuth, previousToken, state) {
@@ -127,13 +162,17 @@ export class ConfigurationService {
     }
 
     const preservesDataIdentity = Boolean(previousConfig) && !changesDestination && !changesUser;
+    const storageLogin = preservesDataIdentity ? previousStorageLogin : identity.login;
+    const personal = await this.userBranchProvisioner(github, { id: identity.id, login: storageLogin }, requestedConfig.branch);
     const preservedConfig = preservesDataIdentity ? Object.fromEntries(
-      ['storageLogin', 'installationId', 'repositoryFormatVersion']
+      ['installationId', 'repositoryFormatVersion']
         .filter(key => previousConfig[key] !== undefined)
         .map(key => [key, previousConfig[key]]),
     ) : {};
     const config = {
       ...requestedConfig, ...preservedConfig,
+      branch: personal.branch, defaultBranch: requestedConfig.branch,
+      storageLogin, storageBranchVersion: 1,
       repoId, branchMode: 'custom', visibility: 'private',
     };
     const statePatch = {

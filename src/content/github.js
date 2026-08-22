@@ -1,5 +1,7 @@
 (() => {
   const ROOT_ID = 'repoclock-root';
+  const POPUP_ROOT_ID = 'repoclock-popup-root';
+  const popupMode = location.protocol === 'chrome-extension:';
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
@@ -27,13 +29,23 @@
   let summaryTotalValue = null;
   let summaryIndex = 0;
   let summaryElapsedMs = 0;
+  let popupTask = null;
 
-  function issueFromLocation() {
-    if (location.protocol !== 'https:' || location.hostname !== 'github.com') return null;
-    const match = location.pathname.match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
+  function taskFromPath(hostname, pathname) {
+    if (hostname !== 'github.com') return null;
+    const match = String(pathname).match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
     if (!match) return null;
     const type = match[3] === 'pull' ? 'pull_request' : 'issue';
     return { type, owner: match[1], repo: match[2], number: Number(match[4]), url: `https://github.com/${match[1]}/${match[2]}/${match[3]}/${match[4]}` };
+  }
+
+  function taskFromUrl(value) {
+    const match = String(value || '').match(/^https:\/\/github\.com([^?#]*)/);
+    return match ? taskFromPath('github.com', match[1]) : null;
+  }
+
+  function issueFromLocation() {
+    return popupMode ? popupTask : taskFromPath(location.hostname, location.pathname);
   }
 
   function send(message) {
@@ -164,7 +176,7 @@
         if ((root?.activeElement ?? document.activeElement) !== field || !event.deltaY) return;
         if (shift(event.deltaY < 0 ? step : -step)) event.preventDefault();
       }, { passive: false });
-      if (compact) column.append(field);
+      if (compact) { increase.textContent = '+'; decrease.textContent = '−'; column.append(decrease, field, increase); }
       else column.append(increase, field, decrease);
       return column;
     };
@@ -186,6 +198,7 @@
   function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
 
   function titleFromPage() {
+    if (popupMode) return '';
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
     return (node?.textContent || '').trim().slice(0, 300);
   }
@@ -212,6 +225,13 @@
   }
 
   function mountInHeader() {
+    if (popupMode) {
+      root = root || document.getElementById(POPUP_ROOT_ID);
+      if (!root) return false;
+      root.classList.add('popup-surface');
+      shadow = shadow || root.attachShadow({ mode: 'closed' });
+      return true;
+    }
     const target = headerTarget();
     if (!target) return false;
     if (!root) {
@@ -340,7 +360,7 @@
     const startPicker = scrollableTimePicker('Start', editing.startedAt, draft?.start), stopPicker = scrollableTimePicker('Stop', editing.endedAt, draft?.stop);
     const description = el('textarea'); description.maxLength = 2000; description.rows = 3; description.value = draft?.description ?? editing.description ?? '';
     const fieldLabel = (text, field) => { const label = el('label', text); label.append(field); return label; };
-    form.append(fieldLabel('Issue or pull request', issueField), fieldLabel('Issue title', titleField));
+    form.append(fieldLabel('Task (issue or pull request)', issueField), fieldLabel('Task title', titleField));
     const timeRange = el('div', undefined, 'time-range-editor'); timeRange.append(startPicker.node, stopPicker.node); form.append(timeRange);
     form.append(fieldLabel('Description', description));
     const actions = el('div', undefined, 'form-actions');
@@ -495,7 +515,7 @@ The previous version remains in Git history.`)) return;
       const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; top.append(meta, pending);
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions');
-      const edit = button('Edit details', 'link-button entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); });
+      const edit = button('Edit details', 'link-button entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(inlineMutation);
       for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
@@ -567,9 +587,12 @@ The previous version remains in Git history.`)) return;
 
   function renderMenu() {
     let elapsedValue = null;
-    const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker');
+    const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
+    const updateScrollState = () => menu.classList.toggle('has-more', menu.scrollHeight > menu.clientHeight + menu.scrollTop + 1);
+    menu.addEventListener('scroll', updateScrollState, { passive: true });
+    globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header');
-    const heading = el('div'); heading.append(el('strong', 'Time tracker'));
+    const heading = el('div'); heading.append(el('strong', 'RepoClock'), el('div', 'Time tracker', 'muted'));
     const syncText = pageState.pendingCount ? `${pageState.pendingCount} waiting to sync` : 'Synced'; heading.append(el('div', syncText, 'muted'));
     const headerActions = el('div', undefined, 'header-actions');
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
@@ -579,7 +602,7 @@ The previous version remains in Git history.`)) return;
     if (editing) renderEditor(body);
     else if (!pageState.configured) {
       body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
-      body.append(button('Open Settings', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
+      body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
       const current = issueFromLocation();
       if (pageState.active) {
@@ -587,7 +610,7 @@ The previous version remains in Git history.`)) return;
         const same = current && active.issue.type === current.type && active.issue.owner === current.owner && active.issue.repo === current.repo && active.issue.number === current.number;
         body.append(el('div', same ? 'Running on this item' : 'Running on another item', 'eyebrow'));
         const activeTitle = String(active.issueTitle || '').trim();
-        const activeLink = el('a', `${issueLabel(active.issue)}${activeTitle ? ` · ${activeTitle}` : ''}`, 'active-link'); activeLink.href = active.issue.url; body.append(activeLink);
+        const activeLink = el('a', `${issueLabel(active.issue)}${activeTitle ? ` · ${activeTitle}` : ''}`, 'active-link'); activeLink.href = active.issue.url; activeLink.target = '_blank'; activeLink.rel = 'noreferrer'; body.append(activeLink);
         elapsedValue = el('div', formatElapsed(active.startedAt), 'elapsed'); body.append(elapsedValue);
         const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
         body.append(button('Stop and save', 'danger wide', async (event, node) => {
@@ -599,14 +622,15 @@ The previous version remains in Git history.`)) return;
         }));
       } else {
         body.append(el('div', 'No timer running', 'eyebrow'));
-        const startButton = button(`Start timer on #${current.number}`, 'primary wide', async (event, node) => {
+        const startButton = button(current ? `Start timer on task #${current.number}` : 'Open a GitHub task to start tracking', 'primary wide', async (event, node) => {
           node.disabled = true;
           try { await send({ type: 'START', issue: current, issueTitle: titleFromPage() }); await refreshState(false, false); }
           catch (error) { node.disabled = false; setError(error); }
         });
-        startButton.disabled = pageState.pendingCount > 0;
+        startButton.disabled = !current || pageState.pendingCount > 0;
         body.append(startButton);
         if (pageState.pendingCount) body.append(el('div', 'Sync or resolve the pending entry before starting.', 'muted'));
+        else if (!current) body.append(el('div', 'Open any GitHub issue or pull request. RepoClock treats both as tasks.', 'muted'));
       }
       if (pageState.pendingCount) body.append(button('Sync now', 'secondary wide', async (event, node) => {
         node.disabled = true;
@@ -672,16 +696,20 @@ The previous version remains in Git history.`)) return;
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       * { box-sizing:border-box } button,input,textarea { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
       .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .trigger.running .octicon-stopwatch { color:var(--fgColor-open,#1a7f37) } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
-      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow:auto; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) }
+      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 }
       header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px }
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .active-link { display:inline-block } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d1d9e0b3) } .section-head { margin-bottom:7px }
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-unit { display:grid; grid-template-rows:30px 48px 30px; width:62px } .time-step { display:grid; place-items:center; min-width:44px; min-height:30px; padding:0; border-color:transparent; background:transparent; color:var(--fgColor-accent,#0969da); font-size:18px; line-height:1 } .time-step:hover { background:var(--button-invisible-bgColor-hover,#818b981a) } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .time-hint { margin-top:7px; color:var(--fgColor-muted,#59636e); font-size:11px; line-height:1.3; text-align:center }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
-      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-title { display:block; margin-bottom:5px; color:var(--fgColor-default,#1f2328); font-size:16px; font-weight:650; line-height:1.35; overflow-wrap:anywhere } .entry-title:hover { color:var(--fgColor-accent,#0969da) } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:flex; align-items:center; gap:5px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .entry-day { flex:0 0 62px; font-weight:650 } .compact-time-picker { display:inline; min-width:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { gap:2px } .compact-time-picker .time-unit { display:block; width:38px } .compact-time-picker .time-value { width:38px; height:32px; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e) } .inline-duration { margin-left:auto; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } .entry-day { flex-basis:54px } .compact-time-picker .time-unit,.compact-time-picker .time-value { width:34px } }
+      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
+      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-title { display:block; margin-bottom:5px; color:var(--fgColor-default,#1f2328); font-size:16px; font-weight:650; line-height:1.35; overflow-wrap:anywhere } .entry-title:hover { color:var(--fgColor-accent,#0969da) } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:grid; grid-template-columns:1fr; align-items:center; gap:6px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .entry-day { font-weight:650 } .compact-time-picker { display:grid; grid-template-columns:3rem minmax(0,1fr); align-items:center; min-width:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:600; white-space:normal } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { justify-content:flex-start; gap:3px } .compact-time-picker .time-unit { display:grid; grid-template-columns:24px 38px 24px; grid-template-rows:32px; width:86px } .compact-time-picker .time-step { min-width:24px; min-height:32px; height:32px; font-size:15px } .compact-time-picker .time-value { width:38px; height:32px; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { display:none; color:var(--fgColor-muted,#59636e) } .inline-duration { margin-left:0; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
+    if (popupMode) {
+      shadow.append(style, renderMenu());
+      return;
+    }
     const current = issueFromLocation(), group = el('div', undefined, 'trigger-group');
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
@@ -733,10 +761,26 @@ The previous version remains in Git history.`)) return;
     }
   }
 
-  document.addEventListener('click', event => {
-    if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
-  });
-  document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
-  navigationCheck();
-  setInterval(navigationCheck, 750);
+  if (popupMode) {
+    menuOpen = true;
+    mountInHeader();
+    renderUi();
+    chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
+      popupTask = taskFromUrl(tab?.url);
+      pageState = await send({ type: 'GET_PAGE_STATE', refresh: true });
+      if (pageState.configured) {
+        loadingRecent = true; renderUi();
+        try { applyMenuData(await send(recentRequest())); }
+        finally { loadingRecent = false; }
+      }
+      renderUi();
+    }).catch(setError);
+  } else {
+    document.addEventListener('click', event => {
+      if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
+    });
+    document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
+    navigationCheck();
+    setInterval(navigationCheck, 750);
+  }
 })();

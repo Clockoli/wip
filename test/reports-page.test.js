@@ -38,6 +38,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(3\)/);
   assert.match(worker, /function syncPendingNow[\s\S]*ensureDataVersion\(3\)/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
+  assert.match(js, /Math\.max\(320, analytics\.buckets\.length \* 92 \+ 100\)/);
 });
 
 test('high-cardinality analytics stays sparse in aggregation and the collapsed details table', () => {

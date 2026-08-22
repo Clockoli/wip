@@ -6,11 +6,12 @@ const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'ut
 const primer = read('src/styles/github-primer.css');
 const documentStyles = [
   'src/options/options.css',
-  'src/popup/popup.css',
   'src/reports/reports.css',
   'src/tasks/tasks.css',
 ].map(path => [path, read(path)]);
 const content = read('src/content/github.js');
+const popupShell = read('src/popup/popup.css');
+const popupHtml = read('src/popup/popup.html');
 const reports = read('src/reports/reports.js');
 
 const lightTokens = {
@@ -59,6 +60,8 @@ test('shared extension-page theme mirrors GitHub Primer typography and semantic 
 });
 
 test('every standalone extension surface consumes the shared GitHub theme without a legacy palette', () => {
+  assert.match(popupShell, /^@import url\("\.\.\/styles\/github-primer\.css"\);/);
+  assert.match(popupHtml, /src="\.\.\/content\/github\.js"/);
   for (const [path, css] of documentStyles) {
     assert.match(css, /^@import url\("\.\.\/styles\/github-primer\.css"\);/, path);
     assert.match(css, /body\{[^}]*font:var\(--text-body-shorthand-medium\)/, path);
@@ -131,12 +134,11 @@ test('standalone typography uses GitHub live body, title, caption, and label met
   ]) assert.ok(primer.includes(expected), `missing live typography metric ${expected}`);
 
   const options = read('src/options/options.css');
-  const popup = read('src/popup/popup.css');
   const reportsCss = read('src/reports/reports.css');
   const tasksCss = read('src/tasks/tasks.css');
   assert.match(options, /body\{[^}]*font:var\(--text-body-shorthand-medium\)/);
   assert.match(options, /h1\{[^}]*font:var\(--text-title-shorthand-large\)/);
-  assert.match(popup, /\.muted\{[^}]*font:var\(--text-caption-shorthand\)/);
+  assert.match(content, /\.muted \{[^}]*font:var\(--text-caption-shorthand/);
   assert.match(reportsCss, /h1\{font:var\(--text-title-shorthand-large\)\}h2\{font:var\(--text-title-shorthand-small\)\}/);
   assert.match(tasksCss, /h1\{font:var\(--text-title-shorthand-large\)\}/);
   for (const [path, css] of documentStyles) {
@@ -171,15 +173,14 @@ test('invisible buttons and danger active state use their exact GitHub tokens', 
     '--button-danger-borderColor-hover:#ffffff26', '--button-danger-borderColor-active:#ffffff26',
   ]) assert.ok(primer.includes(token), `missing live interaction token ${token}`);
 
-  const popup = read('src/popup/popup.css');
   const reportsCss = read('src/reports/reports.css');
   const tasksCss = read('src/tasks/tasks.css');
-  for (const [path, css] of [['popup', popup], ['reports', reportsCss], ['content', content]]) {
+  for (const [path, css] of [['reports', reportsCss], ['content', content]]) {
     assert.match(css, /button-invisible-bgColor-hover/, `${path} lacks invisible hover state`);
     assert.match(css, /button-invisible-bgColor-active/, `${path} lacks invisible active state`);
     assert.match(css, /button-invisible-bgColor-disabled/, `${path} lacks invisible disabled state`);
   }
-  for (const [path, css] of [['popup', popup], ['tasks', tasksCss], ['content', content]]) {
+  for (const [path, css] of [['tasks', tasksCss], ['content', content]]) {
     assert.match(css, /button-danger-fgColor-active/, `${path} lacks danger active foreground`);
     assert.match(css, /button-danger-borderColor-active/, `${path} lacks danger active border`);
   }
@@ -233,10 +234,8 @@ test('print forces GitHub exact light data colors even when the live page is dar
 
 
 test('every destructive Delete control receives the complete Primer danger variant', () => {
-  const popupHtml = read('src/popup/popup.html');
-  const popupCss = read('src/popup/popup.css');
-  assert.match(popupHtml, /id="delete"[^>]+class="danger-outline"/);
-  for (const [surface, css] of [['popup', popupCss], ['content', content]]) {
+  assert.match(content, /button\('Delete', 'danger-outline'/);
+  for (const [surface, css] of [['content', content]]) {
     assert.match(css, /\.danger\s*,\s*\.danger-outline\s*\{[^}]*button-danger-borderColor-rest[^}]*button-danger-bgColor-rest[^}]*button-danger-fgColor-rest/, `${surface} Delete lacks danger rest state`);
     assert.match(css, /\.danger:hover\s*,\s*\.danger-outline:hover\s*\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/, `${surface} Delete lacks danger hover state`);
     assert.match(css, /\.danger:active:not\(:disabled\)\s*,\s*\.danger-outline:active:not\(:disabled\)\s*\{[^}]*button-danger-borderColor-active[^}]*button-danger-bgColor-active[^}]*button-danger-fgColor-active/, `${surface} Delete lacks danger active state`);

@@ -127,3 +127,17 @@ test('timesheet exports correctly escaped CSV and structured JSON', () => {
   assert.equal(reportFilename('json', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.json');
   assert.throws(() => exportTimesheet(records, { format: 'text', startDate: '2026-08-17', endDate: '2026-08-18' }), /format/i);
 });
+
+
+test('billable analytics and exports use local per-person rates', () => {
+  const rates = { alice: 10000, bob: 5000 };
+  const analytics = buildAnalytics(records, { metric: 'billable-amount', horizontalAxis: 'day', stackBy: 'person', rates });
+  assert.equal(analytics.metric, 'billable-amount');
+  assert.equal(analytics.buckets.reduce((sum, bucket) => sum + bucket.totalValue, 0), 50000);
+  const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-17', endDate: '2026-08-18', rates, currency: 'USD' });
+  assert.match(csv, /Hourly rate,Billable amount,Currency/);
+  assert.match(csv, /100\.00/);
+  const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-17', endDate: '2026-08-18', rates, currency: 'USD' }));
+  assert.equal(json.entries[0].currency, 'USD');
+  assert.ok(Object.hasOwn(json.entries[0], 'billableAmount'));
+});

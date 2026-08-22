@@ -165,7 +165,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on #2').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #2').at(-1);
   assert.ok(start?.onclick, 'Start handler was rendered in the pull-request menu');
   await start.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -307,7 +307,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on #7').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #7').at(-1);
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry entry sync').at(-1);
   assert.equal(start.disabled, true, 'pending entry prevents another timer');
   assert.ok(retry?.onclick, 'entry conflict exposes its recovery action');
@@ -910,7 +910,7 @@ test('split main segment resolves non-issue to issue SPA navigation at activatio
   location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start timer on #7'));
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start timer on task #7'));
 });
 
 test('split main segment resolves issue to non-issue SPA navigation at activation time', async () => {
@@ -979,7 +979,7 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on #7').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #7').at(-1);
   await start.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry').at(-1);
   assert.ok(retry?.onclick, 'transient error exposes Retry');

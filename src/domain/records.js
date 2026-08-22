@@ -62,7 +62,7 @@ export function validateActiveTimer(active) {
   validateTimestamp(active.createdAt, 'createdAt timestamp');
   if (new Date(active.createdAt).getTime() !== new Date(active.startedAt).getTime()) throw new Error('Active timer createdAt must equal startedAt');
   if (typeof active.description !== 'string' || active.description.length > 2000) throw new Error('Invalid active timer description');
-  if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle !== normalizeIssueTitle(active.issueTitle))) throw new Error('Invalid active timer issue title');
+  if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle !== normalizeIssueTitle(active.issueTitle))) throw new Error('Invalid active timer task title');
   return active;
 }
 
@@ -101,7 +101,7 @@ export function validateEntry(entry) {
   if (!Number.isInteger(entry.durationSeconds) || entry.durationSeconds !== computed) throw new Error('Duration does not match timestamps');
   if (new Date(entry.updatedAt).getTime() < new Date(entry.createdAt).getTime()) throw new Error('updatedAt must not be before createdAt');
   if (typeof entry.description !== 'string' || entry.description.length > 2000) throw new Error('Invalid description');
-  if (entry.issueTitle !== undefined && (typeof entry.issueTitle !== 'string' || entry.issueTitle !== normalizeIssueTitle(entry.issueTitle))) throw new Error('Invalid issue title');
+  if (entry.issueTitle !== undefined && (typeof entry.issueTitle !== 'string' || entry.issueTitle !== normalizeIssueTitle(entry.issueTitle))) throw new Error('Invalid task title');
   return entry;
 }
 

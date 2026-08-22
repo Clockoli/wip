@@ -99,6 +99,7 @@ function safeAttempt(attempt) {
 async function configuredSnapshot() {
   await store.migrateLegacyPatAuth();
   await configuration.ensureRepositoryIdentity();
+  await configuration.ensurePersonalStorageBranch();
   const [configurationSnapshot, authSnapshot] = await Promise.all([
     store.getConfigurationSnapshot(), store.getAuthSnapshot(),
   ]);
@@ -107,6 +108,7 @@ async function configuredSnapshot() {
 
 async function onboardingState() {
   await store.migrateLegacyPatAuth();
+  await configuration.ensurePersonalStorageBranch();
   const [configurationSnapshot, current, pending, attempt, state, verification] = await Promise.all([
     store.getConfigurationSnapshot(), store.getAuthSnapshot(), store.getPendingAuthSnapshot(),
     deviceFlow().resume(), store.getState(), store.getOnboardingVerification(),
@@ -172,7 +174,8 @@ async function loadReport(message) {
     loadCoordinator.assertCurrent(loadEpoch);
     return {
       configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
-      records: await reports.loadRange(message.payload || {}, { signal: controller.signal }),
+      records: await reports.loadRepositoryRange(message.payload || {}, { defaultBranch: config.defaultBranch || branch, signal: controller.signal }),
+      billing: await store.getLocalPreferences(),
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
@@ -336,7 +339,16 @@ async function handle(message, sender) {
   if (message.type === 'UPDATE_DISPLAY_PREFERENCES') {
     const generation = await store.updateDisplayPreferences(message.payload || {});
     const { config } = await store.getConfigurationSnapshot();
-    return { config, generation };
+    return { config, generation, preferences: await store.getLocalPreferences() };
+  }
+  if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
+  if (message.type === 'SAVE_BILLING_SETTINGS') return store.saveBillingSettings(message.payload || {});
+  if (message.type === 'EXPORT_SETTINGS') return store.exportSettings();
+  if (message.type === 'MARK_SETTINGS_EXPORTED') return { marked: await store.markSettingsExported(message.revision) };
+  if (message.type === 'IMPORT_SETTINGS') {
+    const text = String(message.text || '');
+    if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Settings file is too large.');
+    return store.importSettings(text);
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
@@ -386,7 +398,7 @@ async function handle(message, sender) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type);
   const readOnly = reportReadOnly || ['LOAD_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {

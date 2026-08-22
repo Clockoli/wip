@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OnboardingCoordinator } from '../src/services/onboarding-coordinator.js';
 
+const provisionUserBranch = async (_github, user) => ({ branch: `repoclock/users/${user.id}` });
+
 const candidate = {
   installationId: 88, repoId: 77, owner: 'acme', repo: 'time-data', fullName: 'acme/time-data',
   private: true, archived: false, disabled: false, defaultBranch: 'main', eligible: true, reasons: [],
@@ -38,7 +40,7 @@ function coordinator(store, overrides = {}) {
   const discovery = overrides.discovery || { discover: async () => ({ installations: [], repositories: [candidate], candidates: [candidate] }) };
   const initializer = overrides.initializer || { initialize: async () => ({ status: 'write_verified', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'main' }) };
   return new OnboardingCoordinator({
-    store,
+    store, userBranchProvisioner: provisionUserBranch,
     currentCredentialProvider: { getAccessToken: async () => 'current' },
     pendingCredentialProvider: { getAccessToken: async () => 'pending' },
     githubFactory: options => ({ options, getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }) }),
@@ -80,7 +82,7 @@ test('repository selection automatically follows a default branch created during
   let discoveries = 0, initializations = 0;
   const githubOptions = [];
   const c = new OnboardingCoordinator({
-    store,
+    store, userBranchProvisioner: provisionUserBranch,
     currentCredentialProvider: { getAccessToken: async () => 'current' },
     pendingCredentialProvider: { getAccessToken: async () => 'pending' },
     discoveryFactory: () => ({ discover: async () => {
@@ -96,10 +98,11 @@ test('repository selection automatically follows a default branch created during
     } }),
   });
   const result = await c.selectRepository({ installationId: 88, repoId: 77 });
-  assert.equal(result.config.branch, 'trunk');
+  assert.equal(result.config.branch, 'repoclock/users/123');
+  assert.equal(result.config.defaultBranch, 'trunk');
   assert.equal(discoveries, 2);
   assert.equal(initializations, 2);
-  assert.deepEqual(githubOptions.map(options => options.branch), ['main', 'trunk']);
+  assert.deepEqual(githubOptions.map(options => options.branch), ['main', 'trunk', 'trunk']);
   assert.equal(store.commits.length, 1);
 });
 
@@ -162,7 +165,7 @@ test('PAT migration preserves a validated custom branch for the same stable repo
     config: { owner: 'acme', repo: 'time-data', branch: 'worklog', recentDays: 7, allowedIssueOwners: ['acme'] },
   });
   const c = new OnboardingCoordinator({
-    store, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
+    store, userBranchProvisioner: provisionUserBranch, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
     githubFactory: options => {
       factoryCalls.push(options);
       return options.credentialProvider === currentProvider
@@ -176,7 +179,8 @@ test('PAT migration preserves a validated custom branch for the same stable repo
     } }),
   });
   await c.selectRepository({ installationId: 88, repoId: 77 });
-  assert.equal(store.config.branch, 'worklog');
+  assert.equal(store.config.branch, 'repoclock/users/123');
+  assert.equal(store.config.defaultBranch, 'worklog');
   assert.equal(factoryCalls[0].branch, 'worklog');
   assert.equal(factoryCalls[1].branch, 'worklog');
   assert.deepEqual(initializerCalls[0].options, { expectedRepositoryId: 77, selectedBranch: 'worklog', branchMode: 'custom', requiredStorageLogin: 'alice' });
@@ -191,7 +195,7 @@ test('PAT custom-branch migration fails closed when old coordinates resolve to a
     config: { owner: 'acme', repo: 'time-data', branch: 'worklog' },
   });
   const c = new OnboardingCoordinator({
-    store, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
+    store, userBranchProvisioner: provisionUserBranch, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
     githubFactory: options => ({ getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }), validateRepository: async () => ({ id: options.credentialProvider === currentProvider ? 999 : 77 }) }),
     discoveryFactory: () => ({ discover: async () => ({ installations: [], repositories: [candidate], candidates: [candidate] }) }),
     initializerFactory: () => ({ initialize: async () => { throw new Error('must not initialize'); } }),
@@ -222,8 +226,9 @@ test('stable-ID recovery atomically repairs renamed repository and default-branc
   const result = await c.recoverCurrentRepository();
   assert.equal(result.config.owner, 'new-owner');
   assert.equal(result.config.repo, 'renamed-time-data');
-  assert.equal(result.config.branch, 'new-main');
-  assert.equal(result.config.branchMode, 'default');
+  assert.equal(result.config.branch, 'repoclock/users/123');
+  assert.equal(result.config.defaultBranch, 'new-main');
+  assert.equal(result.config.branchMode, 'custom');
   assert.equal(store.saves.length, 1);
   assert.deepEqual(store.state.activeCache, state.activeCache);
   assert.deepEqual(store.state.pendingWrites, state.pendingWrites);
@@ -292,7 +297,7 @@ test('PAT to App migration proves stable account identity before preserving lega
   });
   const calls = [];
   const c = new OnboardingCoordinator({
-    store, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
+    store, userBranchProvisioner: provisionUserBranch, currentCredentialProvider: currentProvider, pendingCredentialProvider: pendingProvider,
     githubFactory: options => options.credentialProvider === currentProvider
       ? { getAuthenticatedIdentity: async () => ({ id: 123, login: 'new-login' }), validateRepository: async () => ({ id: 77 }) }
       : {},

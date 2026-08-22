@@ -1,4 +1,5 @@
 import { OnboardingError } from './github-app-onboarding.js';
+import { ensureUserStorageBranch } from './user-storage-branch.js';
 
 function changedDestination(previous, candidate, selectedBranch = candidate.defaultBranch) {
   if (!previous) return false;
@@ -16,6 +17,7 @@ export class OnboardingCoordinator {
   constructor({
     store, currentCredentialProvider, pendingCredentialProvider, githubFactory,
     discoveryFactory, initializerFactory, activeProbe = async () => false, now = () => Date.now(),
+    userBranchProvisioner = ensureUserStorageBranch,
   }) {
     this.store = store;
     this.currentCredentialProvider = currentCredentialProvider;
@@ -24,6 +26,7 @@ export class OnboardingCoordinator {
     this.discoveryFactory = discoveryFactory;
     this.initializerFactory = initializerFactory;
     this.activeProbe = activeProbe;
+    this.userBranchProvisioner = userBranchProvisioner;
     this.now = now;
   }
 
@@ -88,7 +91,7 @@ export class OnboardingCoordinator {
     const legacyPatCustomBranch = sameRepository && auth.source === 'pending'
       && auth.currentSnapshot.auth?.mode === 'pat' && previousConfig.branch
       && previousConfig.branch !== candidate.defaultBranch;
-    const preserveCustomBranch = sameRepository && previousConfig.branch
+    const preserveCustomBranch = sameRepository && previousConfig.branch && previousConfig.storageBranchVersion !== 1
       && (previousConfig.branchMode === 'custom' || legacyPatCustomBranch);
     if (preserveCustomBranch) {
       if (!previousConfig.repoId) {
@@ -143,6 +146,18 @@ export class OnboardingCoordinator {
       }
     }
 
+    const branchSource = initialization.branch || selectedBranch;
+    const branchGithub = this.githubFactory({
+      credentialProvider: auth.credentialProvider,
+      owner: candidate.owner, repo: candidate.repo, branch: branchSource,
+      expectedRepositoryId: candidate.repoId,
+      branchMode: branchSource === candidate.defaultBranch ? 'default' : 'custom',
+    });
+    const personal = await this.userBranchProvisioner(branchGithub, {
+      id: auth.snapshot.auth.githubUserId,
+      login: initialization.storageLogin,
+    }, branchSource);
+
     // Close the validation-vs-Start/Stop race before committing the transition.
     const after = await this.store.ensureDataVersion(3);
     await this.assertSafeTransition(previousConfig, after, changing);
@@ -151,8 +166,10 @@ export class OnboardingCoordinator {
     const config = {
       owner: candidate.owner,
       repo: candidate.repo,
-      branch: initialization.branch || selectedBranch,
-      branchMode,
+      branch: personal.branch,
+      branchMode: 'custom',
+      defaultBranch: branchSource,
+      storageBranchVersion: 1,
       repoId: candidate.repoId,
       installationId: candidate.installationId,
       visibility: 'private',
@@ -179,7 +196,7 @@ export class OnboardingCoordinator {
       ? await this.store.commitPendingGitHubAppConfiguration(config, patch, auth.snapshot.authGeneration)
       : await this.store.saveGitHubAppConfiguration(config, patch, auth.snapshot.authGeneration);
     if (saved === false) throw new OnboardingError('Authentication or repository access changed during setup. Check access and try again.', 'onboarding_superseded');
-    return { ...initialization, config };
+    return { ...initialization, branch: personal.branch, config };
   }
 
   async recoverCurrentRepository() {

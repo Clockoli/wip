@@ -95,7 +95,9 @@ test('Step 2 creates a template-backed data repository or skips to existing-repo
 
 test('Step 3 grants App access to the new or an existing repository', () => {
   assert.match(source, /id="repository-access-step"[\s\S]*Give RepoClock access to a data repository/i);
-  assert.match(source, /newly created repository or an existing private repository/i);
+  assert.match(source, /id="repository-access-instruction"/i);
+  assert.match(script, /existing private data repository/i);
+  assert.match(script, /repoclock-data/i);
   assert.match(source, /id="install-app"[\s\S]*Choose repository access on GitHub/i);
   assert.ok(source.indexOf('id="install-app"') > source.indexOf('id="repository-access-step"'));
 });
@@ -116,13 +118,12 @@ test('onboarding renders one active step, keeps cancel below it, and names repos
   for (const id of ['device-step-title', 'access-step-title', 'repository-access-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
   assert.match(script, /previousStep !== null && previousStep !== step[\s\S]*focus\(\)/);
   assert.match(source, /Choose repository access on GitHub/i);
-  assert.match(source, /Check for repository access now/i);
+  assert.doesNotMatch(source, /Check for repository access now/i);
   assert.match(source, /RepoClock checks automatically when you return from GitHub/i);
-  assert.match(source, /Use this only if the repository does not appear/i);
   assert.match(source, /Repository creation does not grant RepoClock access/i);
   assert.match(source, /Create repoclock-data on GitHub/i);
   assert.equal((source.match(/id="install-app"/g) || []).length, 1);
-  assert.equal((source.match(/id="refresh-repositories"/g) || []).length, 1);
+  assert.equal((source.match(/id="refresh-repositories"/g) || []).length, 0);
   assert.doesNotMatch(source, /id="repository-recovery"|id="review-repository-access"|id="refresh-repository-access"/);
   assert.ok(source.indexOf('id="cancel-app-setup"') > source.indexOf('id="repository-step"'));
 });
@@ -141,7 +142,7 @@ test('settings allows every GitHub issue and clearly scopes the recent-entry win
   assert.doesNotMatch(script, /allowedIssueOwners|allowedOwners/);
   assert.match(source, /Recent entries shown in the main panel \(days\)/i);
   assert.match(source, /only controls how many past days appear in the main tracking panel/i);
-  assert.match(source, /Track any GitHub issue or pull request/i);
+  assert.match(source, /Track any GitHub task, whether it is an issue or pull request/i);
 });
 
 test('saved display preferences remain available while GitHub authentication is disconnected', () => {
@@ -202,13 +203,12 @@ test('Device Flow cancellation bypasses the tracker mutation executor and shares
 test('repository access monitoring explains the separate App grant without blinking refresh', () => {
   assert.match(script, /still cannot see \${repositoryMonitorExpectedName}.*Only select repositories.*add \${repositoryMonitorExpectedName}.*Automatic checking will continue/is);
   assert.match(script, /still cannot see an eligible repository.*Only select repositories.*add your data repository.*Automatic checking will continue/is);
-  assert.match(script, /if \(!monitoring\) \$\('refresh-repositories'\)\.disabled = true/);
-  assert.match(script, /if \(!monitoring\) \$\('refresh-repositories'\)\.disabled = false/);
+  assert.doesNotMatch(script, /refresh-repositories/);
 });
 
 test('repository onboarding uses full names and monitors GitHub after repository creation', () => {
   assert.match(source, /id="repository-search"/);
-  assert.match(source, /id="refresh-repositories"[^>]*>Check for repository access now</);
+  assert.doesNotMatch(source, /id="refresh-repositories"/);
   assert.match(script, /name\.textContent = repository\.fullName/);
   assert.doesNotMatch(script, /name\.textContent = repository\.repo/);
   assert.doesNotMatch(script, /Private ·.*Contents: write/);
@@ -253,10 +253,15 @@ test('connected storage summary distinguishes write verification from access che
   assert.match(script, /Access checked/);
 });
 
-test('normal popup setup directs users to Connect GitHub rather than PAT creation', async () => {
-  const popup = await readFile(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
-  assert.match(popup, /Connect GitHub/);
-  assert.doesNotMatch(popup, /fine-grained token/i);
+test('normal popup uses the shared tracker setup and directs users to Connect GitHub', async () => {
+  const [popup, tracker] = await Promise.all([
+    readFile(new URL('../src/popup/popup.html', import.meta.url), 'utf8'),
+    readFile(new URL('../src/content/github.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(popup, /src="\.\.\/content\/github\.js"/);
+  assert.match(tracker, /Connect GitHub/);
+  assert.doesNotMatch(`${popup}
+${tracker}`, /fine-grained token/i);
 });
 
 test('tracking and reporting surfaces expose code-specific recovery actions', async () => {
@@ -283,7 +288,7 @@ test('compliance documentation matches any-owner tracking and durable Title stor
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Repository RepoClock can access/i);
+  assert.match(source, /Repositories RepoClock can use for data storage/i);
   assert.doesNotMatch(source, /Selectable repositories are private repositories granted/i);
   assert.match(source, /directory structure and starter files/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
