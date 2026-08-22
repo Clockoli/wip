@@ -1,127 +1,151 @@
 # RepoClock
 
-Chrome/Chromium extension for tracking time on GitHub issues and pull requests while keeping all records in a dedicated **private GitHub repository**. There is no application server or third-party time-tracking service.
+RepoClock is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no RepoClock application server and no separate time-tracking database.
 
-## What is implemented
+Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. RepoClock captures the URL as the task identity; a title and description are optional.
 
-- Native-style split GitHub header control on every GitHub page. Its left stopwatch opens the full Start/Stop/recent/edit/delete/sync panel on issue and pull-request pages; elsewhere it opens navigation. The separately clickable arrow always opens Reports/Tasks navigation and survives GitHub SPA navigation.
-- Main panel rotates the authenticated user's complete Today, This week, Last week, and This month totals; includes an unsynced completion exactly once and live running time; labels recent rows as Today, Yesterday, or a weekday; and highlights intersecting records so they can be corrected.
-- Dedicated Reports page with repository-wide person/repository facets; selectable total time, average time per distinct task, or distinct task count; independent day/week/month/person/repository/task horizontal and stack dimensions; direct CSV/JSON timesheet downloads; and native print/save-to-PDF for weekly, monthly, quarterly, yearly, and custom periods.
-- Dedicated **Recently tracked work** page: current-user issues and pull requests are deduplicated, hydrated with cached GitHub titles/status, sorted by completed plus currently running time, filtered as you type, and controlled with inline Start/Stop buttons. Its rolling period defaults to two weeks and persists locally; unavailable status appears only under All.
-- Toolbar popup with running timer, recent 7-day entries, editing, and deletion.
-- Backend-free GitHub App Device Flow with resumable authorization, rotating user tokens, installation discovery, and private-repository selection.
-- Conflict-safe repository initialization through `.repoclock/config.json`, including stable user-ID-to-login mappings.
-- Fine-grained PAT setup remains available as an explicit advanced compatibility and migration path.
-- Authenticated GitHub login and stable numeric user ID as the canonical user identity.
-- One GitHub-backed active timer per user.
-- One human-editable plain-text file per GitHub user per local month.
-- SHA-protected edits/deletes and safe conflict errors.
-- Local cache and an idempotent offline Stop queue.
-- Stop retries match the full intended record; concurrent Stops converge only when the active file is already gone and exactly one same-URL/same-Start completion exists.
-- 12-hour long-entry warning.
-- Track any valid GitHub issue or pull request; configure only how many past days appear in the main panel.
-- Recent entries are sorted by their editable start timestamp across the selected window. Loading requires at most one direct GitHub read per represented month rather than one read per record.
+## Why RepoClock
 
-Deferred by the specification: manual entries, Firefox packaging, reminders, and advanced conflict-diff UI.
+Most time trackers put your records in a vendor database. RepoClock writes readable text files to Git instead:
 
-## Install for development
+- **You own the data.** Access, retention, backup, and deletion follow the rules of your GitHub repository.
+- **The history is inspectable.** Time files are readable without RepoClock, and edits remain visible in Git history.
+- **There is no RepoClock backend.** The extension talks directly to GitHub.
+- **It works beyond one issue tracker.** Any valid HTTP(S) URL can be a task.
+- **It still feels native on GitHub.** A stopwatch appears in the GitHub header, while the browser toolbar popup works on other sites.
+- **Team reporting does not require a second data silo.** Team members can write to isolated personal branches in one shared private repository; Reports reads them together.
 
-1. Clone this repository.
-2. Open `chrome://extensions`.
+RepoClock is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why RepoClock](docs/why-repoclock.md) for a detailed comparison and the tradeoffs.
+
+## Current beta installation
+
+RepoClock currently runs as a trusted unpacked extension. The published `v0.1.11` GitHub release predates the features documented here; do not use that package for the current product.
+
+1. Clone or update this repository:
+
+   ```bash
+   git clone git@github.com:repoclock/repoclock.git
+   cd repoclock
+   git switch main
+   git pull --ff-only
+   ```
+
+2. Open `chrome://extensions` in Chrome or another Chromium browser.
 3. Enable **Developer mode**.
-4. Click **Load unpacked** and choose this repository root.
-5. Open the extension’s **Settings**.
-6. For normal GitHub App onboarding, choose **Connect GitHub**, authorize the device code, install the public [RepoClock GitHub App](https://github.com/apps/repoclock) on selected private repositories, and select the time-data repository.
-7. For legacy compatibility, expand **Personal access token compatibility** and use a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens) restricted to the repository with **Contents: Read and write**.
+4. Select **Load unpacked** and choose the repository root, the directory that contains `manifest.json`.
+5. Pin RepoClock to the browser toolbar.
+6. Open **Settings** and complete the four GitHub connection steps.
 
-The Settings **Recent entries shown in the main panel (days)** value affects display only; tracking accepts any valid GitHub issue or pull request, and reports are not limited by that setting.
+If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
 
-The organization-owned GitHub App's `client_id` and slug are public configuration, not secrets. Do not add a client secret, App private key, JWT, or installation token to the extension. The data repository must already exist and allow direct commits to its selected branch. See [docs/time-data-repository.md](docs/time-data-repository.md). The selected Version 1 defaults and requirement mapping are documented in [docs/spec-compliance.md](docs/spec-compliance.md).
+Full setup instructions: [Getting started](docs/getting-started.md).
 
-## Usage
+## Start tracking
 
-1. Open GitHub. The split stopwatch control is immediately before your avatar on every page.
-2. On an issue or pull request, use the left stopwatch for tracking. On other GitHub pages, either segment opens Reports/Tasks navigation. The arrow always opens that navigation menu.
-3. Open the stopwatch dropdown to Start, Stop with an optional description, check sync status, or retry pending synchronization.
-4. The dropdown rotates complete totals for today, this week, last week, and this month. Recent rows show the stored issue title and directly editable Start/Stop hour and minute spinbuttons. Focus a value and scroll, type, or press the arrow keys; then choose **Save time**. Intersecting entries are highlighted, while **Edit details** handles title/description changes and Delete remains contextual.
-5. Choose **Reports** for repository-wide analytics, or **Tasks** for your recently tracked issues and pull requests. The stopwatch is gray while idle and green while any timer is running.
+1. Open the page you want to track.
+2. Select the RepoClock toolbar icon.
+3. Choose **Start tracking this task**.
+4. When you finish, open RepoClock and choose **Stop and save**. Add a description if it will help later.
 
-A running timer is authoritative from its Start timestamp; elapsed time is always `now - Start`, not a browser tick counter. Its local calendar month selects the eventual monthly file.
+On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks** and **Reports**.
 
-## Storage layout
+RepoClock permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
 
-```text
-active/{github-login}.txt
-times/{local YYYY-MM}/{github-login}.txt
-```
+## Features
 
-The login is derived from the file name, not repeated inside the file. Completed records are blank-line-separated blocks:
+### Tracking and correction
 
-```text
-URL: https://github.com/acme/frontend/issues/123
-Title: Ranking regression
-Start: 2026-08-19T09:00:00+03:00
-End: 2026-08-19T10:15:00+03:00
-Description: optional single-line text
-```
+- Track any canonical HTTP(S) URL; task titles are optional.
+- GitHub-header integration plus a toolbar popup for other sites.
+- One GitHub-backed active timer per user, visible across connected browsers.
+- Optional descriptions, up to 2,000 characters.
+- Live elapsed time and rotating totals for Today, This week, Last week, and This month.
+- Recent entries labeled Today, Yesterday, or by weekday.
+- Direct Start/Stop hour and minute correction in the main panel.
+- Thresholded wheel controls that change one minute at a time without turning normal page scrolling into large time jumps.
+- Automatic adjacent-boundary repair: moving Start into the previous interval moves the previous Stop; moving Stop into the next interval moves the next Start. The linked records are saved atomically.
+- Full **Edit** for URL, optional title, Start, Stop, and description.
+- Conflict-safe **Delete**, with the prior version retained in Git history.
+- Overlap warnings and a confirmation before saving entries longer than 12 hours.
 
-`Title` and `Description` are omitted when empty. Existing records without `Title` remain valid; recent loads backfill available titles with SHA-guarded writes so subsequent rendering reads repository data rather than resolving titles on every display. Every timestamp includes a timezone. The active file uses the same format without `End`. Files can be maintained manually as long as field names, canonical GitHub URLs, timestamp timezones, Start months matching their `times/YYYY-MM/` directory, and blank-line record separators are preserved.
+### Tasks
 
-A normal recent-entry refresh performs one direct file read per represented month (normally one or two). Editing or deleting rewrites one monthly file. Same-month edits perform one SHA-guarded write; moving an edited Start into another month updates every affected monthly file in one atomic Git commit. Reports persist raw immutable blobs by Git SHA in extension-origin IndexedDB and conditionally validate the branch ref with an ETag. The Tasks page selects only the authenticated user's monthly paths before blob reads, applies explicit file/byte/record/metadata-request budgets, and caches issue/PR metadata for 15 minutes. An unchanged branch is served from the cache after a `304 Not Modified`; a changed branch downloads only missing blob SHAs. Obsolete report loads are aborted before a newer range begins.
+- A **Recently tracked work** page for the current user.
+- Deduplication by canonical task URL.
+- Search by URL or optional title.
+- Period filters from two weeks to one year.
+- Open, Closed, and All status filters; GitHub issue/PR status is enriched when available.
+- Totals include completed sessions and the currently running session.
+- Inline Start/Stop controls.
 
-Every operation uses predictable commit messages without descriptions.
+### Reports and billing
 
+- Repository-wide reporting across personal storage branches and compatible legacy data.
+- Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
+- People and Source facets. A Source is a GitHub owner/repository for GitHub tasks or a hostname for another URL.
+- Total time, average time per distinct task, distinct task count, and billable amount.
+- Independent Day, Week, Month, Person, Source, and Task chart dimensions.
+- CSV and JSON timesheet downloads.
+- Native print/save-to-PDF.
+- Browser-local hourly rates and one three-letter currency code. Rates and calculated money are never written to the data repository.
 
-## Failure and conflict behavior
+### Storage, sync, and privacy
 
-Stop first verifies that the cached timer still matches GitHub when the repository is reachable; a changed timer is shown instead of completing stale data. If GitHub is temporarily unreachable, the cached completion remains offline-capable. The extension then queues the completion in extension-origin IndexedDB and synchronization:
+- Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
+- Dedicated private GitHub data repository, with one marked personal branch per user.
+- Human-readable monthly text files with explicit timezone offsets.
+- SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
+- Locally queued Stop operations with automatic retry when GitHub is temporarily unavailable.
+- Settings backup in readable JSON without credentials, active timers, pending writes, or tracked time.
+- Credentials and local settings remain in extension-origin IndexedDB and are not exposed to GitHub pages.
 
-1. reads the target monthly text file once;
-2. adopts the exact intended record, recognizes a concurrent Stop only when the active file is gone and one matching timer completion exists, or appends with SHA protection;
-3. persists the queue stage;
-4. clears the active file with its known SHA, re-reading only to reconcile a conflict;
-5. preserves any newer active timer.
+See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
 
-A network failure leaves the queue retryable. A changed active timer or stale monthly-file SHA is never silently overwritten. Manually malformed monthly files produce a visible error so they can be repaired directly in GitHub.
+## Documentation
 
-Changing the target data repository is blocked while writes are pending.
+- [Documentation index](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Feature guide](docs/features.md)
+- [Why RepoClock](docs/why-repoclock.md)
+- [Data, privacy, and security](docs/data-and-privacy.md)
+- [Time-data repository setup](docs/time-data-repository.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-## Security model
+## Current limitations
 
-- Device Flow attempts, GitHub App access/refresh tokens, PAT compatibility credentials, and persistent state are background-owned in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot read that database.
-- Credentials and authorization internals are never sent to content scripts, page JavaScript, URLs, logs, analytics, commit messages, or data files.
-- Runtime host access is limited to `https://api.github.com/*` and GitHub's Device Flow endpoints under `https://github.com/login/*`.
-- Extension pages use an explicit MV3 CSP: `script-src 'self'; object-src 'none'`; JavaScript, CSS, and fonts are bundled locally.
-- Page integration is limited to `https://github.com/*` and validates exact issue and pull-request URL forms.
-- Owner, repository, login, issue number, and generated paths are validated before writes.
-- Untrusted issue titles/descriptions are rendered via `textContent`; remote content is never executed.
-- The GitHub App is installed only on selected private repositories and requires **Contents: Read and write**; compatibility PATs should be fine-grained and repository-restricted.
-
-Browser extension storage does not provide OS-keychain encryption semantics for arbitrary values. A malicious local process, browser compromise, or sufficiently privileged malicious extension remains outside this extension’s protection boundary.
+- Chrome/Chromium 102 or newer; no Firefox package.
+- Current beta installation is unpacked and has no automatic updates.
+- Starting a timer requires GitHub connectivity. Stopping can be queued locally and retried.
+- One active timer per connected GitHub account.
+- No manual time-entry creation, reminders, mobile app, or advanced side-by-side conflict editor.
+- The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.
+- Billable rates are local to each browser and are not shared with teammates.
+- Anyone who can read the data repository can read stored URLs, titles, timestamps, and descriptions.
 
 ## Development
 
-Requires Node.js 20+; there are no runtime or test dependencies.
+Requires Node.js 20+. There are no runtime or test dependencies.
 
 ```bash
 npm test
 npm run check
 ```
 
-`npm run check` validates the manifest, referenced files, extension security invariants, and JavaScript syntax.
+`npm run check` validates the Manifest V3 package inventory, referenced files, security invariants, and JavaScript syntax.
 
-## Repository map
+### Repository map
 
 ```text
-src/api/          GitHub Contents API client
-src/background/   MV3 service worker and message boundary
-src/content/      GitHub issue/pull-request header control and dropdown
-src/domain/       validation, monthly text format, records, paths, timestamps
-src/options/      secure setup and validation
-src/reports/      repository-wide facets, analytics chart, and timesheet export
-src/tasks/        recent tracked-work list, live filtering, and Start/Stop controls
-src/popup/        active/recent/edit/delete UI
-src/services/     timer and synchronization state machine
+src/api/          GitHub API client
+src/auth/         GitHub App Device Flow and credential rotation
+src/background/   Manifest V3 service worker and message boundary
+src/content/      GitHub header control and shared tracking panel
+src/domain/       records, task URLs, reports, settings, and text format
+src/options/      onboarding and settings
+src/popup/        browser toolbar popup
+src/reports/      analytics and export page
+src/services/     tracking, sync, repository, and reporting services
 src/storage/      extension-origin IndexedDB adapter
+src/tasks/        recently tracked work page
 test/             dependency-free Node tests
 ```

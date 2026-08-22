@@ -1,0 +1,131 @@
+# Why RepoClock
+
+RepoClock is not a hosted time-tracking service with GitHub added as an integration. GitHub is the durable data layer, and the browser extension is the application.
+
+That design changes who controls the records, how they can be inspected, and what happens if you stop using the product.
+
+## The short version
+
+Choose RepoClock when you want:
+
+- time data in a private repository you control;
+- a readable, portable format instead of a vendor-only database;
+- direct Git history for review, backup, and recovery;
+- no RepoClock server or second SaaS account;
+- one task model that works with GitHub and arbitrary HTTP(S) pages;
+- repository-wide team reports without writing private rates to the shared repository.
+
+Choose a conventional hosted tracker when your priority is turnkey installation, automatic updates, native mobile applications, reminders, invoicing workflows, or support for people who should not need GitHub access.
+
+## How the model differs
+
+| Question | RepoClock | Conventional hosted tracker | Browser-local timer | Spreadsheet/manual notes |
+|---|---|---|---|---|
+| Where are records stored? | Readable files in your private GitHub repository | Vendor-managed database | One browser profile or vendor sync | A file you maintain |
+| Who controls retention and access? | Your repository administrators | Vendor and workspace administrators | The local profile owner | File owner |
+| Can you read the data without the product? | Yes, as text and Git history | Usually through the product or an export | Product-dependent | Yes |
+| Is a separate application server required? | No RepoClock server | Yes | Not always | No |
+| Is task identity tied to one issue tracker? | No; any HTTP(S) URL | Product-dependent | Product-dependent | No |
+| Team reporting | Shared private repository and marked personal branches | Hosted workspace | Usually limited | Manual aggregation |
+| Billing privacy | Rates stay in each browser | Commonly stored in the workspace | Product-dependent | File-dependent |
+| Automatic updates/mobile/reminders | Not in the current beta | Common | Product-dependent | No |
+
+This is a design comparison, not a claim that one category is universally better. RepoClock deliberately trades some SaaS convenience for control and transparency.
+
+## Advantages of the Git-backed approach
+
+### 1. Data ownership is structural
+
+RepoClock does not promise that you can export later; it writes directly to storage you already control. Repository access rules, organization policy, backup, retention, and deletion apply from the first tracked entry.
+
+If RepoClock is unavailable, the time records still exist as ordinary text in GitHub and in any repository backup.
+
+### 2. The format is portable
+
+A completed record contains a URL, optional title, timezone-bearing Start and End timestamps, and an optional description. Records are grouped into monthly text files.
+
+This can be read by a person, cloned with Git, parsed by a small script, or transformed into another system. You do not need a proprietary database dump just to recover task-level time.
+
+### 3. Auditability is built in
+
+Edits and deletes change Git files, so prior versions remain in normal Git history. You can inspect who changed a file, compare versions, or restore an earlier commit.
+
+Git history is not tamper-proof against repository administrators; they can rewrite it. RepoClock therefore provides strong inspectability and practical recovery, not immutable compliance logging.
+
+### 4. There is no RepoClock data server
+
+The extension communicates directly with GitHub. RepoClock does not operate a second server that receives tracked URLs, descriptions, or billing settings.
+
+This reduces the number of systems that must be trusted and operated. GitHub is still a dependency, and GitHub availability and API limits still matter.
+
+### 5. Tasks are URL-first
+
+Issue-only trackers work well until work starts in a document, support console, customer portal, design tool, or another repository host. RepoClock uses a canonical HTTP(S) URL as the identity, so the same timer can follow the work wherever it lives.
+
+GitHub issues and pull requests receive richer metadata when available, but provider metadata never becomes a requirement for tracking.
+
+### 6. Team writes are isolated
+
+Each authenticated user writes routine timer data to a branch named from their stable GitHub user ID. This reduces shared-branch write contention and avoids filling the default branch with every Start/Stop commit.
+
+Reports discovers the marked personal branches and presents them as one repository-wide view. A fail-closed ownership marker prevents an unrelated pre-existing branch from being silently adopted as a user's storage branch.
+
+### 7. Billing data can remain private
+
+A manager can read shared time records and apply local hourly rates without committing those rates or calculated amounts to the team repository. Each browser can maintain a different rate card for the same data.
+
+This is useful when time should be shared but commercial terms should not. The tradeoff is that rate settings must be backed up and moved separately.
+
+### 8. Safety is visible rather than implicit
+
+RepoClock validates repository identity, privacy, branch routing, storage ownership, record shape, and file versions before writing. It uses Git SHAs and atomic commits for linked or cross-month corrections.
+
+Repository adoption and migration fail closed: incompatible files, unknown ownership, active work, or pending writes block a risky transition instead of being guessed around.
+
+## Compared with an issue-tracker timer
+
+RepoClock keeps the useful contextual behavior—a stopwatch inside GitHub and metadata for issues/PRs—without making those coordinates the durable model.
+
+That gives you:
+
+- the same task identity in the popup, Tasks, Reports, and storage;
+- arbitrary URLs without a separate manual project hierarchy;
+- backward-compatible reading of older GitHub issue/PR records;
+- meaningful Source grouping by GitHub repository or generic hostname.
+
+The limitation is that generic URLs normally have no Open/Closed provider metadata. RepoClock can still track, group, search, and report them by URL and title.
+
+## Compared with a spreadsheet
+
+A spreadsheet gives strong control but depends on consistent manual entry. RepoClock adds:
+
+- a live one-click timer;
+- contextual URL capture;
+- one active timer state across connected browsers;
+- guarded editing and deletion;
+- automatic duration calculation;
+- structured Tasks and Reports;
+- recoverable offline Stop operations.
+
+A spreadsheet remains better for unconstrained manual corrections and custom modeling. RepoClock does not yet create manual entries from scratch.
+
+## Compared with a local-only browser timer
+
+Local-only storage is simple and private but can disappear with a browser profile, remain unavailable on another machine, and provide no natural team audit trail.
+
+RepoClock uses the browser for credentials, preferences, retry state, and private billing rates, but treats GitHub as the durable source for timers and completed records. That enables multi-browser state, repository backup, and team reporting while keeping sensitive commercial settings local.
+
+## Tradeoffs to consider
+
+RepoClock is intentionally opinionated:
+
+- GitHub is required for authentication and durable storage.
+- Everyone who tracks into a shared repository needs appropriate GitHub access.
+- Readers of the data repository can see stored URLs, titles, timestamps, and descriptions.
+- Branch protection or rulesets that prevent direct writes can make a repository unsuitable.
+- Starting needs GitHub connectivity; only Stop has a durable local retry path.
+- The current beta is Chrome/Chromium-only and installed unpacked.
+- There is no automatic update channel, mobile app, reminder system, invoicing workflow, or manual-entry creation.
+- Local rates are not synchronized with teammates.
+
+These are not hidden implementation gaps; they follow from the current product scope and should be part of the adoption decision.

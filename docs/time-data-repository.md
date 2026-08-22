@@ -1,27 +1,80 @@
 # Time-data repository setup
 
-Create a separate private GitHub repository, for example `acme/time-data`, with direct commits permitted on `main`. No initial files or directories are required; the extension creates them through GitHub's Contents API.
+RepoClock uses one dedicated private GitHub repository as the durable store for active timers and completed records. Do not use a source-code repository unless its access and branch policy are intentionally suitable for time data.
 
-## Access
+## Individual setup
 
-- Trackers: repository **write** access.
-- Reporting/managers: repository **read** access if they are permitted to see all issue references and descriptions. The Reports page scans canonical `times/` paths for the selected Start-date range and reads immutable Git blobs.
-- Administrators: maintain/admin.
+Create a private repository such as `your-login/repoclock-data`. The normal onboarding flow opens GitHub's repository-creation form from the RepoClock template and then asks you to grant the RepoClock GitHub App access to that repository.
 
-Time data may reveal private issue references and sensitive descriptions. Use separate data repositories when team access boundaries differ.
+Required conditions:
 
-## GitHub access
+- private visibility;
+- repository not archived or disabled;
+- the signed-in user can read and write;
+- RepoClock App **Contents: Read and write** for this repository;
+- a default branch or an empty repository RepoClock can safely initialize;
+- branch policy permits RepoClock's direct marker and personal-branch writes.
 
-The normal setup authorizes RepoClock through backend-free GitHub App Device Flow, installs the App on selected private repositories, and requires **Contents: Read and write**. Effective writes still require both the signed-in user's push rights and branch/ruleset permission. No write access is required on source issue repositories.
+Use **Only select repositories** when granting App access.
 
-A fine-grained PAT restricted to the private time-data repository remains available under **Personal access token compatibility** for legacy setup and migration.
+## Shared team setup
 
-## Files
+For shared reporting:
+
+1. Create one dedicated private data repository.
+2. Install the RepoClock GitHub App for only that repository.
+3. Give each tracker user sufficient GitHub read/write rights.
+4. Have each user authorize RepoClock separately and select the same repository.
+5. Let RepoClock create and verify the user's personal storage branch.
+6. Give reporting-only users read access if they are allowed to see all stored task references and descriptions.
+
+Use separate data repositories when teams have different privacy boundaries. App installation access is not enough by itself: each signed-in user still needs suitable GitHub permissions and must be able to use the repository's branch/ruleset policy.
+
+## Default branch and personal branches
+
+The default branch contains the shared repository marker:
 
 ```text
 .repoclock/config.json
+```
+
+RepoClock creates one user branch for each stable numeric GitHub identity:
+
+```text
+repoclock/users/{github-user-id}
+```
+
+The branch contains:
+
+```text
+.repoclock/user.json
 active/{storage-login}.txt
 times/{YYYY-MM}/{storage-login}.txt
+```
+
+Routine timer writes occur on the personal branch, not the default branch. This isolates users' writes and reduces shared-ref conflicts. Reports reads all valid marked personal branches and merges compatible legacy records that remain on the default branch.
+
+Do not manually create a branch under `repoclock/users/` and expect RepoClock to adopt it. Existing branches must have valid ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
+
+## Repository marker
+
+`.repoclock/config.json` records:
+
+- repository format version;
+- creation timestamp and creator;
+- stable GitHub user ID to immutable storage-login mappings.
+
+The marker is a compatibility and ownership boundary. RepoClock validates its exact structure and refuses to write over an unknown future format, malformed mapping, or incompatible reserved tree.
+
+## Time files
+
+An active timer is plain text:
+
+```text
+URL: https://github.com/acme/frontend/issues/123
+Title: Ranking regression
+Start: 2026-08-22T09:00:00+03:00
+Description: optional single-line text
 ```
 
 A completed record is plain text:
@@ -29,21 +82,67 @@ A completed record is plain text:
 ```text
 URL: https://github.com/acme/frontend/issues/123
 Title: Ranking regression
-Start: 2026-08-19T09:00:00+03:00
-End: 2026-08-19T10:15:00+03:00
+Start: 2026-08-22T09:00:00+03:00
+End: 2026-08-22T10:15:00+03:00
 Description: optional single-line text
 ```
 
-Records in a monthly file are separated by a blank line. `Title` and `Description` may be omitted. The storage login comes from the file name. `.repoclock/config.json` records the repository format version and stable GitHub-user-ID-to-storage-login mapping. Active files use `URL`, optional `Title`, `Start`, and optional `Description`; Stop appends the matching completed record to the monthly file and removes the active file.
+`Title` and `Description` are optional. Records in a monthly file are separated by a blank line.
 
-Files may be edited manually. Keep canonical GitHub issue/PR URLs, explicit timestamp timezones, Start months matching the `times/YYYY-MM/` directory, recognized field names, and blank-line separators. A malformed monthly file is reported rather than partially ignored. Legacy blocks without `Title` remain readable. When RepoClock can obtain a missing title from the current GitHub page or the metadata API, it rewrites the represented monthly file with its current SHA; persisted titles are then reused without a display-time lookup.
+The canonical URL can point to any HTTP(S) task. Legacy GitHub issue/PR blocks remain readable.
 
-Edits and deletes remain visible in Git history, but Git history is not tamper-proof against repository administrators. Optional backups can use `git clone --mirror`.
+## Manual inspection and editing
 
-## Reports cache
+Files are deliberately readable, but editing them outside RepoClock bypasses its UI validation and concurrency checks. If you edit manually:
 
-Reports first conditionally request the configured branch ref using the saved ETag. A `304 Not Modified` reuses the extension-origin IndexedDB snapshot without consuming primary GitHub API quota. When the branch changes, the extension reads the new commit/tree and downloads only monthly blobs whose immutable Git SHA is absent locally. Cache entries are scoped to `owner/repository@branch`, cleared when the destination or authenticated user changes, and never exposed to GitHub page scripts.
+- keep only valid HTTP(S) URLs without embedded credentials;
+- keep one-line Title and Description fields within their limits;
+- keep explicit timezone offsets on Start and End;
+- keep the file's `times/YYYY-MM/` month consistent with the represented Start date;
+- keep recognized field names and blank-line separators;
+- do not duplicate a record across the default and personal branches;
+- make changes as one reviewed Git commit.
 
-## Migration from daily files
+A malformed monthly file is reported rather than partially ignored. Repair the complete file before retrying the operation or report.
 
-Do not leave daily and monthly representations of the same records together: that can duplicate reports or make older extension versions write to obsolete paths. Migrate in one Git commit, preserving `active/` byte-for-byte, and verify every block before deleting `times/YYYY-MM-DD/*.txt`. The live demo repository includes `scripts/migrate_daily_to_monthly.py` for a dry-run/check/apply workflow. Keep the pre-migration commit as the rollback point.
+Edits and deletions remain visible in Git history unless an administrator rewrites history. For independent backup, use normal Git backup procedures such as `git clone --mirror`.
+
+## Existing repositories and migration safety
+
+RepoClock can use an existing private repository only after it validates the reserved tree and marker. It will not guess that arbitrary existing `active/`, `times/`, or `.repoclock/` content belongs to RepoClock.
+
+Configuration, authentication-mode, repository, and branch transitions are blocked while an active timer or pending write could be stranded. Finish and synchronize work first.
+
+Legacy records on the selected default/custom branch can remain readable while personal branches are introduced. RepoClock deduplicates equivalent records when Reports combines the sources.
+
+### Migration from obsolete daily files
+
+Do not keep daily and monthly representations of the same records together; reports can duplicate them, and older clients may continue writing obsolete paths.
+
+Migrate all validated records in one Git commit, preserve active files byte-for-byte, verify every output block, and keep the pre-migration commit as a rollback point. Use a migration process that supports a read-only dry run and validates the complete result before the commit.
+
+## Branch and ruleset guidance
+
+RepoClock writes directly through the GitHub API. The selected default branch must allow the shared marker to be initialized or updated when users are registered, and each `repoclock/users/{id}` branch must permit the user's routine writes.
+
+A ruleset that requires pull requests for every change can prevent normal timer operations. Use a dedicated repository with a policy designed for direct, authenticated time-data writes rather than weakening rules on a source repository.
+
+## Reports access
+
+Reports lists valid personal branches, reads represented monthly files for the selected Start-date range, and downloads immutable blobs as needed.
+
+Repository readers can therefore see all stored URLs, optional titles, timestamps, and descriptions across users. Local hourly rates and billable calculations are not stored in the repository.
+
+## Administrative operations
+
+### Change repository
+
+Use **Change data repository** in Settings. RepoClock validates the new stable repository identity and storage before switching. It does not delete or transfer the old data.
+
+### Disconnect a browser
+
+**Disconnect this browser** removes local sign-in but leaves GitHub authorization, App installation, repository data, and local configuration as described in Settings. It is not remote revocation.
+
+### Revoke or uninstall
+
+Revoking RepoClock user authorization and uninstalling the RepoClock GitHub App are separate GitHub operations. Neither deletes time data. Delete or archive repository data only through an explicit repository administration process.
