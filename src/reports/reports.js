@@ -1,6 +1,6 @@
 import {
   buildAnalytics, buildFacets, exportTimesheet, filterReportRecords, formatClockDuration,
-  periodRange, reportFilename,
+  periodRange, reportFilename, taskSource,
 } from '../domain/reporting.js';
 import { billableMinorTotal, rateMinorForUser } from '../domain/local-settings.js';
 
@@ -112,7 +112,7 @@ function renderSummary(filtered) {
   $('summary-money').textContent = formatMoney(billableMinorTotal(filtered, state.billing.rates));
   $('summary-entries').textContent = String(filtered.length);
   $('summary-people').textContent = String(new Set(filtered.map(record => record.user)).size);
-  $('summary-repositories').textContent = String(new Set(filtered.map(record => `${record.issue.owner}/${record.issue.repo}`)).size);
+  $('summary-repositories').textContent = String(new Set(filtered.map(record => taskSource(record))).size);
   const missingRates = [...new Set(filtered.map(record => record.user).filter(user => rateMinorForUser(user, state.billing.rates) === null))];
   $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${formatMoney(billableMinorTotal(filtered, state.billing.rates))}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
 }
@@ -187,7 +187,7 @@ function render() {
   renderFacet($('people-facet'), facets.people, state.people, state.peopleSearch, render);
   renderFacet($('repositories-facet'), facets.repositories, state.repositories, state.repositoriesSearch, render);
   const allPeople = [...new Set(state.records.map(record => record.user))];
-  const allRepositories = [...new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`))];
+  const allRepositories = [...new Set(state.records.map(record => taskSource(record)))];
   $('people-all').textContent = allPeople.length && allPeople.every(value => state.people.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   const filtered = filterReportRecords(state.records, selectedFilters());
@@ -213,7 +213,7 @@ async function loadRange(range) {
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { currency: result.billing?.currency || 'USD', rates: result.billing?.rates || {} };
     state.people = new Set(result.records.map(record => record.user));
-    state.repositories = new Set(result.records.map(record => `${record.issue.owner}/${record.issue.repo}`));
+    state.repositories = new Set(result.records.map(record => taskSource(record)));
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
   finally { if (requestId === state.requestId) { state.loading = false; $('loading').hidden = true; } }
@@ -247,7 +247,7 @@ $('people-all').addEventListener('click', () => {
   state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); render();
 });
 $('repositories-all').addEventListener('click', () => {
-  const values = [...new Set(state.records.map(record => `${record.issue.owner}/${record.issue.repo}`))];
+  const values = [...new Set(state.records.map(record => taskSource(record)))];
   state.repositories = values.length && values.every(value => state.repositories.has(value)) ? new Set() : new Set(values); render();
 });
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));

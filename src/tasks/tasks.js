@@ -26,9 +26,9 @@ function localDateValue(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function sameIssue(a, b) {
-  return Boolean(a && b && a.type === b.type && a.owner === b.owner && a.repo === b.repo && a.number === b.number);
-}
+function taskUrlOf(value) { return value?.taskUrl || value?.issue?.url || ''; }
+function sameTask(a, b) { return Boolean(taskUrlOf(a) && taskUrlOf(a) === taskUrlOf(b)); }
+
 
 function formatDuration(seconds, { current = false } = {}) {
   const minutes = Math.max(0, current ? Math.floor(seconds / 60) : Math.round(seconds / 60));
@@ -53,12 +53,12 @@ function setError(error = '') {
 }
 
 function taskVisualStatus(task) {
-  if (task.issue.type === 'issue' && task.status === 'CLOSED') return task.stateReason === 'NOT_PLANNED' ? 'not-planned' : 'completed';
+  if (task.issue?.type === 'issue' && task.status === 'CLOSED') return task.stateReason === 'NOT_PLANNED' ? 'not-planned' : 'completed';
   return task.status.toLowerCase();
 }
 
 function taskIcon(task) {
-  const { type } = task.issue, { status } = task, visualStatus = taskVisualStatus(task);
+  const type = task.issue?.type || 'url', { status } = task, visualStatus = taskVisualStatus(task);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('class', `task-icon ${type === 'pull_request' ? 'pull-request' : 'issue'} ${visualStatus}`);
@@ -71,7 +71,7 @@ function taskIcon(task) {
 
 function statusMatches(task, selected) {
   if (selected === 'all') return true;
-  if (selected === 'open') return task.status === 'OPEN';
+  if (selected === 'open') return task.status === 'OPEN' || !task.issue;
   return task.status === 'CLOSED' || task.status === 'MERGED';
 }
 
@@ -84,7 +84,7 @@ function visibleTasks() {
   const filtered = state.tasks.filter(task => {
     if (!statusMatches(task, status)) return false;
     if (!query) return true;
-    const searchable = `${task.title} ${task.issue.owner}/${task.issue.repo} #${task.issue.number} ${task.issue.type}`.toLowerCase();
+    const searchable = `${task.title} ${task.taskUrl} ${task.issue ? `${task.issue.owner}/${task.issue.repo} #${task.issue.number} ${task.issue.type}` : ''}`.toLowerCase();
     return searchable.includes(query);
   });
   return sortTrackedTasks(filtered, { active: state.active, now: Date.now() });
@@ -92,18 +92,19 @@ function visibleTasks() {
 
 function statusLabel(task) {
   const visualStatus = taskVisualStatus(task);
+  if (!task.issue) return 'Tracked URL';
   return visualStatus === 'open' ? 'Open' : visualStatus === 'merged' ? 'Merged' : visualStatus === 'closed' ? 'Closed'
     : visualStatus === 'completed' ? 'Completed' : visualStatus === 'not-planned' ? 'Not planned' : 'Status unavailable';
 }
 
 function makeTimerButton(task) {
-  const active = sameIssue(state.active?.issue, task.issue), button = document.createElement('button');
+  const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
   button.disabled = Boolean(state.busyUrl || (!active && (state.active || state.pendingWrites.length)));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
-    state.busyUrl = task.issue.url; setError(); render();
+    state.busyUrl = task.taskUrl; setError(); render();
     try {
       if (active) {
         const elapsed = currentElapsedSeconds();
@@ -113,7 +114,7 @@ function makeTimerButton(task) {
         task.activeStartedAt = null; state.active = null;
         if (result?.pending) state.pendingWrites = [{ id: result.entry?.id || 'pending', status: 'pending' }];
       } else {
-        state.active = await send({ type: 'START', issue: task.issue, issueTitle: task.title });
+        state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
         task.activeStartedAt = state.active.startedAt;
       }
     } catch (error) { setError(error); }
@@ -128,11 +129,12 @@ function render() {
   $('result-count').textContent = `${tasks.length} ${tasks.length === 1 ? 'result' : 'results'}`;
   $('empty').hidden = tasks.length > 0;
   for (const task of tasks) {
-    const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.issue.url;
+    const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
     const main = document.createElement('div'); main.className = 'task-main'; main.append(taskIcon(task));
     const copy = document.createElement('div'); copy.className = 'task-copy';
-    const title = document.createElement('a'); title.className = 'task-title'; title.href = task.issue.url; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title;
+    const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.taskUrl;
     const subline = document.createElement('div'); subline.className = 'task-subline';
+    if (task.title) { const name = document.createElement('span'); name.className = 'task-name'; name.textContent = task.title; subline.append(name); }
     const status = document.createElement('span'); status.className = `status ${taskVisualStatus(task)}`; status.textContent = statusLabel(task); subline.append(status);
     copy.append(title, subline); main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
@@ -140,13 +142,13 @@ function render() {
     actions.append(total, makeTimerButton(task)); row.append(main, actions); list.append(row);
   }
   if (state.active) tick = setInterval(() => {
-    const expectedOrder = visibleTasks().map(task => task.issue.url);
+    const expectedOrder = visibleTasks().map(task => task.taskUrl);
     const renderedOrder = [...list.children].map(row => row.dataset.taskUrl);
     if (expectedOrder.some((url, index) => renderedOrder[index] !== url)) { render(); return; }
     const activeButton = document.querySelector('.timer-button.stop');
     if (activeButton) activeButton.textContent = `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}`;
-    const activeRow = [...list.children].find(row => row.dataset.taskUrl === state.active.issue.url);
-    const activeTask = state.tasks.find(task => sameIssue(task.issue, state.active.issue));
+    const activeRow = [...list.children].find(row => row.dataset.taskUrl === taskUrlOf(state.active));
+    const activeTask = state.tasks.find(task => sameTask(task, state.active));
     const total = activeRow?.querySelector('.tracked-time');
     if (total && activeTask) total.textContent = `${formatDuration(taskTotalSeconds(activeTask))} tracked`;
   }, 1000);

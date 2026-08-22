@@ -62,7 +62,7 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(popupHtml, /src="\.\.\/content\/github\.js"/);
   assert.doesNotMatch(popupHtml, /popup\.js/);
   assert.match(content, /popupMode[\s\S]*renderMenu\(\)/);
-  assert.match(content, /Task \(issue or pull request\)/);
+  assert.match(content, /Task URL/);
   assert.match(content, /Task title/);
   assert.doesNotMatch(content, /fieldLabel\('Issue or pull request'/);
   assert.match(content, /overflow-y:scroll/);
@@ -71,4 +71,30 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
   assert.ok(content.includes("shadow?.querySelector?.('.time-value')?.focus?.()"));
   assert.match(content, /compact-time-picker \.time-unit \{ display:grid; grid-template-columns:24px 38px 24px/);
+});
+
+
+test('tracker copy and navigation use URL tasks without item terminology', () => {
+  assert.doesNotMatch(content, /Edit details|Running on this item|Running on another item|Open any GitHub issue or pull request|Task \(issue or pull request\)/);
+  assert.match(content, /button\('Edit', 'entry-edit'/);
+  assert.match(content, /Tracking/);
+  assert.match(content, /'this'/);
+  assert.match(content, /'another'/);
+  assert.match(content, /tracking-another/);
+  assert.match(content, /const tasks = button\('Tasks', 'reports-button'/);
+  assert.match(content, /taskUrl/);
+  assert.match(content, /Task URL/);
+});
+
+test('focused minute wheel input accumulates trackpad movement and changes one minute at a time', () => {
+  assert.match(content, /WHEEL_THRESHOLD/);
+  assert.match(content, /wheelRemainder/);
+  assert.match(content, /unit\(minuteField, 'minute', 1, 59\)/);
+  assert.doesNotMatch(content, /unit\(minuteField, 'minute', 5, 59\)/);
+});
+
+test('main-panel time drafts link crossed neighboring boundaries before save', () => {
+  assert.match(content, /linkCrossedTimeBoundaries/);
+  assert.match(content, /EDIT_ENTRIES/);
+  assert.doesNotMatch(content, /Stop time must not be before Start time\./);
 });

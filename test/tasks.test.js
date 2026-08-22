@@ -45,7 +45,7 @@ test('persisted record titles are used without display-time metadata resolution'
 test('tracked task aggregation keeps inaccessible metadata as a safe canonical fallback', () => {
   const task = issue(7, 'issue', 'private');
   assert.deepEqual(aggregateTrackedTasks([record(task, 60, '2026-08-20')], { user: 'alice' }), [{
-    issue: task, title: 'acme/private#7', status: 'UNKNOWN', totalSeconds: 60, sessionCount: 1,
+    taskUrl: task.url, issue: task, title: '', status: 'UNKNOWN', totalSeconds: 60, sessionCount: 1,
   }]);
 });
 
@@ -57,7 +57,7 @@ test('active-only work is included without baking elapsed time into completed to
     metadata: new Map([[activeIssue.url, { title: 'Running review', status: 'OPEN' }]]),
   });
   assert.deepEqual(tasks, [{
-    issue: activeIssue, title: 'Running review', status: 'OPEN', totalSeconds: 0, sessionCount: 0,
+    taskUrl: activeIssue.url, issue: activeIssue, title: 'Running review', status: 'OPEN', totalSeconds: 0, sessionCount: 0,
     activeStartedAt: '2026-08-20T10:00:00.000Z',
   }]);
 });
@@ -95,4 +95,14 @@ test('closed issue state reasons preserve GitHub completed and not-planned seman
   ]) });
   assert.equal(tasks.find(task => task.issue.url === completed.url).stateReason, 'COMPLETED');
   assert.equal(tasks.find(task => task.issue.url === notPlanned.url).stateReason, 'NOT_PLANNED');
+});
+
+
+test('arbitrary URL tasks aggregate without provider metadata and keep title optional', () => {
+  const taskUrl = 'https://example.com/work/42';
+  const tasks = aggregateTrackedTasks([
+    { user: 'alice', taskUrl, taskTitle: '', durationSeconds: 120 },
+    { user: 'alice', taskUrl, taskTitle: 'Optional name', durationSeconds: 180 },
+  ], { user: 'alice' });
+  assert.deepEqual(tasks, [{ taskUrl, title: 'Optional name', status: 'UNKNOWN', totalSeconds: 300, sessionCount: 2 }]);
 });

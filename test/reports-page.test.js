@@ -17,7 +17,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   for (const id of ['people-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf']) assert.match(html, new RegExp(`id="${id}"`));
   assert.doesNotMatch(html, /Filter people|Filter repositories|id="export-format"|id="download-timesheet"|>Format</);
   assert.match(html, /aria-label="Search people"/);
-  assert.match(html, /aria-label="Search repositories"/);
+  assert.match(html, /aria-label="Search sources"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
   assert.match(html, /aria-label="Print report or save as PDF"/);

@@ -1,7 +1,7 @@
 import { activeTextPath, assertUserMonthlyTextPath, monthlyTextPath, normalizePlainTitle, parseActiveText, parseMonthlyText, serializeActiveText, serializeMonthlyText } from '../domain/monthly-text.js';
 import { applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
 import { createUlid } from '../domain/ulid.js';
-import { entryDateValue, localDateParts, normalizeIssue, validateEntryId, validatePathSegment } from '../domain/values.js';
+import { entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 export class TrackerConflictError extends Error {
   constructor(message, reason = '') { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; this.reason = reason; }
@@ -10,16 +10,17 @@ export class TrackerConflictError extends Error {
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 function isConflict(error) { return error?.status === 409 || error?.code === 'conflict'; }
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
-function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
-function sameTimer(a, b) { return Boolean(a && b) && a.issue?.url === b.issue?.url && a.startedAt === b.startedAt; }
-function sameDurableTitle(a, b) { return normalizePlainTitle(a?.issueTitle) === normalizePlainTitle(b?.issueTitle); }
+function taskTitleOf(value) { return normalizePlainTitle(value?.taskTitle ?? value?.issueTitle); }
+function taskLabel(value) { const url = taskUrlOf(value), github = parseGitHubTaskUrl(url); return github ? `${github.owner}/${github.repo}#${github.number}` : url; }
+function sameTimer(a, b) { return Boolean(a && b) && taskUrlOf(a) === taskUrlOf(b) && a.startedAt === b.startedAt; }
+function sameDurableTitle(a, b) { return taskTitleOf(a) === taskTitleOf(b); }
 function sameDurableTimer(a, b) { return sameTimer(a, b) && sameDurableTitle(a, b); }
 function sameCompletion(entry, operation) {
   const expected = operation.entry;
   return sameDurableTimer(entry, expected) && entry.endedAt === expected.endedAt && entry.description === expected.description;
 }
 function matchesOriginal(entry, original) {
-  return Boolean(entry && original) && entry.issue?.url === original.issueUrl && String(entry.issueTitle || '') === String(original.issueTitle || '')
+  return Boolean(entry && original) && taskUrlOf(entry) === String(original.taskUrl || original.issueUrl) && taskTitleOf(entry) === normalizePlainTitle(original.taskTitle ?? original.issueTitle)
     && entry.startedAt === original.startedAt && entry.endedAt === original.endedAt && entry.description === String(original.description || '');
 }
 function locateEntry(entries, index, original) {
@@ -53,10 +54,7 @@ export class TrackerService {
     this.recentDays = Math.min(31, Math.max(1, Number(recentDays) || 7));
   }
 
-  validateIssue(issue) {
-    const normalized = normalizeIssue(issue);
-    return normalized;
-  }
+  validateTaskUrl(value) { return normalizeTaskUrl(value); }
 
   async confirmFileMissing(error) {
     if (!isNotFound(error)) throw error;
@@ -91,16 +89,16 @@ export class TrackerService {
     return { active, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [] };
   }
 
-  async start(issue, issueTitle = '', description = '') {
+  async start(taskUrl, taskTitle = '', description = '') {
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('A stopped entry is still waiting to sync. Sync it before starting another timer.');
     const existing = await this.refreshActive();
-    if (existing) throw new Error(`A timer is already running on ${issueLabel(existing.issue)}`);
+    if (existing) throw new Error(`A timer is already tracking ${taskLabel(existing)}`);
     const now = this.clock();
-    const active = buildActiveTimer({ user: this.user, issue: this.validateIssue(issue), startedAt: now, description, issueTitle });
+    const active = buildActiveTimer({ user: this.user, taskUrl: this.validateTaskUrl(taskUrl), startedAt: now, description, taskTitle });
     const path = activeTextPath(this.user);
     try {
-      const result = await this.github.putText(path, serializeActiveText(active), `timer: start ${this.user} on ${issueLabel(active.issue)}`);
+      const result = await this.github.putText(path, serializeActiveText(active), `timer: start ${this.user} on ${taskLabel(active)}`);
       const cached = { ...active, _path: path, _sha: result.sha };
       await this.store.patchState({ activeCache: cached });
       return cached;
@@ -216,7 +214,7 @@ export class TrackerService {
     if (found) return found;
     const proposed = [...file.entries, operation.entry];
     try {
-      const result = await this.putMonthly(file, proposed, `time: add ${this.user} on ${issueLabel(operation.entry.issue)}`);
+      const result = await this.putMonthly(file, proposed, `time: add ${this.user} on ${taskLabel(operation.entry)}`);
       return parseMonthlyText(serializeMonthlyText(proposed), { user: this.user, month: file.month, path: file.path, sha: result.sha }).at(-1);
     } catch (error) {
       if (!isConflict(error) && error?.code !== 'validation') throw error;
@@ -356,15 +354,18 @@ export class TrackerService {
   }
 
   async backfillIssueTitles(files, knownTitles = new Map()) {
-    const untitled = files.flatMap(file => file.entries).filter(entry => !entry.issueTitle)
+    const untitled = files.flatMap(file => file.entries).filter(entry => !taskTitleOf(entry))
       .sort((left, right) => new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime());
     if (!untitled.length) return files;
     const titles = new Map();
     for (const entry of untitled) {
-      const known = normalizePlainTitle(knownTitles.get(entry.issue.url));
-      if (known) titles.set(entry.issue.url, known);
+      const url = taskUrlOf(entry), known = normalizePlainTitle(knownTitles.get(url));
+      if (known) titles.set(url, known);
     }
-    const unresolved = [...new Map(untitled.filter(entry => !titles.has(entry.issue.url)).map(entry => [entry.issue.url, entry.issue])).values()].slice(0, 100);
+    const unresolved = [...new Map(untitled.flatMap(entry => {
+      const url = taskUrlOf(entry), issue = entry.issue ?? parseGitHubTaskUrl(url);
+      return !titles.has(url) && issue ? [[url, issue]] : [];
+    })).values()].slice(0, 100);
     if (unresolved.length && typeof this.github.getTaskMetadata === 'function') {
       try {
         const metadata = await this.github.getTaskMetadata(unresolved, { batchSize: 50, maxRequests: 2 });
@@ -377,10 +378,10 @@ export class TrackerService {
       }
     }
     if (!titles.size) return files;
-    const touched = files.filter(file => file.entries.some(entry => !entry.issueTitle && titles.has(entry.issue.url))).map(file => ({
+    const touched = files.filter(file => file.entries.some(entry => !taskTitleOf(entry) && titles.has(taskUrlOf(entry)))).map(file => ({
       ...file,
-      entries: file.entries.map(entry => !entry.issueTitle && titles.has(entry.issue.url)
-        ? { ...entry, issueTitle: titles.get(entry.issue.url) } : entry),
+      entries: file.entries.map(entry => !taskTitleOf(entry) && titles.has(taskUrlOf(entry))
+        ? { ...entry, taskTitle: titles.get(taskUrlOf(entry)), issueTitle: titles.get(taskUrlOf(entry)) } : entry),
     }));
     if (!touched.length) return files;
     try {
@@ -405,16 +406,17 @@ export class TrackerService {
   }
 
   async backfillActiveIssueTitle(active, knownTitles = new Map()) {
-    if (!active || active.issueTitle || !knownTitles.has(active.issue?.url)) return active;
-    const issueTitle = normalizePlainTitle(knownTitles.get(active.issue.url));
-    if (!issueTitle) return active;
+    if (!active || taskTitleOf(active) || !knownTitles.has(taskUrlOf(active))) return active;
+    const taskTitle = normalizePlainTitle(knownTitles.get(taskUrlOf(active)));
+    if (!taskTitle) return active;
     const path = activeTextPath(this.user);
     try {
       const file = await this.github.getText(path), remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
       if (!sameTimer(remote, active)) throw new TrackerConflictError('The active timer changed while its missing task title was being saved. Reload.');
-      if (remote.issueTitle) return remote;
-      const result = await this.github.putText(path, serializeActiveText({ ...remote, issueTitle }), `timer: add missing title ${this.user}`, file.sha);
-      const saved = parseActiveText(serializeActiveText({ ...remote, issueTitle }), { user: this.user, path, sha: result.sha });
+      if (taskTitleOf(remote)) return remote;
+      const titled = { ...remote, taskTitle, issueTitle: taskTitle };
+      const result = await this.github.putText(path, serializeActiveText(titled), `timer: add missing title ${this.user}`, file.sha);
+      const saved = parseActiveText(serializeActiveText(titled), { user: this.user, path, sha: result.sha });
       await this.store.patchState({ activeCache: saved });
       return saved;
     } catch (error) {
@@ -469,8 +471,8 @@ export class TrackerService {
       .reduce((sum, entry) => sum + Math.max(0, Number(entry.durationSeconds) || 0), 0) }));
     await this.store.patchState({ recentCache: recent });
     const active = activeCache ? {
-      issue: activeCache.issue, startedAt: activeCache.startedAt,
-      description: activeCache.description || '', issueTitle: activeCache.issueTitle || '',
+      taskUrl: taskUrlOf(activeCache), taskTitle: taskTitleOf(activeCache), ...(activeCache.issue ? { issue: activeCache.issue } : {}), startedAt: activeCache.startedAt,
+      description: activeCache.description || '', issueTitle: taskTitleOf(activeCache),
     } : null;
     return {
       recent, summaries, todaySeconds: summaries[0].seconds, reportDate: today, active,
@@ -486,7 +488,7 @@ export class TrackerService {
     if (source.sha !== originalSha) throw new TrackerConflictError('This monthly time file changed after you opened it. Reload before saving.');
     const position = locateEntry(source.entries, index, original);
     if (position < 0) throw new TrackerConflictError('This time entry changed after you opened it. Reload before saving.');
-    const normalized = { ...edits, ...(edits.issue ? { issue: this.validateIssue(edits.issue) } : {}) };
+    const normalized = { ...edits, ...((edits.taskUrl || edits.issue) ? { taskUrl: this.validateTaskUrl(edits.taskUrl ?? edits.issue) } : {}) };
     const updated = applyEntryEdits(source.entries[position], normalized, editClock(this.clock, source.entries[position]));
     updated.entryDate = startDate(updated);
     const destinationPath = monthlyTextPath(this.user, updated.entryDate);
@@ -511,6 +513,60 @@ export class TrackerService {
       const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, [source.path, destination.path]) });
       return savedDestination.at(-1);
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while you were saving. Reload.'); throw error; }
+  }
+
+
+  async editEntries({ entries: requests }) {
+    if (!Array.isArray(requests) || requests.length < 1 || requests.length > 50) throw new Error('One to fifty linked time entries are required');
+    const files = new Map();
+    for (const request of requests) {
+      if (!request?.path) throw new Error('Each linked time entry requires a monthly path');
+      if (!files.has(request.path)) files.set(request.path, await this.readMonthly(request.path));
+      const file = files.get(request.path);
+      if (file.sha !== request.originalSha) throw new TrackerConflictError('A monthly time file changed after the panel loaded. Reload before saving.');
+      request.position = locateEntry(file.entries, request.index, request.original);
+      if (request.position < 0) throw new TrackerConflictError('A linked time entry changed inside its monthly file. Reload before saving.');
+      request.originalEntry = file.entries[request.position];
+    }
+    const identities = new Set(requests.map(request => `${request.path}\u0000${request.position}`));
+    if (identities.size !== requests.length) throw new Error('Linked time entries must be distinct');
+    const updated = requests.map(request => {
+      const edits = { ...request.edits, ...((request.edits?.taskUrl || request.edits?.issue)
+        ? { taskUrl: this.validateTaskUrl(request.edits.taskUrl ?? request.edits.issue) } : {}) };
+      const entry = applyEntryEdits(request.originalEntry, edits, editClock(this.clock, request.originalEntry));
+      entry.entryDate = startDate(entry);
+      return entry;
+    });
+    const targetPaths = updated.map(entry => monthlyTextPath(this.user, entry.entryDate));
+    for (const targetPath of targetPaths) if (!files.has(targetPath)) files.set(targetPath, await this.readMonthly(targetPath));
+    for (const request of requests) {
+      const source = files.get(request.path);
+      source.entries = source.entries.filter(entry => entry !== request.originalEntry);
+    }
+    updated.forEach((entry, index) => files.get(targetPaths[index]).entries.push(entry));
+    const touchedPaths = [...new Set([...requests.map(request => request.path), ...targetPaths])];
+    const touched = touchedPaths.map(path => files.get(path));
+    for (const file of touched) file.entries.sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+    const resultLocations = updated.map((entry, index) => ({ path: targetPaths[index], index: files.get(targetPaths[index]).entries.indexOf(entry) }));
+    try {
+      let blobShas = {};
+      if (touched.length === 1) {
+        const file = touched[0], result = await this.putMonthly(file, file.entries, `time: edit linked entries ${this.user} ${file.month}`);
+        blobShas[file.path] = result.sha;
+      } else {
+        const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyText(file.entries) || null }));
+        ({ blobShas } = await this.github.updateTextsAtomic(changes, `time: edit linked entries ${this.user}`));
+      }
+      const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyText(serializeMonthlyText(file.entries), {
+        user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null,
+      })]));
+      const replacements = [...savedByPath.values()].flat(), state = await this.store.getState();
+      await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touchedPaths) });
+      return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
+    } catch (error) {
+      if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while linked time edits were being saved. Reload.');
+      throw error;
+    }
   }
 
   async deleteEntry({ path, originalSha, index, original }) {

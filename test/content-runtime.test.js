@@ -165,14 +165,13 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #2').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
   assert.ok(start?.onclick, 'Start handler was rendered in the pull-request menu');
   await start.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   const startMessage = messages.findLast(message => message.type === 'START');
-  assert.deepEqual(startMessage.issue, {
-    type: 'pull_request', owner: 'acme', repo: 'app', number: 2, url: 'https://github.com/acme/app/pull/2',
-  });
+  assert.equal(startMessage.taskUrl, 'https://github.com/acme/app/pull/2');
+  assert.equal(startMessage.taskTitle, '');
 });
 
 
@@ -225,7 +224,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
   const pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
   assert.equal(pageStateMessages.length, 1);
-  assert.deepEqual(messages.findLast(message => message.type === 'LOAD_RECENT'), { type: 'LOAD_RECENT', menuData: true, issue: active.issue, issueTitle: '' });
+  assert.deepEqual(messages.findLast(message => message.type === 'LOAD_RECENT'), { type: 'LOAD_RECENT', menuData: true, taskUrl: active.issue.url, taskTitle: '' });
 });
 
 
@@ -307,7 +306,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #7').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry entry sync').at(-1);
   assert.equal(start.disabled, true, 'pending entry prevents another timer');
   assert.ok(retry?.onclick, 'entry conflict exposes its recovery action');
@@ -420,7 +419,7 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
         assert.equal(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true,
           'all detailed time fields are locked while Save is in flight');
         assert.equal(createdNodes.filter(node => node.tag === 'input' && (node.required || node.maxLength === 300)).slice(-2).every(node => node.disabled), true,
-          'issue and title fields are locked while Save is in flight');
+          'task URL and title fields are locked while Save is in flight');
         assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).disabled, true);
         callback(editAttempts === 1 ? { ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } }
           : { ok: true, data: { ...entry, ...message.payload.edits } });
@@ -436,14 +435,14 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
   const recentLink = createdNodes.filter(node => node.tag === 'a' && node.href === entry.issue.url).at(-1);
-  assert.equal(recentLink.textContent, 'app#7 · Make ranking deterministic');
+  assert.equal(recentLink.textContent, 'https://github.com/acme/app/issues/7 · Make ranking deterministic');
   const inlineTimeValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
   assert.deepEqual(inlineTimeValues.slice(-4).map(node => node.value), ['08', '00', '23', '58'],
     'the list exposes Start and Stop in their stored offset wall time');
-  assert.equal(messages.findLast(message => message.type === 'LOAD_RECENT').issueTitle, 'Make ranking deterministic');
+  assert.equal(messages.findLast(message => message.type === 'LOAD_RECENT').taskTitle, 'Make ranking deterministic');
   assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'no between-entry drag control remains');
 
-  const edit = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Edit details').at(-1);
+  const edit = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Edit').at(-1);
   await edit.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const timeValues = createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value'));
   assert.equal(timeValues.length, 4, 'Start and Stop each expose large hour and minute values');
@@ -461,15 +460,18 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   assert.equal(invalidPrevented, false, 'a partial direct-input draft does not capture page scrolling');
   assert.equal(stopMinute.value, '', 'a partial direct-input draft is preserved instead of throwing or resetting');
   assert.equal(stopMinute.getAttribute('aria-invalid'), 'true');
-  stopMinute.value = '58'; stopMinute.oninput({});
-  assert.equal(stopMinute.getAttribute('aria-valuenow'), '58');
+  stopMinute.value = '59'; stopMinute.oninput({});
+  assert.equal(stopMinute.getAttribute('aria-valuenow'), '59');
   const shadowHost = new FakeNode('div');
   document.activeElement = shadowHost;
   stopMinute.getRootNode = () => ({ activeElement: stopMinute });
   let prevented = false;
-  stopMinute.onwheel({ deltaY: -1, preventDefault() { prevented = true; } });
+  stopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, 'a tiny trackpad delta does not consume page scrolling');
+  assert.equal(stopMinute.value, '59');
+  stopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
-  assert.equal(stopMinute.value, '03', 'wheel stepping rolls minutes across midnight');
+  assert.equal(stopMinute.value, '00', 'one accumulated wheel threshold advances exactly one minute across midnight');
   const stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
   assert.equal(stopDate.value, '2026-08-19', 'cross-midnight scrolling advances the Stop date');
 
@@ -480,13 +482,13 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   await form.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1).value, 'Edited deterministic ranking');
   assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).value, 'Preserve this draft');
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['08', '00', '00', '03'],
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['08', '00', '00', '00'],
     'a conflict rerender preserves the complete typed and scrolled draft');
   const retryForm = createdNodes.filter(node => node.tag === 'form').at(-1);
   await retryForm.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRY');
   assert.equal(editMessage.payload.edits.startedAt, entry.startedAt, 'unchanged Start keeps its original wall time, seconds, milliseconds, and offset');
-  assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:03:27.123-07:00');
+  assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:00:27.123-07:00');
 });
 
 
@@ -529,7 +531,7 @@ test('consecutive records for one task share one task header and keep separate t
 
   const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href));
   assert.equal(taskLinks.length, 3, 'two adjacent records for issue 7 render one shared task header');
-  assert.deepEqual(taskLinks.map(node => node.textContent), ['app#7 · Issue 7', 'app#8 · Issue 8', 'app#7 · Issue 7'],
+  assert.deepEqual(taskLinks.map(node => node.textContent), [issue(7).url + ' · Issue 7', issue(8).url + ' · Issue 8', issue(7).url + ' · Issue 7'],
     'the same task receives a new header after a different task interrupts the sequence');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
@@ -573,7 +575,7 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'EDIT_ENTRY') {
+      else if (message.type === 'EDIT_ENTRIES') {
         assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), true,
           'the complete current and sibling inline editors are locked while Save time is in flight');
         callback({ ok: true, data: {} });
@@ -596,20 +598,42 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
   assert.equal(inlineValues.length, 16, 'every main-panel record exposes Start and Stop hour/minute spinbuttons');
   assert.equal(createdNodes.filter(node => node.className.includes('inline-save')).slice(-4).every(node => node.hidden), true);
 
-  const firstStopMinute = inlineValues[3];
+  const firstStopMinute = inlineValues[7];
   document.activeElement = new FakeNode('div');
   firstStopMinute.getRootNode = () => ({ activeElement: firstStopMinute });
   let prevented = false;
-  firstStopMinute.onwheel({ deltaY: -1, preventDefault() { prevented = true; } });
+  firstStopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false);
+  assert.equal(firstStopMinute.value, '00');
+  firstStopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
-  assert.equal(firstStopMinute.value, '05');
-  const save = createdNodes.filter(node => node.className.includes('inline-save')).at(-4);
+  assert.equal(firstStopMinute.value, '01');
+  const save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
   assert.equal(save.hidden, false, 'scrolling a main-panel value reveals an explicit Save action');
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const edit = messages.findLast(message => message.type === 'EDIT_ENTRY');
-  assert.equal(edit.payload.index, 1);
-  assert.equal(edit.payload.originalSha, 'same');
-  assert.equal(edit.payload.edits.endedAt, '2026-08-21T16:05:00+00:00');
+  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(edit.payload.entries.length, 2, 'the crossed neighboring Start is saved in the same atomic group');
+  assert.equal(edit.payload.entries[0].originalSha, 'same');
+  assert.equal(edit.payload.entries[0].edits.endedAt, '2026-08-21T15:01:00+00:00');
+  assert.equal(edit.payload.entries[1].edits.startedAt, '2026-08-21T15:01:00+00:00');
+
+  const refreshedInlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
+  const secondStartMinute = refreshedInlineValues[1];
+  secondStartMinute.getRootNode = () => ({ activeElement: secondStartMinute });
+  let startPrevented = false;
+  secondStartMinute.onwheel({ deltaY: 1, deltaMode: 0, preventDefault() { startPrevented = true; } });
+  assert.equal(startPrevented, false);
+  assert.equal(secondStartMinute.value, '30');
+  secondStartMinute.onwheel({ deltaY: 79, deltaMode: 0, preventDefault() { startPrevented = true; } });
+  assert.equal(startPrevented, true);
+  assert.equal(secondStartMinute.value, '29');
+  const mirroredSave = createdNodes.filter(node => node.className.includes('inline-save')).slice(-4)[0];
+  assert.equal(mirroredSave.hidden, false, 'crossing Start reveals Save on the edited record');
+  await mirroredSave.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const mirroredEdit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(mirroredEdit.payload.entries.length, 2, 'the crossed previous Stop is saved in the same atomic group');
+  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T14:29:00+00:00');
+  assert.equal(mirroredEdit.payload.entries[1].edits.endedAt, '2026-08-21T14:29:00+00:00');
 });
 
 test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
@@ -639,7 +663,8 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
   const entry = (id, number, startedAt, endedAt, sha, index = number - 1) => ({
-    schemaVersion: 1, id, user: 'alice', issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
+    schemaVersion: 1, id, user: 'alice', taskUrl: `https://github.com/acme/app/issues/${number}`, taskTitle: `Issue ${number}`,
+    issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
     issueTitle: `Issue ${number}`, entryDate: startedAt.slice(0, 10), startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
     createdAt: endedAt, updatedAt: endedAt, _path: 'times/2026-08/alice.txt', _sha: sha, _index: index,
   });
@@ -699,7 +724,8 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   assert.equal(deletion.payload.path, newer._path);
   assert.equal(deletion.payload.index, newer._index);
   assert.deepEqual(deletion.payload.original, {
-    issueUrl: newer.issue.url, issueTitle: newer.issueTitle, startedAt: newer.startedAt, endedAt: newer.endedAt, description: '',
+    taskUrl: newer.taskUrl, taskTitle: newer.taskTitle, issueUrl: newer.issue.url, issueTitle: newer.issueTitle,
+    startedAt: newer.startedAt, endedAt: newer.endedAt, description: '',
   });
   const survivingDelete = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
   await survivingDelete.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -856,7 +882,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
 });
 
-test('split header navigation works on a non-issue GitHub page without loading tracker entries', async () => {
+test('split header navigation tracks a generic GitHub URL and still opens Tasks', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
@@ -881,7 +907,7 @@ test('split header navigation works on a non-issue GitHub page without loading t
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   const arrow = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-menu'));
   assert.ok(main?.onclick); assert.ok(arrow?.onclick);
-  assert.equal(main.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(main.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(arrow.getAttribute('aria-haspopup'), 'menu');
   await arrow.onclick({ isTrusted: true });
   const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks');
@@ -889,11 +915,12 @@ test('split header navigation works on a non-issue GitHub page without loading t
   await tasks.onclick({ isTrusted: true });
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TASKS'), { type: 'OPEN_TASKS' });
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
-  await main.onclick({ isTrusted: true });
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Reports'));
+  await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
 });
 
-test('split main segment resolves non-issue to issue SPA navigation at activation time', async () => {
+test('split main segment resolves a generic GitHub URL to an issue URL at activation time', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
   const { actions } = makeHeader();
@@ -910,10 +937,10 @@ test('split main segment resolves non-issue to issue SPA navigation at activatio
   location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start timer on task #7'));
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
 });
 
-test('split main segment resolves issue to non-issue SPA navigation at activation time', async () => {
+test('split main segment resolves an issue URL to another generic GitHub URL at activation time', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
@@ -924,8 +951,8 @@ test('split main segment resolves issue to non-issue SPA navigation at activatio
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/issues/assigned'; location.href = 'https://github.com/issues/assigned';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks'));
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
+  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
 });
 
 test('header mounting falls back to a complete legacy header when the modern container has no avatar', async () => {
@@ -979,7 +1006,7 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start timer on task #7').at(-1);
+  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
   await start.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry').at(-1);
   assert.ok(retry?.onclick, 'transient error exposes Retry');

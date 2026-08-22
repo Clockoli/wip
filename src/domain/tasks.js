@@ -1,4 +1,4 @@
-import { normalizeIssue } from './values.js';
+import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
 
 const PERIOD_DAYS = Object.freeze({
   'two-weeks': 14,
@@ -12,6 +12,7 @@ function dateValue(date) {
   const pad = value => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? '').trim().slice(0, 300); }
 
 export function taskPeriodRange(period, today) {
   const days = PERIOD_DAYS[period];
@@ -27,7 +28,7 @@ export function taskPeriodRange(period, today) {
 export function effectiveTrackedSeconds(task, { active = null, now = Date.now() } = {}) {
   const completed = Number(task?.totalSeconds);
   if (!Number.isFinite(completed) || completed < 0) throw new Error('Invalid tracked task duration');
-  if (!task.activeStartedAt || active?.issue?.url !== task.issue?.url) return completed;
+  if (!task.activeStartedAt || taskUrlOf(active) !== taskUrlOf(task)) return completed;
   const startedAt = new Date(task.activeStartedAt).getTime(), current = new Date(now).getTime();
   if (!Number.isFinite(startedAt) || !Number.isFinite(current)) throw new Error('Invalid active task time');
   return completed + Math.max(0, Math.floor((current - startedAt) / 1000));
@@ -35,7 +36,7 @@ export function effectiveTrackedSeconds(task, { active = null, now = Date.now() 
 
 export function sortTrackedTasks(tasks, options = {}) {
   return [...(tasks ?? [])].sort((a, b) => effectiveTrackedSeconds(b, options) - effectiveTrackedSeconds(a, options)
-    || a.issue.url.localeCompare(b.issue.url));
+    || taskUrlOf(a).localeCompare(taskUrlOf(b)));
 }
 
 export function aggregateTrackedTasks(records, { user, metadata = new Map(), active = null } = {}) {
@@ -43,35 +44,33 @@ export function aggregateTrackedTasks(records, { user, metadata = new Map(), act
   const tasks = new Map();
   for (const record of records ?? []) {
     if (record?.user !== user) continue;
-    const issue = normalizeIssue(record.issue);
+    const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
     const seconds = Number(record.durationSeconds);
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('Invalid tracked task duration');
-    const existing = tasks.get(issue.url) ?? { issue, totalSeconds: 0, sessionCount: 0 };
-    const storedTitle = typeof record.issueTitle === 'string' ? record.issueTitle.trim().slice(0, 300) : '';
+    const existing = tasks.get(taskUrl) ?? { taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0 };
+    const storedTitle = taskTitleOf(record);
     if (storedTitle) existing.title = storedTitle;
-    existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(issue.url, existing);
+    existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(taskUrl, existing);
   }
   if (active?.user === user) {
-    const issue = normalizeIssue(active.issue), startedAt = new Date(active.startedAt);
+    const taskUrl = taskUrlOf(active), issue = active.issue ?? parseGitHubTaskUrl(taskUrl), startedAt = new Date(active.startedAt);
     if (Number.isNaN(startedAt.getTime())) throw new Error('Invalid active task start time');
-    const existing = tasks.get(issue.url) ?? { issue, totalSeconds: 0, sessionCount: 0 };
-    existing.activeStartedAt = startedAt.toISOString(); tasks.set(issue.url, existing);
+    const existing = tasks.get(taskUrl) ?? { taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0 };
+    existing.activeStartedAt = startedAt.toISOString(); tasks.set(taskUrl, existing);
   }
   return [...tasks.values()].map(task => {
-    const details = metadata.get(task.issue.url);
-    const title = task.title || (task.activeStartedAt && typeof active?.issueTitle === 'string' && active.issueTitle.trim()
-      ? active.issueTitle.trim().slice(0, 300)
-      : (typeof details?.title === 'string' && details.title.trim()
-        ? details.title.trim().slice(0, 300)
-        : `${task.issue.owner}/${task.issue.repo}#${task.issue.number}`));
+    const details = metadata.get(task.taskUrl);
+    const title = task.title || (task.activeStartedAt && taskTitleOf(active)
+      ? taskTitleOf(active)
+      : (typeof details?.title === 'string' && details.title.trim() ? details.title.trim().slice(0, 300) : ''));
     const status = ['OPEN', 'CLOSED', 'MERGED'].includes(details?.status) ? details.status : 'UNKNOWN';
-    const stateReason = task.issue.type === 'issue' && status === 'CLOSED' && ['COMPLETED', 'NOT_PLANNED'].includes(details?.stateReason)
-      ? details.stateReason
-      : null;
+    const stateReason = task.issue?.type === 'issue' && status === 'CLOSED' && ['COMPLETED', 'NOT_PLANNED'].includes(details?.stateReason)
+      ? details.stateReason : null;
     return {
-      issue: task.issue, title, status, totalSeconds: task.totalSeconds, sessionCount: task.sessionCount,
+      taskUrl: task.taskUrl, ...(task.issue ? { issue: task.issue } : {}), title, status,
+      totalSeconds: task.totalSeconds, sessionCount: task.sessionCount,
       ...(stateReason ? { stateReason } : {}),
       ...(task.activeStartedAt ? { activeStartedAt: task.activeStartedAt } : {}),
     };
-  }).sort((a, b) => b.totalSeconds - a.totalSeconds || a.issue.url.localeCompare(b.issue.url));
+  }).sort((a, b) => b.totalSeconds - a.totalSeconds || a.taskUrl.localeCompare(b.taskUrl));
 }

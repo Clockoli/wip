@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "RepoClock",
   "version": "0.1.11",
-  "description": "Track time on GitHub tasks (issues and pull requests) in a private GitHub repository.",
+  "description": "Track time on any task URL and store records in a private GitHub repository.",
   "permissions": [
     "alarms",
     "activeTab"

@@ -1,5 +1,5 @@
 import { parseMonthlyText, parseMonthlyTextPath } from '../domain/monthly-text.js';
-import { entryDateParts, validatePathSegment } from '../domain/values.js';
+import { entryDateParts, taskUrlOf, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
@@ -10,7 +10,7 @@ function withoutStorageMetadata(record) {
 }
 
 function reportRecordKey(record) {
-  return [record.user.toLowerCase(), record.issue.url, record.startedAt, record.endedAt].join('\u0000');
+  return [record.user.toLowerCase(), taskUrlOf(record), record.startedAt, record.endedAt].join('\u0000');
 }
 
 function mergeReportRecords(primary, fallback) {

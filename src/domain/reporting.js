@@ -1,3 +1,4 @@
+import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
 import { billableMinorForRecord, rateMinorForUser } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
@@ -79,7 +80,11 @@ export function todayTrackedSeconds(records, active, now = new Date(), today = n
   return total;
 }
 
-function repository(record) { return `${record.issue.owner}/${record.issue.repo}`; }
+export function taskSource(record) {
+  const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
+  return issue ? `${issue.owner}/${issue.repo}` : new URL(taskUrl).hostname;
+}
+function repository(record) { return taskSource(record); }
 function selected(values) { return values instanceof Set ? values : new Set(values ?? []); }
 
 export function filterReportRecords(records, filters = {}) {
@@ -109,8 +114,8 @@ export function buildFacets(records, filters = {}) {
 function recordDate(record) { return record.entryDate || record.startedAt.slice(0, 10); }
 
 function taskPart(record) {
-  const type = record.issue.type === 'pull_request' ? 'PR' : 'Issue';
-  return { key: record.issue.url, label: `${record.issue.owner}/${record.issue.repo}#${record.issue.number} (${type})` };
+  const taskUrl = taskUrlOf(record), title = String(record.taskTitle ?? record.issueTitle ?? '').trim();
+  return { key: taskUrl, label: title ? `${taskUrl} · ${title}` : taskUrl };
 }
 
 function axisPart(record, axis) {
@@ -159,7 +164,7 @@ export function buildAnalytics(records, options = {}) {
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
     const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, billableMinor: 0, tasks: new Set() };
     cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1;
-    cell.billableMinor += billableMinorForRecord(record, options.rates || {}); cell.tasks.add(record.issue.url);
+    cell.billableMinor += billableMinorForRecord(record, options.rates || {}); cell.tasks.add(taskUrlOf(record));
     bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -204,9 +209,9 @@ export function exportTimesheet(records, { format, startDate, endDate, rates = n
   const entries = ordered.map(record => ({
     person: record.user,
     repository: repository(record),
-    type: record.issue.type === 'pull_request' ? 'Pull request' : 'Issue',
-    number: record.issue.number,
-    url: record.issue.url,
+    type: record.issue?.type === 'pull_request' ? 'Pull request' : record.issue?.type === 'issue' ? 'Issue' : 'URL',
+    number: record.issue?.number ?? '',
+    url: taskUrlOf(record),
     start: record.startedAt,
     end: record.endedAt,
     duration: hms(record.durationSeconds),

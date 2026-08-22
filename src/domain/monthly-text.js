@@ -1,5 +1,5 @@
 import { durationSeconds } from './records.js';
-import { entryDateParts, normalizeIssue, parseIssueUrl, validatePathSegment } from './values.js';
+import { entryDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validatePathSegment } from './values.js';
 
 const FIELD_RE = /^([A-Za-z]+):(?: (.*))?$/;
 const ALLOWED_FIELDS = new Set(['URL', 'Title', 'Start', 'End', 'Description']);
@@ -79,15 +79,14 @@ function parseBlock(block, { active = false } = {}) {
     if (!fields.get(required)) throw new Error(`Missing time record field: ${required}`);
   }
   if (active && fields.has('End')) throw new Error('Active timer must not contain End');
-  const issue = parseIssueUrl(fields.get('URL'));
-  if (!issue) throw new Error('Invalid issue or pull request URL');
+  const taskUrl = normalizeTaskUrl(fields.get('URL'));
   const startedAt = timestampWithTimezone(fields.get('Start'));
   const endedAt = active ? null : timestampWithTimezone(fields.get('End'));
-  const issueTitle = normalizePlainTitle(fields.get('Title') || '');
+  const taskTitle = normalizePlainTitle(fields.get('Title') || '');
   const description = normalizePlainDescription(fields.get('Description') || '');
-  if (active) return { issue, issueTitle, startedAt, description };
+  if (active) return { taskUrl, taskTitle, startedAt, description };
   durationSeconds(startedAt, endedAt);
-  return { issue, issueTitle, startedAt, endedAt, description };
+  return { taskUrl, taskTitle, startedAt, endedAt, description };
 }
 
 function splitBlocks(text) {
@@ -107,7 +106,8 @@ export function parseMonthlyText(text, { user, month, path = `times/${validateMo
     entryDateParts(date);
     const createdAt = record.endedAt;
     return {
-      schemaVersion: 1, id: recordId(date, index), user, issue: normalizeIssue(record.issue), issueTitle: record.issueTitle, entryDate: date,
+      schemaVersion: 1, id: recordId(date, index), user, taskUrl: record.taskUrl, taskTitle: record.taskTitle, issueTitle: record.taskTitle,
+      ...(parseGitHubTaskUrl(record.taskUrl) ? { issue: parseGitHubTaskUrl(record.taskUrl) } : {}), entryDate: date,
       startedAt: record.startedAt, endedAt: record.endedAt, durationSeconds: durationSeconds(record.startedAt, record.endedAt),
       description: record.description, createdAt, updatedAt: createdAt,
       _path: path, _sha: sha, _index: index,
@@ -116,10 +116,9 @@ export function parseMonthlyText(text, { user, month, path = `times/${validateMo
 }
 
 function serializeRecord(record, { active = false } = {}) {
-  const issue = normalizeIssue(record.issue);
-  const lines = [`URL: ${issue.url}`];
-  const issueTitle = normalizePlainTitle(record.issueTitle);
-  if (issueTitle) lines.push(`Title: ${issueTitle}`);
+  const lines = [`URL: ${taskUrlOf(record)}`];
+  const taskTitle = normalizePlainTitle(record.taskTitle ?? record.issueTitle);
+  if (taskTitle) lines.push(`Title: ${taskTitle}`);
   lines.push(`Start: ${timestampWithTimezone(record.startedAt)}`);
   if (!active) {
     timestampWithTimezone(record.endedAt);
@@ -143,7 +142,8 @@ export function parseActiveText(text, { user, path = activeTextPath(user), sha =
   if (blocks.length !== 1) throw new Error('Active timer file must contain exactly one timer');
   const record = parseBlock(blocks[0], { active: true });
   return {
-    schemaVersion: 1, user, issue: normalizeIssue(record.issue), issueTitle: record.issueTitle, entryDate: record.startedAt.slice(0, 10),
+    schemaVersion: 1, user, taskUrl: record.taskUrl, taskTitle: record.taskTitle, issueTitle: record.taskTitle,
+    ...(parseGitHubTaskUrl(record.taskUrl) ? { issue: parseGitHubTaskUrl(record.taskUrl) } : {}), entryDate: record.startedAt.slice(0, 10),
     startedAt: record.startedAt, description: record.description, createdAt: record.startedAt,
     _path: path, _sha: sha,
   };

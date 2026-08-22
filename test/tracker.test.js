@@ -84,6 +84,18 @@ test('start writes one readable active text file with its durable issue title', 
   assert.equal(parseActiveText(file.text, { user: 'alice' }).issue.number, 123);
 });
 
+test('start persists an arbitrary task URL with an optional empty title', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const result = await tracker.start('https://example.com/work/42?view=full', '');
+  assert.equal(result.taskUrl, 'https://example.com/work/42?view=full');
+  assert.equal(result.taskTitle, '');
+  assert.equal(result.issue, undefined);
+  const file = github.files.get('active/alice.txt');
+  assert.equal(file.text.startsWith('URL: https://example.com/work/42?view=full\nStart: '), true);
+  assert.doesNotMatch(file.text, /^Title:/m);
+  assert.equal(parseActiveText(file.text, { user: 'alice' }).taskUrl, result.taskUrl);
+});
+
 test('recent load backfills missing issue titles once with the current SHA', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.txt';
   const untitled = entry(localTimestamp(2026, 7, 18, 8), localTimestamp(2026, 7, 18, 9));
@@ -535,7 +547,7 @@ test('simultaneous Stops converge automatically after a monthly-file create race
 
 test('malformed monthly text fails visibly instead of silently hiding the whole month', async () => {
   const github = new FakeGitHub(); seedText(github, 'times/2026-08/alice.txt', 'URL: javascript:alert(1)\nStart: nope\nEnd: nope\n');
-  await assert.rejects(() => service({ github, recentDays: 1 }).loadRecent(), /issue|timestamp/i);
+  await assert.rejects(() => service({ github, recentDays: 1 }).loadRecent(), /task URL|timestamp/i);
 });
 
 test('tracking accepts a valid GitHub issue from any owner', async () => {
@@ -606,4 +618,39 @@ test('repository-level 404 during clearActive preserves the queue and escapes fo
   assert.equal(store.value.pendingWrites[0].stage, 'clearActive');
   assert.equal(store.value.activeCache.startedAt, old.startedAt);
   assert.equal(store.value.recentCache.length, 0);
+});
+
+
+test('linked time edits save a crossed adjacent boundary in one monthly-file write', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.txt';
+  const previous = entry('2026-08-18T08:00:00+00:00', '2026-08-18T09:00:00+00:00');
+  const current = entry('2026-08-18T10:00:00+00:00', '2026-08-18T11:00:00+00:00', { issue: pull });
+  seedText(github, path, serializeMonthlyText([previous, current]), 'linked');
+  const saved = await service({ github }).editEntries({ entries: [
+    { path, originalSha: 'linked', index: 0, original: { issueUrl: previous.issue.url, issueTitle: '', startedAt: previous.startedAt, endedAt: previous.endedAt, description: '' }, edits: { endedAt: '2026-08-18T08:30:00+00:00' } },
+    { path, originalSha: 'linked', index: 1, original: { issueUrl: current.issue.url, issueTitle: '', startedAt: current.startedAt, endedAt: current.endedAt, description: '' }, edits: { startedAt: '2026-08-18T08:30:00+00:00' } },
+  ] });
+  assert.equal(github.writes.length, 1);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(saved.length, 2);
+  const parsed = parseMonthlyText(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(parsed.map(record => [record.startedAt, record.endedAt]), [
+    ['2026-08-18T08:00:00+00:00', '2026-08-18T08:30:00+00:00'],
+    ['2026-08-18T08:30:00+00:00', '2026-08-18T11:00:00+00:00'],
+  ]);
+});
+
+test('linked time edits remain atomic when an adjusted Start moves across monthly files', async () => {
+  const github = new FakeGitHub(), august = 'times/2026-08/alice.txt', september = 'times/2026-09/alice.txt';
+  const previous = entry('2026-08-31T22:00:00+00:00', '2026-08-31T23:30:00+00:00');
+  const current = entry('2026-09-01T00:00:00+00:00', '2026-09-01T01:00:00+00:00', { issue: pull });
+  seedText(github, august, serializeMonthlyText([previous]), 'august');
+  seedText(github, september, serializeMonthlyText([current]), 'september');
+  await service({ github }).editEntries({ entries: [
+    { path: august, originalSha: 'august', index: 0, original: { issueUrl: previous.issue.url, issueTitle: '', startedAt: previous.startedAt, endedAt: previous.endedAt, description: '' }, edits: { endedAt: '2026-08-31T23:00:00+00:00' } },
+    { path: september, originalSha: 'september', index: 0, original: { issueUrl: current.issue.url, issueTitle: '', startedAt: current.startedAt, endedAt: current.endedAt, description: '' }, edits: { startedAt: '2026-08-31T23:00:00+00:00' } },
+  ] });
+  assert.equal(github.atomicWrites.length, 1);
+  assert.equal(parseMonthlyText(github.files.get(august).text, { user: 'alice', month: '2026-08' }).length, 2);
+  assert.equal(github.files.has(september), false);
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertMessageAllowed, issueForStart } from '../src/background/message-policy.js';
+import { assertMessageAllowed, issueForStart, taskUrlForStart } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
@@ -15,12 +15,12 @@ test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('EDIT_ENTRY', content, origin));
 });
 
-test('non-issue GitHub pages can open navigation pages but cannot mutate timers', () => {
+test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
-  for (const type of ['START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY']) {
+  for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
     assert.throws(() => assertMessageAllowed(type, dashboard, origin), /not allowed/i);
   }
 });
@@ -71,4 +71,23 @@ test('GitHub App onboarding and credential operations are extension-page only', 
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
     assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
   }
+});
+
+
+test('any GitHub page can start a URL task only for its exact sender URL', () => {
+  const sender = { url: 'https://github.com/acme/app/actions/runs/123?check_suite_focus=true', tab: { id: 9 } };
+  assert.equal(assertMessageAllowed('START', sender, origin), 'content');
+  assert.equal(taskUrlForStart(sender.url, sender, origin), sender.url);
+  assert.throws(() => taskUrlForStart('https://example.com/other', sender, origin), /match/i);
+});
+
+test('trusted popup accepts arbitrary HTTP(S) task URLs and rejects unsafe schemes', () => {
+  assert.equal(taskUrlForStart('https://example.com/docs/42', extension, origin), 'https://example.com/docs/42');
+  assert.throws(() => taskUrlForStart('javascript:alert(1)', extension, origin), /task URL/i);
+});
+
+
+test('GitHub issue query and fragment churn cannot create a second task identity', () => {
+  const sender = { url: 'https://github.com/acme/app/issues/7?notification_referrer_id=1#issuecomment-3', tab: { id: 10 } };
+  assert.equal(taskUrlForStart('https://github.com/acme/app/issues/7', sender, origin), 'https://github.com/acme/app/issues/7');
 });

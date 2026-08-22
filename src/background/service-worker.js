@@ -14,7 +14,7 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
-import { assertMessageAllowed, issueForStart } from './message-policy.js';
+import { assertMessageAllowed, taskUrlForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
@@ -222,8 +222,8 @@ async function loadTasks(message, sender) {
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
     const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
-    const issueValues = records.map(record => record.issue);
-    if (initialTimerState.active) issueValues.push(initialTimerState.active.issue);
+    const issueValues = records.flatMap(record => record.issue ? [record.issue] : []);
+    if (initialTimerState.active?.issue) issueValues.push(initialTimerState.active.issue);
     let issues = [...new Map(issueValues.map(issue => [issue.url, issue])).values()];
     const metadataService = new TaskMetadataService({
       github, cache: store, configurationGeneration: generation,
@@ -233,7 +233,7 @@ async function loadTasks(message, sender) {
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
     let timerState = await finalizeTaskLoad(executor, store, tracker, generation, loadGuard);
-    if (timerState.active && !metadata.has(timerState.active.issue.url)) {
+    if (timerState.active?.issue && !metadata.has(timerState.active.issue.url)) {
       issues = [...new Map([...issues, timerState.active.issue].map(issue => [issue.url, issue])).values()];
       metadata = await metadataService.load(issues, { signal: controller.signal });
       controller.signal.throwIfAborted();
@@ -272,7 +272,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC',
-  'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -362,8 +362,9 @@ async function handle(message, sender) {
     const state = await tracker.getState({ refresh: Boolean(message.refresh) });
     if (message.type === 'GET_PAGE_STATE') {
       const active = state.active ? {
-        issue: state.active.issue, startedAt: state.active.startedAt,
-        description: state.active.description || '', issueTitle: state.active.issueTitle || '',
+        taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
+        ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
+        description: state.active.description || '', issueTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
       } : null;
       return {
         configured: true, active, pendingCount: state.pendingWrites.length,
@@ -374,20 +375,21 @@ async function handle(message, sender) {
   }
   const { tracker } = await context();
   switch (message.type) {
-    case 'START': return tracker.start(issueForStart(message.issue, sender, extensionOrigin), message.issueTitle || '', message.description || '');
+    case 'START': return tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
     case 'STOP': return tracker.stop(message.description || '');
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': {
       if (!message.menuData) return tracker.loadRecent(50);
       const knownTitles = new Map();
-      if (message.issue && message.issueTitle) {
-        const issue = issueForStart(message.issue, sender, extensionOrigin);
-        const title = String(message.issueTitle).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
-        if (title) knownTitles.set(issue.url, title);
+      if ((message.taskUrl || message.issue) && (message.taskTitle || message.issueTitle)) {
+        const taskUrl = taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
+        const title = String(message.taskTitle ?? message.issueTitle).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
+        if (title) knownTitles.set(taskUrl, title);
       }
       return tracker.loadMenuData(50, { knownTitles });
     }
     case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
+    case 'EDIT_ENTRIES': return tracker.editEntries(message.payload);
     case 'MOVE_BOUNDARY': return tracker.moveBoundary(message.payload);
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
     case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id, message.action || '');

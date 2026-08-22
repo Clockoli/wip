@@ -2,6 +2,23 @@ const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 const USER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+const TASK_URL_MAX = 2048;
+
+export function normalizeTaskUrl(value) {
+  const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
+  if (typeof candidate !== 'string' || !candidate || candidate.length > TASK_URL_MAX) throw new Error('Invalid task URL');
+  let parsed;
+  try { parsed = new URL(candidate); } catch { throw new Error('Invalid task URL'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('Invalid task URL');
+  if (parsed.protocol === 'https:' && parsed.hostname === 'github.com'
+      && /^\/[^/]+\/[^/]+\/(?:issues|pull)\/[1-9]\d*\/?$/.test(parsed.pathname)) {
+    parsed.search = ''; parsed.hash = '';
+  }
+  if (parsed.href.length > TASK_URL_MAX) throw new Error('Invalid task URL');
+  return parsed.href;
+}
+
+export function taskUrlOf(value) { return normalizeTaskUrl(value); }
 
 export function validateOwner(value) {
   if (typeof value !== 'string' || !OWNER_RE.test(value) || value.includes('--')) throw new Error('Invalid owner');
@@ -50,7 +67,7 @@ export function normalizeIssue({ type = 'issue', owner, repo, number, url } = {}
 
 export function parseIssueUrl(value) {
   try {
-    const url = new URL(value);
+    const url = new URL(normalizeTaskUrl(value));
     if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null;
     const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
     if (!match) return null;
@@ -64,6 +81,8 @@ export function parseIssueUrl(value) {
     return null;
   }
 }
+
+export function parseGitHubTaskUrl(value) { return parseIssueUrl(value); }
 
 export function parseIssueReference(value, type = 'issue') {
   const match = String(value ?? '').trim().match(/^([^/#\s]+)\/([^/#\s]+)#([1-9]\d*)$/);

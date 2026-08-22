@@ -1,38 +1,53 @@
-import { normalizeIssue, parseIssueUrl } from '../domain/values.js';
+import { normalizeIssue, normalizeTaskUrl, parseIssueUrl } from '../domain/values.js';
 
-const ISSUE_CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']);
-const PAGE_CONTENT_MESSAGES = new Set(['GET_PAGE_STATE', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']);
-const EXTENSION_MESSAGES = new Set(['GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'GET_LOCAL_PREFERENCES', 'SAVE_BILLING_SETTINGS', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'LOAD_TASKS', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION']);
+const CONTENT_MESSAGES = new Set([
+  'GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'MOVE_BOUNDARY',
+  'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS',
+]);
+const EXTENSION_MESSAGES = new Set([
+  'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'MOVE_BOUNDARY',
+  'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'GET_LOCAL_PREFERENCES',
+  'SAVE_BILLING_SETTINGS', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT',
+  'LOAD_TASKS', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
+  'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
+  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP',
+  'CLEAR_LOCAL_CONFIGURATION',
+]);
 
 function senderContext(sender, extensionOrigin) {
-  const url = sender?.url || sender?.tab?.url || '';
-  if (url.startsWith(extensionOrigin)) return { kind: 'extension', issue: null };
+  const value = sender?.url || sender?.tab?.url || '';
+  if (value.startsWith(extensionOrigin)) return { kind: 'extension', taskUrl: null };
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(value);
     if (sender?.tab && parsed.protocol === 'https:' && parsed.hostname === 'github.com') {
-      return { kind: 'content', issue: parseIssueUrl(url) };
+      return { kind: 'content', taskUrl: normalizeTaskUrl(value) };
     }
   } catch { /* invalid sender URL */ }
-  return { kind: 'unknown', issue: null };
+  return { kind: 'unknown', taskUrl: null };
 }
 
 export function assertMessageAllowed(type, sender, extensionOrigin) {
   const context = senderContext(sender, extensionOrigin);
-  const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES
-    : context.kind === 'content' ? (context.issue ? ISSUE_CONTENT_MESSAGES : PAGE_CONTENT_MESSAGES)
-      : new Set();
+  const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES : context.kind === 'content' ? CONTENT_MESSAGES : new Set();
   if (!allowed.has(type)) throw new Error(`Message ${type} is not allowed from this sender`);
   return context.kind;
 }
 
-export function issueForStart(payloadIssue, sender, extensionOrigin) {
+export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
   const kind = assertMessageAllowed('START', sender, extensionOrigin);
-  const requested = normalizeIssue(payloadIssue);
+  const requested = normalizeTaskUrl(payloadTaskUrl);
   if (kind === 'content') {
-    const pageIssue = parseIssueUrl(sender.url || sender.tab?.url || '');
-    if (!pageIssue || pageIssue.type !== requested.type || pageIssue.owner !== requested.owner || pageIssue.repo !== requested.repo || pageIssue.number !== requested.number) {
-      throw new Error('Requested item must match the GitHub issue or pull request page');
-    }
+    const pageTaskUrl = normalizeTaskUrl(sender.url || sender.tab?.url || '');
+    if (pageTaskUrl !== requested) throw new Error('Requested task URL must match the current page');
   }
+  return requested;
+}
+
+// Backward-compatible input adapter for cached callers while task URL remains the canonical identity.
+export function issueForStart(payloadIssue, sender, extensionOrigin) {
+  const requested = normalizeIssue(payloadIssue);
+  taskUrlForStart(requested.url, sender, extensionOrigin);
+  const pageIssue = parseIssueUrl(requested.url);
+  if (!pageIssue) throw new Error('Requested task URL must match the current page');
   return requested;
 }

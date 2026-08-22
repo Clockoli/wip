@@ -1,7 +1,7 @@
-import { entryDateParts, entryDateValue, localDateParts, normalizeIssue, utcDateParts, validateEntryId, validatePathSegment } from './values.js';
+import { entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, utcDateParts, validateEntryId, validatePathSegment } from './values.js';
 
 
-function normalizeIssueTitle(value) {
+export function normalizeTaskTitle(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
 }
 
@@ -35,47 +35,49 @@ export function durationSeconds(startedAt, endedAt) {
   return Math.floor((end - start) / 1000);
 }
 
-export function buildActiveTimer({ user, issue, startedAt, entryId, description = '', issueTitle = '' }) {
+export function buildActiveTimer({ user, taskUrl, taskTitle = '', issue, issueTitle = '', startedAt, entryId, description = '' }) {
   const started = toIso(startedAt);
-  const normalized = {
+  return {
     schemaVersion: 1,
     user: validatePathSegment(user, 'user'),
-    issue: normalizeIssue(issue),
+    taskUrl: normalizeTaskUrl(taskUrl ?? issue),
+    taskTitle: normalizeTaskTitle(taskTitle || issueTitle),
+    issueTitle: normalizeTaskTitle(taskTitle || issueTitle),
+    ...(parseGitHubTaskUrl(taskUrl ?? issue) ? { issue: parseGitHubTaskUrl(taskUrl ?? issue) } : {}),
     ...(entryId ? { entryId: validateEntryId(entryId) } : {}),
     entryDate: entryDateValue(localDateParts(new Date(started))),
     startedAt: started,
     description: String(description ?? '').slice(0, 2000),
     createdAt: started,
   };
-  normalized.issueTitle = normalizeIssueTitle(issueTitle);
-  return normalized;
 }
-
 
 export function validateActiveTimer(active) {
   if (!active || active.schemaVersion !== 1) throw new Error('Unsupported active timer schema');
   validatePathSegment(active.user, 'user');
-  normalizeIssue(active.issue);
+  taskUrlOf(active);
   if (active.entryId !== undefined) validateEntryId(active.entryId);
   if (active.entryDate !== undefined) entryDateParts(active.entryDate);
   validateTimestamp(active.startedAt, 'startedAt timestamp');
   validateTimestamp(active.createdAt, 'createdAt timestamp');
   if (new Date(active.createdAt).getTime() !== new Date(active.startedAt).getTime()) throw new Error('Active timer createdAt must equal startedAt');
   if (typeof active.description !== 'string' || active.description.length > 2000) throw new Error('Invalid active timer description');
-  if (active.issueTitle !== undefined && (typeof active.issueTitle !== 'string' || active.issueTitle !== normalizeIssueTitle(active.issueTitle))) throw new Error('Invalid active timer task title');
+  const taskTitle = active.taskTitle ?? active.issueTitle;
+  if (taskTitle !== undefined && (typeof taskTitle !== 'string' || taskTitle !== normalizeTaskTitle(taskTitle))) throw new Error('Invalid active timer task title');
   return active;
 }
 
 export function buildEntry({ active, id, endedAt, now = endedAt, description = active?.description ?? '' }) {
   if (!active) throw new Error('No active timer');
-  const started = toIso(active.startedAt);
-  const ended = toIso(endedAt);
-  const created = toIso(now);
+  const started = toIso(active.startedAt), ended = toIso(endedAt), created = toIso(now);
   return {
     schemaVersion: 1,
     id: validateEntryId(id),
     user: validatePathSegment(active.user, 'user'),
-    issue: normalizeIssue(active.issue),
+    taskUrl: taskUrlOf(active),
+    taskTitle: normalizeTaskTitle(active.taskTitle ?? active.issueTitle),
+    issueTitle: normalizeTaskTitle(active.taskTitle ?? active.issueTitle),
+    ...(parseGitHubTaskUrl(taskUrlOf(active)) ? { issue: parseGitHubTaskUrl(taskUrlOf(active)) } : {}),
     entryDate: active.entryDate ?? entryDateValue(utcDateParts(new Date(started))),
     startedAt: started,
     endedAt: ended,
@@ -83,7 +85,6 @@ export function buildEntry({ active, id, endedAt, now = endedAt, description = a
     description: String(description ?? '').slice(0, 2000),
     createdAt: created,
     updatedAt: created,
-    issueTitle: normalizeIssueTitle(active.issueTitle),
   };
 }
 
@@ -91,7 +92,7 @@ export function validateEntry(entry) {
   if (!entry || entry.schemaVersion !== 1) throw new Error('Unsupported time entry schema');
   validateEntryId(entry.id);
   validatePathSegment(entry.user, 'user');
-  normalizeIssue(entry.issue);
+  taskUrlOf(entry);
   if (entry.entryDate !== undefined) entryDateParts(entry.entryDate);
   validateTimestamp(entry.startedAt, 'startedAt timestamp');
   validateTimestamp(entry.endedAt, 'endedAt timestamp');
@@ -101,18 +102,22 @@ export function validateEntry(entry) {
   if (!Number.isInteger(entry.durationSeconds) || entry.durationSeconds !== computed) throw new Error('Duration does not match timestamps');
   if (new Date(entry.updatedAt).getTime() < new Date(entry.createdAt).getTime()) throw new Error('updatedAt must not be before createdAt');
   if (typeof entry.description !== 'string' || entry.description.length > 2000) throw new Error('Invalid description');
-  if (entry.issueTitle !== undefined && (typeof entry.issueTitle !== 'string' || entry.issueTitle !== normalizeIssueTitle(entry.issueTitle))) throw new Error('Invalid task title');
+  const taskTitle = entry.taskTitle ?? entry.issueTitle;
+  if (taskTitle !== undefined && (typeof taskTitle !== 'string' || taskTitle !== normalizeTaskTitle(taskTitle))) throw new Error('Invalid task title');
   return entry;
 }
 
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
-  const issue = normalizeIssue(edits.issue ?? entry.issue);
+  const currentTaskUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentTaskUrl);
+  const { issue: _legacyIssue, issueTitle: _legacyTitle, taskUrl: _oldTaskUrl, taskTitle: _oldTaskTitle, ...base } = entry;
   const next = {
-    ...entry,
+    ...base,
     entryDate: entry.entryDate ?? entryDateValue(utcDateParts(new Date(entry.startedAt))),
-    issue,
-    issueTitle: normalizeIssueTitle(edits.issueTitle ?? (issue.url === entry.issue.url ? entry.issueTitle : '')),
+    taskUrl,
+    taskTitle: normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentTaskUrl ? (entry.taskTitle ?? entry.issueTitle) : '')),
+    issueTitle: normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentTaskUrl ? (entry.taskTitle ?? entry.issueTitle) : '')),
+    ...(parseGitHubTaskUrl(taskUrl) ? { issue: parseGitHubTaskUrl(taskUrl) } : {}),
     startedAt: toIso(edits.startedAt ?? entry.startedAt),
     endedAt: toIso(edits.endedAt ?? entry.endedAt),
     description: String(edits.description ?? entry.description).slice(0, 2000),

@@ -14,7 +14,7 @@
   <main>
     <p id="source" class="muted source">Loading configured repository…</p>
     <section class="toolbar" aria-label="Task filters">
-      <input id="task-filter" type="text" autocomplete="off" placeholder="Filter by title, repository, or number" aria-label="Filter tracked work">
+      <input id="task-filter" type="text" autocomplete="off" placeholder="Filter by URL or optional title" aria-label="Filter tracked tasks">
       <label>Status
         <select id="status">
           <option value="open" selected>Open</option>
@@ -34,7 +34,7 @@
     </section>
 
     <div id="error" class="notice error" role="alert" hidden></div>
-    <div id="loading" class="notice" role="status">Loading tracked work from GitHub…</div>
+    <div id="loading" class="notice" role="status">Loading tracked tasks from the data repository…</div>
     <div id="setup" class="notice" hidden>
       Configure a private time-data repository before opening tracked work.
       <button id="setup-settings" class="button" type="button">Open Settings</button>

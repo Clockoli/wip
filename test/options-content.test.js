@@ -142,7 +142,7 @@ test('settings allows every GitHub issue and clearly scopes the recent-entry win
   assert.doesNotMatch(script, /allowedIssueOwners|allowedOwners/);
   assert.match(source, /Recent entries shown in the main panel \(days\)/i);
   assert.match(source, /only controls how many past days appear in the main tracking panel/i);
-  assert.match(source, /Track any GitHub task, whether it is an issue or pull request/i);
+  assert.match(source, /Track any HTTP\(S\) task URL.*title is optional/i);
 });
 
 test('saved display preferences remain available while GitHub authentication is disconnected', () => {

@@ -6,6 +6,7 @@
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
   const REPORTS_PATH = 'M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z';
+  const WHEEL_THRESHOLD = 80;
   const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
   let lastRoute = null;
   let tick = null;
@@ -20,6 +21,7 @@
   let editing = null;
   let editingDraft = null;
   const inlineDrafts = new Map();
+  const inlineEditors = new Map();
   let inlineMutation = null;
   let errorText = '';
   let errorCode = '';
@@ -31,21 +33,39 @@
   let summaryElapsedMs = 0;
   let popupTask = null;
 
-  function taskFromPath(hostname, pathname) {
-    if (hostname !== 'github.com') return null;
-    const match = String(pathname).match(/^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9]\d*)\/?$/);
-    if (!match) return null;
-    const type = match[3] === 'pull' ? 'pull_request' : 'issue';
-    return { type, owner: match[1], repo: match[2], number: Number(match[4]), url: `https://github.com/${match[1]}/${match[2]}/${match[3]}/${match[4]}` };
+  function normalizeTaskUrl(value) {
+    const candidate = String(value || '');
+    if (typeof URL !== 'function') {
+      const match = candidate.match(/^https?:\/\/([^/?#]+)(?:[/?#]|$)/i);
+      if (!match || match[1].includes('@')) return null;
+      let normalized = candidate;
+      normalized = normalized.replace(/^(https:\/\/github\.com\/[^/?#]+\/[^/?#]+\/(?:issues|pull)\/[1-9]\d*)\/?(?:[?#].*)?$/i, '$1');
+      return normalized.length <= 2048 ? normalized : null;
+    }
+    try {
+      const url = new URL(candidate);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+      if (url.protocol === 'https:' && url.hostname === 'github.com'
+          && /^\/[^/]+\/[^/]+\/(?:issues|pull)\/[1-9]\d*\/?$/.test(url.pathname)) {
+        url.search = ''; url.hash = '';
+      }
+      return url.href.length <= 2048 ? url.href : null;
+    } catch { return null; }
   }
 
-  function taskFromUrl(value) {
-    const match = String(value || '').match(/^https:\/\/github\.com([^?#]*)/);
-    return match ? taskFromPath('github.com', match[1]) : null;
+  function taskUrlOf(value) { return normalizeTaskUrl(typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url); }
+  function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
+  function taskFromUrl(value, title = '') {
+    const taskUrl = normalizeTaskUrl(value);
+    return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
-
-  function issueFromLocation() {
-    return popupMode ? popupTask : taskFromPath(location.hostname, location.pathname);
+  function taskFromLocation() { return popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
+  function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+  async function refreshPopupTask() {
+    if (!popupMode) return taskFromLocation();
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    popupTask = taskFromUrl(tab?.url, tab?.title || '');
+    return popupTask;
   }
 
   function send(message) {
@@ -152,8 +172,9 @@
     };
     const value = () => { if (!refreshSpinbuttons()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(original, dateField.value, hourField.value, minuteField.value); };
     const changed = () => onChange(currentDraft());
-    const applyTimestamp = timestamp => {
-      const parts = timestampParts(timestamp); dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshSpinbuttons(); changed();
+    const applyTimestamp = (timestamp, notify = true) => {
+      const parts = timestampParts(timestamp); dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshSpinbuttons();
+      if (notify) changed();
     };
     const shift = minutes => {
       try { applyTimestamp(timestampAtOriginalOffset(original, new Date(value()).getTime() + minutes * 60000)); return true; }
@@ -161,6 +182,7 @@
     };
     const unit = (field, unitLabel, step, maximum) => {
       const column = el('div', undefined, 'time-unit');
+      let wheelRemainder = 0, lastWheelAt = 0;
       const increase = button('⌃', 'time-step', async () => { shift(step); }); increase.setAttribute('aria-label', `Increase ${label} ${unitLabel}`); increase.title = `Increase ${unitLabel}`;
       const decrease = button('⌄', 'time-step', async () => { shift(-step); }); controls.push(increase, decrease); decrease.setAttribute('aria-label', `Decrease ${label} ${unitLabel}`); decrease.title = `Decrease ${unitLabel}`;
       updateSpinbutton(field, unitLabel, maximum);
@@ -174,17 +196,25 @@
       field.addEventListener('wheel', event => {
         const root = field.getRootNode?.();
         if ((root?.activeElement ?? document.activeElement) !== field || !event.deltaY) return;
-        if (shift(event.deltaY < 0 ? step : -step)) event.preventDefault();
+        const now = Date.now(), direction = Math.sign(event.deltaY);
+        if (now - lastWheelAt > 400 || Math.sign(wheelRemainder) !== direction) wheelRemainder = 0;
+        lastWheelAt = now;
+        const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 240 : 1;
+        wheelRemainder += event.deltaY * multiplier;
+        if (Math.abs(wheelRemainder) < WHEEL_THRESHOLD) return;
+        const amount = wheelRemainder < 0 ? step : -step;
+        wheelRemainder = 0;
+        if (shift(amount)) event.preventDefault();
       }, { passive: false });
       if (compact) { increase.textContent = '+'; decrease.textContent = '−'; column.append(decrease, field, increase); }
       else column.append(increase, field, decrease);
       return column;
     };
     dateField.addEventListener('input', changed);
-    values.append(unit(hourField, 'hour', 60, 23), el('span', ':', 'time-colon'), unit(minuteField, 'minute', 5, 59));
+    values.append(unit(hourField, 'hour', 60, 23), el('span', ':', 'time-colon'), unit(minuteField, 'minute', 1, 59));
     group.append(dateField, values);
     if (!compact) group.append(el('div', 'Scroll or use ↑/↓', 'time-hint'));
-    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
+    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setValue: (timestamp, notify = false) => applyTimestamp(timestamp, notify), setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
   function timestampAtOriginalOffset(original, instant) {
@@ -195,17 +225,16 @@
     return `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}T${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}${match[1]}`;
   }
 
-  function issueLabel(issue) { return `${issue.owner}/${issue.repo}#${issue.number}`; }
-
   function titleFromPage() {
-    if (popupMode) return '';
+    if (popupMode) return taskTitleOf(popupTask);
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
-    return (node?.textContent || '').trim().slice(0, 300);
+    const title = (node?.textContent || document.title || '').replace(/ · GitHub$/, '').trim();
+    return title.slice(0, 300);
   }
 
   function recentRequest() {
-    const issue = issueFromLocation(), issueTitle = titleFromPage();
-    return { type: 'LOAD_RECENT', menuData: true, ...(issue ? { issue, issueTitle } : {}) };
+    const task = taskFromLocation();
+    return { type: 'LOAD_RECENT', menuData: true, ...(task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
   }
 
   function directChild(node, ancestor) {
@@ -256,7 +285,7 @@
 
   function closeMenu() { menuOpen = false; navigationOpen = false; editing = null; editingDraft = null; errorText = ''; errorCode = ''; renderUi(); }
 
-  function originalRecord(entry) { return { issueUrl: entry.issue.url, issueTitle: entry.issueTitle || '', startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
+  function originalRecord(entry) { return { taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
   function sameRecord(left, right) {
     const a = originalRecord(left), b = originalRecord(right);
@@ -293,14 +322,16 @@
   }
 
   function validRewrittenEntry(item, position, path, sha) {
-    const keys = '_index,_path,_sha,createdAt,description,durationSeconds,endedAt,entryDate,id,issue,issueTitle,schemaVersion,startedAt,updatedAt,user';
-    if (!item || typeof item !== 'object' || Object.keys(item).sort().join(',') !== keys || item.schemaVersion !== 1
+    const required = ['_index', '_path', '_sha', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate', 'id', 'issueTitle', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl', 'updatedAt', 'user'];
+    const allowed = new Set([...required, 'issue']);
+    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !allowed.has(key)) || required.some(key => !(key in item)) || item.schemaVersion !== 1
         || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
         || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
-        || !validIssue(item.issue) || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
+        || !taskUrlOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
+        || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
         || item.entryDate !== item.startedAt.slice(0, 10) || item.createdAt !== item.endedAt || item.updatedAt !== item.endedAt
-        || typeof item.issueTitle !== 'string' || item.issueTitle.length > 300
-        || item.issueTitle !== item.issueTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
+        || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
+        || item.taskTitle !== item.taskTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
         || typeof item.description !== 'string' || item.description.length > 2000
         || item.description !== item.description.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()) return false;
     const pathMatch = path.match(/^times\/(\d{4}-\d{2})\/([A-Za-z0-9-]+)\.txt$/);
@@ -348,19 +379,30 @@
     const cancelEdit = button('Cancel', 'link-button', async () => { editing = null; editingDraft = null; renderUi(); }); header.append(cancelEdit);
     const draft = editingDraft?.id === editing.id ? editingDraft : null;
     const form = el('form');
-    const issueField = el('input'); issueField.required = true; issueField.value = draft?.issueText ?? issueLabel(editing.issue);
-    const titleField = el('input'); titleField.maxLength = 300; titleField.value = draft?.issueTitle ?? editing.issueTitle ?? '';
-    let titleEdited = Boolean(draft?.titleEdited);
+    const urlField = el('input'); urlField.required = true; urlField.type = 'url'; urlField.value = draft?.taskUrl ?? taskUrlOf(editing);
+    const titleField = el('input'); titleField.maxLength = 300; titleField.value = draft?.taskTitle ?? taskTitleOf(editing);
+    let titleEdited = Boolean(draft?.titleEdited), adjusting = false, startPicker, stopPicker;
     titleField.addEventListener('input', () => { titleEdited = true; });
-    issueField.addEventListener('input', () => {
-      if (titleEdited) return;
-      try { if (parseIssueRef(issueField.value).url !== editing.issue.url) titleField.value = ''; }
-      catch { /* Keep the title until the new issue reference is complete. */ }
+    urlField.addEventListener('input', () => {
+      if (!titleEdited && normalizeTaskUrl(urlField.value) !== taskUrlOf(editing)) titleField.value = '';
     });
-    const startPicker = scrollableTimePicker('Start', editing.startedAt, draft?.start), stopPicker = scrollableTimePicker('Stop', editing.endedAt, draft?.stop);
+    const reconcile = changed => {
+      if (adjusting || !startPicker || !stopPicker) return;
+      try {
+        adjusting = true;
+        const startedAt = startPicker.value(), endedAt = stopPicker.value();
+        if (new Date(startedAt) > new Date(endedAt)) {
+          if (changed === 'start') stopPicker.setValue(timestampAtOriginalOffset(editing.endedAt, new Date(startedAt).getTime()));
+          else startPicker.setValue(timestampAtOriginalOffset(editing.startedAt, new Date(endedAt).getTime()));
+        }
+      } catch { /* preserve incomplete direct-input drafts until submit */ }
+      finally { adjusting = false; }
+    };
+    startPicker = scrollableTimePicker('Start', editing.startedAt, draft?.start, { onChange: () => reconcile('start') });
+    stopPicker = scrollableTimePicker('Stop', editing.endedAt, draft?.stop, { onChange: () => reconcile('stop') });
     const description = el('textarea'); description.maxLength = 2000; description.rows = 3; description.value = draft?.description ?? editing.description ?? '';
     const fieldLabel = (text, field) => { const label = el('label', text); label.append(field); return label; };
-    form.append(fieldLabel('Task (issue or pull request)', issueField), fieldLabel('Task title', titleField));
+    form.append(fieldLabel('Task URL', urlField), fieldLabel('Task title (optional)', titleField));
     const timeRange = el('div', undefined, 'time-range-editor'); timeRange.append(startPicker.node, stopPicker.node); form.append(timeRange);
     form.append(fieldLabel('Description', description));
     const actions = el('div', undefined, 'form-actions');
@@ -374,23 +416,19 @@ The previous version remains in Git history.`)) return;
     });
     const save = el('button', 'Save', 'primary'); save.type = 'submit';
     const setEditorDisabled = disabled => {
-      for (const control of [cancelEdit, issueField, titleField, description, remove, save]) control.disabled = disabled;
+      for (const control of [cancelEdit, urlField, titleField, description, remove, save]) control.disabled = disabled;
       startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled);
     };
     actions.append(remove, save); form.append(actions);
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (!event.isTrusted) return;
-      editingDraft = { id: editing.id, issueText: issueField.value, issueTitle: titleField.value, titleEdited, start: startPicker.draft(), stop: stopPicker.draft(), description: description.value };
+      editingDraft = { id: editing.id, taskUrl: urlField.value, taskTitle: titleField.value, titleEdited, start: startPicker.draft(), stop: stopPicker.draft(), description: description.value };
       setEditorDisabled(true);
       try {
-        const match = issueField.value.trim().match(/^([^/# ]+)\/([^/# ]+)#([1-9]\d*)$/);
-        if (!match) throw new Error('Use owner/repository#number.');
-        const type = editing.issue.type;
-        const segment = type === 'pull_request' ? 'pull' : 'issues';
-        const issue = { type, owner: match[1], repo: match[2], number: Number(match[3]), url: `https://github.com/${match[1]}/${match[2]}/${segment}/${match[3]}` };
+        const task = taskFromUrl(urlField.value, titleField.value);
+        if (!task) throw new Error('Enter a valid HTTP(S) task URL.');
         const startedAt = startPicker.value(), endedAt = stopPicker.value();
-        if (new Date(endedAt).getTime() < new Date(startedAt).getTime()) throw new Error('Stop time must not be before Start time.');
-        await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing), edits: { issue, issueTitle: titleField.value, startedAt, endedAt, description: description.value } } });
+        await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing), edits: { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt, endedAt, description: description.value } } });
         editing = null; editingDraft = null; recentLoaded = false; await refreshState(false, true);
       } catch (error) { setEditorDisabled(false); setError(error); }
     });
@@ -442,13 +480,6 @@ The previous version remains in Git history.`)) return;
     }
   }
 
-  function sameTask(left, right) {
-    return left.issue.type === right.issue.type
-      && left.issue.owner === right.issue.owner
-      && left.issue.repo === right.issue.repo
-      && left.issue.number === right.issue.number;
-  }
-
   function entryKey(entry) {
     return `${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
   }
@@ -467,41 +498,95 @@ The previous version remains in Git history.`)) return;
     return overlaps;
   }
 
+  function mergeDraftGroup(group, previousGroup) {
+    if (!previousGroup || previousGroup === group) return;
+    for (const [key, draft] of inlineDrafts) if (draft.group === previousGroup) inlineDrafts.set(key, { ...draft, group });
+  }
+
+  function linkCrossedTimeBoundaries(entry, boundary, group) {
+    const sequence = [...inlineEditors.entries()]
+      .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
+      .flatMap(([key, editor]) => [
+        { key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, editor },
+        { key, boundary: 'stop', picker: editor.stopPicker, original: editor.entry.endedAt, editor },
+      ]);
+    const position = sequence.findIndex(item => item.key === entryKey(entry) && item.boundary === boundary);
+    if (position < 0) return;
+    let instant;
+    try { instant = new Date(sequence[position].picker.value()).getTime(); } catch { return; }
+    const touched = new Set([sequence[position].key]);
+    const link = item => {
+      const previousGroup = inlineDrafts.get(item.key)?.group;
+      mergeDraftGroup(group, previousGroup);
+      item.picker.setValue(timestampAtOriginalOffset(item.original, instant));
+      touched.add(item.key);
+    };
+    for (let index = position - 1; index >= 0; index -= 1) {
+      let value;
+      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
+      if (value <= instant) break;
+      link(sequence[index]);
+    }
+    for (let index = position + 1; index < sequence.length; index += 1) {
+      let value;
+      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
+      if (value >= instant) break;
+      link(sequence[index]);
+    }
+    for (const key of touched) inlineEditors.get(key)?.updateDraft(group);
+  }
+
   function inlineTimeEditor(entry) {
     const key = entryKey(entry), draft = inlineDrafts.get(key);
     const range = el('div', undefined, 'inline-time-range entry-meta');
     const day = el('span', relativeDayLabel((draft?.start?.date || entry.startedAt.slice(0, 10))), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration');
     let startPicker, stopPicker, save, cancel;
-    const remember = () => {
+    const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
-      const value = { start: startPicker.draft(), stop: stopPicker.draft() };
-      inlineDrafts.set(key, value); save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty');
+      const value = { start: startPicker.draft(), stop: stopPicker.draft(), group };
+      inlineDrafts.set(key, value);
+      if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
       day.textContent = relativeDayLabel(value.start.date);
       try {
         const startedAt = startPicker.value(), endedAt = stopPicker.value();
         duration.textContent = formatDuration(Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)));
       } catch { duration.textContent = '—'; }
     };
-    startPicker = scrollableTimePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: remember });
-    stopPicker = scrollableTimePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: remember });
-    save = button('Save time', 'link-button inline-save', async () => {
-      inlineDrafts.set(key, { start: startPicker.draft(), stop: stopPicker.draft() });
+    const remember = boundary => {
+      const group = inlineDrafts.get(key)?.group || key;
+      updateDraft(group);
+      linkCrossedTimeBoundaries(entry, boundary, group);
+    };
+    startPicker = scrollableTimePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: () => remember('start') });
+    stopPicker = scrollableTimePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: () => remember('stop') });
+    const saveGroup = async () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey]) => {
+        const editor = inlineEditors.get(draftKey), target = editor?.entry;
+        if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
+        return {
+          path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target),
+          edits: { taskUrl: taskUrlOf(target), taskTitle: taskTitleOf(target), startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description: target.description || '' },
+        };
+      });
+      inlineMutation = group; renderUi();
       try {
-        const startedAt = startPicker.value(), endedAt = stopPicker.value();
-        if (new Date(endedAt).getTime() < new Date(startedAt).getTime()) throw new Error('Stop time must not be before Start time.');
-        inlineMutation = key; renderUi();
-        await send({ type: 'EDIT_ENTRY', payload: {
-          path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry),
-          edits: { issue: entry.issue, issueTitle: entry.issueTitle || '', startedAt, endedAt, description: entry.description || '' },
-        } });
-        inlineDrafts.delete(key); inlineMutation = null; recentLoaded = false; await refreshState(false, true);
+        await send({ type: 'EDIT_ENTRIES', payload: { entries } });
+        for (const [draftKey, value] of inlineDrafts) if (value.group === group) inlineDrafts.delete(draftKey);
+        inlineMutation = null; recentLoaded = false; await refreshState(false, true);
       } catch (error) { inlineMutation = null; setError(error); }
+    };
+    save = button('Save time', 'link-button inline-save', saveGroup);
+    cancel = button('Cancel', 'link-button inline-cancel', async () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      for (const [draftKey, value] of inlineDrafts) if (value.group === group) inlineDrafts.delete(draftKey);
+      renderUi();
     });
-    cancel = button('Cancel', 'link-button inline-cancel', async () => { inlineDrafts.delete(key); renderUi(); });
     save.hidden = !draft; cancel.hidden = !draft;
     const separator = el('span', '–', 'inline-time-separator');
     range.append(day, startPicker.node, separator, stopPicker.node, duration);
+    inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft });
     return { node: range, save, cancel, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
   }
 
@@ -515,7 +600,7 @@ The previous version remains in Git history.`)) return;
       const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; top.append(meta, pending);
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions');
-      const edit = button('Edit details', 'link-button entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
+      const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(inlineMutation);
       for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
@@ -531,15 +616,16 @@ The previous version remains in Git history.`)) return;
 
   function recentGroup(entries, overlaps) {
     const group = el('article', undefined, 'entry');
-    const first = entries[0], storedTitle = String(first.issueTitle || '').trim();
-    const link = el('a', `${first.issue.repo}#${first.issue.number}${storedTitle ? ` · ${storedTitle}` : ''}`, 'entry-title');
-    link.title = issueLabel(first.issue); link.href = first.issue.url; link.target = '_blank'; link.rel = 'noreferrer';
+    const first = entries[0], taskUrl = taskUrlOf(first), storedTitle = taskTitleOf(first);
+    const link = el('a', `${taskUrl}${storedTitle ? ` · ${storedTitle}` : ''}`, 'entry-title');
+    link.title = taskUrl; link.href = taskUrl; link.target = '_blank'; link.rel = 'noreferrer';
     group.append(link);
     for (const entry of entries) group.append(recentRecord(entry, overlaps));
     return group;
   }
 
   function renderRecent(container) {
+    inlineEditors.clear();
     const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
@@ -595,22 +681,24 @@ The previous version remains in Git history.`)) return;
     const heading = el('div'); heading.append(el('strong', 'RepoClock'), el('div', 'Time tracker', 'muted'));
     const syncText = pageState.pendingCount ? `${pageState.pendingCount} waiting to sync` : 'Synced'; heading.append(el('div', syncText, 'muted'));
     const headerActions = el('div', undefined, 'header-actions');
+    const tasks = button('Tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open tasks';
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
     const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
-    headerActions.append(reports, settings); header.append(heading, headerActions); menu.append(header);
+    headerActions.append(tasks, reports, settings); header.append(heading, headerActions); menu.append(header);
     const body = el('div', undefined, 'menu-body');
     if (editing) renderEditor(body);
     else if (!pageState.configured) {
       body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
       body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
-      const current = issueFromLocation();
+      const current = taskFromLocation();
       if (pageState.active) {
-        const active = pageState.active;
-        const same = current && active.issue.type === current.type && active.issue.owner === current.owner && active.issue.repo === current.repo && active.issue.number === current.number;
-        body.append(el('div', same ? 'Running on this item' : 'Running on another item', 'eyebrow'));
-        const activeTitle = String(active.issueTitle || '').trim();
-        const activeLink = el('a', `${issueLabel(active.issue)}${activeTitle ? ` · ${activeTitle}` : ''}`, 'active-link'); activeLink.href = active.issue.url; activeLink.target = '_blank'; activeLink.rel = 'noreferrer'; body.append(activeLink);
+        const active = pageState.active, same = current && sameTask(active, current);
+        const tracking = el('div', undefined, `eyebrow tracking-status${same ? '' : ' tracking-another'}`);
+        tracking.append(document.createTextNode('Tracking '), el('strong', same ? 'this' : 'another'), document.createTextNode(' task'));
+        body.append(tracking);
+        const activeUrl = taskUrlOf(active), activeTitle = taskTitleOf(active);
+        const activeLink = el('a', `${activeUrl}${activeTitle ? ` · ${activeTitle}` : ''}`, 'active-link'); activeLink.href = activeUrl; activeLink.target = '_blank'; activeLink.rel = 'noreferrer'; body.append(activeLink);
         elapsedValue = el('div', formatElapsed(active.startedAt), 'elapsed'); body.append(elapsedValue);
         const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
         body.append(button('Stop and save', 'danger wide', async (event, node) => {
@@ -622,15 +710,19 @@ The previous version remains in Git history.`)) return;
         }));
       } else {
         body.append(el('div', 'No timer running', 'eyebrow'));
-        const startButton = button(current ? `Start timer on task #${current.number}` : 'Open a GitHub task to start tracking', 'primary wide', async (event, node) => {
+        const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
           node.disabled = true;
-          try { await send({ type: 'START', issue: current, issueTitle: titleFromPage() }); await refreshState(false, false); }
-          catch (error) { node.disabled = false; setError(error); }
+          try {
+            const activatedTask = popupMode ? await refreshPopupTask() : taskFromLocation();
+            if (!activatedTask) throw new Error('Open an HTTP(S) page to start tracking.');
+            await send({ type: 'START', taskUrl: activatedTask.taskUrl, taskTitle: activatedTask.taskTitle || '' });
+            await refreshState(false, false);
+          } catch (error) { node.disabled = false; setError(error); }
         });
         startButton.disabled = !current || pageState.pendingCount > 0;
         body.append(startButton);
         if (pageState.pendingCount) body.append(el('div', 'Sync or resolve the pending entry before starting.', 'muted'));
-        else if (!current) body.append(el('div', 'Open any GitHub issue or pull request. RepoClock treats both as tasks.', 'muted'));
+        else if (!current) body.append(el('div', 'RepoClock tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
       if (pageState.pendingCount) body.append(button('Sync now', 'secondary wide', async (event, node) => {
         node.disabled = true;
@@ -697,7 +789,7 @@ The previous version remains in Git history.`)) return;
       * { box-sizing:border-box } button,input,textarea { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
       .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .trigger.running .octicon-stopwatch { color:var(--fgColor-open,#1a7f37) } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
       .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 }
-      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px }
+      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:#ff2d55; color:#fff; box-shadow:0 0 0 2px #ff2d5533 }
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .active-link { display:inline-block } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d1d9e0b3) } .section-head { margin-bottom:7px }
@@ -710,17 +802,15 @@ The previous version remains in Git history.`)) return;
       shadow.append(style, renderMenu());
       return;
     }
-    const current = issueFromLocation(), group = el('div', undefined, 'trigger-group');
+    const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.setAttribute('aria-haspopup', current ? 'dialog' : 'menu'); main.setAttribute('aria-expanded', String(current ? menuOpen : navigationOpen));
-    main.title = pageState.active ? 'Time tracker is running' : current ? 'Open time tracker' : 'Open time tracker pages'; main.append(icon('stopwatch', STOPWATCH_PATH));
+    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(menuOpen));
+    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(icon('stopwatch', STOPWATCH_PATH));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      const activatedIssue = issueFromLocation();
-      if (!activatedIssue) {
-        menuOpen = false; navigationOpen = !navigationOpen; editing = null; editingDraft = null; errorText = ''; renderUi(); return;
-      }
+      const activatedTask = taskFromLocation();
+      if (!activatedTask) return;
       navigationOpen = false; menuOpen = !menuOpen; editing = null; editingDraft = null; errorText = ''; renderUi();
       if (menuOpen && pageState.configured) {
         loadingRecent = true; renderUi();
@@ -750,7 +840,7 @@ The previous version remains in Git history.`)) return;
   }
 
   function navigationCheck() {
-    const route = issueFromLocation()?.url ?? `https://github.com${location.pathname}`;
+    const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
       lastRoute = route; recent = []; recentLoaded = false; editing = null; editingDraft = null; menuOpen = false; navigationOpen = false;
@@ -765,8 +855,7 @@ The previous version remains in Git history.`)) return;
     menuOpen = true;
     mountInHeader();
     renderUi();
-    chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
-      popupTask = taskFromUrl(tab?.url);
+    refreshPopupTask().then(async () => {
       pageState = await send({ type: 'GET_PAGE_STATE', refresh: true });
       if (pageState.configured) {
         loadingRecent = true; renderUi();
