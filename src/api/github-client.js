@@ -280,7 +280,7 @@ export class GitHubClient {
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
     const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
       .map(({ path, sha, size }) => ({ path, sha, ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}) })).sort((a, b) => a.path.localeCompare(b.path));
-    return { notModified: false, etag: snapshotEtag, files };
+    return { notModified: false, etag: snapshotEtag, headSha: refResponse.body?.object?.sha || '', files };
   }
 
   async listTextFiles(prefix = '') {
@@ -309,7 +309,7 @@ export class GitHubClient {
     }
     for (let offset = 0; offset < requested.length; offset += size) {
       const batch = requested.slice(offset, offset + size);
-      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title state stateReason url } ... on PullRequest { title state url } } }`).join('\n');
+      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title url } ... on PullRequest { title url } } }`).join('\n');
       let body;
       try {
         body = await this.request('/graphql', { method: 'POST', signal, body: JSON.stringify({ query: `query TrackedTasks {\n${fields}\n}` }) });
@@ -326,13 +326,7 @@ export class GitHubClient {
         const issue = batch[index], node = body?.data?.[`task${index}`]?.issueOrPullRequest;
         const expectedType = issue.type === 'pull_request' ? 'PullRequest' : 'Issue';
         if (!node || node.__typename !== expectedType || node.url !== issue.url || typeof node.title !== 'string') continue;
-        const status = String(node.state || '').toUpperCase();
-        if (!['OPEN', 'CLOSED', 'MERGED'].includes(status)) continue;
-        const stateReason = expectedType === 'Issue' && status === 'CLOSED'
-          ? String(node.stateReason || 'COMPLETED').toUpperCase()
-          : null;
-        if (stateReason && !['COMPLETED', 'NOT_PLANNED'].includes(stateReason)) continue;
-        metadata.set(issue.url, { title: node.title, status, ...(stateReason ? { stateReason } : {}) });
+        metadata.set(issue.url, { title: node.title });
       }
     }
     return metadata;
@@ -394,26 +388,32 @@ export class GitHubClient {
     return this.request(this.contentUrl(path), { method: 'DELETE', body: JSON.stringify({ message, sha, branch: this.branch }) });
   }
 
-  async updateTextsAtomic(changes, message) {
-    if (!Array.isArray(changes) || changes.length < 2) throw new Error('At least two file changes are required');
+  async updateTextsAtomic(changes, message, { guards = [], expectedHeadSha = null } = {}) {
+    if (!Array.isArray(changes) || !changes.length || !Array.isArray(guards) || (changes.length < 2 && !guards.length)) throw new Error('At least two changed or guarded file paths are required');
+    if (expectedHeadSha !== null && typeof expectedHeadSha !== 'string') throw new Error('Expected branch head SHA must be a string or null');
     await this.assertStableDestinationForWrite();
     const unique = new Set();
+    for (const item of [...changes, ...guards]) {
+      encodePath(item.path);
+      if (unique.has(item.path)) throw new Error('Atomic changed and guarded file paths must be unique');
+      unique.add(item.path);
+      if (item.sha !== null && item.sha !== undefined && typeof item.sha !== 'string') throw new Error('Atomic file SHA must be a string or null');
+    }
     for (const change of changes) {
-      encodePath(change.path);
-      if (unique.has(change.path)) throw new Error('Atomic file paths must be unique');
-      unique.add(change.path);
       if (change.text !== null && typeof change.text !== 'string') throw new Error('Atomic text content must be a string or null');
     }
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
     const refPath = `${base}/git/ref/heads/${encodeURIComponent(this.branch)}`;
     const updateRefPath = `${base}/git/refs/heads/${encodeURIComponent(this.branch)}`;
     const ref = await this.request(refPath), parentSha = ref.object?.sha;
+    if (!parentSha) throw new GitHubApiError('GitHub branch head is missing', 422);
+    if (expectedHeadSha && parentSha !== expectedHeadSha) throw new GitHubConflictError();
     const commit = await this.request(`${base}/git/commits/${encodeURIComponent(parentSha)}`), treeSha = commit.tree?.sha;
     const currentTree = await this.request(`${base}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`);
     if (currentTree.truncated) throw new GitHubApiError('Repository tree is too large for an atomic update', 422);
     const current = new Map((currentTree.tree ?? []).filter(item => item.type === 'blob').map(item => [item.path, item.sha]));
-    for (const change of changes) {
-      if ((current.get(change.path) ?? null) !== (change.sha ?? null)) throw new GitHubConflictError();
+    for (const item of [...changes, ...guards]) {
+      if ((current.get(item.path) ?? null) !== (item.sha ?? null)) throw new GitHubConflictError();
     }
     const blobShas = {}, tree = [];
     for (const change of changes) {

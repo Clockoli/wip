@@ -87,7 +87,7 @@ test('v2 migration refuses to silently discard an unrecognized pending completio
 
 test('task metadata cache is repository-scoped and cleared with configuration', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
-  const cache = { repositoryKey: 'acme/time@main', fetchedAt: 123, entries: { 'https://github.com/acme/app/issues/1': { title: 'One', status: 'OPEN' } } };
+  const cache = { repositoryKey: 'acme/time@main', fetchedAt: 123, entries: { 'https://github.com/acme/app/issues/1': { title: 'One' } } };
   await store.saveTaskMetadataCache(cache);
   assert.deepEqual(await store.getTaskMetadataCache('acme/time@main'), cache);
   assert.equal(await store.getTaskMetadataCache('other/time@main'), null);
@@ -381,12 +381,12 @@ test('billable rates and settings export stay local, version changes, and import
   assert.deepEqual(await store.getLocalPreferences(), {
     recentDays: 7, currency: 'USD', rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
   });
-  const saved = await store.saveBillingSettings({ currency: 'EUR', rates: { alice: 12500 } });
+  const saved = await store.saveBillingSettings({ currency: 'EUR', rates: { alice: [{ amountMinorPerHour: 12500, startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);
   assert.equal((await store.getLocalPreferences()).exportRecommended, true);
   const exported = await store.exportSettings();
   assert.doesNotMatch(exported.text, /secret/);
-  assert.deepEqual(JSON.parse(exported.text).billing, { currency: 'EUR', rates: { alice: 12500 } });
+  assert.deepEqual(JSON.parse(exported.text).billing, { currency: 'EUR', rates: { alice: [{ amountMinorPerHour: 12500, startDate: '', endDate: '' }] } });
   assert.equal(await store.markSettingsExported(exported.revision), true);
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
   const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));

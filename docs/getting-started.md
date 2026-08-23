@@ -13,7 +13,7 @@ The data repository is separate from the repositories, documents, tickets, and p
 
 ## 1. Install the current beta
 
-The published `v0.1.11` package predates the product described in this documentation. Install the current trusted checkout instead.
+The current trusted checkout and its locally built package identify as `v0.1.12`. The published `v0.1.11` package predates the product described in this documentation.
 
 1. Clone or update the repository:
 
@@ -115,9 +115,9 @@ The popup reads the active tab's current URL and title when you start. Internal 
 RepoClock adds a split stopwatch control before your GitHub avatar:
 
 - the stopwatch opens the tracking panel for the current GitHub URL;
-- the arrow opens navigation to **Tasks** and **Reports**.
+- the arrow opens navigation to **Tasks**, **Times**, and **Reports**.
 
-GitHub issue and pull-request titles and status can be used as metadata when GitHub makes them available. The URL remains the task identity.
+GitHub issue and pull-request titles can be used as optional metadata when GitHub makes them available. The URL remains the task identity.
 
 ### One timer at a time
 
@@ -132,19 +132,20 @@ Stop the current timer before starting another one. Pending completions must be 
 
 Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
-- Type the Start or Stop hour/minute directly; you do not need to open **Edit** first.
+- Type the Start or Stop hour/minute directly in the unified inline draft.
 - Wheel/trackpad gestures scroll the panel normally and do not change time; no `−`/`+` controls are shown.
 - Choose **Save time** to persist the correction, or **Cancel** to discard the draft.
-- Choose **Edit** to change the URL, optional title, Start, Stop, or description.
+- Select the displayed URL, title, or description to edit those fields in the same draft; Enter also saves it.
 - Choose **Delete** to remove an entry. The previous repository version remains in Git history.
 
 If moving a boundary crosses the adjacent record, RepoClock changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
 
-## 5. Open Tasks and Reports
+## 5. Open Tasks, Times, and Reports
 
 Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
 
-- **Tasks** groups your sessions by task URL, displays URL and optional title as a search-style result, adds the running session, and provides search, period, status, and inline Start/Stop actions.
+- **Tasks** groups your sessions by task URL, displays URL and optional title as a search-style result, adds the running session, and provides URL/title search, periods, and inline Start/Stop actions.
+- **Times** shows completed entries for preset or custom periods, supports URL/title filtering and inline correction, and accepts all-or-nothing bulk manual entries.
 - **Reports** reads the selected period across the data repository and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF.
 
 ## 6. Optional settings

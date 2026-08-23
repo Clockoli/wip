@@ -67,7 +67,7 @@ test('GitHub client returns branch ETags and accepts a conditional 304 snapshot'
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   const first = await client.listTextFilesSnapshot('times/');
-  assert.deepEqual(first, { notModified: false, etag: '"snapshot"', files: [{ path: 'times/2026-08/alice.txt', sha }] });
+  assert.deepEqual(first, { notModified: false, etag: '"snapshot"', headSha: 'parent', files: [{ path: 'times/2026-08/alice.txt', sha }] });
   const second = await client.listTextFilesSnapshot('times/', { etag: first.etag });
   assert.deepEqual(second, { notModified: true, etag: '"snapshot"' });
   assert.equal(calls.length, 4, '304 skips commit and tree requests');
@@ -92,6 +92,38 @@ test('GitHub client atomically updates multiple text files from one verified tre
   const patch = calls.find(call => call.options.method === 'PATCH');
   assert.deepEqual(JSON.parse(patch.options.body), { sha: 'commit-new', force: false });
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
+});
+
+test('atomic text update rejects a branch head changed after partition discovery', async () => {
+  let writes = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (options.method) writes += 1;
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'new-head' } });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  await assert.rejects(() => client.updateTextsAtomic([
+    { path: 'times/2026-09/alice.txt', sha: null, text: 'new time\n' },
+  ], 'bulk', { guards: [{ path: 'active/alice.txt', sha: null }], expectedHeadSha: 'discovery-head' }), GitHubConflictError);
+  assert.equal(writes, 0);
+});
+
+test('atomic text update rejects a stale read-set guard before creating a single-file commit', async () => {
+  let writes = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (options.method) writes += 1;
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    return response(200, { tree: [
+      { path: 'times/2026-09/alice.txt', type: 'blob', sha: 'month-old' },
+      { path: 'active/alice.txt', type: 'blob', sha: 'active-new' },
+    ] });
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  await assert.rejects(() => client.updateTextsAtomic([
+    { path: 'times/2026-09/alice.txt', sha: 'month-old', text: 'new time\n' },
+  ], 'bulk', { guards: [{ path: 'active/alice.txt', sha: null }] }), GitHubConflictError);
+  assert.equal(writes, 0);
 });
 
 test('atomic text update rejects stale expected blobs before creating a commit', async () => {
@@ -170,11 +202,12 @@ test('GitHub client returns task metadata in bounded GraphQL batches', async () 
     assert.match(query, /issueOrPullRequest\(number: 1\)/);
     assert.match(query, /issueOrPullRequest\(number: 2\)/);
     assert.match(query, /issueOrPullRequest\(number: 3\)/);
-    assert.match(query, /on Issue \{ title state stateReason url \}/);
+    assert.match(query, /on Issue \{ title url \}/);
+    assert.doesNotMatch(query, /stateReason|\bstate\b/);
     return response(200, { data: {
-      task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Fix indexing', state: 'OPEN', url: 'https://github.com/acme/app/issues/1' } },
-      task1: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Ship reports', state: 'MERGED', url: 'https://github.com/acme/app/pull/2' } },
-      task2: { issueOrPullRequest: { __typename: 'Issue', title: 'Won’t implement', state: 'CLOSED', stateReason: 'NOT_PLANNED', url: 'https://github.com/acme/app/issues/3' } },
+      task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Fix indexing', url: 'https://github.com/acme/app/issues/1' } },
+      task1: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Ship reports', url: 'https://github.com/acme/app/pull/2' } },
+      task2: { issueOrPullRequest: { __typename: 'Issue', title: 'Won’t implement', url: 'https://github.com/acme/app/issues/3' } },
     } });
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
@@ -184,9 +217,9 @@ test('GitHub client returns task metadata in bounded GraphQL batches', async () 
     { type: 'issue', owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3' },
   ];
   assert.deepEqual(await client.getTaskMetadata(issues), new Map([
-    [issues[0].url, { title: 'Fix indexing', status: 'OPEN' }],
-    [issues[1].url, { title: 'Ship reports', status: 'MERGED' }],
-    [issues[2].url, { title: 'Won’t implement', status: 'CLOSED', stateReason: 'NOT_PLANNED' }],
+    [issues[0].url, { title: 'Fix indexing' }],
+    [issues[1].url, { title: 'Ship reports' }],
+    [issues[2].url, { title: 'Won’t implement' }],
   ]));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.github.com/graphql');

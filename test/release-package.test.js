@@ -16,6 +16,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/background/task-load.js',
   'src/config/github-app.js',
   'src/content/github.js',
+  'src/domain/bulk-time.js',
   'src/domain/local-settings.js',
   'src/domain/monthly-text.js',
   'src/domain/records.js',
@@ -46,6 +47,8 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/tasks/tasks.css',
   'src/tasks/tasks.html',
   'src/tasks/tasks.js',
+  'src/times/times.css',
+  'src/times/times.html',
 ];
 
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {

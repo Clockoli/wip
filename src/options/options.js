@@ -378,7 +378,7 @@ function startRepositoryMonitoring(expectedName = '') {
   repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 1500);
 }
 
-function addRateRow(login = '', minorPerHour = 0) {
+function addRateRow(login = '', minorPerHour = 0, startDate = '', endDate = '') {
   const row = document.createElement('div'); row.className = 'rate-row';
   const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
   const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
@@ -386,16 +386,24 @@ function addRateRow(login = '', minorPerHour = 0) {
   const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate';
   const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.inputMode = 'decimal'; rateInput.placeholder = '100.00'; rateInput.value = rateMinorToMajor(minorPerHour);
   rateLabel.append(rateInput);
+  const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
+  const startInput = document.createElement('input'); startInput.className = 'rate-start'; startInput.type = 'date'; startInput.value = startDate; startLabel.append(startInput);
+  const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
+  const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = endDate; endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());
-  row.append(loginLabel, rateLabel, remove); $('rates-list').append(row);
+  row.append(loginLabel, rateLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
 function renderLocalPreferences(preferences) {
   localPreferences = preferences;
   $('billing-currency').value = preferences.currency;
   $('rates-list').replaceChildren();
-  for (const [login, rate] of Object.entries(preferences.rates || {})) addRateRow(login, rate);
+  for (const [login, periods] of Object.entries(preferences.rates || {})) {
+    for (const period of (Array.isArray(periods) ? periods : [{ amountMinorPerHour: periods, startDate: '', endDate: '' }])) {
+      addRateRow(login, period.amountMinorPerHour, period.startDate, period.endDate);
+    }
+  }
   if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
   if (!state?.config) $('recent-days').value = preferences.recentDays || 7;
   $('settings-export-reminder').hidden = !preferences.exportRecommended;
@@ -412,7 +420,8 @@ function billingPayload() {
     const value = row.querySelector('.rate-value').value.trim();
     if (!login && !value) continue;
     if (!login || !value) throw new Error('Enter both a GitHub user and an hourly rate');
-    rates[login] = rateMajorToMinor(value);
+    rates[login] ||= [];
+    rates[login].push({ amountMinorPerHour: rateMajorToMinor(value), startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
   return { currency: $('billing-currency').value.trim().toUpperCase(), rates };
 }

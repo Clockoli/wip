@@ -1,13 +1,11 @@
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 
-function readEntry(value, issue, now, ttlMs) {
+function readEntry(value, now, ttlMs) {
   if (!value || !Number.isFinite(value.fetchedAt) || now - value.fetchedAt < 0 || now - value.fetchedAt >= ttlMs) return { fresh: false, details: null };
   if (value.details === null) return { fresh: true, details: null };
   const details = value.details;
-  if (!details || typeof details.title !== 'string' || !['OPEN', 'CLOSED', 'MERGED'].includes(details.status)) return { fresh: false, details: null };
-  const stateReason = ['COMPLETED', 'NOT_PLANNED'].includes(details.stateReason) ? details.stateReason : null;
-  if (issue?.type === 'issue' && details.status === 'CLOSED' && !stateReason) return { fresh: false, details: null };
-  return { fresh: true, details: { title: details.title.slice(0, 500), status: details.status, ...(stateReason ? { stateReason } : {}) } };
+  if (!details || typeof details.title !== 'string') return { fresh: false, details: null };
+  return { fresh: true, details: { title: details.title.slice(0, 500) } };
 }
 
 export class TaskMetadataService {
@@ -25,10 +23,10 @@ export class TaskMetadataService {
     const cachedEntries = cached?.entries && typeof cached.entries === 'object' ? cached.entries : {};
     const entries = {}, metadata = new Map(), missing = [];
     for (const issue of issues) {
-      const entry = readEntry(cachedEntries[issue.url], issue, now, this.ttlMs);
+      const entry = readEntry(cachedEntries[issue.url], now, this.ttlMs);
       if (!entry.fresh) missing.push(issue);
       else {
-        entries[issue.url] = cachedEntries[issue.url];
+        entries[issue.url] = { fetchedAt: cachedEntries[issue.url].fetchedAt, details: entry.details };
         if (entry.details) metadata.set(issue.url, entry.details);
       }
     }
@@ -36,7 +34,8 @@ export class TaskMetadataService {
       const loaded = await this.github.getTaskMetadata(missing, { batchSize: 50, maxRequests: 40, signal });
       signal?.throwIfAborted();
       for (const issue of missing) {
-        const details = loaded.get(issue.url) ?? null;
+        const loadedDetails = loaded.get(issue.url) ?? null;
+        const details = loadedDetails && typeof loadedDetails.title === 'string' ? { title: loadedDetails.title.slice(0, 500) } : null;
         entries[issue.url] = { fetchedAt: now, details };
         if (details) metadata.set(issue.url, details);
       }

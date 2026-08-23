@@ -1,7 +1,9 @@
 (() => {
   const ROOT_ID = 'repoclock-root';
   const POPUP_ROOT_ID = 'repoclock-popup-root';
-  const popupMode = location.protocol === 'chrome-extension:';
+  const TIMES_ROOT_ID = 'repoclock-times-root';
+  const timesMode = location.protocol === 'chrome-extension:' && location.pathname.endsWith('/src/times/times.html');
+  const popupMode = location.protocol === 'chrome-extension:' && !timesMode;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
@@ -19,8 +21,15 @@
   let recentFresh = false;
   let loadingRecent = false;
   let recentLoad = null;
-  let editing = null;
-  let editingDraft = null;
+  let recentLoadId = 0;
+  let timesLoadId = 0;
+  let activeInlineKey = null;
+  let timesPeriod = 'today';
+  let timesStartDate = '';
+  let timesEndDate = '';
+  let timesFilter = '';
+  let bulkDraft = '';
+  let bulkMutation = false;
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
   const inlineBoundaryLinks = new Map();
@@ -72,7 +81,7 @@
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
-  function taskFromLocation() { return popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
+  function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
   function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
@@ -121,6 +130,23 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   }
 
+  function timesRange() {
+    const today = new Date(), endToday = localDateValue(today), start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
+    const date = value => localDateValue(value), move = days => { const value = new Date(start); value.setDate(value.getDate() + days); return value; };
+    if (timesPeriod === 'today') return { startDate: endToday, endDate: endToday };
+    if (timesPeriod === 'yesterday') { const value = date(move(-1)); return { startDate: value, endDate: value }; }
+    const mondayOffset = (today.getDay() + 6) % 7;
+    if (timesPeriod === 'this-week') return { startDate: date(move(-mondayOffset)), endDate: endToday };
+    if (timesPeriod === 'last-week') return { startDate: date(move(-mondayOffset - 7)), endDate: date(move(-mondayOffset - 1)) };
+    if (timesPeriod === 'this-month') return { startDate: `${endToday.slice(0, 7)}-01`, endDate: endToday };
+    if (timesPeriod === 'last-month') {
+      const last = new Date(today.getFullYear(), today.getMonth(), 0, 12), first = new Date(last.getFullYear(), last.getMonth(), 1, 12);
+      return { startDate: date(first), endDate: date(last) };
+    }
+    if (timesPeriod === 'custom' && validEntryDate(timesStartDate) && validEntryDate(timesEndDate) && timesStartDate <= timesEndDate) return { startDate: timesStartDate, endDate: timesEndDate };
+    throw new Error('Choose a valid custom date range.');
+  }
+
   function summarySeconds(frame) {
     let seconds = Math.max(0, Number(frame?.seconds) || 0);
     const activeDate = pageState.active?.startedAt?.slice(0, 10);
@@ -138,7 +164,7 @@
       { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
     ];
     if (!Array.isArray(data)) pageState = {
-      ...pageState, configured: true, active: data?.active ?? null,
+      ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
       pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
     };
     recentLoaded = true;
@@ -165,7 +191,7 @@
     return value;
   }
 
-  function timePicker(label, original, draft = null, { compact = false, onChange = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, onChange = () => {}, onFocus = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
     const initial = timestampParts(template), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
@@ -187,8 +213,9 @@
       if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
+    hourField.addEventListener('focus', () => onFocus('hour')); minuteField.addEventListener('focus', () => onFocus('minute'));
     refreshValidity(); values.append(hourField, el('span', ':', 'time-colon'), minuteField); group.append(dateField, values);
-    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
+    return { node: group, value, draft: currentDraft, controls, focus: part => (part === 'minute' ? minuteField : hourField).focus(), reset: () => applyTimestamp(original), setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
   function timestampAtOriginalOffset(original, instant) {
@@ -202,12 +229,14 @@
 
   function titleFromPage() {
     if (popupMode) return taskTitleOf(popupTask);
+    if (timesMode) return '';
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
     const title = (node?.textContent || document.title || '').replace(/ · GitHub$/, '').trim();
     return title.slice(0, 300);
   }
 
   function recentRequest() {
+    if (timesMode) return { type: 'LOAD_TIMES', payload: timesRange() };
     const task = taskFromLocation();
     return { type: 'LOAD_RECENT', menuData: true, ...(task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
   }
@@ -229,10 +258,10 @@
   }
 
   function mountInHeader() {
-    if (popupMode) {
-      root = root || document.getElementById(POPUP_ROOT_ID);
+    if (popupMode || timesMode) {
+      root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
-      root.classList.add('popup-surface');
+      root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
     }
@@ -258,7 +287,7 @@
 
   function setError(error = '') { errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
 
-  function closeMenu() { menuOpen = false; navigationOpen = false; editing = null; editingDraft = null; errorText = ''; errorCode = ''; renderUi(); }
+  function closeMenu() { menuOpen = false; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
 
   function originalRecord(entry) { return { taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
@@ -340,12 +369,16 @@
     return next;
   }
 
-  function refreshRecent() {
-    if (recentLoad) return recentLoad;
+  function refreshRecent(force = false) {
+    if (recentLoad && !force) return recentLoad;
+    const loadId = ++recentLoadId, request = recentRequest();
     recentFresh = false; loadingRecent = true; renderUi();
     let load;
-    load = send(recentRequest()).then(data => applyMenuData(data, true)).finally(() => {
-      if (recentLoad === load) {
+    load = send(request).then(data => {
+      if (loadId === recentLoadId) applyMenuData(data, true);
+      return data;
+    }).finally(() => {
+      if (loadId === recentLoadId && recentLoad === load) {
         recentLoad = null; loadingRecent = false; renderUi();
       }
     });
@@ -359,66 +392,6 @@
     renderUi();
   }
 
-  function renderEditor(container) {
-    const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Edit entry'));
-    const cancelEdit = button('Cancel', 'link-button', async () => { editing = null; editingDraft = null; renderUi(); }); header.append(cancelEdit);
-    const draft = editingDraft?.id === editing.id ? editingDraft : null;
-    const form = el('form');
-    const urlField = el('input'); urlField.required = true; urlField.type = 'url'; urlField.value = draft?.taskUrl ?? taskUrlOf(editing);
-    const titleField = el('input'); titleField.maxLength = 300; titleField.value = draft?.taskTitle ?? taskTitleOf(editing);
-    let titleEdited = Boolean(draft?.titleEdited), adjusting = false, startPicker, stopPicker;
-    titleField.addEventListener('input', () => { titleEdited = true; });
-    urlField.addEventListener('input', () => {
-      if (!titleEdited && normalizeTaskUrl(urlField.value) !== taskUrlOf(editing)) titleField.value = '';
-    });
-    const reconcile = changed => {
-      if (adjusting || !startPicker || !stopPicker) return;
-      try {
-        adjusting = true;
-        const startedAt = startPicker.value(), endedAt = stopPicker.value();
-        if (new Date(startedAt) > new Date(endedAt)) {
-          if (changed === 'start') stopPicker.setValue(timestampAtOriginalOffset(editing.endedAt, new Date(startedAt).getTime()));
-          else startPicker.setValue(timestampAtOriginalOffset(editing.startedAt, new Date(endedAt).getTime()));
-        }
-      } catch { /* preserve incomplete direct-input drafts until submit */ }
-      finally { adjusting = false; }
-    };
-    startPicker = timePicker('Start', editing.startedAt, draft?.start, { onChange: () => reconcile('start') });
-    stopPicker = timePicker('Stop', editing.endedAt, draft?.stop, { onChange: () => reconcile('stop') });
-    const description = el('textarea'); description.maxLength = 2000; description.rows = 3; description.value = draft?.description ?? editing.description ?? '';
-    const fieldLabel = (text, field) => { const label = el('label', text); label.append(field); return label; };
-    form.append(fieldLabel('Task URL', urlField), fieldLabel('Task title (optional)', titleField));
-    const timeRange = el('div', undefined, 'time-range-editor'); timeRange.append(startPicker.node, stopPicker.node); form.append(timeRange);
-    form.append(fieldLabel('Description', description));
-    const actions = el('div', undefined, 'form-actions');
-    const remove = button('Delete', 'danger-outline', async (event, node) => {
-      if (!confirm(`Delete this ${formatDuration(editing.durationSeconds)} entry?
-
-The previous version remains in Git history.`)) return;
-      node.disabled = true;
-      try { await send({ type: 'DELETE_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing) } }); editing = null; editingDraft = null; recentLoaded = false; await refreshState(false, true); }
-      catch (error) { node.disabled = false; setError(error); }
-    });
-    const save = el('button', 'Save', 'primary'); save.type = 'submit';
-    const setEditorDisabled = disabled => {
-      for (const control of [cancelEdit, urlField, titleField, description, remove, save]) control.disabled = disabled;
-      startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled);
-    };
-    actions.append(remove, save); form.append(actions);
-    form.addEventListener('submit', async event => {
-      event.preventDefault(); if (!event.isTrusted) return;
-      editingDraft = { id: editing.id, taskUrl: urlField.value, taskTitle: titleField.value, titleEdited, start: startPicker.draft(), stop: stopPicker.draft(), description: description.value };
-      setEditorDisabled(true);
-      try {
-        const task = taskFromUrl(urlField.value, titleField.value);
-        if (!task) throw new Error('Enter a valid HTTP(S) task URL.');
-        const startedAt = startPicker.value(), endedAt = stopPicker.value();
-        await send({ type: 'EDIT_ENTRY', payload: { path: editing._path, originalSha: editing._sha, index: editing._index, original: originalRecord(editing), edits: { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt, endedAt, description: description.value } } });
-        editing = null; editingDraft = null; recentLoaded = false; await refreshState(false, true);
-      } catch (error) { setEditorDisabled(false); setError(error); }
-    });
-    container.append(header, form);
-  }
 
   function relativeDayLabel(date) {
     const today = localDateValue(), marker = new Date(`${today}T12:00:00`);
@@ -447,7 +420,7 @@ The previous version remains in Git history.`)) return;
     for (const control of controls) control.disabled = true;
     try {
       const result = await send({ type: 'DELETE_ENTRY', payload: { path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
-      editing = null; editingDraft = null;
+      activeInlineKey = null;
       const entryDate = entry.entryDate || entry.startedAt.slice(0, 10);
       summaryFrames = summaryFrames.map(frame => entryDate >= frame.startDate && entryDate <= frame.endDate
         ? { ...frame, seconds: Math.max(0, frame.seconds - entry.durationSeconds) } : frame);
@@ -467,6 +440,31 @@ The previous version remains in Git history.`)) return;
 
   function entryKey(entry) {
     return `${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
+  }
+
+  function clearInlineGroup(key) {
+    const group = inlineDrafts.get(key)?.group || key;
+    const keys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+    if (key) keys.add(key);
+    clearBoundaryLinks(keys);
+    for (const draftKey of keys) inlineDrafts.delete(draftKey);
+    return keys.size > 0;
+  }
+
+  function cancelActiveInlineDraft(nextKey = null) {
+    const previous = activeInlineKey;
+    const changed = previous ? clearInlineGroup(previous) : false;
+    activeInlineKey = nextKey;
+    return changed;
+  }
+
+  function activateTimeInput(key, boundary, part) {
+    if (activeInlineKey && activeInlineKey !== key) {
+      cancelActiveInlineDraft(key); renderUi();
+      globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.[boundary === 'start' ? 'startPicker' : 'stopPicker']?.focus(part));
+      return;
+    }
+    activeInlineKey = key;
   }
 
   function overlappingEntries(entries) {
@@ -594,8 +592,9 @@ The previous version remains in Git history.`)) return;
     let startPicker, stopPicker, save, cancel;
     const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
-      const value = { start: startPicker.draft(), stop: stopPicker.draft(), group };
-      inlineDrafts.set(key, value);
+      const previous = inlineDrafts.get(key) || {};
+      const value = { ...previous, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
+      inlineDrafts.set(key, value); activeInlineKey ||= key;
       if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
       day.textContent = relativeDayLabel(value.start.date);
       try {
@@ -606,82 +605,111 @@ The previous version remains in Git history.`)) return;
     };
     const remember = boundary => {
       const group = inlineDrafts.get(key)?.group || key;
-      updateDraft(group);
-      linkCrossedTimeBoundaries(entry, boundary, group);
-      refreshOverlapWarnings();
+      updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
-    startPicker = timePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: () => remember('start') });
-    stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: () => remember('stop') });
+    startPicker = timePicker('Start', entry.startedAt, draft?.start, {
+      compact: true, onChange: () => remember('start'), onFocus: part => activateTimeInput(key, 'start', part),
+    });
+    stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
+      compact: true, onChange: () => remember('stop'), onFocus: part => activateTimeInput(key, 'stop', part),
+    });
     const saveGroup = async () => {
       const group = inlineDrafts.get(key)?.group || key;
       try {
-        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey]) => {
+        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey, value]) => {
           const editor = inlineEditors.get(draftKey), target = editor?.entry;
           if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
-          const edits = { taskUrl: taskUrlOf(target), taskTitle: taskTitleOf(target), startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description: target.description || '' };
-          if (edits.startedAt === target.startedAt && edits.endedAt === target.endedAt) return null;
-          return { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits };
+          const task = value.metadataActive ? taskFromUrl(value.taskUrl, value.taskTitle) : taskFromUrl(taskUrlOf(target), taskTitleOf(target));
+          if (!task) throw new Error('Enter a valid HTTP(S) task URL.');
+          const description = String(value.metadataActive ? value.description : target.description || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+          const edits = { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
+          const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
+          return changed ? { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
         const savedKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
         if (!entries.length) {
-          clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); renderUi(); return;
+          clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
         inlineMutation = group; renderUi();
         await send({ type: 'EDIT_ENTRIES', payload: { entries } });
-        clearBoundaryLinks(savedKeys);
-        for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
-        inlineMutation = null; recentLoaded = false; await refreshState(false, true);
+        clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
+        activeInlineKey = null; inlineMutation = null; recentLoaded = false; await refreshState(false, true);
       } catch (error) { inlineMutation = null; setError(error); }
     };
+    const cancelGroup = async () => { clearInlineGroup(key); activeInlineKey = null; renderUi(); };
     save = button('Save time', 'link-button inline-save', saveGroup);
-    cancel = button('Cancel', 'link-button inline-cancel', async () => {
-      const group = inlineDrafts.get(key)?.group || key;
-      const cancelledKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
-      clearBoundaryLinks(cancelledKeys);
-      for (const draftKey of cancelledKeys) inlineDrafts.delete(draftKey);
-      renderUi();
-    });
+    cancel = button('Cancel', 'link-button inline-cancel', cancelGroup);
     save.hidden = !draft; cancel.hidden = !draft;
-    const separator = el('span', '-', 'inline-time-separator');
-    const timeLine = el('div', undefined, 'inline-time-line');
+    const onEnter = event => {
+      if (event.key !== 'Enter' || !event.isTrusted) return;
+      event.preventDefault(); void saveGroup();
+    };
+    for (const control of [...startPicker.controls, ...stopPicker.controls]) control.addEventListener('keydown', onEnter);
+    const separator = el('span', '-', 'inline-time-separator'), timeLine = el('div', undefined, 'inline-time-line');
     timeLine.append(startPicker.node, separator, stopPicker.node); range.append(timeLine);
-    inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft });
-    return { node: range, day, duration, save, cancel, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+    inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft, saveGroup, cancelGroup });
+    return { node: range, day, duration, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+  }
+
+  function beginMetadataEdit(entry) {
+    const key = entryKey(entry);
+    if (activeInlineKey && activeInlineKey !== key) cancelActiveInlineDraft(key); else activeInlineKey = key;
+    const existing = inlineDrafts.get(key);
+    inlineDrafts.set(key, {
+      ...(existing || {
+        start: { ...timestampParts(entry.startedAt), timestamp: entry.startedAt },
+        stop: { ...timestampParts(entry.endedAt), timestamp: entry.endedAt },
+        group: key,
+      }),
+      metadataActive: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
+    });
+    renderUi(); globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.descriptionField?.focus());
   }
 
   function recentRecord(entry, overlaps) {
-    const key = entryKey(entry), overlapping = overlaps.has(key);
+    const key = entryKey(entry), overlapping = overlaps.has(key), draft = inlineDrafts.get(key);
     const record = el('div', undefined, 'entry-record');
     const warning = el('div', 'Overlaps another entry', 'overlap-warning');
     const setOverlap = active => {
       record.classList[active ? 'add' : 'remove']('entry-overlap');
-      if (active && !warning.parentElement) record.prepend(warning);
-      else if (!active) warning.remove();
+      if (active && !warning.parentElement) record.prepend(warning); else if (!active) warning.remove();
     };
     setOverlap(overlapping);
-    const timeRow = el('div', undefined, 'entry-time-row');
-    let day;
+    const timeRow = el('div', undefined, 'entry-time-row'); let day;
     if (entry._pending) {
       day = el('div', relativeDayLabel(entry.startedAt.slice(0, 10)), 'entry-day');
       const time = el('span', recentTimeText(entry), 'entry-time-range');
       const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
       const actions = el('div', undefined, 'entry-actions entry-actions-visible');
-      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending);
-      timeRow.append(time, duration, actions);
+      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending); timeRow.append(time, duration, actions);
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
-      const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
-      for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
-      inline.setDisabled(disabled);
-      actions.append(inline.cancel, inline.save, edit, remove);
-      if (!inline.save.hidden) actions.classList.add('dirty');
-      timeRow.append(inline.node, inline.duration, actions);
+      for (const control of [inline.save, inline.cancel, remove]) control.disabled = disabled;
+      inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
+      if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
+      if (draft?.metadataActive) {
+        const metadata = el('div', undefined, 'inline-metadata-editor');
+        const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = 'url'; urlField.required = true; urlField.value = draft.taskUrl;
+        const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
+        const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
+        const field = (labelText, input) => { const label = el('label', labelText); label.append(input); return label; };
+        metadata.append(field('Task URL', urlField), field('Task title (optional)', titleField), field('Description', descriptionField));
+        const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
+        for (const input of [urlField, titleField, descriptionField]) {
+          input.disabled = disabled; input.addEventListener('input', updateMetadata);
+          input.addEventListener('keydown', event => { if (event.key === 'Enter' && event.isTrusted) { event.preventDefault(); updateMetadata(); void inline.saveGroup(); } });
+        }
+        record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
+      } else {
+        const description = button(entry.description || 'Add description', 'entry-description entry-description-editable', async () => beginMetadataEdit(entry));
+        description.title = 'Edit URL, title, and description'; description.setAttribute('aria-label', entry.description ? `Edit description: ${entry.description}` : 'Add description and edit task details');
+        record.append(description);
+      }
     }
-    record.append(day, timeRow);
-    if (entry.description) record.append(el('div', entry.description, 'entry-description'));
+    record.prepend(day, timeRow);
     return record;
   }
 
@@ -693,9 +721,9 @@ The previous version remains in Git history.`)) return;
     return group;
   }
 
-  function renderRecent(container) {
+  function renderRecent(container, sourceEntries = recent) {
     inlineEditors.clear();
-    const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Recent entries'));
+    const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode ? 'Tracked time' : 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
       try { errorText = ''; renderUi(); await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
@@ -704,8 +732,8 @@ The previous version remains in Git history.`)) return;
     refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
-    if (!recent.length) { container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
-    const entries = [...recent].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    if (!sourceEntries.length) { container.append(el('div', timesMode ? 'No time entries match this period and filter.' : 'No entries in the configured display window.', 'muted')); return; }
+    const entries = [...sourceEntries].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
     let group = [];
     for (const entry of entries) {
@@ -740,6 +768,78 @@ The previous version remains in Git history.`)) return;
     }
   }
 
+  async function loadSelectedTimes() {
+    const loadId = ++timesLoadId;
+    cancelActiveInlineDraft(); recentLoaded = false; errorText = ''; renderUi();
+    try { await refreshRecent(true); }
+    catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
+  }
+
+  function renderTimesPage() {
+    const page = el('main', undefined, 'times-page');
+    const header = el('header', undefined, 'times-header');
+    const heading = el('div'); heading.append(el('strong', 'RepoClock'), el('h1', 'Times'));
+    const navigation = el('div', undefined, 'header-actions');
+    navigation.append(
+      button('Tasks', 'reports-button', async () => send({ type: 'OPEN_TASKS' })),
+      button('Reports', 'reports-button', async () => send({ type: 'OPEN_REPORTS' })),
+      button('Settings', 'reports-button', async () => send({ type: 'OPEN_OPTIONS' })),
+    );
+    header.append(heading, navigation); page.append(header);
+    const body = el('div', undefined, 'times-body');
+    if (!pageState.configured && recentLoaded) {
+      body.append(el('p', 'Connect a GitHub repository before viewing time.', 'muted'), button('Connect GitHub', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
+      page.append(body); return page;
+    }
+    const toolbar = el('section', undefined, 'times-toolbar');
+    const periodLabel = el('label', 'Period'), period = el('select'); period.setAttribute('aria-label', 'Time period');
+    for (const [value, label] of [['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']]) {
+      const option = el('option', label); option.value = value; option.selected = timesPeriod === value; period.append(option);
+    }
+    period.addEventListener('change', () => {
+      timesPeriod = period.value;
+      if (timesPeriod === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
+      else void loadSelectedTimes();
+    }); periodLabel.append(period); toolbar.append(periodLabel);
+    if (timesPeriod === 'custom') {
+      const startLabel = el('label', 'From'), start = el('input'); start.type = 'date'; start.value = timesStartDate; start.addEventListener('input', () => { timesStartDate = start.value; }); startLabel.append(start);
+      const endLabel = el('label', 'Through'), end = el('input'); end.type = 'date'; end.value = timesEndDate; end.addEventListener('input', () => { timesEndDate = end.value; }); endLabel.append(end);
+      toolbar.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => loadSelectedTimes()));
+    }
+    const filterLabel = el('label', 'Filter by URL or optional title'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Filter by URL or optional title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel); body.append(toolbar);
+    const result = el('section', undefined, 'times-results');
+    const renderFiltered = () => {
+      result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
+      const matches = query ? recent.filter(entry => taskUrlOf(entry).toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...recent];
+      if (query && inlineDrafts.size) {
+        const visible = new Set(matches.map(entryKey));
+        for (const entry of recent) if (inlineDrafts.has(entryKey(entry)) && !visible.has(entryKey(entry))) matches.push(entry);
+      }
+      renderRecent(result, matches);
+    };
+    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered(); body.append(result);
+    const bulk = el('details', undefined, 'bulk-time');
+    const summary = el('summary', 'Add time in bulk'); bulk.append(summary);
+    const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
+    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
+    input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
+2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5
+23.08.2026 https://example.com/call Customer call 1:30
+24/08/2026 https://example.com/release Release preparation 0.25`;
+    input.addEventListener('input', () => { bulkDraft = input.value; });
+    const add = button('Add time', 'primary', async () => {
+      if (bulkMutation) return;
+      bulkDraft = input.value; bulkMutation = true; errorText = ''; renderUi();
+      try {
+        const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
+        bulkDraft = ''; bulkMutation = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
+      } catch (error) { bulkMutation = false; setError(error); }
+    }); add.disabled = bulkMutation;
+    bulk.append(help, input, add); body.append(bulk);
+    if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
+    page.append(body); return page;
+  }
+
   function renderMenu() {
     let elapsedValue = null;
     const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
@@ -755,8 +855,7 @@ The previous version remains in Git history.`)) return;
     const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
     headerActions.append(tasks, reports, settings); header.append(heading, headerActions); menu.append(header);
     const body = el('div', undefined, 'menu-body');
-    if (editing) renderEditor(body);
-    else if (!pageState.configured) {
+    if (!pageState.configured) {
       body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
       body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
@@ -822,6 +921,7 @@ The previous version remains in Git history.`)) return;
         updateSummary();
       }, 1000);
       const divider = el('div', undefined, 'divider'); body.append(divider); renderRecent(body);
+      const more = el('div', undefined, 'more-times'); more.append(button('View more times', 'secondary', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); })); body.append(more);
     }
     if (errorText) {
       const error = el('div', errorText, 'error'), recovery = globalThis.RepoClockRecovery.actionFor(errorCode), label = recovery?.label || '';
@@ -845,7 +945,9 @@ The previous version remains in Git history.`)) return;
     reports.setAttribute('role', 'menuitem'); reports.prepend(icon('graph', REPORTS_PATH));
     const tasks = button('Tasks', 'navigation-item', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); });
     tasks.setAttribute('role', 'menuitem'); tasks.prepend(icon('issue-opened', STOPWATCH_PATH));
-    menu.append(reports, tasks); return menu;
+    const times = button('Times', 'navigation-item', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); });
+    times.setAttribute('role', 'menuitem'); times.prepend(icon('stopwatch', STOPWATCH_PATH));
+    menu.append(reports, tasks, times); return menu;
   }
 
   function renderUi() {
@@ -854,23 +956,21 @@ The previous version remains in Git history.`)) return;
     shadow.replaceChildren();
     const style = el('style', `
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
-      * { box-sizing:border-box } button,input,textarea { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
-      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .trigger.running .octicon-stopwatch { color:var(--fgColor-open,#1a7f37) } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
-      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 }
+      * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
+      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .trigger.running .octicon-stopwatch { color:var(--fgColor-open,#1a7f37) } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
+      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:100vh; margin:0 auto; background:var(--bgColor-default,#fff); border-inline:1px solid var(--borderColor-muted,#d1d9e0b3) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(140px,.7fr) minmax(150px,1fr) minmax(150px,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } .times-filter { grid-column:1/-1 } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,#59636e); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
       header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:#ff2d55; color:#fff; box-shadow:0 0 0 2px #ff2d5533 }
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d1d9e0b3) } .section-head { margin-bottom:7px }
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
-      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
- label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
+      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff0); color:var(--fgColor-muted,#59636e); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,#818b981a); color:var(--fgColor-default,#1f2328) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:7px; background:var(--bgColor-muted,#f6f8fa) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:1 } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
-    if (popupMode) {
-      shadow.append(style, renderMenu());
-      return;
-    }
+    if (timesMode) { shadow.append(style, renderTimesPage()); return; }
+    if (popupMode) { shadow.append(style, renderMenu()); return; }
     const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
@@ -880,17 +980,17 @@ The previous version remains in Git history.`)) return;
       if (!event.isTrusted) return;
       const activatedTask = taskFromLocation();
       if (!activatedTask) return;
-      navigationOpen = false; menuOpen = !menuOpen; editing = null; editingDraft = null; errorText = ''; renderUi();
+      navigationOpen = false; menuOpen = !menuOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
       if (menuOpen && pageState.configured) {
         try { await refreshRecent(); }
         catch (error) { setError(error); }
       }
     });
     const arrow = el('button', undefined, 'trigger trigger-menu'); arrow.type = 'button'; arrow.setAttribute('aria-label', 'Open time tracker pages');
-    arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports and tasks'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
+    arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports, tasks, and times'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
     arrow.addEventListener('click', event => {
       if (!event.isTrusted) return;
-      menuOpen = false; navigationOpen = !navigationOpen; editing = null; editingDraft = null; errorText = ''; renderUi();
+      menuOpen = false; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
     });
     group.append(main, arrow); shadow.append(style, group);
     if (navigationOpen) shadow.append(renderNavigationMenu());
@@ -919,7 +1019,7 @@ The previous version remains in Git history.`)) return;
     const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; editing = null; editingDraft = null; menuOpen = false; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft(); menuOpen = false; navigationOpen = false;
       void render(firstRender);
     } else if (route) {
       const target = headerTarget();
@@ -927,7 +1027,10 @@ The previous version remains in Git history.`)) return;
     }
   }
 
-  if (popupMode) {
+  if (timesMode) {
+    mountInHeader(); renderUi();
+    void loadSelectedTimes();
+  } else if (popupMode) {
     menuOpen = true;
     mountInHeader();
     renderUi();

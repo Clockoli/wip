@@ -70,8 +70,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /scrollbar-gutter:stable/);
   assert.match(content, /Time tracker panel\. Scroll for more content/);
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
-  assert.ok(content.includes("shadow?.querySelector?.('.time-value')?.focus?.()"));
-  assert.match(content, /const timeLine = el\('div', undefined, 'inline-time-line'\)/);
+  assert.match(content, /descriptionField\?\.focus/);
+  assert.match(content, /timeLine = el\('div', undefined, 'inline-time-line'\)/);
   assert.match(content, /timeLine\.append\(startPicker\.node, separator, stopPicker\.node\)/);
   assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);
   assert.match(content, /@media\(max-width:340px\) \{ \.entry-time-row \{ gap:3px \}[^}]*\.inline-time-line \{ gap:1px \}/,
@@ -96,7 +96,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
 
 test('tracker copy and navigation use URL tasks without item terminology', () => {
   assert.doesNotMatch(content, /Edit details|Running on this item|Running on another item|Open any GitHub issue or pull request|Task \(issue or pull request\)/);
-  assert.match(content, /button\('Edit', 'entry-edit'/);
+  assert.doesNotMatch(content, /button\('Edit', 'entry-edit'/);
+  assert.match(content, /entry-description-editable/);
   assert.match(content, /Tracking/);
   assert.match(content, /'this'/);
   assert.match(content, /'another'/);

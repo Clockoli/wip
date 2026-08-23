@@ -87,14 +87,10 @@ test('report charts keep live GitHub data-token references instead of fixed or g
   assert.doesNotMatch(reports, /hsl\(/);
 });
 
-test('task states use GitHub open, closed, done, and muted semantic colors', () => {
-  const tasks = read('src/tasks/tasks.js');
-  const css = read('src/tasks/tasks.css');
-  assert.match(tasks, /taskIcon\(task\)/);
-  assert.match(css, /\.task-icon\.open\{color:var\(--fgColor-open\)\}/);
-  assert.match(css, /\.task-icon\.closed\{color:var\(--fgColor-closed\)\}/);
-  assert.match(css, /\.task-icon\.completed,\.task-icon\.merged\{color:var\(--fgColor-done\)\}/);
-  assert.match(css, /\.task-icon\.not-planned,\.task-icon\.unknown\{color:var\(--fgColor-muted\)\}/);
+test('Tasks CSS has no provider-status presentation', () => {
+  const tasks = read('src/tasks/tasks.css');
+  assert.doesNotMatch(tasks, /\.status\.|task-icon\.(?:open|closed|merged|completed|not-planned|unknown)/);
+  assert.match(tasks, /\.task-icon\{[^}]*fill:currentColor/);
 });
 
 
@@ -149,18 +145,14 @@ test('standalone typography uses GitHub live body, title, caption, and label met
 });
 
 
-test('task status glyphs use official status-specific Primer Octicon geometry', () => {
+test('Tasks uses neutral type glyphs without provider status presentation', () => {
   const tasks = read('src/tasks/tasks.js');
-  for (const name of ['ISSUE_OPEN_PATH', 'ISSUE_CLOSED_PATH', 'ISSUE_NOT_PLANNED_PATH', 'PULL_OPEN_PATH', 'PULL_CLOSED_PATH', 'PULL_MERGED_PATH']) {
-    assert.match(tasks, new RegExp(`const ${name} = '[^']+';`), `missing ${name}`);
-  }
-  assert.match(tasks, /status === 'MERGED' \? PULL_MERGED_PATH : status === 'CLOSED' \? PULL_CLOSED_PATH : PULL_OPEN_PATH/);
-  assert.match(tasks, /visualStatus === 'not-planned' \? ISSUE_NOT_PLANNED_PATH : status === 'CLOSED' \? ISSUE_CLOSED_PATH : ISSUE_OPEN_PATH/);
-  assert.match(tasks, /M11\.28 6\.78a\.75\.75 0 0 0-1\.06-1\.06/); // issue-closed-16
-  assert.match(tasks, /M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0/); // skip-16
-  assert.match(tasks, /M3\.25 1A2\.25 2\.25 0 0 1 4 5\.372/); // git-pull-request-closed-16
-  assert.match(tasks, /M5\.45 5\.154A4\.25 4\.25 0 0 0 9\.25 7\.5/); // git-merge-16
+  assert.match(tasks, /const ISSUE_OPEN_PATH = '[^']+';/);
+  assert.match(tasks, /const PULL_OPEN_PATH = '[^']+';/);
+  assert.doesNotMatch(tasks, /ISSUE_CLOSED_PATH|ISSUE_NOT_PLANNED_PATH|PULL_CLOSED_PATH|PULL_MERGED_PATH/);
+  assert.doesNotMatch(tasks, /task\.status|statusMatches|statusLabel|stateReason/);
 });
+
 
 test('invisible buttons and danger active state use their exact GitHub tokens', () => {
   for (const token of [
@@ -234,7 +226,7 @@ test('print forces GitHub exact light data colors even when the live page is dar
 
 
 test('every destructive Delete control receives the complete Primer danger variant', () => {
-  assert.match(content, /button\('Delete', 'danger-outline'/);
+  assert.match(content, /button\('Delete', 'danger-outline entry-delete'/);
   for (const [surface, css] of [['content', content]]) {
     assert.match(css, /\.danger\s*,\s*\.danger-outline\s*\{[^}]*button-danger-borderColor-rest[^}]*button-danger-bgColor-rest[^}]*button-danger-fgColor-rest/, `${surface} Delete lacks danger rest state`);
     assert.match(css, /\.danger:hover\s*,\s*\.danger-outline:hover\s*\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/, `${surface} Delete lacks danger hover state`);

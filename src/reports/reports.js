@@ -113,7 +113,7 @@ function renderSummary(filtered) {
   $('summary-entries').textContent = String(filtered.length);
   $('summary-people').textContent = String(new Set(filtered.map(record => record.user)).size);
   $('summary-repositories').textContent = String(new Set(filtered.map(record => taskSource(record))).size);
-  const missingRates = [...new Set(filtered.map(record => record.user).filter(user => rateMinorForUser(user, state.billing.rates) === null))];
+  const missingRates = [...new Set(filtered.filter(record => rateMinorForUser(record.user, state.billing.rates, record.entryDate || record.startedAt.slice(0, 10)) === null).map(record => record.user))];
   $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${formatMoney(billableMinorTotal(filtered, state.billing.rates))}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
 }
 

@@ -1,5 +1,6 @@
-import { activeTextPath, assertUserMonthlyTextPath, monthlyTextPath, normalizePlainTitle, parseActiveText, parseMonthlyText, serializeActiveText, serializeMonthlyText } from '../domain/monthly-text.js';
+import { activeTextPath, assertUserMonthlyTextPath, localTimestamp, monthlyTextPath, normalizePlainTitle, parseActiveText, parseMonthlyText, serializeActiveText, serializeMonthlyText } from '../domain/monthly-text.js';
 import { applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
+import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { createUlid } from '../domain/ulid.js';
 import { entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
 
@@ -36,7 +37,14 @@ function newestFirst(a, b) { return new Date(b.startedAt).getTime() - new Date(a
 function stripInternal(value) { return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !key.startsWith('_'))); }
 function monthFromPath(path, user) { return assertUserMonthlyTextPath(path, user).month; }
 function editClock(clock, entry) { return new Date(Math.max(clock().getTime(), new Date(entry.updatedAt).getTime())); }
-
+function localMidnight(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  return localTimestamp(new Date(year, month - 1, day, 0, 0, 0, 0));
+}
+function nextLocalMidnight(date) {
+  const [year, month, day] = date.split('-').map(Number);
+  return localTimestamp(new Date(year, month - 1, day + 1, 0, 0, 0, 0));
+}
 function replaceCachedFiles(cache, replacements, touchedPaths = replacements.map(entry => entry._path)) {
   const paths = new Set(touchedPaths);
   return [...replacements, ...(cache ?? []).filter(entry => !paths.has(entry._path))]
@@ -565,6 +573,70 @@ export class TrackerService {
       return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while linked time edits were being saved. Reload.');
+      throw error;
+    }
+  }
+
+  async bulkAddTimes(text) {
+    const requested = parseBulkTimeText(text);
+    const activeTimer = await this.refreshActive();
+    const activeStartMs = activeTimer ? new Date(activeTimer.startedAt).getTime() : Infinity;
+    const touchedMonths = new Set(requested.map(item => item.date.slice(0, 7)));
+    const validationMonths = new Set(touchedMonths), latestTouchedMonth = [...touchedMonths].sort().at(-1);
+    const snapshot = await this.github.listTextFilesSnapshot('times/');
+    for (const file of snapshot.files ?? []) {
+      try {
+        const month = monthFromPath(file.path, this.user);
+        if (month <= latestTouchedMonth) validationMonths.add(month);
+      } catch { /* Another user's or unrelated text file. */ }
+    }
+    const files = new Map();
+    for (const month of [...validationMonths].sort()) {
+      const path = monthlyTextPath(this.user, `${month}-01`);
+      files.set(path, await this.readMonthly(path));
+    }
+    const added = [];
+    for (const item of requested) {
+      const dayStart = localMidnight(item.date), dayEnd = nextLocalMidnight(item.date);
+      const dayStartMs = new Date(dayStart).getTime(), dayEndMs = new Date(dayEnd).getTime();
+      const existing = [...files.values()].flatMap(file => file.entries).filter(entry => {
+        const start = new Date(entry.startedAt).getTime(), end = new Date(entry.endedAt).getTime();
+        return start < dayEndMs && end > dayStartMs;
+      }).sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+      for (let index = 1; index < existing.length; index += 1) {
+        if (new Date(existing[index].startedAt) < new Date(existing[index - 1].endedAt)) {
+          throw new Error(`Line ${item.line}: existing time on ${item.date} already overlaps. No entries were added.`);
+        }
+      }
+      const latestEnd = existing.reduce((latest, entry) => Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
+      const startedAt = latestEnd === dayStartMs ? dayStart : localTimestamp(new Date(latestEnd));
+      const endedAt = localTimestamp(new Date(latestEnd + item.durationSeconds * 1000)), endedAtMs = new Date(endedAt).getTime();
+      if (endedAtMs > dayEndMs) throw new Error(`Line ${item.line}: ${item.durationSeconds / 3600} hours do not fit after existing time on ${item.date}. No entries were added.`);
+      if (endedAtMs > activeStartMs) throw new Error(`Line ${item.line}: imported time would overlap the running timer that started at ${activeTimer.startedAt}. No entries were added.`);
+      const active = buildActiveTimer({ user: this.user, taskUrl: item.taskUrl, startedAt, description: item.description });
+      const entry = buildEntry({ active, id: this.idFactory(latestEnd), endedAt, now: endedAt, description: item.description });
+      entry.entryDate = item.date;
+      const path = monthlyTextPath(this.user, item.date), file = files.get(path);
+      file.entries.push(entry); file.entries.sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+      added.push(entry);
+    }
+    const touched = [...touchedMonths].sort().map(month => files.get(monthlyTextPath(this.user, `${month}-01`)));
+    const staged = touched.map(file => {
+      const text = serializeMonthlyText(file.entries);
+      const entries = parseMonthlyText(text, { user: this.user, month: file.month, path: file.path });
+      return { file, text, entries };
+    });
+    try {
+      const touchedPaths = new Set(touched.map(file => file.path));
+      const changes = staged.map(({ file, text }) => ({ path: file.path, sha: file.sha, text }));
+      const guards = [...files.values()].filter(file => !touchedPaths.has(file.path)).map(file => ({ path: file.path, sha: file.sha }));
+      guards.push({ path: activeTextPath(this.user), sha: activeTimer?._sha ?? null });
+      const { blobShas } = await this.github.updateTextsAtomic(changes, `time: bulk add ${added.length} entries ${this.user}`, { guards, expectedHeadSha: snapshot.headSha || null });
+      const saved = staged.flatMap(({ file, entries }) => entries.map(entry => ({ ...entry, _sha: blobShas[file.path] })));
+      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, touched.map(file => file.path)) });
+      return { added: added.length };
+    } catch (error) {
+      if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed during bulk import. No entries were added; reload and try again.');
       throw error;
     }
   }

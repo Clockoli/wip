@@ -5,7 +5,7 @@ RepoClock tracks time against HTTP(S) task URLs and stores the records in a priv
 ## User guides
 
 - [Getting started](getting-started.md): install RepoClock, connect GitHub, choose a data repository, and track the first task.
-- [Feature guide](features.md): tracking, correction, Tasks, Reports, billable rates, settings backup, and synchronization.
+- [Feature guide](features.md): tracking, correction, Tasks, Times, Reports, billable rates, settings backup, and synchronization.
 - [Why RepoClock](why-repoclock.md): how the Git-backed model differs from SaaS trackers, local-only timers, spreadsheets, and issue-only integrations.
 - [Data, privacy, and security](data-and-privacy.md): what is stored, where it is stored, permissions, personal branches, and security boundaries.
 - [Time-data repository setup](time-data-repository.md): individual and shared-repository administration.
@@ -17,4 +17,4 @@ RepoClock tracks time against HTTP(S) task URLs and stores the records in a priv
 
 ## Product scope
 
-The current beta supports Chrome/Chromium 102 or newer. It does not provide Firefox packaging, manual time-entry creation, reminders, a mobile app, or automatic updates for unpacked installations.
+The current beta supports Chrome/Chromium 102 or newer and manual completed-entry creation through the Times bulk importer. It does not provide Firefox packaging, reminders, a mobile app, or automatic updates for unpacked installations.

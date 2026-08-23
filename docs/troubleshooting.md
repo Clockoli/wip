@@ -146,7 +146,7 @@ RepoClock could not prove that the timer was completed. It reports the missing-a
 
 ### Scrolling does not change a time value
 
-This is intentional. Wheel and trackpad gestures scroll the panel normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible inline fields; opening **Edit** first is not required. RepoClock does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
+This is intentional. Wheel and trackpad gestures scroll the panel normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. RepoClock does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
 
 ### Editing one row changed a neighboring row
 
@@ -159,9 +159,9 @@ The panel updates both rows immediately and saves them as one atomic operation. 
 
 ### “Overlaps another entry” remains visible
 
-The represented intervals still intersect after correction. Endpoint-touching records are allowed, but time shared by two intervals is highlighted. Adjust the boundaries or use full **Edit**.
+The represented intervals still intersect after correction. Endpoint-touching records are allowed, but time shared by two intervals is highlighted. Adjust the boundaries in the unified inline draft.
 
-### Edit/Delete reports a stale or changed record
+### Inline edit or Delete reports a stale or changed record
 
 The monthly file changed after the panel loaded. Reload recent entries, review the latest record, and repeat the intended action. RepoClock refuses to retarget an edit or delete by array position alone.
 
@@ -183,11 +183,11 @@ Use Git history to compare with the last valid version.
 
 ### A tracked task is not listed
 
-Check the selected period and status filter. **Recently tracked work** is current-user-only and reads entries whose Start date is in the selected period. Use **All** when GitHub metadata is unavailable or when looking for non-GitHub URL tasks.
+Check the selected period and URL/title filter. **Recently tracked work** is current-user-only and reads entries whose Start date is in the selected period. Clear the filter when looking for a task whose optional GitHub title is unavailable.
 
-### A GitHub task has no title or status
+### A GitHub task has no title
 
-Metadata enrichment can be unavailable because of repository visibility, permission, API budget, or a temporary request failure. The stored URL and existing title remain usable. RepoClock does not relabel unknown metadata as a confirmed GitHub state.
+Title enrichment can be unavailable because of repository visibility, permission, API budget, or a temporary request failure. The stored URL and existing title remain usable.
 
 ## Reports and billing
 

@@ -14,7 +14,7 @@ class MemoryStore {
 }
 
 class FakeGitHub {
-  constructor() { this.files = new Map(); this.reads = []; this.writes = []; this.deletes = []; this.atomicWrites = []; this.metadataReads = []; this.metadata = new Map(); this.serial = 0; }
+  constructor() { this.files = new Map(); this.reads = []; this.writes = []; this.deletes = []; this.atomicWrites = []; this.metadataReads = []; this.metadata = new Map(); this.serial = 0; this.headSha = 'discovery-head'; }
   notFound() { const error = new Error('not found'); error.status = 404; error.code = 'not_found'; return error; }
   conflict() { const error = new Error('conflict'); error.status = 409; error.code = 'conflict'; return error; }
   async getText(path) {
@@ -32,18 +32,21 @@ class FakeGitHub {
     this.files.delete(path); this.deletes.push({ path, message, sha }); return {};
   }
   async assertDestinationReachable() { return true; }
+  async listTextFilesSnapshot(prefix) {
+    return { notModified: false, etag: '', headSha: this.headSha, files: [...this.files].filter(([path]) => path.startsWith(prefix)).map(([path, file]) => ({ path, sha: file.sha, size: file.text.length })) };
+  }
   async getTaskMetadata(issues) { this.metadataReads.push(structuredClone(issues)); return new Map(issues.flatMap(item => this.metadata.has(item.url) ? [[item.url, this.metadata.get(item.url)]] : [])); }
-  async updateTextsAtomic(changes, message) {
-    for (const change of changes) {
-      const current = this.files.get(change.path);
-      if ((current?.sha ?? null) !== (change.sha ?? null)) throw this.conflict();
+  async updateTextsAtomic(changes, message, { guards = [], expectedHeadSha = null } = {}) {
+    for (const item of [...changes, ...guards]) {
+      const current = this.files.get(item.path);
+      if ((current?.sha ?? null) !== (item.sha ?? null)) throw this.conflict();
     }
     const commitSha = `commit-${++this.serial}`, blobShas = {};
     for (const change of changes) {
       if (change.text === null) this.files.delete(change.path);
       else { blobShas[change.path] = `${commitSha}-${change.path}`; this.files.set(change.path, { sha: blobShas[change.path], text: change.text }); }
     }
-    this.atomicWrites.push({ changes: structuredClone(changes), message });
+    this.atomicWrites.push({ changes: structuredClone(changes), guards: structuredClone(guards), expectedHeadSha, message });
     return { commitSha, blobShas };
   }
 }
@@ -100,7 +103,7 @@ test('recent load backfills missing issue titles once with the current SHA', asy
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.txt';
   const untitled = entry(localTimestamp(2026, 7, 18, 8), localTimestamp(2026, 7, 18, 9));
   seedText(github, path, serializeMonthlyText([untitled]), 'daily');
-  github.metadata.set(issue.url, { title: 'Ranking regression', status: 'OPEN' });
+  github.metadata.set(issue.url, { title: 'Ranking regression' });
   const tracker = service({ github, store, recentDays: 1, clock: () => new Date(localTimestamp(2026, 7, 18, 12)) });
 
   const first = await tracker.loadMenuData(50);
@@ -653,4 +656,122 @@ test('linked time edits remain atomic when an adjusted Start moves across monthl
   assert.equal(github.atomicWrites.length, 1);
   assert.equal(parseMonthlyText(github.files.get(august).text, { user: 'alice', month: '2026-08' }).length, 2);
   assert.equal(github.files.has(september), false);
+});
+
+
+test('bulk import appends entries after existing same-day time and stages same-day lines sequentially', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.txt';
+  seedText(github, path, serializeMonthlyText([entry(localTimestamp(2026, 7, 21, 9), localTimestamp(2026, 7, 21, 10))]), 'before');
+  const tracker = service({ github, store, idFactory: value => `${fixedId.slice(0, -2)}${String(value).slice(-2)}` });
+  const result = await tracker.bulkAddTimes(`2026/08/21 https://example.com/a First task 2:00\n2026-08-21 https://example.com/b Second task 1.5`);
+  assert.deepEqual(result, { added: 2 });
+  const saved = parseMonthlyText(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.length, 3);
+  assert.equal(saved[1].startedAt.slice(11, 19), '10:00:00');
+  assert.equal(saved[1].endedAt.slice(11, 19), '12:00:00');
+  assert.equal(saved[2].startedAt.slice(11, 19), '12:00:00');
+  assert.equal(saved[2].endedAt.slice(11, 19), '13:30:00');
+  assert.equal(saved[2].description, 'Second task');
+});
+
+test('bulk import is all-or-nothing when requested hours do not fit without crossing the day', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.txt';
+  seedText(github, path, serializeMonthlyText([entry(localTimestamp(2026, 7, 21, 23), localTimestamp(2026, 7, 22, 0))]), 'before');
+  const tracker = service({ github });
+  await assert.rejects(() => tracker.bulkAddTimes('2026-08-21 https://example.com/a No room 1:00'), /Line 1.*do not fit.*No entries were added/i);
+  assert.equal(github.writes.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.get(path).sha, 'before');
+});
+
+test('bulk import commits multiple monthly files atomically', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const result = await tracker.bulkAddTimes('2026-08-31 https://example.com/a August 1\n2026-09-01 https://example.com/b September 2');
+  assert.deepEqual(result, { added: 2 });
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['times/2026-08/alice.txt', 'times/2026-09/alice.txt']);
+});
+
+
+test('bulk import rejects intervals that would overlap the running timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const startedAt = localTimestamp(2026, 9, 2, 9);
+  seedText(github, 'active/alice.txt', serializeActiveText(active(startedAt)), 'active-sha');
+  const tracker = service({ github, store });
+  await assert.rejects(() => tracker.bulkAddTimes('2026-10-02 https://example.com/import Import 10'), /overlap the running timer/i);
+  assert.equal(github.files.has('times/2026-10/alice.txt'), false);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('bulk import starts after a completed entry that crosses in from the previous month', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const previousStart = localTimestamp(2026, 7, 31, 23, 30), previousEnd = localTimestamp(2026, 8, 1, 0, 30);
+  seedText(github, 'times/2026-08/alice.txt', serializeMonthlyText([entry(previousStart, previousEnd)]), 'aug-sha');
+  const tracker = service({ github, store, idFactory: () => '01K2ABCDEF0123456789ABCDE0' });
+  await tracker.bulkAddTimes('2026-09-01 https://example.com/import Import 1');
+  const imported = parseMonthlyText(github.files.get('times/2026-09/alice.txt').text, { user: 'alice', month: '2026-09', path: 'times/2026-09/alice.txt' });
+  assert.equal(imported[0].startedAt, previousEnd);
+  assert.equal(imported[0].endedAt, localTimestamp(2026, 8, 1, 1, 30));
+});
+
+
+test('bulk import formats generated timestamps in the importing timezone across mixed-offset month boundaries', async () => {
+  const previousTz = process.env.TZ;
+  process.env.TZ = 'America/Los_Angeles';
+  try {
+    const github = new FakeGitHub(), path = 'times/2026-08/alice.txt';
+    const existing = entry('2026-08-31T23:00:00+00:00', '2026-09-01T06:00:00+00:00');
+    seedText(github, path, serializeMonthlyText([existing]), 'aug-sha');
+
+    const result = await service({ github }).bulkAddTimes('2026-08-31 https://example.com/import Mixed-zone 0.5');
+
+    assert.deepEqual(result, { added: 1 });
+    assert.equal(github.atomicWrites.length, 1);
+    const saved = parseMonthlyText(github.files.get(path).text, { user: 'alice', month: '2026-08', path });
+    assert.equal(saved[1].startedAt, '2026-08-31T23:00:00-07:00');
+    assert.equal(saved[1].endedAt, '2026-08-31T23:30:00-07:00');
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  }
+});
+
+test('bulk import atomically guards a prior-month crossing partition against concurrent changes', async () => {
+  const github = new FakeGitHub(), previousPath = 'times/2026-08/alice.txt';
+  seedText(github, previousPath, '', 'aug-old');
+  const originalAtomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (changes, message, options) => {
+    const crossing = entry(localTimestamp(2026, 7, 31, 23, 30), localTimestamp(2026, 8, 1, 0, 30));
+    seedText(github, previousPath, serializeMonthlyText([crossing]), 'aug-new');
+    return originalAtomic(changes, message, options);
+  };
+  await assert.rejects(() => service({ github }).bulkAddTimes('2026-09-01 https://example.com/import Import 1'), /changed during bulk import/i);
+  assert.equal(github.files.has('times/2026-09/alice.txt'), false);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('bulk import atomically guards against a timer started after occupancy validation', async () => {
+  const github = new FakeGitHub(), activePath = 'active/alice.txt';
+  const originalAtomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (changes, message, options) => {
+    seedText(github, activePath, serializeActiveText(active(localTimestamp(2026, 9, 2, 0, 30))), 'active-new');
+    return originalAtomic(changes, message, options);
+  };
+  await assert.rejects(() => service({ github }).bulkAddTimes('2026-10-02 https://example.com/import Import 1'), /changed during bulk import/i);
+  assert.equal(github.files.has('times/2026-10/alice.txt'), false);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+
+test('bulk import starts after an interval crossing from any older monthly partition', async () => {
+  const github = new FakeGitHub(), oldPath = 'times/2026-07/alice.txt';
+  const crossing = entry(localTimestamp(2026, 6, 31, 23), localTimestamp(2026, 8, 1, 1));
+  seedText(github, oldPath, serializeMonthlyText([crossing]), 'july-sha');
+  const tracker = service({ github });
+  await tracker.bulkAddTimes('2026-09-01 https://example.com/import Import 1');
+  const imported = parseMonthlyText(github.files.get('times/2026-09/alice.txt').text, { user: 'alice', month: '2026-09' });
+  assert.equal(imported[0].startedAt, localTimestamp(2026, 8, 1, 1));
+  assert.equal(imported[0].endedAt, localTimestamp(2026, 8, 1, 2));
+  assert.deepEqual(github.atomicWrites[0].guards, [{ path: oldPath, sha: 'july-sha' }, { path: 'active/alice.txt', sha: null }]);
+  assert.equal(github.atomicWrites[0].expectedHeadSha, 'discovery-head');
 });

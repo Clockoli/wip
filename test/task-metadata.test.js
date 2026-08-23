@@ -18,7 +18,7 @@ class MemoryMetadataCache {
   }
 }
 
-function metadata(title, status = 'OPEN', stateReason = null) { return { title, status, ...(stateReason ? { stateReason } : {}) }; }
+const metadata = title => ({ title });
 
 test('fetching a missing task does not renew another entry timestamp', async () => {
   const scopeKey = 'time@main:alice:g1', base = 1_000_000;
@@ -77,38 +77,22 @@ test('an old in-flight metadata request cannot repopulate a rotated generation',
   assert.equal(cache.value, null);
 });
 
-
-test('legacy closed issue cache entries without stateReason are refreshed immediately', async () => {
-  const scopeKey = 'time@main:alice:g1', now = 2_000, calls = [];
-  const cache = new MemoryMetadataCache(scopeKey, {
-    [oldIssue.url]: { fetchedAt: now - 1, details: metadata('Legacy closed', 'CLOSED') },
-  });
-  const github = { getTaskMetadata: async issues => {
-    calls.push(issues.map(issue => issue.url));
-    return new Map([[oldIssue.url, metadata('Skipped', 'CLOSED', 'NOT_PLANNED')]]);
-  } };
-  const service = new TaskMetadataService({ github, cache, scopeKey, configurationGeneration: 1, now: () => now });
-  assert.deepEqual((await service.load([oldIssue])).get(oldIssue.url), metadata('Skipped', 'CLOSED', 'NOT_PLANNED'));
-  assert.deepEqual(calls, [[oldIssue.url]]);
-  assert.deepEqual(cache.value.entries[oldIssue.url].details, metadata('Skipped', 'CLOSED', 'NOT_PLANNED'));
-});
-
-test('legacy closed pull-request cache entries remain valid without an issue stateReason', async () => {
+test('legacy cached status fields are accepted for compatibility and stripped on save', async () => {
   const scopeKey = 'time@main:alice:g1', now = 2_000;
   const cache = new MemoryMetadataCache(scopeKey, {
-    [newIssue.url]: { fetchedAt: now - 1, details: metadata('Closed PR', 'CLOSED') },
+    [oldIssue.url]: { fetchedAt: now - 1, details: { title: 'Legacy closed', status: 'CLOSED', stateReason: 'NOT_PLANNED' } },
   });
-  const github = { getTaskMetadata: async () => { throw new Error('closed PR cache should not reload'); } };
+  const github = { getTaskMetadata: async () => { throw new Error('fresh title cache should not reload'); } };
   const service = new TaskMetadataService({ github, cache, scopeKey, configurationGeneration: 1, now: () => now });
-  assert.deepEqual((await service.load([newIssue])).get(newIssue.url), metadata('Closed PR', 'CLOSED'));
+  assert.deepEqual((await service.load([oldIssue])).get(oldIssue.url), metadata('Legacy closed'));
+  assert.deepEqual(cache.value.entries[oldIssue.url].details, metadata('Legacy closed'));
 });
 
-test('metadata cache preserves a closed issue state reason', async () => {
+test('fresh metadata writes title only even if an older API adapter returns status fields', async () => {
   const scopeKey = 'time@main:alice:g1', now = 2_000;
-  const cache = new MemoryMetadataCache(scopeKey, {
-    [oldIssue.url]: { fetchedAt: now - 1, details: metadata('Skipped', 'CLOSED', 'NOT_PLANNED') },
-  });
-  const github = { getTaskMetadata: async () => { throw new Error('fresh cache should not reload'); } };
+  const cache = new MemoryMetadataCache(scopeKey);
+  const github = { getTaskMetadata: async () => new Map([[newIssue.url, { title: 'Merged PR', status: 'MERGED' }]]) };
   const service = new TaskMetadataService({ github, cache, scopeKey, configurationGeneration: 1, now: () => now });
-  assert.deepEqual((await service.load([oldIssue])).get(oldIssue.url), metadata('Skipped', 'CLOSED', 'NOT_PLANNED'));
+  assert.deepEqual((await service.load([newIssue])).get(newIssue.url), metadata('Merged PR'));
+  assert.deepEqual(cache.value.entries[newIssue.url].details, metadata('Merged PR'));
 });

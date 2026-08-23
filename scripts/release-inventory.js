@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const MANIFEST = 'manifest.json';
-const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html'];
+const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
 const SECRET_PATTERNS = [
   { label: 'GitHub token', pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b/ },

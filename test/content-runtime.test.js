@@ -432,7 +432,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
 });
 
 
-test('recent rows show durable titles and direct offset-preserving time inputs without scrolling controls', async () => {
+test('recent rows show durable titles and unified offset-preserving inline editing saves on Enter', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -442,13 +442,13 @@ test('recent rows show durable titles and direct offset-preserving time inputs w
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
     issueTitle: 'Make ranking deterministic', entryDate: '2026-08-18',
     startedAt: '2026-08-18T08:00:11.321-07:00', endedAt: '2026-08-18T23:58:27.123-07:00', durationSeconds: 57500,
-    description: '', createdAt: '2026-08-18T23:58:27.123-07:00', updatedAt: '2026-08-18T23:58:27.123-07:00',
+    description: 'Original note', createdAt: '2026-08-18T23:58:27.123-07:00', updatedAt: '2026-08-18T23:58:27.123-07:00',
     _path: 'times/2026-08/alice.txt', _sha: 'one', _index: 0,
   };
   const issueTitleNode = new FakeNode('bdi'); issueTitleNode.textContent = 'Make ranking deterministic';
   const document = {
     documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
     querySelector: selector => selector === '.AppHeader-actions' ? actions : selector.includes('issue-title') ? issueTitleNode : null, addEventListener() {},
   };
@@ -458,17 +458,12 @@ test('recent rows show durable titles and direct offset-preserving time inputs w
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
-      else if (message.type === 'EDIT_ENTRY') {
+      else if (message.type === 'EDIT_ENTRIES') {
         editAttempts += 1;
-        assert.equal(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true,
-          'all detailed time fields are locked while Save is in flight');
-        assert.equal(createdNodes.filter(node => node.tag === 'input' && (node.required || node.maxLength === 300)).slice(-2).every(node => node.disabled), true,
-          'task URL and title fields are locked while Save is in flight');
-        assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).disabled, true);
-        callback(editAttempts === 1 ? { ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } }
-          : { ok: true, data: { ...entry, ...message.payload.edits } });
-      }
-      else callback({ ok: true, data: {} });
+        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true);
+        assert.equal(createdNodes.filter(node => ['inline-task-url', 'inline-task-title', 'inline-description'].some(name => node.className.includes(name))).slice(-3).every(node => node.disabled), true);
+        callback(editAttempts === 1 ? { ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } } : { ok: true, data: [] });
+      } else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
@@ -477,57 +472,33 @@ test('recent rows show durable titles and direct offset-preserving time inputs w
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-
-  const recentLinks = createdNodes.filter(node => node.tag === 'a' && node.href === entry.issue.url);
-  const recentUrl = createdNodes.findLast(node => node.className.includes('task-url') && node.textContent === entry.issue.url);
-  const recentTitle = recentLinks.findLast(node => node.className.includes('task-title'));
-  assert.equal(recentUrl.textContent, 'https://github.com/acme/app/issues/7');
-  assert.equal(recentTitle.textContent, 'Make ranking deterministic');
-  assert.ok(createdNodes.findLast(node => node.className.includes('task-result')), 'URL and title share a Google-style task result block');
-  const inlineTimeLine = createdNodes.findLast(node => node.className.includes('inline-time-line'));
-  assert.ok(inlineTimeLine, 'Start and Stop controls share one no-wrap time line');
-  assert.deepEqual(inlineTimeLine.children.map(node => node.className), ['time-picker compact-time-picker', 'inline-time-separator', 'time-picker compact-time-picker']);
-  assert.equal(inlineTimeLine.children[1].textContent, '-');
-  const inlineTimeValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
-  assert.deepEqual(inlineTimeValues.slice(-4).map(node => node.value), ['08', '00', '23', '58'],
-    'the list exposes Start and Stop in their stored offset wall time');
-  assert.equal(messages.findLast(message => message.type === 'LOAD_RECENT').taskTitle, 'Make ranking deterministic');
-  assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'no between-entry drag control remains');
-
-  const edit = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Edit').at(-1);
-  await edit.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const timeValues = createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value'));
-  assert.equal(timeValues.length, 4, 'Start and Stop each expose large hour and minute values');
-  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-label')), ['Start hour', 'Start minute', 'Stop hour', 'Stop minute']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('role')), [null, null, null, null], 'plain text fields do not expose stepper semantics');
-  assert.equal(createdNodes.some(node => node.className.includes('time-step') || node.className.includes('time-drag')), false);
-
-  const stopMinute = timeValues.at(-1);
-  stopMinute.value = ''; stopMinute.oninput({});
-  assert.equal(stopMinute.value, '', 'a partial direct-input draft is preserved instead of resetting');
-  assert.equal(stopMinute.getAttribute('aria-invalid'), 'true');
-  assert.equal(stopMinute.onwheel, undefined, 'time fields do not install wheel handlers');
-  const stopHour = timeValues.at(-2), stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
-  stopDate.value = '2026-08-19'; stopDate.oninput({});
-  stopHour.value = '00'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
-  assert.equal(stopMinute.getAttribute('aria-invalid'), 'false');
-
-  const titleDraft = createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1);
-  const descriptionDraft = createdNodes.filter(node => node.tag === 'textarea').at(-1);
-  titleDraft.value = 'Edited deterministic ranking'; titleDraft.oninput({}); descriptionDraft.value = 'Preserve this draft';
-  const form = createdNodes.filter(node => node.tag === 'form').at(-1);
-  await form.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1).value, 'Edited deterministic ranking');
-  assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).value, 'Preserve this draft');
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['08', '00', '00', '00'],
-    'a conflict rerender preserves the complete directly typed draft');
-  const retryForm = createdNodes.filter(node => node.tag === 'form').at(-1);
-  await retryForm.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
-  const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRY');
-  assert.equal(editMessage.payload.edits.startedAt, entry.startedAt, 'unchanged Start keeps its original wall time, seconds, milliseconds, and offset');
-  assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:00:27.123-07:00');
+  assert.equal(createdNodes.findLast(node => node.className.includes('task-title')).textContent, 'Make ranking deterministic');
+  const descriptionControl = createdNodes.findLast(node => node.className.includes('entry-description-editable'));
+  assert.equal(descriptionControl.textContent, 'Original note');
+  await descriptionControl.onclick({ isTrusted: true });
+  const urlDraft = createdNodes.findLast(node => node.className.includes('inline-task-url'));
+  const titleDraft = createdNodes.findLast(node => node.className.includes('inline-task-title'));
+  const descriptionDraft = createdNodes.findLast(node => node.className.includes('inline-description'));
+  assert.equal(urlDraft.value, entry.issue.url); assert.equal(titleDraft.value, entry.issueTitle); assert.equal(descriptionDraft.value, 'Original note');
+  titleDraft.value = 'Edited deterministic ranking'; titleDraft.oninput({});
+  descriptionDraft.value = 'Preserve this draft'; descriptionDraft.oninput({});
+  let values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
+  assert.deepEqual(values.map(node => node.value), ['08', '00', '23', '58']);
+  const stopMinute = values.at(-1), stopHour = values.at(-2), stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
+  stopDate.value = '2026-08-19'; stopDate.oninput({}); stopHour.value = '00'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
+  await descriptionDraft.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(createdNodes.findLast(node => node.className.includes('inline-task-title')).value, 'Edited deterministic ranking');
+  assert.equal(createdNodes.findLast(node => node.className.includes('inline-description')).value, 'Preserve this draft');
+  await createdNodes.findLast(node => node.className.includes('inline-description')).onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(editMessage.payload.entries.length, 1);
+  assert.equal(editMessage.payload.entries[0].edits.taskTitle, 'Edited deterministic ranking');
+  assert.equal(editMessage.payload.entries[0].edits.description, 'Preserve this draft');
+  assert.equal(editMessage.payload.entries[0].edits.startedAt, entry.startedAt);
+  assert.equal(editMessage.payload.entries[0].edits.endedAt, '2026-08-19T00:00:27.123-07:00');
+  assert.equal(createdNodes.some(node => node.textContent === 'Edit'), false, 'the separate Edit panel trigger is gone');
 });
-
 
 test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -575,13 +546,13 @@ test('opening before remote state refresh renders cache immediately and keeps st
     'fresh entries are requested before the slower remote active refresh');
   assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Cached entry')),
     'cached entries are visible before either remote request finishes');
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, true,
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
     'cached mutation controls stay locked until their current SHA is refreshed');
   assert.equal(createdNodes.some(node => node.textContent === 'Open the menu again to load entries.'), false);
 
   replyRecent({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, true,
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
     'a failed automatic refresh keeps stale cached mutation controls locked');
   assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length, 1,
     'remote active refresh continues after the cached-first menu attempt');
@@ -596,7 +567,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
   await retrying;
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Refreshed entry')));
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-edit')).disabled, false,
+  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, false,
     'fresh entries become editable only after a successful retry');
 });
 
@@ -647,8 +618,8 @@ test('consecutive records for one task share one task header and keep separate t
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-edit')).slice(-4).length, 4,
-    'each time record remains independently editable');
+  assert.equal(createdNodes.filter(node => node.className.includes('entry-description-editable')).slice(-4).length, 4,
+    'each time record exposes its inline metadata editor affordance');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-delete')).slice(-4).length, 4,
     'each time record remains independently deletable');
 });
@@ -1220,4 +1191,144 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
   await retry.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.ok(loadCalls > before, 'Retry performs a safe tracker refresh');
   assert.equal(messages.some(message => message.type === 'OPEN_OPTIONS'), false);
+});
+
+
+test('Times bulk import preserves its draft and remains single-flight across rerenders and failure', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: () => null, addEventListener() {},
+  };
+  let bulkCallback = null, bulkCalls = 0;
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [] } });
+      else if (message.type === 'BULK_ADD_TIMES') { bulkCalls += 1; bulkCallback = callback; }
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const draft = '2026-08-23 https://example.com/task Preserve this draft 1';
+  const input = createdNodes.findLast(node => node.className.includes('bulk-time-input'));
+  input.value = draft; input.oninput({});
+  const firstAdd = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Add time');
+  const firstSubmission = firstAdd.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const replacementInput = createdNodes.findLast(node => node.className.includes('bulk-time-input'));
+  const replacementAdd = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Add time');
+  assert.notEqual(replacementInput, input);
+  assert.equal(replacementInput.value, draft);
+  assert.equal(replacementInput.disabled, true);
+  assert.equal(replacementAdd.disabled, true);
+  await replacementAdd.onclick({ isTrusted: true });
+  assert.equal(bulkCalls, 1);
+
+  bulkCallback({ ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } });
+  await firstSubmission; await new Promise(resolve => setTimeout(resolve, 0));
+  const failedInput = createdNodes.findLast(node => node.className.includes('bulk-time-input'));
+  const failedAdd = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Add time');
+  assert.equal(failedInput.value, draft);
+  assert.equal(failedInput.disabled, false);
+  assert.equal(failedAdd.disabled, false);
+  assert.equal(createdNodes.some(node => node.textContent === 'The monthly file changed.'), true);
+});
+
+
+test('Times ignores a rejected initial load after a newer period succeeds', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: () => null, addEventListener() {},
+  };
+  const loads = [];
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      if (message.type === 'LOAD_TIMES') loads.push({ message: structuredClone(message), callback });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(loads.length, 1);
+
+  const period = createdNodes.findLast(node => node.tag === 'select' && node.getAttribute('aria-label') === 'Time period');
+  period.value = 'yesterday'; period.onchange({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(loads.length, 2);
+  loads[1].callback({ ok: true, data: { configured: true, recent: [] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  loads[0].callback({ ok: false, error: { code: 'superseded', message: 'Time load was superseded by a configuration change.' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(createdNodes.some(node => node.textContent === 'Time load was superseded by a configuration change.'), false);
+  const selected = createdNodes.filter(node => node.tag === 'option' && node.selected).at(-1);
+  assert.equal(selected.value, 'yesterday');
+});
+
+
+test('Times keeps every linked draft row mounted while filtering and saves the full group', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
+  const makeEntry = (id, url, title, start, end, index) => ({
+    schemaVersion: 1, id, user: 'alice', taskUrl: url, taskTitle: title,
+    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
+    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+  });
+  const entries = [
+    makeEntry('x', 'https://example.com/x', 'X', '2026-08-21T10:00:00+00:00', '2026-08-21T11:00:00+00:00', 0),
+    makeEntry('y', 'https://example.com/y', 'Y', '2026-08-21T11:00:00+00:00', '2026-08-21T12:00:00+00:00', 1),
+  ];
+  const messages = [];
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: () => null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: entries } });
+      else if (message.type === 'EDIT_ENTRIES') callback({ ok: true, data: [] });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
+  values[7].value = '15'; values[7].oninput({});
+  assert.deepEqual(values.slice(0, 2).map(node => node.value), ['11', '15'], 'Y Start mirrors X Stop');
+  const filter = createdNodes.findLast(node => node.placeholder === 'Filter by URL or optional title');
+  filter.value = '/x'; filter.oninput({});
+  const filteredValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
+  assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
+  const save = createdNodes.filter(node => node.className.includes('inline-save')).at(-1);
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(edit.payload.entries.length, 2);
+  assert.deepEqual(edit.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
+    ['2026-08-21T10:00:00+00:00', '2026-08-21T11:15:00+00:00'],
+    ['2026-08-21T11:15:00+00:00', '2026-08-21T12:00:00+00:00'],
+  ]);
 });

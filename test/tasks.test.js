@@ -25,27 +25,27 @@ test('tracked tasks deduplicate sessions by canonical issue or PR and sort by to
     record(issueOne, 1200, '2026-08-20'),
     record(issue(3), 9999, '2026-08-20', 'bob'),
   ], { user: 'alice', metadata: new Map([
-    [issueOne.url, { title: 'Fix search', status: 'OPEN' }],
-    [pullTwo.url, { title: 'Improve reports', status: 'MERGED' }],
+    [issueOne.url, { title: 'Fix search' }],
+    [pullTwo.url, { title: 'Improve reports' }],
   ]) });
-  assert.deepEqual(tasks.map(task => ({ url: task.issue.url, seconds: task.totalSeconds, sessions: task.sessionCount, title: task.title, status: task.status })), [
-    { url: pullTwo.url, seconds: 3600, sessions: 1, title: 'Improve reports', status: 'MERGED' },
-    { url: issueOne.url, seconds: 1800, sessions: 2, title: 'Fix search', status: 'OPEN' },
+  assert.deepEqual(tasks.map(task => ({ url: task.issue.url, seconds: task.totalSeconds, sessions: task.sessionCount, title: task.title })), [
+    { url: pullTwo.url, seconds: 3600, sessions: 1, title: 'Improve reports' },
+    { url: issueOne.url, seconds: 1800, sessions: 2, title: 'Fix search' },
   ]);
 });
 
 test('persisted record titles are used without display-time metadata resolution', () => {
   const storedIssue = issue(8);
   const stored = { user: 'alice', issue: storedIssue, issueTitle: 'Stored ranking regression', durationSeconds: 120 };
-  const tasks = aggregateTrackedTasks([stored], { user: 'alice', metadata: new Map([[storedIssue.url, { title: 'Fresh API title', status: 'OPEN' }]]) });
+  const tasks = aggregateTrackedTasks([stored], { user: 'alice', metadata: new Map([[storedIssue.url, { title: 'Fresh API title' }]]) });
   assert.equal(tasks[0].title, 'Stored ranking regression');
-  assert.equal(tasks[0].status, 'OPEN', 'metadata still supplies issue state without replacing the persisted title');
+  assert.equal('status' in tasks[0], false, 'provider status is not part of the tracked-task DTO');
 });
 
 test('tracked task aggregation keeps inaccessible metadata as a safe canonical fallback', () => {
   const task = issue(7, 'issue', 'private');
   assert.deepEqual(aggregateTrackedTasks([record(task, 60, '2026-08-20')], { user: 'alice' }), [{
-    taskUrl: task.url, issue: task, title: '', status: 'UNKNOWN', totalSeconds: 60, sessionCount: 1,
+    taskUrl: task.url, issue: task, title: '', totalSeconds: 60, sessionCount: 1,
   }]);
 });
 
@@ -54,10 +54,10 @@ test('active-only work is included without baking elapsed time into completed to
   const tasks = aggregateTrackedTasks([], {
     user: 'alice',
     active: { user: 'alice', issue: activeIssue, startedAt: '2026-08-20T10:00:00.000Z', issueTitle: 'Running review' },
-    metadata: new Map([[activeIssue.url, { title: 'Running review', status: 'OPEN' }]]),
+    metadata: new Map([[activeIssue.url, { title: 'Running review' }]]),
   });
   assert.deepEqual(tasks, [{
-    taskUrl: activeIssue.url, issue: activeIssue, title: 'Running review', status: 'OPEN', totalSeconds: 0, sessionCount: 0,
+    taskUrl: activeIssue.url, issue: activeIssue, title: 'Running review', totalSeconds: 0, sessionCount: 0,
     activeStartedAt: '2026-08-20T10:00:00.000Z',
   }]);
 });
@@ -76,8 +76,8 @@ test('active work augments an existing tracked task and ignores another user', (
 });
 
 test('running elapsed time participates in total-time ordering without mutating completed totals', () => {
-  const first = { issue: issue(1), title: 'First', status: 'OPEN', totalSeconds: 3600, sessionCount: 1 };
-  const second = { issue: issue(2), title: 'Second', status: 'OPEN', totalSeconds: 3000, sessionCount: 1, activeStartedAt: '2026-08-20T10:00:00.000Z' };
+  const first = { issue: issue(1), title: 'First', totalSeconds: 3600, sessionCount: 1 };
+  const second = { issue: issue(2), title: 'Second', totalSeconds: 3000, sessionCount: 1, activeStartedAt: '2026-08-20T10:00:00.000Z' };
   const active = { issue: second.issue, startedAt: second.activeStartedAt };
   assert.equal(effectiveTrackedSeconds(second, { active, now: '2026-08-20T10:20:00.000Z' }), 4200);
   assert.deepEqual(sortTrackedTasks([first, second], { active, now: '2026-08-20T10:20:00.000Z' }).map(task => task.issue.number), [2, 1]);
@@ -85,16 +85,14 @@ test('running elapsed time participates in total-time ordering without mutating 
 });
 
 
-test('closed issue state reasons preserve GitHub completed and not-planned semantics', () => {
-  const completed = issue(10), notPlanned = issue(11);
-  const tasks = aggregateTrackedTasks([
-    record(completed, 60, '2026-08-20'), record(notPlanned, 30, '2026-08-20'),
-  ], { user: 'alice', metadata: new Map([
-    [completed.url, { title: 'Done', status: 'CLOSED', stateReason: 'COMPLETED' }],
-    [notPlanned.url, { title: 'Skipped', status: 'CLOSED', stateReason: 'NOT_PLANNED' }],
-  ]) });
-  assert.equal(tasks.find(task => task.issue.url === completed.url).stateReason, 'COMPLETED');
-  assert.equal(tasks.find(task => task.issue.url === notPlanned.url).stateReason, 'NOT_PLANNED');
+test('provider status metadata is not exposed in URL-first tracked-task results', () => {
+  const completed = issue(10);
+  const [task] = aggregateTrackedTasks([record(completed, 60, '2026-08-20')], {
+    user: 'alice', metadata: new Map([[completed.url, { title: 'Done' }]]),
+  });
+  assert.equal(task.title, 'Done');
+  assert.equal('status' in task, false);
+  assert.equal('stateReason' in task, false);
 });
 
 
@@ -104,5 +102,5 @@ test('arbitrary URL tasks aggregate without provider metadata and keep title opt
     { user: 'alice', taskUrl, taskTitle: '', durationSeconds: 120 },
     { user: 'alice', taskUrl, taskTitle: 'Optional name', durationSeconds: 180 },
   ], { user: 'alice' });
-  assert.deepEqual(tasks, [{ taskUrl, title: 'Optional name', status: 'UNKNOWN', totalSeconds: 300, sessionCount: 2 }]);
+  assert.deepEqual(tasks, [{ taskUrl, title: 'Optional name', totalSeconds: 300, sessionCount: 2 }]);
 });

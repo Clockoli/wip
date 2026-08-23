@@ -217,8 +217,8 @@ export function exportTimesheet(records, { format, startDate, endDate, rates = n
     duration: hms(record.durationSeconds),
     durationSeconds: record.durationSeconds,
     ...(rates ? {
-      hourlyRate: rateMinorForUser(record.user, rates) === null ? '' : (rateMinorForUser(record.user, rates) / 100).toFixed(2),
-      billableAmount: rateMinorForUser(record.user, rates) === null ? '' : (billableMinorForRecord(record, rates) / 100).toFixed(2),
+      hourlyRate: rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) === null ? '' : (rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) / 100).toFixed(2),
+      billableAmount: rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) === null ? '' : (billableMinorForRecord(record, rates) / 100).toFixed(2),
       currency,
     } : {}),
     description: record.description || '',

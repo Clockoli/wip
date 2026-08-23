@@ -183,6 +183,41 @@ async function loadReport(message) {
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
+async function loadTimes(message, sender) {
+  const loadEpoch = await loadCoordinator.beginLoad();
+  await store.ensureDataVersion(3); loadCoordinator.assertCurrent(loadEpoch);
+  const { config, auth, generation } = await configuredSnapshot(); loadCoordinator.assertCurrent(loadEpoch);
+  if (!config || !auth) return { configured: false, recent: [] };
+  const branch = config.branch || 'main', repositoryKey = `${config.owner}/${config.repo}@${branch}`;
+  const requestOwner = sender?.documentId ?? sender?.tab?.id ?? sender?.url ?? 'extension';
+  const loadKey = `${repositoryKey}:times:${requestOwner}`;
+  const previous = reportLoads.get(loadKey);
+  if (previous) {
+    previous.controller.abort();
+    await previous.promise.catch(() => {});
+    loadCoordinator.assertCurrent(loadEpoch);
+  }
+  const controller = new AbortController(), github = githubForConfig(config);
+  const promise = (async () => {
+    controller.signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+    const state = await store.getState();
+    let user = config.storageLogin || state.user || auth.githubLogin;
+    if (!user) {
+      user = await github.getAuthenticatedUser(); controller.signal.throwIfAborted();
+      if (!await store.patchStateIfGeneration({ user }, generation)) throw new DOMException('Time load was superseded by a configuration change.', 'AbortError');
+    }
+    const reports = new ReportService({ github, cache: store });
+    const recent = await reports.loadUserRange(message.payload || {}, user, { includeStorageMetadata: true, signal: controller.signal }, {
+      maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
+    });
+    controller.signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+    return { configured: true, recent: recent.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)) };
+  })();
+  reportLoads.set(loadKey, { controller, promise });
+  try { return await promise; }
+  finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
+}
+
 async function loadTasks(message, sender) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(3);
@@ -271,8 +306,8 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC',
-  'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_REPORT', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -308,6 +343,9 @@ async function handle(message, sender) {
   }
   if (message.type === 'OPEN_TASKS') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
+  }
+  if (message.type === 'OPEN_TIMES') {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') }); return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
@@ -353,6 +391,7 @@ async function handle(message, sender) {
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
+  if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const { config, auth } = await configuredSnapshot();
     if (!config || !auth) return message.type === 'GET_PAGE_STATE'
@@ -389,8 +428,12 @@ async function handle(message, sender) {
       }
       return tracker.loadMenuData(50, { knownTitles });
     }
-    case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
     case 'EDIT_ENTRIES': return tracker.editEntries(message.payload);
+    case 'BULK_ADD_TIMES': {
+      const text = String(message.text || '');
+      if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
+      return tracker.bulkAddTimes(text);
+    }
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
     case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id, message.action || '');
     default: throw new Error('Unknown extension message');
@@ -399,7 +442,7 @@ async function handle(message, sender) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type);
-  const readOnly = reportReadOnly || ['LOAD_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
+  const readOnly = reportReadOnly || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;
   if (changesConfiguration) {

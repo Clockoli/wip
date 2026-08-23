@@ -19,7 +19,7 @@ RepoClock is a good fit when data ownership and auditability matter more than on
 
 ## Current beta installation
 
-RepoClock currently runs as a trusted unpacked extension. The published `v0.1.11` GitHub release predates the features documented here; do not use that package for the current product.
+RepoClock currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.12`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
@@ -47,7 +47,7 @@ Full setup instructions: [Getting started](docs/getting-started.md).
 3. Choose **Start tracking this task**.
 4. When you finish, open RepoClock and choose **Stop and save**. Add a description if it will help later.
 
-On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks** and **Reports**.
+On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
 
 RepoClock permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
 
@@ -64,7 +64,7 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Direct one-line `HH : MM - HH : MM` time correction in the main panel.
 - Start and Stop remain directly editable inline; wheel/trackpad gestures scroll normally and never change a time value.
 - Automatic adjacent-boundary repair: moving Start into the previous interval moves the previous Stop; moving Stop into the next interval moves the next Start. The linked records are saved atomically.
-- Full **Edit** for URL, optional title, Start, Stop, and description.
+- One unified inline draft for URL, optional title, Start, Stop, and description; Enter or **Save time** saves the complete draft.
 - Conflict-safe **Delete**, with the prior version retained in Git history.
 - Overlap warnings and a confirmation before saving entries longer than 12 hours.
 
@@ -74,9 +74,15 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Deduplication by canonical task URL.
 - Search by URL or optional title.
 - Period filters from two weeks to one year.
-- Open, Closed, and All status filters; GitHub issue/PR status is enriched when available.
 - Totals include completed sessions and the currently running session.
 - Aggregated completed and running time per task.
+
+### Times
+
+- A dedicated history page with day, week, month, and custom inclusive periods.
+- Filter tracked entries by URL or optional title while preserving active linked drafts.
+- Add multiple dated URL tasks in one all-or-nothing bulk import.
+- Edit and delete historical rows with the same inline controls as the main tracker.
 
 ### Reports and billing
 
@@ -87,7 +93,7 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Independent Day, Week, Month, Person, Source, and Task chart dimensions.
 - CSV and JSON timesheet downloads.
 - Native print/save-to-PDF.
-- Browser-local hourly rates and one three-letter currency code. Rates and calculated money are never written to the data repository.
+- Browser-local effective-dated hourly rates and one three-letter currency code. Rates and calculated money are never written to the data repository.
 
 ### Storage, sync, and privacy
 
@@ -117,7 +123,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - Current beta installation is unpacked and has no automatic updates.
 - Starting a timer requires GitHub connectivity. Stopping can be queued locally and retried.
 - One active timer per connected GitHub account.
-- No manual time-entry creation, reminders, mobile app, or advanced side-by-side conflict editor.
+- Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
 - The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.
 - Billable rates are local to each browser and are not shared with teammates.
 - Anyone who can read the data repository can read stored URLs, titles, timestamps, and descriptions.

@@ -9,7 +9,7 @@ RepoClock treats the canonical HTTP(S) URL as the task identity. A task can be:
 - a document, dashboard, customer record, or design;
 - any other HTTP(S) page.
 
-A title is optional. GitHub titles and status are metadata, not part of the durable identity. For GitHub issue and pull-request URLs, RepoClock removes navigation-only query and fragment data so opening the same task through a notification link does not create another task.
+A title is optional. GitHub titles are metadata, not part of the durable identity. For GitHub issue and pull-request URLs, RepoClock removes navigation-only query and fragment data so opening the same task through a notification link does not create another task.
 
 The toolbar popup supports any HTTP(S) active tab. The injected stopwatch and native-looking split control are limited to `github.com`.
 
@@ -32,14 +32,14 @@ Stopping an entry longer than 12 hours asks for confirmation. The warning does n
 The GitHub panel and browser toolbar popup use the same tracking component. They include:
 
 - active URL, optional title, live elapsed time, and optional Stop description;
-- Start, Stop, Sync, Tasks, Reports, and Settings actions;
+- Start, Stop, Sync, Tasks, Times, Reports, and Settings actions;
 - pending-write and conflict status;
 - rotating totals for Today, This week, Last week, and This month;
 - recent entries grouped by task URL;
 - relative day labels and stored wall time;
-- direct time correction, Edit, and Delete.
+- unified inline time/metadata correction and Delete.
 
-The GitHub split control survives GitHub's client-side navigation and mounts next to the authenticated user's avatar. Its arrow always opens Tasks/Reports navigation.
+The GitHub split control survives GitHub's client-side navigation and mounts next to the authenticated user's avatar. Its arrow always opens Tasks/Times/Reports navigation.
 
 ## Recent entries
 
@@ -51,7 +51,7 @@ Changing this setting does not alter stored data or limit reports. Recent data i
 
 Each completed row has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology.
 
-- Type an hour or minute directly in the always-visible Start/Stop inputs; opening the full **Edit** form is not required.
+- Type an hour or minute directly in the always-visible Start/Stop inputs.
 - Wheel and trackpad gestures never mutate time values or trap panel scrolling, and there are no `−`/`+` step controls.
 - A direct correction remains a local draft until **Save time** is selected.
 - All relevant row controls are disabled while a mutation is in flight.
@@ -61,14 +61,16 @@ If the edited Start moves before the previous interval's Stop, the previous Stop
 
 Strict intersections are highlighted as **Overlaps another entry**. Entries that only touch at one endpoint are not overlaps.
 
-### Full Edit and Delete
+### Unified inline editing and deletion
 
-**Edit** supports:
+Selecting the displayed URL, title, or description expands those fields in the same inline draft as Start and Stop. Press Enter or select **Save time** to save:
 
 - task URL;
 - optional title, up to 300 characters;
 - Start and Stop date/time;
 - description, up to 2,000 characters.
+
+Only one draft is active at a time. Starting another edit cancels the previous unsaved draft. A linked adjacent-boundary group remains available while the Times URL/title filter changes.
 
 Changing the URL clears an unchanged old title so metadata from one task is not silently carried to another.
 
@@ -80,14 +82,17 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 
 - Search by URL or optional title.
 - Periods: last 2 weeks, month, 3 months, 6 months, or year.
-- Status filters: Open, Closed, and All.
-- GitHub issue/PR status and state reason are shown when metadata is available.
-- Generic URL tasks appear under Open and All as `Tracked URL`; they are not presented as confirmed GitHub Open issues.
 - Completed and running time participate in ordering.
 - The task URL appears as a compact source line, with the optional title as the prominent link below it. Untitled tasks show the URL as the primary link without duplication.
 - Inline direct-input time-range controls use the same serialized timer state as the popup.
 
-The page reads only the current user's monthly paths before hydrating GitHub issue/PR metadata. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
+The page reads only the current user's monthly paths before hydrating optional GitHub issue/PR titles. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
+
+## Times page
+
+Times loads the current user's completed entries for Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range.
+
+The bulk importer accepts one dated URL task per line with an optional description and a duration. It validates the complete request and existing history before one atomic Git commit, including intervals that cross in from older monthly files and a concurrently started active timer. A failed request writes nothing and keeps the draft available for correction.
 
 ## Reports
 
@@ -203,4 +208,4 @@ Exported settings contain display preferences, local billing, and reference-only
 
 ## Deliberate limits
 
-The current beta does not include manual entry creation, reminders, mobile applications, Firefox packaging, or a side-by-side conflict diff editor. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.
+The current beta includes manual completed-entry creation through the Times bulk importer. It does not include reminders, mobile applications, Firefox packaging, or a side-by-side conflict diff editor. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.

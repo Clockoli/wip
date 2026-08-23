@@ -12,12 +12,12 @@ test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
-  assert.doesNotThrow(() => assertMessageAllowed('EDIT_ENTRY', content, origin));
+  assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
 });
 
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
   for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
@@ -46,6 +46,10 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
+  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES']) {
+    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+  }
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
@@ -56,7 +60,7 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', sender, origin), /not allowed/);
 });

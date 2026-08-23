@@ -93,7 +93,7 @@ That gives you:
 - backward-compatible reading of older GitHub issue/PR records;
 - meaningful Source grouping by GitHub repository or generic hostname.
 
-The limitation is that generic URLs normally have no Open/Closed provider metadata. RepoClock can still track, group, search, and report them by URL and title.
+Generic URLs do not need provider metadata. RepoClock tracks, groups, searches, and reports them by URL and optional title.
 
 ## Compared with a spreadsheet
 
@@ -107,7 +107,7 @@ A spreadsheet gives strong control but depends on consistent manual entry. RepoC
 - structured Tasks and Reports;
 - recoverable offline Stop operations.
 
-A spreadsheet remains better for unconstrained manual corrections and custom modeling. RepoClock does not yet create manual entries from scratch.
+A spreadsheet remains better for unconstrained custom modeling. RepoClock can create completed manual entries in bulk on the Times page while retaining its validated monthly storage format.
 
 ## Compared with a local-only browser timer
 
@@ -125,7 +125,7 @@ RepoClock is intentionally opinionated:
 - Branch protection or rulesets that prevent direct writes can make a repository unsuitable.
 - Starting needs GitHub connectivity; only Stop has a durable local retry path.
 - The current beta is Chrome/Chromium-only and installed unpacked.
-- There is no automatic update channel, mobile app, reminder system, invoicing workflow, or manual-entry creation.
+- There is no automatic update channel, mobile app, reminder system, or invoicing workflow; manual completed entries use the Times bulk importer.
 - Local rates are not synchronized with teammates.
 
 These are not hidden implementation gaps; they follow from the current product scope and should be part of the adoption decision.

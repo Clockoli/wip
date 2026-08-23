@@ -22,7 +22,7 @@ test('inline range, duration, and contextual actions share the left-aligned row'
   assert.match(source, /timeRow\.append\(inline\.node, inline\.duration, actions\)/);
   assert.match(source, /\.entry-time-row \{[^}]*justify-content:flex-start[^}]*white-space:nowrap/);
   assert.doesNotMatch(source, /\.entry-actions \{[^}]*margin-left:auto/);
-  assert.match(source, /actions\.append\(inline\.cancel, inline\.save, edit, remove\)/);
+  assert.match(source, /actions\.append\(inline\.cancel, inline\.save, remove\)/);
 });
 
 test('grouped inline save is exposed only through the needed message route', () => {

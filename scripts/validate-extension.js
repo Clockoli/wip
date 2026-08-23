@@ -6,6 +6,9 @@ const fail = message => { throw new Error(message); };
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const exists = file => fs.existsSync(path.join(root, file));
 const manifest = JSON.parse(read('manifest.json'));
+const packageJson = JSON.parse(read('package.json'));
+
+if (manifest.version !== packageJson.version) fail('Manifest and package versions must match');
 
 if (manifest.manifest_version !== 3) fail('Manifest V3 is required');
 if (Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
@@ -14,11 +17,11 @@ if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.g
 for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab'].includes(permission)) fail(`Unexpected permission: ${permission}`);
 if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 
-const referenced = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html'];
+const referenced = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 for (const script of manifest.content_scripts || []) referenced.push(...script.js);
 for (const file of referenced) if (!exists(file)) fail(`Manifest references missing file: ${file}`);
 
-const htmlFiles = [manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html'];
+const htmlFiles = [manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 for (const file of htmlFiles) {
   const html = read(file);
   if (/<script(?![^>]+src=)/i.test(html)) fail(`Inline script is forbidden: ${file}`);

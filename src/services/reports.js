@@ -91,7 +91,7 @@ export class ReportService {
     });
   }
 
-  async loadRange({ startDate, endDate }, { signal, user = null, maxFiles = Infinity, maxBytes = Infinity, maxRecords = Infinity } = {}) {
+  async loadRange({ startDate, endDate }, { signal, user = null, maxFiles = Infinity, maxBytes = Infinity, maxRecords = Infinity, includeStorageMetadata = false } = {}) {
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
     signal?.throwIfAborted();
@@ -143,7 +143,7 @@ export class ReportService {
       try {
         return parseMonthlyText(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })
           .filter(record => record.entryDate >= startDate && record.entryDate <= endDate)
-          .map(withoutStorageMetadata);
+          .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record));
       } catch (error) {
         throw new Error(`Invalid time data in ${file.path}: ${error.message}`);
       }

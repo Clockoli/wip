@@ -156,16 +156,15 @@
 
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
-      <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user.</p></div>
+      <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user, with optional start and end dates. Leave a date blank for an open-ended period.</p></div>
     </div>
     <p class="help"><strong>Rates stay only in this browser’s extension-local storage.</strong> RepoClock never writes rates or calculated money to the data repository.</p>
     <form id="billing-form">
       <label>Currency code<input id="billing-currency" required maxlength="3" value="USD" autocomplete="off" aria-describedby="currency-help"></label>
       <p id="currency-help" class="help">Use one three-letter currency code, such as USD, EUR, or GBP, for all rates.</p>
-      <div class="rate-heading" aria-hidden="true"><span>GitHub user</span><span>Hourly rate</span><span></span></div>
       <div id="rates-list" class="rates-list"></div>
       <div class="actions billing-actions">
-        <button id="add-rate" type="button" class="secondary">Add person</button>
+        <button id="add-rate" type="button" class="secondary">Add rate period</button>
         <button id="save-billing" type="submit">Save billable rates</button>
       </div>
     </form>

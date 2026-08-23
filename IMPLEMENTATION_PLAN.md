@@ -3,7 +3,7 @@
 ## Decisions
 
 - Chrome/Chromium Manifest V3; WebExtensions-friendly APIs where practical.
-- GitHub issues (`/{owner}/{repo}/issues/{number}`) and pull requests (`/{owner}/{repo}/pull/{number}`); manual entries are deferred.
+- Any canonical HTTP(S) URL can be tracked. Completed manual entries can be created atomically through the Times bulk importer.
 - Backend-free GitHub App Device Flow is primary; rotating credentials and attempts remain background-owned in extension-origin IndexedDB. Fine-grained PAT is an advanced compatibility path; no credentials are sent to content scripts.
 - One configured private data repository and canonical branch (`main` by default).
 - Stable numeric GitHub user ID is canonical and `.repoclock/config.json` maps it to a validated storage login before path creation.
@@ -12,7 +12,7 @@
 - One active timer per user. A new timer is blocked while a Stop operation is pending/conflicted.
 - Offline Stop writes a stable-ID operation to an extension-origin IndexedDB queue before network I/O. Retries first ensure the same entry exists, then conditionally clear the matching active timer.
 - Recent view reads the authenticated user’s one or two represented monthly files, filters the configured local-date window, validates the records, globally sorts by editable `startedAt`, and returns at most 50 entries.
-- Edits preserve the original file path and require the SHA seen when editing; durations are recomputed. Dragging an adjacent-entry boundary preflights the involved SHA(s); cross-month changes publish one atomic Git Data commit.
+- Inline edits preserve the original file path and require the SHA seen when editing; durations are recomputed. Directly typing across an adjacent boundary links the records, preflights every involved SHA, and publishes cross-month changes in one atomic Git Data commit.
 - Deletes require explicit UI confirmation and the latest known SHA.
 - Issue owners default to the configured data-repository owner and can be expanded in Settings.
 
@@ -27,7 +27,8 @@
 - `src/content/github.js`: GitHub SPA issue/pull-request detection plus a native-style before-avatar stopwatch control and closed-Shadow management dropdown.
 - `src/popup/*`: active/recent/sync UI and edit/delete controls.
 - `src/reports/*`: weekly/monthly/quarterly/yearly/custom periods, person/repository facets, selectable metric/axis local stacked-bar aggregation, direct CSV/JSON downloads, and print/save-to-PDF.
-- `src/tasks/*`: authenticated-user rolling-period task aggregation, immediate text/status filtering, cached GitHub title/status hydration, active-only task inclusion, elapsed-time ordering, and inline Start/Stop controls.
+- `src/tasks/*`: authenticated-user rolling-period task aggregation, immediate URL/title filtering, bounded cached GitHub title hydration, active-only task inclusion, elapsed-time ordering, and inline Start/Stop controls.
+- `src/times/*`: authenticated-user range history, URL/title filtering, shared inline correction controls, and all-or-nothing bulk time entry.
 - `src/options/*`: GitHub App authorization/install/repository onboarding, recovery/disconnect/reset, plus advanced PAT compatibility.
 
 ## Acceptance checks
@@ -41,5 +42,5 @@
 7. Content script never receives token/config secrets and renders untrusted text with text nodes.
 8. Invalid owner/repo/login/path/date/issue data is rejected before an API write.
 9. Repository-wide reports load matching immutable blobs without exposing credentials or storage SHAs, and all facet/chart changes rerender locally.
-10. The split GitHub header opens timer management only on issue/PR pages and exposes Reports/Tasks navigation everywhere without exposing privileged report/task data to content scripts.
+10. The split GitHub header opens timer management for any GitHub HTTP(S) task URL and exposes Tasks/Times/Reports navigation without exposing privileged time, task, or report data to content scripts.
 11. Automated Node tests, network-disabled Node 22 tests, real-Chromium UI checks, static extension validation, and exact-snapshot review pass before packaging.

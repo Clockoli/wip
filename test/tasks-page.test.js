@@ -17,9 +17,9 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.doesNotMatch(html, /id="source"/);
   assert.doesNotMatch(js, /result\.sourceRepository|result\.branch/);
   assert.doesNotMatch(html, /class="eyebrow"/);
-  for (const id of ['period', 'task-filter', 'status', 'result-count', 'task-list']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['period', 'task-filter', 'result-count', 'task-list']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['two-weeks', 'one-month', 'three-months', 'six-months', 'one-year']) assert.match(html, new RegExp(`value="${value}"`));
-  assert.match(html, /value="open" selected/);
+  assert.doesNotMatch(html, /id="status"|<label>Status/i);
   assert.doesNotMatch(html, /magnif|octicon-search|pagination|Sort|Assigned to me/i);
   assert.doesNotMatch(html, /labels|comments|assignee/i);
   assert.doesNotMatch(html, /id="settings"/);
@@ -60,7 +60,7 @@ test('visible extension branding is RepoClock and Tasks uses neutral GitHub butt
   assert.doesNotMatch(css, /\.timer-button\{[^}]*button-primary/);
   assert.doesNotMatch(html, /class="button primary"/);
   assert.doesNotMatch(css, /\.button\.primary/);
-  assert.match(css, /\.task-icon\.open\{color:var\(--fgColor-open\)\}/, 'GitHub semantic Open color remains intact');
+  assert.doesNotMatch(js, /task\.status|statusMatches|statusLabel/);
 });
 
 test('standalone selects use an inset custom caret while the GitHub header caret remains untouched', () => {

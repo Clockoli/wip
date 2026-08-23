@@ -63,13 +63,9 @@ export function aggregateTrackedTasks(records, { user, metadata = new Map(), act
     const title = task.title || (task.activeStartedAt && taskTitleOf(active)
       ? taskTitleOf(active)
       : (typeof details?.title === 'string' && details.title.trim() ? details.title.trim().slice(0, 300) : ''));
-    const status = ['OPEN', 'CLOSED', 'MERGED'].includes(details?.status) ? details.status : 'UNKNOWN';
-    const stateReason = task.issue?.type === 'issue' && status === 'CLOSED' && ['COMPLETED', 'NOT_PLANNED'].includes(details?.stateReason)
-      ? details.stateReason : null;
     return {
-      taskUrl: task.taskUrl, ...(task.issue ? { issue: task.issue } : {}), title, status,
+      taskUrl: task.taskUrl, ...(task.issue ? { issue: task.issue } : {}), title,
       totalSeconds: task.totalSeconds, sessionCount: task.sessionCount,
-      ...(stateReason ? { stateReason } : {}),
       ...(task.activeStartedAt ? { activeStartedAt: task.activeStartedAt } : {}),
     };
   }).sort((a, b) => b.totalSeconds - a.totalSeconds || a.taskUrl.localeCompare(b.taskUrl));
