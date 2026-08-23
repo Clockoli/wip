@@ -432,7 +432,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
 });
 
 
-test('recent rows show static time details and Edit uses direct offset-preserving inputs', async () => {
+test('recent rows show durable titles and direct offset-preserving time inputs without scrolling controls', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -484,14 +484,13 @@ test('recent rows show static time details and Edit uses direct offset-preservin
   assert.equal(recentUrl.textContent, 'https://github.com/acme/app/issues/7');
   assert.equal(recentTitle.textContent, 'Make ranking deterministic');
   assert.ok(createdNodes.findLast(node => node.className.includes('task-result')), 'URL and title share a Google-style task result block');
-  const timeRow = createdNodes.findLast(node => node.className === 'entry-time-row');
-  assert.ok(timeRow, 'the recent record has one static detail row');
-  assert.deepEqual(timeRow.children.map(node => node.className), ['entry-time-range', 'inline-duration', 'entry-actions']);
-  assert.equal(timeRow.children[0].textContent, '08:00 - 23:58', 'the list exposes stored-offset wall time as static text');
-  assert.equal(timeRow.children[1].textContent, '15h 58m', 'duration follows Start/Stop on the same row');
-  assert.deepEqual(timeRow.children[2].children.map(node => node.textContent), ['Edit', 'Delete']);
-  assert.equal(createdNodes.some(node => node.className.includes('inline-time-value') || node.className.includes('time-step')), false,
-    'the recent row has no wheel or stepper controls');
+  const inlineTimeLine = createdNodes.findLast(node => node.className.includes('inline-time-line'));
+  assert.ok(inlineTimeLine, 'Start and Stop controls share one no-wrap time line');
+  assert.deepEqual(inlineTimeLine.children.map(node => node.className), ['time-picker compact-time-picker', 'inline-time-separator', 'time-picker compact-time-picker']);
+  assert.equal(inlineTimeLine.children[1].textContent, '-');
+  const inlineTimeValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
+  assert.deepEqual(inlineTimeValues.slice(-4).map(node => node.value), ['08', '00', '23', '58'],
+    'the list exposes Start and Stop in their stored offset wall time');
   assert.equal(messages.findLast(message => message.type === 'LOAD_RECENT').taskTitle, 'Make ranking deterministic');
   assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'no between-entry drag control remains');
 
@@ -500,21 +499,18 @@ test('recent rows show static time details and Edit uses direct offset-preservin
   const timeValues = createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value'));
   assert.equal(timeValues.length, 4, 'Start and Stop each expose large hour and minute values');
   assert.deepEqual(timeValues.map(node => node.getAttribute('aria-label')), ['Start hour', 'Start minute', 'Stop hour', 'Stop minute']);
-  assert.deepEqual(timeValues.map(node => node.type), ['text', 'text', 'text', 'text']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-invalid')), ['false', 'false', 'false', 'false']);
-  assert.equal(timeValues.every(node => node.onwheel === undefined), true, 'Edit fields never capture wheel input');
-  assert.equal(createdNodes.some(node => node.className.includes('time-step') || node.className.includes('time-drag')), false,
-    'Edit uses direct text input without custom steppers or drag controls');
+  assert.deepEqual(timeValues.map(node => node.getAttribute('role')), [null, null, null, null], 'plain text fields do not expose stepper semantics');
+  assert.equal(createdNodes.some(node => node.className.includes('time-step') || node.className.includes('time-drag')), false);
 
-  const startHour = timeValues[0], startMinute = timeValues[1];
-  startMinute.value = ''; startMinute.oninput({});
-  assert.equal(startMinute.value, '', 'a partial direct-input draft is preserved instead of throwing or resetting');
-  assert.equal(startMinute.getAttribute('aria-invalid'), 'true');
-  startHour.value = '23'; startHour.oninput({});
-  startMinute.value = '59'; startMinute.oninput({});
-  assert.equal(startMinute.getAttribute('aria-invalid'), 'false');
-  assert.deepEqual(timeValues.map(node => node.value), ['23', '59', '23', '59'],
-    'crossing Start reconciles Stop in the direct Edit form');
+  const stopMinute = timeValues.at(-1);
+  stopMinute.value = ''; stopMinute.oninput({});
+  assert.equal(stopMinute.value, '', 'a partial direct-input draft is preserved instead of resetting');
+  assert.equal(stopMinute.getAttribute('aria-invalid'), 'true');
+  assert.equal(stopMinute.onwheel, undefined, 'time fields do not install wheel handlers');
+  const stopHour = timeValues.at(-2), stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
+  stopDate.value = '2026-08-19'; stopDate.oninput({});
+  stopHour.value = '00'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
+  assert.equal(stopMinute.getAttribute('aria-invalid'), 'false');
 
   const titleDraft = createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1);
   const descriptionDraft = createdNodes.filter(node => node.tag === 'textarea').at(-1);
@@ -523,14 +519,13 @@ test('recent rows show static time details and Edit uses direct offset-preservin
   await form.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1).value, 'Edited deterministic ranking');
   assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).value, 'Preserve this draft');
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['23', '59', '23', '59'],
-    'a conflict rerender preserves the complete directly typed and reconciled draft');
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['08', '00', '00', '00'],
+    'a conflict rerender preserves the complete directly typed draft');
   const retryForm = createdNodes.filter(node => node.tag === 'form').at(-1);
   await retryForm.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRY');
-  assert.equal(editMessage.payload.edits.startedAt, '2026-08-18T23:59:11.321-07:00', 'changed Start keeps its original seconds, milliseconds, and offset');
-  assert.equal(editMessage.payload.edits.endedAt, '2026-08-18T23:59:11.321-07:00',
-    'reconciled Stop keeps the exact Start instant after conflict rerender and retry');
+  assert.equal(editMessage.payload.edits.startedAt, entry.startedAt, 'unchanged Start keeps its original wall time, seconds, milliseconds, and offset');
+  assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:00:27.123-07:00');
 });
 
 
@@ -651,14 +646,14 @@ test('consecutive records for one task share one task header and keep separate t
     [issue(7).url, issue(8).url, issue(7).url], 'each grouped title retains its canonical URL source line');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
-  assert.equal(createdNodes.filter(node => node.className === 'entry-time-row').slice(-4).length, 4);
+  assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-edit')).slice(-4).length, 4,
     'each time record remains independently editable');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-delete')).slice(-4).length, 4,
     'each time record remains independently deletable');
 });
 
-test('main-panel times are static, left-aligned, relative-day labeled, and overlapping records are highlighted', async () => {
+test('main-panel times are directly editable, relative-day labeled, and overlapping records are highlighted', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -691,6 +686,11 @@ test('main-panel times are static, left-aligned, relative-day labeled, and overl
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
+      else if (message.type === 'EDIT_ENTRIES') {
+        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), true,
+          'the complete current and sibling inline editors are locked while Save time is in flight');
+        callback({ ok: true, data: {} });
+      }
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},
@@ -701,23 +701,146 @@ test('main-panel times are static, left-aligned, relative-day labeled, and overl
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  assert.deepEqual(createdNodes.filter(node => node.className === 'entry-day').slice(-4).map(node => node.textContent),
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('entry-day')).slice(-4).map(node => node.textContent),
     ['Today', 'Today', 'Yesterday', 'Wed']);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-overlap')).slice(-2).length, 2);
   assert.equal(createdNodes.filter(node => node.className.includes('overlap-warning')).slice(-2).length, 2);
-  const rows = createdNodes.filter(node => node.className === 'entry-time-row').slice(-4);
-  assert.deepEqual(rows.map(row => row.children.map(node => node.className)), Array(4).fill(['entry-time-range', 'inline-duration', 'entry-actions']));
-  assert.deepEqual(rows.map(row => row.children[0].textContent), ['14:30 - 16:00', '14:00 - 15:00', '12:00 - 12:30', '09:00 - 09:15']);
-  assert.deepEqual(rows.map(row => row.children[1].textContent), ['1h 30m', '1h 0m', '30m', '15m']);
-  assert.equal(createdNodes.some(node => node.className.includes('inline-time-value') || node.className.includes('time-step')), false);
-  for (const row of rows) {
-    const actionsNode = row.children[2];
-    assert.deepEqual(actionsNode.children.map(node => node.textContent), ['Edit', 'Delete']);
-    assert.equal(actionsNode.parentElement, row, 'Edit/Delete share the exact Start/Stop and duration row');
-  }
-  assert.equal(messages.some(message => message.type === 'EDIT_ENTRIES'), false, 'opening recent rows performs no inline time mutation');
+  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
+  assert.equal(inlineValues.length, 16, 'every main-panel record exposes Start and Stop hour/minute spinbuttons');
+  assert.equal(createdNodes.filter(node => node.className.includes('inline-save')).slice(-4).every(node => node.hidden), true);
+
+  let firstStopMinute = inlineValues[7];
+  assert.equal(firstStopMinute.onwheel, undefined, 'inline time fields leave wheel scrolling untouched');
+  firstStopMinute.value = ''; firstStopMinute.oninput({});
+  let save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.some(message => message.type === 'EDIT_ENTRIES'), false, 'an incomplete direct-input draft is never sent');
+  assert.ok(createdNodes.findLast(node => node.className.includes('error') && node.textContent.includes('valid date and time')));
+  const preservedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
+  assert.equal(preservedValues[7].value, '', 'validation rerender preserves the incomplete direct-input draft');
+  firstStopMinute = preservedValues[7]; firstStopMinute.value = '01'; firstStopMinute.oninput({});
+  save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
+  assert.equal(save.hidden, false, 'typing a main-panel value reveals an explicit Save action');
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(edit.payload.entries.length, 2, 'the crossed neighboring Start is saved in the same atomic group');
+  assert.equal(edit.payload.entries[0].originalSha, 'same');
+  assert.equal(edit.payload.entries[0].edits.endedAt, '2026-08-21T15:01:00+00:00');
+  assert.equal(edit.payload.entries[1].edits.startedAt, '2026-08-21T15:01:00+00:00');
+
+  const refreshedInlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
+  const secondStartMinute = refreshedInlineValues[1];
+  assert.equal(secondStartMinute.onwheel, undefined);
+  secondStartMinute.value = '29'; secondStartMinute.oninput({});
+  const mirroredSave = createdNodes.filter(node => node.className.includes('inline-save')).slice(-4)[0];
+  assert.equal(mirroredSave.hidden, false, 'crossing Start reveals Save on the edited record');
+  await mirroredSave.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const mirroredEdit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(mirroredEdit.payload.entries.length, 2, 'the crossed previous Stop is saved in the same atomic group');
+  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T14:29:00+00:00');
+  assert.equal(mirroredEdit.payload.entries[1].edits.endedAt, '2026-08-21T14:29:00+00:00');
 });
 
+test('directly typed newer Start and previous Stop save as touching intervals without an overlap warning', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [];
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
+  const makeEntry = (id, number, start, end, index) => ({
+    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
+    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
+    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+  });
+  let entries = [
+    makeEntry('older', 7, '2026-08-21T14:00:00.111+00:00', '2026-08-21T15:00:43.324+00:00', 0),
+    makeEntry('newer', 8, '2026-08-21T15:00:06.768+00:00', '2026-08-21T16:00:00.999+00:00', 1),
+    makeEntry('oldest', 6, '2026-08-21T13:00:00.222+00:00', '2026-08-21T14:00:00.000+00:00', 2),
+  ];
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
+      else if (message.type === 'EDIT_ENTRIES') {
+        for (const request of message.payload.entries) {
+          const position = entries.findIndex(entry => entry._index === request.index);
+          entries[position] = { ...entries[position], ...request.edits,
+            entryDate: request.edits.startedAt.slice(0, 10),
+            durationSeconds: (new Date(request.edits.endedAt) - new Date(request.edits.startedAt)) / 1000,
+            _sha: 'saved' };
+        }
+        callback({ ok: true, data: entries });
+      } else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const visibleOverlapWarnings = () => createdNodes.filter(node => node.className.includes('overlap-warning') && node.isConnected);
+  assert.equal(visibleOverlapWarnings().length, 2, 'a seconds-only overlap is initially visible even though both boundaries display 15:00');
+
+  const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
+  const newerStartHour = values[0], newerStartMinute = values[1];
+  assert.equal(newerStartMinute.onwheel, undefined);
+  newerStartHour.value = '14'; newerStartHour.oninput({});
+  newerStartMinute.value = '59'; newerStartMinute.oninput({});
+  assert.equal(values[6].value, '14');
+  assert.equal(values[7].value, '59', 'the older Stop mirrors the newer Start immediately');
+  assert.equal(visibleOverlapWarnings().length, 0, 'linked direct-input drafts clear the stale overlap warning before Save');
+
+  newerStartHour.value = '15'; newerStartHour.oninput({});
+  newerStartMinute.value = '01'; newerStartMinute.oninput({});
+  assert.deepEqual([values[6].value, values[7].value], ['15', '00'],
+    'backing out of the crossing restores the older Stop baseline');
+  let save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  let request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.equal(request.payload.entries.length, 1, 'a restored no-op neighbor is excluded from the grouped mutation');
+  assert.equal(request.payload.entries[0].edits.startedAt, '2026-08-21T15:01:06.768+00:00');
+  assert.equal(entries[0].endedAt, '2026-08-21T15:00:43.324+00:00', 'the older Stop remains exact after the non-crossing save');
+
+  const refreshedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
+  const refreshedStartHour = refreshedValues[0], refreshedStartMinute = refreshedValues[1];
+  refreshedStartHour.value = '14'; refreshedStartHour.oninput({});
+  refreshedStartMinute.value = '59'; refreshedStartMinute.oninput({});
+  assert.deepEqual([refreshedValues[6].value, refreshedValues[7].value], ['14', '59']);
+  save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
+    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
+  ]);
+  assert.equal(visibleOverlapWarnings().length, 0,
+    'the refreshed linked result remains endpoint-touching, not overlapping');
+
+  const cascadeValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
+  cascadeValues[0].value = '13'; cascadeValues[0].oninput({});
+  cascadeValues[1].value = '30'; cascadeValues[1].oninput({});
+  assert.deepEqual(cascadeValues.slice(4, 12).map(node => node.value),
+    ['13', '30', '13', '30', '13', '00', '13', '30'],
+    'continuing past an existing link discovers and updates every newly crossed boundary');
+  save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-3)[0];
+  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
+    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T13:30:06.768+00:00'],
+    ['2026-08-21T13:00:00.222+00:00', '2026-08-21T13:30:06.768+00:00'],
+  ]);
+  assert.equal(visibleOverlapWarnings().length, 0, 'the cascaded linked save remains non-overlapping');
+});
 
 test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -948,12 +1071,11 @@ test('main panel shows today total and opens Reports before Settings', async () 
   rotate(); assert.equal(total.children[0].textContent, 'Last week:');
   rotate(); assert.equal(total.children[0].textContent, 'This month:');
   const day = createdNodes.findLast(node => node.className === 'entry-day');
-  const timeRow = createdNodes.findLast(node => node.className === 'entry-time-row');
+  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
+  const duration = createdNodes.findLast(node => node.className === 'inline-duration');
   assert.equal(day.textContent, 'Today');
-  assert.deepEqual(timeRow.children.map(node => node.className), ['entry-time-range', 'inline-duration', 'entry-actions']);
-  assert.equal(timeRow.children[0].textContent, '08:00 - 09:30');
-  assert.equal(timeRow.children[1].textContent, '1h 30m');
-  assert.deepEqual(timeRow.children[2].children.map(node => node.textContent), ['Edit', 'Delete']);
+  assert.deepEqual(inlineValues.map(node => node.value), ['08', '00', '09', '30']);
+  assert.equal(duration.textContent, '1h 30m');
   assert.doesNotMatch(day.textContent, /acme|\d{1,2}\/\d{1,2}\/\d{4}/);
   await trigger.onclick({ isTrusted: true });
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));

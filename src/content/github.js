@@ -21,6 +21,10 @@
   let recentLoad = null;
   let editing = null;
   let editingDraft = null;
+  const inlineDrafts = new Map();
+  const inlineEditors = new Map();
+  const inlineBoundaryLinks = new Map();
+  let inlineMutation = null;
   let errorText = '';
   let errorCode = '';
   let todayReportDate = '';
@@ -161,31 +165,30 @@
     return value;
   }
 
-  function timePicker(label, original, draft = null, { onChange = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, onChange = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
-    const initial = timestampParts(template), group = el('fieldset', undefined, 'time-picker'), controls = [];
+    const initial = timestampParts(template), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
     const dateField = el('input'); controls.push(dateField); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
     const values = el('div', undefined, 'time-picker-values');
-    const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = 'time-value time-hour'; hourField.setAttribute('aria-label', `${label} hour`);
-    const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = 'time-value time-minute'; minuteField.setAttribute('aria-label', `${label} minute`);
+    const fieldClass = compact ? 'time-value inline-time-value' : 'time-value';
+    const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = `${fieldClass} time-hour`; hourField.setAttribute('aria-label', `${label} hour`);
+    const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = `${fieldClass} time-minute`; minuteField.setAttribute('aria-label', `${label} minute`);
     const currentDraft = () => ({ date: dateField.value, hour: hourField.value, minute: minuteField.value, timestamp: template });
     const validNumber = (field, maximum) => {
-      const text = String(field.value), numeric = Number(text), valid = /^\d{1,2}$/.test(text) && Number.isInteger(numeric) && numeric >= 0 && numeric <= maximum;
-      field.setAttribute('aria-invalid', String(!valid));
-      return valid;
+      const value = Number(field.value), valid = /^\d{1,2}$/.test(String(field.value)) && Number.isInteger(value) && value >= 0 && value <= maximum;
+      field.setAttribute('aria-invalid', String(!valid)); return valid;
     };
     const refreshValidity = () => validNumber(hourField, 23) && validNumber(minuteField, 59);
     const value = () => { if (!refreshValidity()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value); };
     const changed = () => { refreshValidity(); onChange(currentDraft()); };
-    const applyTimestamp = timestamp => {
+    const applyTimestamp = (timestamp, notify = false) => {
       const parts = timestampParts(timestamp); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
+      if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
-    refreshValidity();
-    values.append(hourField, el('span', ':', 'time-colon'), minuteField);
-    group.append(dateField, values);
-    return { node: group, value, draft: currentDraft, setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
+    refreshValidity(); values.append(hourField, el('span', ':', 'time-colon'), minuteField); group.append(dateField, values);
+    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
   function timestampAtOriginalOffset(original, instant) {
@@ -425,6 +428,16 @@ The previous version remains in Git history.`)) return;
     return new Date(`${date}T12:00:00Z`).toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
   }
 
+  function wallTime(parts) {
+    return new Date(`${parts.date}T${parts.hour}:${parts.minute}:00Z`).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+  }
+
+  function recentMeta(entry, startedAt = entry.startedAt, endedAt = entry.endedAt) {
+    const start = timestampParts(startedAt), end = timestampParts(endedAt);
+    const duration = Math.max(0, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
+    const endDay = end.date === start.date ? '' : `${relativeDayLabel(end.date)} `;
+    return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
+  }
 
   async function deleteRecentEntry(entry, node) {
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?
@@ -470,32 +483,203 @@ The previous version remains in Git history.`)) return;
     return overlaps;
   }
 
+  function entryWithInlineDraft(entry) {
+    const draft = inlineDrafts.get(entryKey(entry));
+    if (!draft) return entry;
+    try {
+      return {
+        ...entry,
+        startedAt: timestampFromTimeParts(draft.start.timestamp || entry.startedAt, draft.start.date, draft.start.hour, draft.start.minute),
+        endedAt: timestampFromTimeParts(draft.stop.timestamp || entry.endedAt, draft.stop.date, draft.stop.hour, draft.stop.minute),
+      };
+    } catch { return entry; }
+  }
+
+  function refreshOverlapWarnings() {
+    const overlaps = overlappingEntries(recent.map(entryWithInlineDraft));
+    for (const [key, editor] of inlineEditors) editor.setOverlap?.(overlaps.has(key));
+  }
+
+  function mergeDraftGroup(group, previousGroup) {
+    if (!previousGroup || previousGroup === group) return;
+    for (const [key, draft] of inlineDrafts) if (draft.group === previousGroup) inlineDrafts.set(key, { ...draft, group });
+  }
+
+  function boundaryId(key, boundary) { return `${key}\u0000${boundary}`; }
+
+  function rememberBoundaryLink(source, target, baseline, relation) {
+    if (!inlineBoundaryLinks.has(source)) inlineBoundaryLinks.set(source, new Map());
+    inlineBoundaryLinks.get(source).set(target, { baseline, relation });
+  }
+
+  function detachIncomingBoundaryLinks(target) {
+    for (const [source, links] of [...inlineBoundaryLinks]) {
+      links.delete(target); if (!links.size) inlineBoundaryLinks.delete(source);
+    }
+  }
+
+  function clearBoundaryLinks(keys) {
+    for (const [source, links] of [...inlineBoundaryLinks]) {
+      if (keys.has(source.split('\u0000')[0])) { inlineBoundaryLinks.delete(source); continue; }
+      for (const target of [...links.keys()]) if (keys.has(target.split('\u0000')[0])) links.delete(target);
+      if (!links.size) inlineBoundaryLinks.delete(source);
+    }
+  }
+
+  function linkCrossedTimeBoundaries(entry, boundary, group) {
+    const sequence = [...inlineEditors.entries()]
+      .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
+      .flatMap(([key, editor]) => [
+        { id: boundaryId(key, 'start'), key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, editor },
+        { id: boundaryId(key, 'stop'), key, boundary: 'stop', picker: editor.stopPicker, original: editor.entry.endedAt, editor },
+      ]);
+    const position = sequence.findIndex(item => item.key === entryKey(entry) && item.boundary === boundary);
+    if (position < 0) return;
+    let instant;
+    try { instant = new Date(sequence[position].picker.value()).getTime(); } catch { return; }
+    const source = sequence[position], touched = new Set([source.key]);
+    const apply = (item, timestamp) => {
+      const previousGroup = inlineDrafts.get(item.key)?.group;
+      mergeDraftGroup(group, previousGroup);
+      item.picker.setValue(timestampAtOriginalOffset(item.original, new Date(timestamp).getTime()));
+      touched.add(item.key);
+    };
+    detachIncomingBoundaryLinks(source.id);
+    const existing = inlineBoundaryLinks.get(source.id);
+    if (existing?.size) {
+      for (const [targetId, link] of [...existing]) {
+        const item = sequence.find(candidate => candidate.id === targetId);
+        if (!item) { existing.delete(targetId); continue; }
+        const baselineInstant = new Date(link.baseline).getTime();
+        const stillCrossed = link.relation === 'previous' ? baselineInstant > instant : baselineInstant < instant;
+        apply(item, stillCrossed ? timestampAtOriginalOffset(item.original, instant) : link.baseline);
+        if (!stillCrossed) existing.delete(targetId);
+      }
+      if (!existing.size) inlineBoundaryLinks.delete(source.id);
+    }
+    const linkedTargets = new Set(inlineBoundaryLinks.get(source.id)?.keys() || []);
+    const register = (item, relation) => {
+      const baseline = item.picker.value();
+      apply(item, timestampAtOriginalOffset(item.original, instant));
+      rememberBoundaryLink(source.id, item.id, baseline, relation); linkedTargets.add(item.id);
+    };
+    for (let index = position - 1; index >= 0; index -= 1) {
+      if (linkedTargets.has(sequence[index].id)) continue;
+      let value;
+      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
+      if (value <= instant) break;
+      register(sequence[index], 'previous');
+    }
+    for (let index = position + 1; index < sequence.length; index += 1) {
+      if (linkedTargets.has(sequence[index].id)) continue;
+      let value;
+      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
+      if (value >= instant) break;
+      register(sequence[index], 'next');
+    }
+    for (const key of touched) inlineEditors.get(key)?.updateDraft(group);
+  }
+
   function recentTimeText(entry) {
     const start = timestampParts(entry.startedAt), stop = timestampParts(entry.endedAt);
     const stopDay = stop.date === start.date ? '' : `${relativeDayLabel(stop.date)} `;
     return `${start.hour}:${start.minute} - ${stopDay}${stop.hour}:${stop.minute}`;
   }
 
+  function inlineTimeEditor(entry) {
+    const key = entryKey(entry), draft = inlineDrafts.get(key);
+    const range = el('div', undefined, 'inline-time-range entry-meta');
+    const day = el('div', relativeDayLabel((draft?.start?.date || entry.startedAt.slice(0, 10))), 'entry-day');
+    const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
+    let startPicker, stopPicker, save, cancel;
+    const updateDraft = group => {
+      if (!startPicker || !stopPicker) return;
+      const value = { start: startPicker.draft(), stop: stopPicker.draft(), group };
+      inlineDrafts.set(key, value);
+      if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
+      day.textContent = relativeDayLabel(value.start.date);
+      try {
+        const startedAt = startPicker.value(), endedAt = stopPicker.value();
+        duration.textContent = formatDuration(Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)));
+      } catch { duration.textContent = '—'; }
+      duration.title = duration.textContent;
+    };
+    const remember = boundary => {
+      const group = inlineDrafts.get(key)?.group || key;
+      updateDraft(group);
+      linkCrossedTimeBoundaries(entry, boundary, group);
+      refreshOverlapWarnings();
+    };
+    startPicker = timePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: () => remember('start') });
+    stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: () => remember('stop') });
+    const saveGroup = async () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      try {
+        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey]) => {
+          const editor = inlineEditors.get(draftKey), target = editor?.entry;
+          if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
+          const edits = { taskUrl: taskUrlOf(target), taskTitle: taskTitleOf(target), startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description: target.description || '' };
+          if (edits.startedAt === target.startedAt && edits.endedAt === target.endedAt) return null;
+          return { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits };
+        }).filter(Boolean);
+        const savedKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+        if (!entries.length) {
+          clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); renderUi(); return;
+        }
+        inlineMutation = group; renderUi();
+        await send({ type: 'EDIT_ENTRIES', payload: { entries } });
+        clearBoundaryLinks(savedKeys);
+        for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
+        inlineMutation = null; recentLoaded = false; await refreshState(false, true);
+      } catch (error) { inlineMutation = null; setError(error); }
+    };
+    save = button('Save time', 'link-button inline-save', saveGroup);
+    cancel = button('Cancel', 'link-button inline-cancel', async () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      const cancelledKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+      clearBoundaryLinks(cancelledKeys);
+      for (const draftKey of cancelledKeys) inlineDrafts.delete(draftKey);
+      renderUi();
+    });
+    save.hidden = !draft; cancel.hidden = !draft;
+    const separator = el('span', '-', 'inline-time-separator');
+    const timeLine = el('div', undefined, 'inline-time-line');
+    timeLine.append(startPicker.node, separator, stopPicker.node); range.append(timeLine);
+    inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft });
+    return { node: range, day, duration, save, cancel, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+  }
+
   function recentRecord(entry, overlaps) {
-    const overlapping = overlaps.has(entryKey(entry));
-    const record = el('div', undefined, `entry-record${overlapping ? ' entry-overlap' : ''}`);
-    if (overlapping) record.append(el('div', 'Overlaps another entry', 'overlap-warning'));
-    const day = el('div', relativeDayLabel(entry.startedAt.slice(0, 10)), 'entry-day');
-    const time = el('span', recentTimeText(entry), 'entry-time-range');
-    const durationText = formatDuration(entry.durationSeconds);
-    const duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
+    const key = entryKey(entry), overlapping = overlaps.has(key);
+    const record = el('div', undefined, 'entry-record');
+    const warning = el('div', 'Overlaps another entry', 'overlap-warning');
+    const setOverlap = active => {
+      record.classList[active ? 'add' : 'remove']('entry-overlap');
+      if (active && !warning.parentElement) record.prepend(warning);
+      else if (!active) warning.remove();
+    };
+    setOverlap(overlapping);
     const timeRow = el('div', undefined, 'entry-time-row');
-    const actions = el('div', undefined, `entry-actions${entry._pending ? ' entry-actions-visible' : ''}`);
+    let day;
     if (entry._pending) {
+      day = el('div', relativeDayLabel(entry.startedAt.slice(0, 10)), 'entry-day');
+      const time = el('span', recentTimeText(entry), 'entry-time-range');
+      const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
+      const actions = el('div', undefined, 'entry-actions entry-actions-visible');
       const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending);
+      timeRow.append(time, duration, actions);
     } else {
+      const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
+      const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(loadingRecent || !recentFresh);
-      edit.disabled = disabled; remove.disabled = disabled;
-      actions.append(edit, remove);
+      const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
+      for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
+      inline.setDisabled(disabled);
+      actions.append(inline.cancel, inline.save, edit, remove);
+      if (!inline.save.hidden) actions.classList.add('dirty');
+      timeRow.append(inline.node, inline.duration, actions);
     }
-    timeRow.append(time, duration, actions);
     record.append(day, timeRow);
     if (entry.description) record.append(el('div', entry.description, 'entry-description'));
     return record;
@@ -510,6 +694,7 @@ The previous version remains in Git history.`)) return;
   }
 
   function renderRecent(container) {
+    inlineEditors.clear();
     const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
@@ -521,7 +706,7 @@ The previous version remains in Git history.`)) return;
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recent.length) { container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
     const entries = [...recent].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-    const overlaps = overlappingEntries(entries);
+    const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
     let group = [];
     for (const entry of entries) {
       if (group.length && !sameTask(group[0], entry)) { container.append(recentGroup(group, overlaps)); group = []; }
@@ -679,8 +864,8 @@ The previous version remains in Git history.`)) return;
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range { flex:0 0 auto; color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
- label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:5px } .entry-actions { gap:1px } .entry-actions button { padding:3px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
     if (popupMode) {
       shadow.append(style, renderMenu());

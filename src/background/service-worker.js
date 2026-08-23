@@ -272,7 +272,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC',
-  'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -390,6 +390,7 @@ async function handle(message, sender) {
       return tracker.loadMenuData(50, { knownTitles });
     }
     case 'EDIT_ENTRY': return tracker.editEntry(message.payload);
+    case 'EDIT_ENTRIES': return tracker.editEntries(message.payload);
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
     case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id, message.action || '');
     default: throw new Error('Unknown extension message');

@@ -47,11 +47,17 @@ The main panel shows cached entries immediately when available and refreshes the
 
 Changing this setting does not alter stored data or limit reports. Recent data is read by monthly file rather than one API request per record.
 
-### Recent entry rows
+### Direct time correction
 
-Each completed row shows a static stored-offset `HH:MM - HH:MM` range. Duration appears immediately to its right, followed by contextual **Edit** and **Delete** actions on the same left-aligned row. Wheel and trackpad gestures never change time.
+Each completed row has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology.
 
-Choose **Edit** and type the Start or Stop date, hour, and minute directly. A correction remains in the full edit form until **Save** is selected. All form controls are disabled while a mutation is in flight, and validation or network errors keep the complete draft available for correction or retry.
+- Type an hour or minute directly in the always-visible Start/Stop inputs; opening the full **Edit** form is not required.
+- Wheel and trackpad gestures never mutate time values or trap panel scrolling, and there are no `−`/`+` step controls.
+- A direct correction remains a local draft until **Save time** is selected.
+- All relevant row controls are disabled while a mutation is in flight.
+- Validation or network errors keep the draft available for correction or retry.
+
+If the edited Start moves before the previous interval's Stop, the previous Stop moves to the new Start. If the edited Stop moves after the next interval's Start, the next Start moves to the new Stop. All touched records are preflighted and saved together. Cross-month changes use one atomic Git commit.
 
 Strict intersections are highlighted as **Overlaps another entry**. Entries that only touch at one endpoint are not overlaps.
 
@@ -79,7 +85,7 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 - Generic URL tasks appear under Open and All as `Tracked URL`; they are not presented as confirmed GitHub Open issues.
 - Completed and running time participate in ordering.
 - The task URL appears as a compact source line, with the optional title as the prominent link below it. Untitled tasks show the URL as the primary link without duplication.
-- Stored time totals use the same serialized timer state as the popup.
+- Inline direct-input time-range controls use the same serialized timer state as the popup.
 
 The page reads only the current user's monthly paths before hydrating GitHub issue/PR metadata. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 

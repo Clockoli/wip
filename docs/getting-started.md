@@ -130,13 +130,15 @@ Stop the current timer before starting another one. Pending completions must be 
 
 ## 4. Correct a record
 
-Recent rows show a static one-line `HH:MM - HH:MM` range, followed by the task duration and contextual **Edit** / **Delete** actions. Wheel and trackpad gestures do not modify the time.
+Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
-- Choose **Edit** and type the Start or Stop date, hour, and minute directly. The stored timezone offset, seconds, and fractional seconds are preserved.
-- Choose **Save** to persist the full edit, or **Cancel** to discard its draft.
+- Type the Start or Stop hour/minute directly; you do not need to open **Edit** first.
+- Wheel/trackpad gestures scroll the panel normally and do not change time; no `−`/`+` controls are shown.
+- Choose **Save time** to persist the correction, or **Cancel** to discard the draft.
+- Choose **Edit** to change the URL, optional title, Start, Stop, or description.
 - Choose **Delete** to remove an entry. The previous repository version remains in Git history.
 
-Strictly intersecting intervals are highlighted as **Overlaps another entry**; endpoint-touching intervals are allowed.
+If moving a boundary crosses the adjacent record, RepoClock changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
 
 ## 5. Open Tasks and Reports
 
