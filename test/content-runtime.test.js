@@ -432,7 +432,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
 });
 
 
-test('recent rows show durable titles and Edit uses large scrollable offset-preserving time controls', async () => {
+test('recent rows show static time details and Edit uses direct offset-preserving inputs', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -484,13 +484,14 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   assert.equal(recentUrl.textContent, 'https://github.com/acme/app/issues/7');
   assert.equal(recentTitle.textContent, 'Make ranking deterministic');
   assert.ok(createdNodes.findLast(node => node.className.includes('task-result')), 'URL and title share a Google-style task result block');
-  const inlineTimeLine = createdNodes.findLast(node => node.className.includes('inline-time-line'));
-  assert.ok(inlineTimeLine, 'Start and Stop controls share one no-wrap time line');
-  assert.deepEqual(inlineTimeLine.children.map(node => node.className), ['time-picker compact-time-picker', 'inline-time-separator', 'time-picker compact-time-picker']);
-  assert.equal(inlineTimeLine.children[1].textContent, '-');
-  const inlineTimeValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
-  assert.deepEqual(inlineTimeValues.slice(-4).map(node => node.value), ['08', '00', '23', '58'],
-    'the list exposes Start and Stop in their stored offset wall time');
+  const timeRow = createdNodes.findLast(node => node.className === 'entry-time-row');
+  assert.ok(timeRow, 'the recent record has one static detail row');
+  assert.deepEqual(timeRow.children.map(node => node.className), ['entry-time-range', 'inline-duration', 'entry-actions']);
+  assert.equal(timeRow.children[0].textContent, '08:00 - 23:58', 'the list exposes stored-offset wall time as static text');
+  assert.equal(timeRow.children[1].textContent, '15h 58m', 'duration follows Start/Stop on the same row');
+  assert.deepEqual(timeRow.children[2].children.map(node => node.textContent), ['Edit', 'Delete']);
+  assert.equal(createdNodes.some(node => node.className.includes('inline-time-value') || node.className.includes('time-step')), false,
+    'the recent row has no wheel or stepper controls');
   assert.equal(messages.findLast(message => message.type === 'LOAD_RECENT').taskTitle, 'Make ranking deterministic');
   assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'no between-entry drag control remains');
 
@@ -499,38 +500,21 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   const timeValues = createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value'));
   assert.equal(timeValues.length, 4, 'Start and Stop each expose large hour and minute values');
   assert.deepEqual(timeValues.map(node => node.getAttribute('aria-label')), ['Start hour', 'Start minute', 'Stop hour', 'Stop minute']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('role')), ['spinbutton', 'spinbutton', 'spinbutton', 'spinbutton']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-valuemin')), ['0', '0', '0', '0']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-valuemax')), ['23', '59', '23', '59']);
-  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-valuenow')), ['8', '0', '23', '58']);
-  assert.equal(createdNodes.some(node => node.className.includes('time-drag')), false, 'Edit no longer uses a drag slider');
+  assert.deepEqual(timeValues.map(node => node.type), ['text', 'text', 'text', 'text']);
+  assert.deepEqual(timeValues.map(node => node.getAttribute('aria-invalid')), ['false', 'false', 'false', 'false']);
+  assert.equal(timeValues.every(node => node.onwheel === undefined), true, 'Edit fields never capture wheel input');
+  assert.equal(createdNodes.some(node => node.className.includes('time-step') || node.className.includes('time-drag')), false,
+    'Edit uses direct text input without custom steppers or drag controls');
 
-  const stopMinute = timeValues.at(-1); document.activeElement = stopMinute;
-  stopMinute.value = ''; stopMinute.oninput({});
-  let invalidPrevented = false;
-  stopMinute.onwheel({ deltaY: -1, preventDefault() { invalidPrevented = true; } });
-  assert.equal(invalidPrevented, false, 'a partial direct-input draft does not capture page scrolling');
-  assert.equal(stopMinute.value, '', 'a partial direct-input draft is preserved instead of throwing or resetting');
-  assert.equal(stopMinute.getAttribute('aria-invalid'), 'true');
-  stopMinute.value = '59'; stopMinute.oninput({});
-  assert.equal(stopMinute.getAttribute('aria-valuenow'), '59');
-  const shadowHost = new FakeNode('div');
-  document.activeElement = shadowHost;
-  stopMinute.getRootNode = () => ({ activeElement: stopMinute });
-  const stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
-  const validStopDate = stopDate.value; stopDate.value = ''; stopDate.oninput({});
-  let invalidDatePrevented = false;
-  stopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { invalidDatePrevented = true; } });
-  assert.equal(invalidDatePrevented, false, 'an invalid date does not capture panel scrolling');
-  stopDate.value = validStopDate; stopDate.oninput({});
-  let prevented = false;
-  stopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, true, 'a focused valid time field contains the whole wheel gesture so the panel does not scroll');
-  assert.equal(stopMinute.value, '59');
-  stopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, true);
-  assert.equal(stopMinute.value, '00', 'one accumulated wheel threshold advances exactly one minute across midnight');
-  assert.equal(stopDate.value, '2026-08-19', 'cross-midnight scrolling advances the Stop date');
+  const startHour = timeValues[0], startMinute = timeValues[1];
+  startMinute.value = ''; startMinute.oninput({});
+  assert.equal(startMinute.value, '', 'a partial direct-input draft is preserved instead of throwing or resetting');
+  assert.equal(startMinute.getAttribute('aria-invalid'), 'true');
+  startHour.value = '23'; startHour.oninput({});
+  startMinute.value = '59'; startMinute.oninput({});
+  assert.equal(startMinute.getAttribute('aria-invalid'), 'false');
+  assert.deepEqual(timeValues.map(node => node.value), ['23', '59', '23', '59'],
+    'crossing Start reconciles Stop in the direct Edit form');
 
   const titleDraft = createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1);
   const descriptionDraft = createdNodes.filter(node => node.tag === 'textarea').at(-1);
@@ -539,13 +523,14 @@ test('recent rows show durable titles and Edit uses large scrollable offset-pres
   await form.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.filter(node => node.tag === 'input' && node.maxLength === 300).at(-1).value, 'Edited deterministic ranking');
   assert.equal(createdNodes.filter(node => node.tag === 'textarea').at(-1).value, 'Preserve this draft');
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['08', '00', '00', '00'],
-    'a conflict rerender preserves the complete typed and scrolled draft');
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('time-value') && !node.className.includes('inline-time-value')).slice(-4).map(node => node.value), ['23', '59', '23', '59'],
+    'a conflict rerender preserves the complete directly typed and reconciled draft');
   const retryForm = createdNodes.filter(node => node.tag === 'form').at(-1);
   await retryForm.onsubmit({ isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRY');
-  assert.equal(editMessage.payload.edits.startedAt, entry.startedAt, 'unchanged Start keeps its original wall time, seconds, milliseconds, and offset');
-  assert.equal(editMessage.payload.edits.endedAt, '2026-08-19T00:00:27.123-07:00');
+  assert.equal(editMessage.payload.edits.startedAt, '2026-08-18T23:59:11.321-07:00', 'changed Start keeps its original seconds, milliseconds, and offset');
+  assert.equal(editMessage.payload.edits.endedAt, '2026-08-18T23:59:11.321-07:00',
+    'reconciled Stop keeps the exact Start instant after conflict rerender and retry');
 });
 
 
@@ -666,14 +651,14 @@ test('consecutive records for one task share one task header and keep separate t
     [issue(7).url, issue(8).url, issue(7).url], 'each grouped title retains its canonical URL source line');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
+  assert.equal(createdNodes.filter(node => node.className === 'entry-time-row').slice(-4).length, 4);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-edit')).slice(-4).length, 4,
     'each time record remains independently editable');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-delete')).slice(-4).length, 4,
     'each time record remains independently deletable');
 });
 
-test('main-panel times are directly scrollable, relative-day labeled, and overlapping records are highlighted', async () => {
+test('main-panel times are static, left-aligned, relative-day labeled, and overlapping records are highlighted', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -706,11 +691,6 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'EDIT_ENTRIES') {
-        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), true,
-          'the complete current and sibling inline editors are locked while Save time is in flight');
-        callback({ ok: true, data: {} });
-      }
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},
@@ -721,117 +701,23 @@ test('main-panel times are directly scrollable, relative-day labeled, and overla
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('entry-day')).slice(-4).map(node => node.textContent),
+  assert.deepEqual(createdNodes.filter(node => node.className === 'entry-day').slice(-4).map(node => node.textContent),
     ['Today', 'Today', 'Yesterday', 'Wed']);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-overlap')).slice(-2).length, 2);
   assert.equal(createdNodes.filter(node => node.className.includes('overlap-warning')).slice(-2).length, 2);
-  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
-  assert.equal(inlineValues.length, 16, 'every main-panel record exposes Start and Stop hour/minute spinbuttons');
-  assert.equal(createdNodes.filter(node => node.className.includes('inline-save')).slice(-4).every(node => node.hidden), true);
-
-  const firstStopMinute = inlineValues[7];
-  document.activeElement = new FakeNode('div');
-  firstStopMinute.getRootNode = () => ({ activeElement: firstStopMinute });
-  let prevented = false;
-  firstStopMinute.onwheel({ deltaY: -1, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, true, 'focused inline time contains the whole wheel gesture');
-  assert.equal(firstStopMinute.value, '00');
-  firstStopMinute.onwheel({ deltaY: -79, deltaMode: 0, preventDefault() { prevented = true; } });
-  assert.equal(prevented, true);
-  assert.equal(firstStopMinute.value, '01');
-  const save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
-  assert.equal(save.hidden, false, 'scrolling a main-panel value reveals an explicit Save action');
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
-  assert.equal(edit.payload.entries.length, 2, 'the crossed neighboring Start is saved in the same atomic group');
-  assert.equal(edit.payload.entries[0].originalSha, 'same');
-  assert.equal(edit.payload.entries[0].edits.endedAt, '2026-08-21T15:01:00+00:00');
-  assert.equal(edit.payload.entries[1].edits.startedAt, '2026-08-21T15:01:00+00:00');
-
-  const refreshedInlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
-  const secondStartMinute = refreshedInlineValues[1];
-  secondStartMinute.getRootNode = () => ({ activeElement: secondStartMinute });
-  let startPrevented = false;
-  secondStartMinute.onwheel({ deltaY: 1, deltaMode: 0, preventDefault() { startPrevented = true; } });
-  assert.equal(startPrevented, true, 'focused linked time contains the whole wheel gesture');
-  assert.equal(secondStartMinute.value, '30');
-  secondStartMinute.onwheel({ deltaY: 79, deltaMode: 0, preventDefault() { startPrevented = true; } });
-  assert.equal(startPrevented, true);
-  assert.equal(secondStartMinute.value, '29');
-  const mirroredSave = createdNodes.filter(node => node.className.includes('inline-save')).slice(-4)[0];
-  assert.equal(mirroredSave.hidden, false, 'crossing Start reveals Save on the edited record');
-  await mirroredSave.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const mirroredEdit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
-  assert.equal(mirroredEdit.payload.entries.length, 2, 'the crossed previous Stop is saved in the same atomic group');
-  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T14:29:00+00:00');
-  assert.equal(mirroredEdit.payload.entries[1].edits.endedAt, '2026-08-21T14:29:00+00:00');
+  const rows = createdNodes.filter(node => node.className === 'entry-time-row').slice(-4);
+  assert.deepEqual(rows.map(row => row.children.map(node => node.className)), Array(4).fill(['entry-time-range', 'inline-duration', 'entry-actions']));
+  assert.deepEqual(rows.map(row => row.children[0].textContent), ['14:30 - 16:00', '14:00 - 15:00', '12:00 - 12:30', '09:00 - 09:15']);
+  assert.deepEqual(rows.map(row => row.children[1].textContent), ['1h 30m', '1h 0m', '30m', '15m']);
+  assert.equal(createdNodes.some(node => node.className.includes('inline-time-value') || node.className.includes('time-step')), false);
+  for (const row of rows) {
+    const actionsNode = row.children[2];
+    assert.deepEqual(actionsNode.children.map(node => node.textContent), ['Edit', 'Delete']);
+    assert.equal(actionsNode.parentElement, row, 'Edit/Delete share the exact Start/Stop and duration row');
+  }
+  assert.equal(messages.some(message => message.type === 'EDIT_ENTRIES'), false, 'opening recent rows performs no inline time mutation');
 });
 
-test('wheel-linked newer Start and previous Stop save as touching intervals without an overlap warning', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
-  const makeEntry = (id, number, start, end, index) => ({
-    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
-    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
-    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
-  });
-  let entries = [
-    makeEntry('older', 7, '2026-08-21T14:00:00.111+00:00', '2026-08-21T15:00:43.324+00:00', 0),
-    makeEntry('newer', 8, '2026-08-21T15:00:06.768+00:00', '2026-08-21T16:00:00.999+00:00', 1),
-  ];
-  const document = {
-    documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'EDIT_ENTRIES') {
-        for (const request of message.payload.entries) {
-          const position = entries.findIndex(entry => entry._index === request.index);
-          entries[position] = { ...entries[position], ...request.edits,
-            entryDate: request.edits.startedAt.slice(0, 10),
-            durationSeconds: (new Date(request.edits.endedAt) - new Date(request.edits.startedAt)) / 1000,
-            _sha: 'saved' };
-        }
-        callback({ ok: true, data: entries });
-      } else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const visibleOverlapWarnings = () => createdNodes.filter(node => node.className.includes('overlap-warning') && node.isConnected);
-  assert.equal(visibleOverlapWarnings().length, 2, 'a seconds-only overlap is initially visible even though both boundaries display 15:00');
-
-  const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
-  const newerStartMinute = values[1];
-  newerStartMinute.getRootNode = () => ({ activeElement: newerStartMinute });
-  newerStartMinute.onwheel({ deltaY: 80, deltaMode: 0, preventDefault() {} });
-  assert.equal(newerStartMinute.value, '59');
-  assert.equal(values[7].value, '59', 'the older Stop mirrors the newer Start immediately');
-  assert.equal(visibleOverlapWarnings().length, 0, 'linked wheel drafts clear the stale overlap warning before Save');
-  const save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
-  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
-    ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
-  ]);
-  assert.equal(visibleOverlapWarnings().length, 0,
-    'the refreshed linked result remains endpoint-touching, not overlapping');
-});
 
 test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -1062,11 +948,12 @@ test('main panel shows today total and opens Reports before Settings', async () 
   rotate(); assert.equal(total.children[0].textContent, 'Last week:');
   rotate(); assert.equal(total.children[0].textContent, 'This month:');
   const day = createdNodes.findLast(node => node.className === 'entry-day');
-  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
-  const duration = createdNodes.findLast(node => node.className === 'inline-duration');
+  const timeRow = createdNodes.findLast(node => node.className === 'entry-time-row');
   assert.equal(day.textContent, 'Today');
-  assert.deepEqual(inlineValues.map(node => node.value), ['08', '00', '09', '30']);
-  assert.equal(duration.textContent, '1h 30m');
+  assert.deepEqual(timeRow.children.map(node => node.className), ['entry-time-range', 'inline-duration', 'entry-actions']);
+  assert.equal(timeRow.children[0].textContent, '08:00 - 09:30');
+  assert.equal(timeRow.children[1].textContent, '1h 30m');
+  assert.deepEqual(timeRow.children[2].children.map(node => node.textContent), ['Edit', 'Delete']);
   assert.doesNotMatch(day.textContent, /acme|\d{1,2}\/\d{1,2}\/\d{4}/);
   await trigger.onclick({ isTrusted: true });
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));

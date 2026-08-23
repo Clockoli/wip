@@ -7,6 +7,7 @@ const optionsHtml = await readFile(new URL('src/options/options.html', root), 'u
 const optionsJs = await readFile(new URL('src/options/options.js', root), 'utf8');
 const optionsCss = await readFile(new URL('src/options/options.css', root), 'utf8');
 const popupHtml = await readFile(new URL('src/popup/popup.html', root), 'utf8');
+const popupCss = await readFile(new URL('src/popup/popup.css', root), 'utf8');
 const content = await readFile(new URL('src/content/github.js', root), 'utf8');
 const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
@@ -71,20 +72,6 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /Time tracker panel\. Scroll for more content/);
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
   assert.ok(content.includes("shadow?.querySelector?.('.time-value')?.focus?.()"));
-  assert.match(content, /const timeLine = el\('div', undefined, 'inline-time-line'\)/);
-  assert.match(content, /timeLine\.append\(startPicker\.node, separator, stopPicker\.node\)/);
-  assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);
-  assert.match(content, /@media\(max-width:340px\) \{ \.inline-time-line \{ gap:2px \} \.compact-time-picker \.time-picker-values \{ gap:1px \} \}/,
-    'the minimum supported panel width tightens only spacing, never wraps the time range');
-  assert.match(content, /\.entry-actions\.dirty \{[^}]*flex-basis:100%[^}]*justify-content:flex-end/,
-    'Save/Cancel move below the time range instead of squeezing From, the separator, and To together');
-  assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);
-  assert.doesNotMatch(content, /\.compact-time-picker legend \{[^}]*position:static/);
-  assert.match(content, /\.compact-time-picker \.time-unit:focus-within \{[^}]*height:88px/,
-    'focused compact units reserve vertical space for their controls without widening the time line');
-  assert.match(content, /\.compact-time-picker \.time-step:first-child \{ top:0 \}/);
-  assert.match(content, /\.compact-time-picker \.time-step:last-child \{ bottom:0 \}/);
-  assert.doesNotMatch(content, /\.compact-time-picker \.time-step:first-child \{ right:calc\(100% \+ 2px\) \}/);
   assert.match(content, /\.task-result-untitled \.task-url \{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
     'untitled URLs stay clamped even at the 2,048-character identity limit');
   assert.match(content, /url\.title = taskUrl/,
@@ -93,6 +80,28 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
     'maximum-length optional titles are limited to two result lines');
   assert.match(content, /title\.title = taskTitle/,
     'the full clamped title remains exposed as native accessible text');
+});
+
+
+test('popup shell uses the viewport instead of forcing horizontal overflow below 380px', () => {
+  assert.match(popupCss, /@media\(max-width:380px\)\{html,body\{width:100vw;min-width:0\}\}/);
+  assert.doesNotMatch(popupCss, /@media\(max-width:380px\).*width:360px/);
+});
+
+
+test('recent entries use a static left-aligned time row with duration and actions, never wheel editing', () => {
+  assert.doesNotMatch(content, /WHEEL_THRESHOLD|wheelRemainder|addEventListener\('wheel'|inlineDrafts|inlineTimeEditor|inline-time-value|time-step/);
+  assert.match(content, /const timeRow = el\('div', undefined, 'entry-time-row'\)/);
+  assert.match(content, /timeRow\.append\(time, duration, actions\)/,
+    'Start/Stop, duration, Edit, and Delete share the same row in that order');
+  assert.match(content, /\.entry-time-row \{[^}]*display:flex[^}]*justify-content:flex-start[^}]*white-space:nowrap/,
+    'the row starts at the same left edge as its Today/Yesterday label');
+  assert.match(content, /\.inline-duration \{[^}]*flex:0 1 auto[^}]*min-width:0[^}]*text-overflow:ellipsis/,
+    'an unusually long duration shrinks before it can force horizontal overflow');
+  assert.match(content, /duration\.title = durationText/,
+    'the full duration remains available when narrow layout ellipsizes it');
+  assert.doesNotMatch(content, /\.entry-actions \{[^}]*margin-left:auto/,
+    'actions stay beside duration instead of moving to the far edge');
 });
 
 
@@ -112,21 +121,7 @@ test('opening the tracker renders cached entries and refreshes them without a se
   assert.match(serviceWorker, /configured: true, active, recent: state\.recent/);
   assert.match(content, /if \(!recentLoaded && Array\.isArray\(data\?\.recent\) && data\.recent\.length\) applyMenuData\(data\.recent, false\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
-  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
+  assert.match(content, /loadingRecent \|\| !recentFresh/);
   assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
   assert.doesNotMatch(content, /Open the menu again to load entries/);
-});
-
-
-test('focused minute wheel input accumulates trackpad movement and changes one minute at a time', () => {
-  assert.match(content, /WHEEL_THRESHOLD/);
-  assert.match(content, /wheelRemainder/);
-  assert.match(content, /unit\(minuteField, 'minute', 1, 59\)/);
-  assert.doesNotMatch(content, /unit\(minuteField, 'minute', 5, 59\)/);
-});
-
-test('main-panel time drafts link crossed neighboring boundaries before save', () => {
-  assert.match(content, /linkCrossedTimeBoundaries/);
-  assert.match(content, /EDIT_ENTRIES/);
-  assert.doesNotMatch(content, /Stop time must not be before Start time\./);
 });

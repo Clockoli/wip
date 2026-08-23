@@ -1,2 +1,2 @@
 @import url("../styles/github-primer.css");
-html,body{margin:0;width:420px;min-height:220px;overflow:hidden;background:var(--bgColor-default);color:var(--fgColor-default);color-scheme:light dark}body{display:block}@media(max-width:380px){html,body{width:360px}}
+html,body{margin:0;width:420px;min-height:220px;overflow:hidden;background:var(--bgColor-default);color:var(--fgColor-default);color-scheme:light dark}body{display:block}@media(max-width:380px){html,body{width:100vw;min-width:0}}

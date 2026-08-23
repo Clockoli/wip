@@ -30,16 +30,12 @@ test('header menu exposes recent-entry management without exposing the token', (
 });
 
 
-test('time adjustment controls use focused wheel and keyboard input without page-level drag handlers', () => {
-  assert.match(source, /addEventListener\('wheel'/);
-  assert.match(source, /passive: false/);
-  assert.match(source, /field\.getRootNode\?\.\(\)/);
-  assert.match(source, /root\?\.activeElement \?\? document\.activeElement/);
-  assert.match(source, /ArrowUp/);
-  assert.match(source, /ArrowDown/);
-  assert.match(source, /PageUp/);
-  assert.match(source, /PageDown/);
-  assert.match(source, /event\.preventDefault\(\)[\s\S]*wheelRemainder \+=/, 'a focused valid time field contains sub-threshold wheel movement');
+test('time adjustment uses direct input without wheel, keyboard stepping, or drag handlers', () => {
+  assert.match(source, /function timePicker\(/);
+  assert.match(source, /hourField\.addEventListener\('input', changed\)/);
+  assert.match(source, /minuteField\.addEventListener\('input', changed\)/);
+  assert.doesNotMatch(source, /addEventListener\('wheel'|passive: false|WHEEL_THRESHOLD|wheelRemainder/);
+  assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown|time-step/);
   assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
 });
 
@@ -48,15 +44,16 @@ test('successful Sync and refresh clears a stale boundary conflict message', () 
 });
 
 
-test('grouped recent records reveal contextual actions and large accessible time controls without boundary elements', () => {
+test('grouped recent records use one static left-aligned row with contextual actions and direct Edit fields', () => {
+  assert.match(source, /entry-time-row/);
+  assert.match(source, /entry-time-range/);
   assert.match(source, /entry-actions/);
   assert.match(source, /entry-delete/);
   assert.match(source, /\.entry-actions\s*\{[^}]*opacity:0[^}]*pointer-events:none/);
-  assert.match(source, /\.entry-record:hover \.entry-actions,\.entry-record:focus-within \.entry-actions,\.entry-actions\.dirty\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
+  assert.match(source, /\.entry-record:hover \.entry-actions,\.entry-record:focus-within \.entry-actions,\.entry-actions-visible\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
   assert.match(source, /\.time-value\s*\{[^}]*font:700 26px/);
-  assert.match(source, /\.time-step\s*\{[^}]*opacity:0[^}]*pointer-events:none/);
-  assert.match(source, /\.time-unit:focus-within \.time-step\s*\{[^}]*opacity:1[^}]*pointer-events:auto/);
   assert.match(source, /aria-label', `\$\{label\} hour`/);
   assert.match(source, /aria-label', `\$\{label\} minute`/);
+  assert.doesNotMatch(source, /inline-time-value|inlineTimeEditor|EDIT_ENTRIES|time-step/);
   assert.doesNotMatch(source, /time-boundary|bindBoundaryVisibility|drag-line|drag-grip/);
 });

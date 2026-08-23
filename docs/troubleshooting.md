@@ -144,18 +144,9 @@ RepoClock could not prove that the timer was completed. It reports the missing-a
 
 ## Editing time
 
-### Scrolling does not change the minute immediately
+### Scrolling does not change the time
 
-This is intentional. RepoClock accumulates a deliberate amount of wheel/trackpad movement and changes one minute at a time. Click or focus the value first. While a valid time value is focused, RepoClock keeps the panel still and contains the entire wheel gesture; `−` and `+` appear for that value. You can also type the minute directly.
-
-### Editing one row changed a neighboring row
-
-RepoClock maintains the chronological boundary between adjacent records:
-
-- moving Start into the previous interval moves the previous Stop;
-- moving Stop into the next interval moves the next Start.
-
-The panel updates both rows immediately and saves them as one atomic operation. Choose **Cancel** before saving if that is not the intended correction.
+This is intentional. Recent rows are static and RepoClock never captures wheel or trackpad gestures to change time. Choose **Edit**, type the Start or Stop date, hour, and minute directly, then choose **Save**.
 
 ### “Overlaps another entry” remains visible
 

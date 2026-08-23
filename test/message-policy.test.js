@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { assertMessageAllowed, issueForStart, taskUrlForStart } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
+const serviceWorker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
@@ -17,10 +19,10 @@ test('content scripts receive only page-safe state and timer actions', () => {
 
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
-  for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
+  for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT', 'EDIT_ENTRIES', 'MOVE_BOUNDARY']) {
     assert.throws(() => assertMessageAllowed(type, dashboard, origin), /not allowed/i);
   }
 });
@@ -56,8 +58,17 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'MOVE_BOUNDARY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
-  for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRY', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['GET_STATE', 'SAVE_CONFIG', 'EDIT_ENTRIES', 'MOVE_BOUNDARY']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
+});
+
+
+test('removed inline and boundary editors have no privileged message route', () => {
+  for (const type of ['EDIT_ENTRIES', 'MOVE_BOUNDARY']) {
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+    assert.throws(() => assertMessageAllowed(type, extension, origin), /not allowed/i);
+  }
+  assert.doesNotMatch(serviceWorker, /case 'EDIT_ENTRIES'|case 'MOVE_BOUNDARY'/);
 });
 
 

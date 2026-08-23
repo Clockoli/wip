@@ -6,7 +6,6 @@
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
   const REPORTS_PATH = 'M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z';
-  const WHEEL_THRESHOLD = 80;
   const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
   let lastRoute = null;
   let tick = null;
@@ -22,9 +21,6 @@
   let recentLoad = null;
   let editing = null;
   let editingDraft = null;
-  const inlineDrafts = new Map();
-  const inlineEditors = new Map();
-  let inlineMutation = null;
   let errorText = '';
   let errorCode = '';
   let todayReportDate = '';
@@ -165,78 +161,31 @@
     return value;
   }
 
-  function scrollableTimePicker(label, original, draft = null, { compact = false, onChange = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { onChange = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
-    const initial = timestampParts(template), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
+    const initial = timestampParts(template), group = el('fieldset', undefined, 'time-picker'), controls = [];
     group.append(el('legend', label));
     const dateField = el('input'); controls.push(dateField); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
     const values = el('div', undefined, 'time-picker-values');
-    const fieldClass = compact ? 'time-value inline-time-value' : 'time-value';
-    const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = `${fieldClass} time-hour`; hourField.setAttribute('aria-label', `${label} hour`);
-    const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = `${fieldClass} time-minute`; minuteField.setAttribute('aria-label', `${label} minute`);
+    const hourField = el('input'); controls.push(hourField); hourField.type = 'text'; hourField.inputMode = 'numeric'; hourField.maxLength = 2; hourField.value = draft?.hour ?? initial.hour; hourField.className = 'time-value time-hour'; hourField.setAttribute('aria-label', `${label} hour`);
+    const minuteField = el('input'); controls.push(minuteField); minuteField.type = 'text'; minuteField.inputMode = 'numeric'; minuteField.maxLength = 2; minuteField.value = draft?.minute ?? initial.minute; minuteField.className = 'time-value time-minute'; minuteField.setAttribute('aria-label', `${label} minute`);
     const currentDraft = () => ({ date: dateField.value, hour: hourField.value, minute: minuteField.value, timestamp: template });
-    const updateSpinbutton = (field, unitLabel, maximum) => {
-      field.setAttribute('role', 'spinbutton'); field.setAttribute('aria-valuemin', '0'); field.setAttribute('aria-valuemax', String(maximum));
+    const validNumber = (field, maximum) => {
       const text = String(field.value), numeric = Number(text), valid = /^\d{1,2}$/.test(text) && Number.isInteger(numeric) && numeric >= 0 && numeric <= maximum;
       field.setAttribute('aria-invalid', String(!valid));
-      if (valid) {
-        field.setAttribute('aria-valuenow', String(numeric)); field.setAttribute('aria-valuetext', `${String(numeric).padStart(2, '0')} ${unitLabel}`);
-      } else {
-        field.removeAttribute('aria-valuenow'); field.removeAttribute('aria-valuetext');
-      }
       return valid;
     };
-    const refreshSpinbuttons = () => {
-      const hourValid = updateSpinbutton(hourField, 'hour', 23), minuteValid = updateSpinbutton(minuteField, 'minute', 59);
-      return hourValid && minuteValid;
+    const refreshValidity = () => validNumber(hourField, 23) && validNumber(minuteField, 59);
+    const value = () => { if (!refreshValidity()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value); };
+    const changed = () => { refreshValidity(); onChange(currentDraft()); };
+    const applyTimestamp = timestamp => {
+      const parts = timestampParts(timestamp); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
     };
-    const value = () => { if (!refreshSpinbuttons()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value); };
-    const changed = () => onChange(currentDraft());
-    const applyTimestamp = (timestamp, notify = true) => {
-      const parts = timestampParts(timestamp); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshSpinbuttons();
-      if (notify) changed();
-    };
-    const shift = minutes => {
-      try { applyTimestamp(timestampAtOriginalOffset(original, new Date(value()).getTime() + minutes * 60000)); return true; }
-      catch { refreshSpinbuttons(); return false; }
-    };
-    const unit = (field, unitLabel, step, maximum) => {
-      const column = el('div', undefined, 'time-unit');
-      let wheelRemainder = 0, lastWheelAt = 0;
-      const increase = button('⌃', 'time-step', async () => { shift(step); }); increase.setAttribute('aria-label', `Increase ${label} ${unitLabel}`); increase.title = `Increase ${unitLabel}`;
-      const decrease = button('⌄', 'time-step', async () => { shift(-step); }); controls.push(increase, decrease); decrease.setAttribute('aria-label', `Decrease ${label} ${unitLabel}`); decrease.title = `Decrease ${unitLabel}`;
-      updateSpinbutton(field, unitLabel, maximum);
-      field.addEventListener('input', () => { updateSpinbutton(field, unitLabel, maximum); changed(); });
-      field.addEventListener('keydown', event => {
-        event.stopPropagation();
-        const amount = event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : event.key === 'PageUp' ? step * 6 : event.key === 'PageDown' ? -step * 6 : 0;
-        if (!amount) return;
-        event.preventDefault(); shift(amount);
-      });
-      field.addEventListener('wheel', event => {
-        const root = field.getRootNode?.();
-        if ((root?.activeElement ?? document.activeElement) !== field || !event.deltaY) return;
-        try { value(); } catch { return; }
-        event.preventDefault();
-        const now = Date.now(), direction = Math.sign(event.deltaY);
-        if (now - lastWheelAt > 400 || Math.sign(wheelRemainder) !== direction) wheelRemainder = 0;
-        lastWheelAt = now;
-        const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 240 : 1;
-        wheelRemainder += event.deltaY * multiplier;
-        if (Math.abs(wheelRemainder) < WHEEL_THRESHOLD) return;
-        const amount = wheelRemainder < 0 ? step : -step;
-        wheelRemainder = 0;
-        shift(amount);
-      }, { passive: false });
-      if (compact) { increase.textContent = '+'; decrease.textContent = '−'; column.append(decrease, field, increase); }
-      else column.append(increase, field, decrease);
-      return column;
-    };
-    dateField.addEventListener('input', changed);
-    values.append(unit(hourField, 'hour', 60, 23), el('span', ':', 'time-colon'), unit(minuteField, 'minute', 1, 59));
+    dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
+    refreshValidity();
+    values.append(hourField, el('span', ':', 'time-colon'), minuteField);
     group.append(dateField, values);
-    if (!compact) group.append(el('div', 'Scroll or use ↑/↓', 'time-hint'));
-    return { node: group, value, draft: currentDraft, reset: () => applyTimestamp(original), setValue: (timestamp, notify = false) => applyTimestamp(timestamp, notify), setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
+    return { node: group, value, draft: currentDraft, setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
   function timestampAtOriginalOffset(original, instant) {
@@ -431,8 +380,8 @@
       } catch { /* preserve incomplete direct-input drafts until submit */ }
       finally { adjusting = false; }
     };
-    startPicker = scrollableTimePicker('Start', editing.startedAt, draft?.start, { onChange: () => reconcile('start') });
-    stopPicker = scrollableTimePicker('Stop', editing.endedAt, draft?.stop, { onChange: () => reconcile('stop') });
+    startPicker = timePicker('Start', editing.startedAt, draft?.start, { onChange: () => reconcile('start') });
+    stopPicker = timePicker('Stop', editing.endedAt, draft?.stop, { onChange: () => reconcile('stop') });
     const description = el('textarea'); description.maxLength = 2000; description.rows = 3; description.value = draft?.description ?? editing.description ?? '';
     const fieldLabel = (text, field) => { const label = el('label', text); label.append(field); return label; };
     form.append(fieldLabel('Task URL', urlField), fieldLabel('Task title (optional)', titleField));
@@ -476,16 +425,6 @@ The previous version remains in Git history.`)) return;
     return new Date(`${date}T12:00:00Z`).toLocaleDateString([], { weekday: 'short', timeZone: 'UTC' });
   }
 
-  function wallTime(parts) {
-    return new Date(`${parts.date}T${parts.hour}:${parts.minute}:00Z`).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-  }
-
-  function recentMeta(entry, startedAt = entry.startedAt, endedAt = entry.endedAt) {
-    const start = timestampParts(startedAt), end = timestampParts(endedAt);
-    const duration = Math.max(0, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
-    const endDay = end.date === start.date ? '' : `${relativeDayLabel(end.date)} `;
-    return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
-  }
 
   async function deleteRecentEntry(entry, node) {
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?
@@ -531,146 +470,33 @@ The previous version remains in Git history.`)) return;
     return overlaps;
   }
 
-  function entryWithInlineDraft(entry) {
-    const draft = inlineDrafts.get(entryKey(entry));
-    if (!draft) return entry;
-    try {
-      return {
-        ...entry,
-        startedAt: timestampFromTimeParts(draft.start.timestamp || entry.startedAt, draft.start.date, draft.start.hour, draft.start.minute),
-        endedAt: timestampFromTimeParts(draft.stop.timestamp || entry.endedAt, draft.stop.date, draft.stop.hour, draft.stop.minute),
-      };
-    } catch { return entry; }
-  }
-
-  function refreshOverlapWarnings() {
-    const overlaps = overlappingEntries(recent.map(entryWithInlineDraft));
-    for (const [key, editor] of inlineEditors) editor.setOverlap?.(overlaps.has(key));
-  }
-
-  function mergeDraftGroup(group, previousGroup) {
-    if (!previousGroup || previousGroup === group) return;
-    for (const [key, draft] of inlineDrafts) if (draft.group === previousGroup) inlineDrafts.set(key, { ...draft, group });
-  }
-
-  function linkCrossedTimeBoundaries(entry, boundary, group) {
-    const sequence = [...inlineEditors.entries()]
-      .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
-      .flatMap(([key, editor]) => [
-        { key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, editor },
-        { key, boundary: 'stop', picker: editor.stopPicker, original: editor.entry.endedAt, editor },
-      ]);
-    const position = sequence.findIndex(item => item.key === entryKey(entry) && item.boundary === boundary);
-    if (position < 0) return;
-    let instant;
-    try { instant = new Date(sequence[position].picker.value()).getTime(); } catch { return; }
-    const touched = new Set([sequence[position].key]);
-    const link = item => {
-      const previousGroup = inlineDrafts.get(item.key)?.group;
-      mergeDraftGroup(group, previousGroup);
-      item.picker.setValue(timestampAtOriginalOffset(item.original, instant));
-      touched.add(item.key);
-    };
-    for (let index = position - 1; index >= 0; index -= 1) {
-      let value;
-      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
-      if (value <= instant) break;
-      link(sequence[index]);
-    }
-    for (let index = position + 1; index < sequence.length; index += 1) {
-      let value;
-      try { value = new Date(sequence[index].picker.value()).getTime(); } catch { break; }
-      if (value >= instant) break;
-      link(sequence[index]);
-    }
-    for (const key of touched) inlineEditors.get(key)?.updateDraft(group);
-  }
-
-  function inlineTimeEditor(entry) {
-    const key = entryKey(entry), draft = inlineDrafts.get(key);
-    const range = el('div', undefined, 'inline-time-range entry-meta');
-    const day = el('span', relativeDayLabel((draft?.start?.date || entry.startedAt.slice(0, 10))), 'entry-day');
-    const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration');
-    let startPicker, stopPicker, save, cancel;
-    const updateDraft = group => {
-      if (!startPicker || !stopPicker) return;
-      const value = { start: startPicker.draft(), stop: stopPicker.draft(), group };
-      inlineDrafts.set(key, value);
-      if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
-      day.textContent = relativeDayLabel(value.start.date);
-      try {
-        const startedAt = startPicker.value(), endedAt = stopPicker.value();
-        duration.textContent = formatDuration(Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)));
-      } catch { duration.textContent = '—'; }
-    };
-    const remember = boundary => {
-      const group = inlineDrafts.get(key)?.group || key;
-      updateDraft(group);
-      linkCrossedTimeBoundaries(entry, boundary, group);
-      refreshOverlapWarnings();
-    };
-    startPicker = scrollableTimePicker('Start', entry.startedAt, draft?.start, { compact: true, onChange: () => remember('start') });
-    stopPicker = scrollableTimePicker('Stop', entry.endedAt, draft?.stop, { compact: true, onChange: () => remember('stop') });
-    const saveGroup = async () => {
-      const group = inlineDrafts.get(key)?.group || key;
-      const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey]) => {
-        const editor = inlineEditors.get(draftKey), target = editor?.entry;
-        if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
-        return {
-          path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target),
-          edits: { taskUrl: taskUrlOf(target), taskTitle: taskTitleOf(target), startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description: target.description || '' },
-        };
-      });
-      inlineMutation = group; renderUi();
-      try {
-        await send({ type: 'EDIT_ENTRIES', payload: { entries } });
-        for (const [draftKey, value] of inlineDrafts) if (value.group === group) inlineDrafts.delete(draftKey);
-        inlineMutation = null; recentLoaded = false; await refreshState(false, true);
-      } catch (error) { inlineMutation = null; setError(error); }
-    };
-    save = button('Save time', 'link-button inline-save', saveGroup);
-    cancel = button('Cancel', 'link-button inline-cancel', async () => {
-      const group = inlineDrafts.get(key)?.group || key;
-      for (const [draftKey, value] of inlineDrafts) if (value.group === group) inlineDrafts.delete(draftKey);
-      renderUi();
-    });
-    save.hidden = !draft; cancel.hidden = !draft;
-    const separator = el('span', '-', 'inline-time-separator');
-    const meta = el('div', undefined, 'inline-time-meta'); meta.append(day, duration);
-    const timeLine = el('div', undefined, 'inline-time-line');
-    timeLine.append(startPicker.node, separator, stopPicker.node);
-    range.append(meta, timeLine);
-    inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft });
-    return { node: range, save, cancel, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+  function recentTimeText(entry) {
+    const start = timestampParts(entry.startedAt), stop = timestampParts(entry.endedAt);
+    const stopDay = stop.date === start.date ? '' : `${relativeDayLabel(stop.date)} `;
+    return `${start.hour}:${start.minute} - ${stopDay}${stop.hour}:${stop.minute}`;
   }
 
   function recentRecord(entry, overlaps) {
-    const key = entryKey(entry), overlapping = overlaps.has(key);
-    const record = el('div', undefined, 'entry-record');
-    const warning = el('div', 'Overlaps another entry', 'overlap-warning');
-    const setOverlap = active => {
-      record.classList[active ? 'add' : 'remove']('entry-overlap');
-      if (active && !warning.parentElement) record.prepend(warning);
-      else if (!active) warning.remove();
-    };
-    setOverlap(overlapping);
-    const top = el('div', undefined, 'entry-row');
+    const overlapping = overlaps.has(entryKey(entry));
+    const record = el('div', undefined, `entry-record${overlapping ? ' entry-overlap' : ''}`);
+    if (overlapping) record.append(el('div', 'Overlaps another entry', 'overlap-warning'));
+    const day = el('div', relativeDayLabel(entry.startedAt.slice(0, 10)), 'entry-day');
+    const time = el('span', recentTimeText(entry), 'entry-time-range');
+    const durationText = formatDuration(entry.durationSeconds);
+    const duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
+    const timeRow = el('div', undefined, 'entry-time-row');
+    const actions = el('div', undefined, `entry-actions${entry._pending ? ' entry-actions-visible' : ''}`);
     if (entry._pending) {
-      const meta = el('div', recentMeta(entry), 'entry-meta');
-      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; top.append(meta, pending);
+      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending);
     } else {
-      const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions');
-      const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const edit = button('Edit', 'entry-edit', async () => { editing = entry; editingDraft = null; renderUi(); shadow?.querySelector?.('.time-value')?.focus?.(); });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
-      for (const control of [inline.save, inline.cancel, edit, remove]) control.disabled = disabled;
-      inline.setDisabled(disabled);
-      actions.append(inline.cancel, inline.save, edit, remove);
-      if (!inline.save.hidden) actions.classList.add('dirty');
-      top.append(inline.node, actions);
+      const disabled = Boolean(loadingRecent || !recentFresh);
+      edit.disabled = disabled; remove.disabled = disabled;
+      actions.append(edit, remove);
     }
-    record.append(top);
+    timeRow.append(time, duration, actions);
+    record.append(day, timeRow);
     if (entry.description) record.append(el('div', entry.description, 'entry-description'));
     return record;
   }
@@ -684,7 +510,6 @@ The previous version remains in Git history.`)) return;
   }
 
   function renderRecent(container) {
-    inlineEditors.clear();
     const header = el('div', undefined, 'section-head'); header.append(el('strong', 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
@@ -696,7 +521,7 @@ The previous version remains in Git history.`)) return;
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recent.length) { container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
     const entries = [...recent].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-    const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
+    const overlaps = overlappingEntries(entries);
     let group = [];
     for (const entry of entries) {
       if (group.length && !sameTask(group[0], entry)) { container.append(recentGroup(group, overlaps)); group = []; }
@@ -851,10 +676,11 @@ The previous version remains in Git history.`)) return;
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
       .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .divider { height:1px; margin:16px -16px 12px; background:var(--borderColor-muted,#d1d9e0b3) } .section-head { margin-bottom:7px }
-      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-unit { display:grid; grid-template-rows:30px 48px 30px; width:62px } .time-step { display:grid; place-items:center; min-width:44px; min-height:30px; padding:0; border-color:transparent; background:transparent; color:var(--fgColor-accent,#0969da); font-size:18px; line-height:1; opacity:0; pointer-events:none } .time-unit:focus-within .time-step { opacity:1; pointer-events:auto } .time-step:hover { background:var(--button-invisible-bgColor-hover,#818b981a) } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .time-hint { margin-top:7px; color:var(--fgColor-muted,#59636e); font-size:11px; line-height:1.3; text-align:center }
+      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-meta { flex:1; min-width:0; color:var(--fgColor-muted,#59636e); font-size:13px; font-variant-numeric:tabular-nums } .entry-record .entry-row { align-items:flex-start; flex-wrap:wrap; gap:4px 8px } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; align-items:center; gap:4px; margin-left:auto; opacity:0; pointer-events:none } .entry-actions.dirty { flex-basis:100%; justify-content:flex-end } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions.dirty { opacity:1; pointer-events:auto } .inline-time-range { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; width:100%; color:var(--fgColor-default,#1f2328); font-size:13px } .inline-time-meta { display:flex; align-items:center; justify-content:space-between; gap:8px } .entry-day { font-weight:650; white-space:nowrap } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:center; gap:5px; width:100%; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:3px; white-space:nowrap } .compact-time-picker .time-unit { position:relative; display:block; width:38px; height:32px; flex:0 0 38px } .compact-time-picker .time-unit:focus-within { height:88px } .compact-time-picker .time-step { position:absolute; z-index:3; left:0; min-width:38px; min-height:24px; width:38px; height:24px; padding:0; border-color:var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff); font-size:15px; box-shadow:var(--shadow-resting-small,0 1px 0 #1f23280a) } .compact-time-picker .time-step:first-child { top:0 } .compact-time-picker .time-step:last-child { bottom:0 } .compact-time-picker .time-value { position:absolute; top:50%; left:0; width:38px; height:32px; margin:0; padding:2px; transform:translateY(-50%); border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { display:inline; color:var(--fgColor-muted,#59636e); font-weight:650 } .inline-duration { margin-left:0; font-weight:650; white-space:nowrap } label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .inline-time-line { gap:2px } .compact-time-picker .time-picker-values { gap:1px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .entry { padding:12px 0; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry:last-child { border-bottom:0 } .entry-task-result { margin-bottom:5px } .entry-record { padding:7px 0; border-radius:7px } .entry-record + .entry-record { border-top:1px solid var(--borderColor-muted,#d1d9e0b3) } .entry-record.entry-overlap { margin:4px -8px; padding:8px; border:1px solid var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range { flex:0 0 auto; color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:5px } .entry-actions { gap:1px } .entry-actions button { padding:3px } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
     if (popupMode) {
       shadow.append(style, renderMenu());
