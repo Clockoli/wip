@@ -132,6 +132,27 @@ async function onboardingState() {
   };
 }
 
+async function checkCurrentRepositoryAccess() {
+  let snapshot = await configuredSnapshot();
+  if (!snapshot.config || !snapshot.auth) throw new Error('Connect GitHub before checking repository access.');
+  if (snapshot.auth.mode === 'github_app' && snapshot.config.repoId) {
+    await onboarding.recoverCurrentRepository();
+    snapshot = await configuredSnapshot();
+  }
+  const repository = await githubForConfig(snapshot.config).assertDestinationReachable();
+  const lastVerifiedAt = new Date().toISOString();
+  await store.patchState({
+    onboardingLastVerifiedAt: lastVerifiedAt,
+    onboardingVerificationStatus: 'access_checked',
+  });
+  return {
+    config: snapshot.config,
+    repository: { id: repository.id, fullName: repository.full_name },
+    lastVerifiedAt,
+    verificationStatus: 'access_checked',
+  };
+}
+
 async function context() {
   const snapshot = await configuredSnapshot();
   const { config, auth } = snapshot;
@@ -367,6 +388,7 @@ async function handle(message, sender) {
     return { cancelled: true };
   }
   if (message.type === 'DISCOVER_REPOSITORIES') return onboarding.discover();
+  if (message.type === 'CHECK_REPOSITORY_ACCESS') return checkCurrentRepositoryAccess();
   if (message.type === 'SELECT_REPOSITORY') return onboarding.selectRepository(message.payload);
   if (message.type === 'DISCONNECT_GITHUB_APP') return onboarding.disconnect();
   if (message.type === 'CLEAR_LOCAL_CONFIGURATION') return onboarding.clearLocalConfiguration();
@@ -443,7 +465,7 @@ async function handle(message, sender) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type);
   const readOnly = reportReadOnly || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {

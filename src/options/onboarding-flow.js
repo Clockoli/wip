@@ -1,8 +1,7 @@
-export function onboardingStep({ authorized = false, repositoryChoiceMade = false, discoveryStatus = 'idle', repositories = [], repositoryAccessDetected = repositories.length > 0 } = {}) {
+export function onboardingStep({ authorized = false, repositories = [], repositoryAccessDetected = repositories.length > 0 } = {}) {
   if (!authorized) return 1;
-  if (!repositoryChoiceMade && (discoveryStatus !== 'ready' || repositories.length === 0)) return 2;
-  if (!repositoryAccessDetected) return 3;
-  return 4;
+  if (!repositoryAccessDetected) return 2;
+  return 3;
 }
 
 export function selectOnlyEligibleRepository(repositories = []) {

@@ -1,5 +1,5 @@
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
-import { formatRateInput, parseRateInput } from '../domain/local-settings.js';
+import { parseRateInput } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -9,6 +9,8 @@ let pollTimer = null;
 let showOnboarding = false;
 let discoveryPromise = null;
 let githubHandoff = false;
+let repositoryRecoveryHandoff = false;
+let suppressRepositoryAutoConnect = false;
 let discoveryStatus = 'idle';
 let setupCancelled = false;
 let repositoryMonitorTimer = null;
@@ -22,6 +24,7 @@ let repositoryChoiceMode = '';
 let renderedOnboardingStep = null;
 let repositoryChoiceSummary = 'Repository setup option chosen';
 let localPreferences = null;
+let recoveryAction = null;
 
 function message(text, kind = '') {
   $('message').textContent = text;
@@ -43,6 +46,19 @@ function githubUrl(value) {
   } catch { return ''; }
 }
 
+function openGitHubHandoff(url) {
+  const opened = window.open('', '_blank');
+  if (!opened) return false;
+  try {
+    opened.opener = null;
+    opened.location.replace(url);
+    return true;
+  } catch {
+    opened.close();
+    return false;
+  }
+}
+
 function setLink(id, value) {
   const element = $(id), url = githubUrl(value);
   element.hidden = !url;
@@ -50,18 +66,37 @@ function setLink(id, value) {
   else element.removeAttribute('href');
 }
 
-function showRecovery(error = null) {
+function showRecovery(error = null, { retry = '' } = {}) {
   const recovery = globalThis.ClockoliRecovery.actionFor(error?.code);
   const actions = $('recovery-actions');
-  const connect = recovery?.kind === 'connect';
-  const reviewAccess = ['grant', 'choose', 'repair'].includes(recovery?.kind);
-  const retry = recovery?.kind === 'retry';
-  const reviewUrl = githubUrl(state?.installationUrl);
-  $('recovery-connect').hidden = !connect;
-  $('recovery-grant').textContent = 'Review repository access on GitHub';
-  $('recovery-grant').hidden = !reviewAccess || !reviewUrl;
-  $('recovery-retry').hidden = !retry;
-  actions.hidden = !(connect || (reviewAccess && reviewUrl) || retry);
+  recoveryAction = null;
+  if (!recovery) { actions.hidden = true; return; }
+  const patUpdate = state?.auth?.mode === 'pat' && ['grant', 'connect'].includes(recovery.kind);
+  const storageRepair = recovery.kind === 'repair';
+  const recoveryKind = patUpdate || storageRepair ? 'choose' : recovery.kind;
+  const reviewUrl = recoveryKind === 'grant' ? githubUrl(state?.installationUrl) : '';
+  if (recoveryKind === 'grant' && !reviewUrl) { actions.hidden = true; return; }
+  const explanations = {
+    connect: 'Your GitHub sign-in is missing or expired. Reconnect to continue.',
+    grant: 'Clockoli cannot access the selected private repository. Review the App repository grant on GitHub.',
+    choose: 'The selected repository is unavailable or no longer writable. Choose and validate another private repository.',
+    repair: 'Clockoli found an incompatible storage layout. Review repository access and repair the repository before continuing.',
+    retry: 'GitHub did not complete the request. Retry when the connection is available.',
+  };
+  recoveryAction = {
+    kind: recoveryKind,
+    url: reviewUrl,
+    retry,
+    recheckConfigured: Boolean(state?.ready && state?.config),
+    forceManualSelection: storageRepair,
+  };
+  $('recovery-action').textContent = patUpdate ? 'Update PAT access'
+    : storageRepair ? 'Choose another repository' : recovery.label;
+  $('recovery-explanation').textContent = patUpdate
+    ? 'The personal access token cannot write to this repository. Update the token or repository coordinates.'
+    : storageRepair ? 'Clockoli found an incompatible storage layout. Choose and fully validate another private repository.'
+      : explanations[recovery.kind];
+  actions.hidden = false;
 }
 
 function isAppAuthorized() {
@@ -79,24 +114,22 @@ function renderOnboardingProgress() {
     repositories,
   });
   $('current-step').textContent = String(step);
-  $('progress-fill').style.width = `${(step / 4) * 100}%`;
+  $('progress-fill').style.width = `${(step / 3) * 100}%`;
   const previousStep = renderedOnboardingStep;
   renderedOnboardingStep = step;
-  for (const [number, id] of [[1, 'device-step'], [2, 'access-step'], [3, 'repository-access-step'], [4, 'repository-step']]) {
+  for (const [number, id] of [[1, 'device-step'], [2, 'repository-setup-step'], [3, 'repository-step']]) {
     const element = $(id);
     element.hidden = number !== step;
   }
   $('device-complete').hidden = step === 1;
   $('device-account').textContent = authorized && (state?.candidateAuth?.githubLogin || state?.auth?.githubLogin)
     ? ` as ${state.candidateAuth?.githubLogin || state.auth?.githubLogin}` : '';
-  $('access-complete').hidden = step < 3;
-  $('repository-access-complete').hidden = step < 4;
-  $('repository-choice-summary').textContent = repositoryChoiceSummary;
+  $('repository-access-complete').hidden = step < 3;
   $('repository-access-instruction').textContent = repositoryChoiceMode === 'create'
     ? 'On GitHub, choose Only select repositories and add clockoli-data.'
     : 'On GitHub, choose Only select repositories and add your existing private data repository.';
   if (previousStep !== null && previousStep !== step) {
-    queueMicrotask(() => $({ 1: 'device-step-title', 2: 'access-step-title', 3: 'repository-access-step-title', 4: 'repository-step-title' }[step]).focus());
+    queueMicrotask(() => $({ 1: 'device-step-title', 2: 'repository-setup-step-title', 3: 'repository-step-title' }[step]).focus());
   }
 }
 
@@ -111,14 +144,19 @@ function renderState() {
   $('authorize').disabled = !state.appConfigured;
   $('connection-status').textContent = state.ready ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${state.ready ? ' ready' : ''}`;
+  $('connection-title').textContent = connected ? 'GitHub connection' : 'Connect GitHub';
 
   if (state.config) {
     $('connected-account').textContent = state.auth?.githubLogin || (state.auth?.mode === 'pat' ? 'Personal access token' : '—');
     $('connected-repository-link').textContent = `${state.config.owner}/${state.config.repo}`;
-    $('connected-branch').textContent = state.config.branch || 'main';
+    const branch = state.config.branch || 'main';
+    $('connected-branch').textContent = branch;
+    setLink('connected-branch-link', `${state.trackingRepositoryUrl}/tree/${encodeURIComponent(branch)}`);
     const verification = state.verificationStatus === 'write_verified' ? 'Write verified'
       : state.verificationStatus === 'access_checked' ? 'Access checked' : 'Not checked';
     $('connected-storage').textContent = `Private · Format ${state.config.repositoryFormatVersion || 'legacy'} · ${verification}`;
+    $('connected-last-check').textContent = state.lastVerifiedAt
+      ? `Last access check ${new Date(state.lastVerifiedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
     $('owner').value = state.config.owner || '';
     $('repo').value = state.config.repo || '';
     $('branch').value = state.config.branch || 'main';
@@ -126,9 +164,9 @@ function renderState() {
   }
   $('save-display').disabled = !state.config;
   setLink('revoke', state.authorizationSettingsUrl);
-  setLink('recovery-grant', state.installationUrl);
   $('revoke-action').hidden = state.auth?.mode !== 'github_app';
   setLink('install-app', state.installationUrl);
+  setLink('manage-access', state.installationUrl);
   setLink('new-repository', state.newRepositoryUrl);
   setLink('connected-repository-link', state.trackingRepositoryUrl);
 
@@ -269,6 +307,33 @@ function renderRepositories(result) {
   renderOnboardingProgress();
 }
 
+async function connectSelectedRepository({ automatic = false } = {}) {
+  if (!selectedRepository) return false;
+  $('connect-repository').disabled = true;
+  message(automatic
+    ? `Validating ${selectedRepository.fullName} and Clockoli storage…`
+    : 'Validating repository access and Clockoli storage…');
+  try {
+    const result = await send({ type: 'SELECT_REPOSITORY', payload: {
+      installationId: selectedRepository.installationId,
+      repoId: selectedRepository.repoId,
+      recentDays: Number($('recent-days').value),
+    } });
+    stopRepositoryMonitoring();
+    showOnboarding = false;
+    await refreshState();
+    message(result.status === 'write_verified'
+      ? 'Connected. Clockoli verified a repository write.'
+      : 'Connected. Existing Clockoli storage was validated without an unnecessary write.', 'success');
+    return true;
+  } catch (error) {
+    message(error.message, 'error');
+    showRecovery(error);
+    $('connect-repository').disabled = false;
+    return false;
+  }
+}
+
 async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
   const remaining = deadline ? deadline - Date.now() : 30_000;
   const timeoutMs = Math.max(0, Math.min(30_000, remaining));
@@ -289,8 +354,13 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
         : result.candidates;
       if (!repositoryAccessDetected && repositoryChoiceMode === 'create') {
         message('Clockoli still cannot see clockoli-data. Grant that repository access on GitHub; automatic checking will continue.');
+      } else if (relevantCandidates.length === 1 && !suppressRepositoryAutoConnect) {
+        selectedRepository = relevantCandidates[0];
+        renderRepositoryList();
+        await connectSelectedRepository({ automatic: true });
       } else if (relevantCandidates.length === 1) {
-        message('Repository access was detected and the eligible data repository was selected automatically. Validate it to finish setup.', 'success');
+        suppressRepositoryAutoConnect = false;
+        message('Repository access was detected. Review and validate the selected repository to continue.');
       } else if (relevantCandidates.length > 1) {
         message('Repository access was detected. Choose the private repository that should store Clockoli data.');
       } else if (result.repositories.length) {
@@ -339,6 +409,10 @@ async function monitorRepositories() {
   }
   try {
     const result = await discoverRepositories({ monitoring: true, deadline: repositoryMonitorDeadline });
+    if (state?.ready) {
+      stopRepositoryMonitoring();
+      return;
+    }
     const accessedRepository = repositoryMonitorExpectedName
       ? result.repositories.find(repository => repository.repo === repositoryMonitorExpectedName)
       : result.repositories[0];
@@ -384,16 +458,21 @@ function addRateRow(login = '', period = null) {
   const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
   const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
   loginLabel.append(loginInput);
-  const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate with currency';
-  const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.maxLength = 32; rateInput.autocomplete = 'off'; rateInput.spellcheck = false; rateInput.placeholder = '$15.50 or 750 RUB'; rateInput.value = formatRateInput(rate);
+  const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate';
+  const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.inputMode = 'decimal'; rateInput.maxLength = 16; rateInput.autocomplete = 'off'; rateInput.placeholder = '15.50'; rateInput.value = Number.isFinite(Number(rate.amountMinorPerHour)) ? (Number(rate.amountMinorPerHour) / 100).toFixed(2).replace(/\.00$/, '') : '';
   rateLabel.append(rateInput);
+  const currencyLabel = document.createElement('label'); currencyLabel.textContent = 'Currency';
+  const currencyInput = document.createElement('input'); currencyInput.className = 'rate-currency'; currencyInput.required = true; currencyInput.maxLength = 12; currencyInput.autocomplete = 'off'; currencyInput.spellcheck = false; currencyInput.placeholder = '$ or EUR'; currencyInput.value = rate.currency || '$';
+  currencyInput.dataset.initialValue = currencyInput.value;
+  row.dataset.currencyPosition = rate.currencyPosition || (/^[A-Za-z]{2,12}$/.test(currencyInput.value) ? 'suffix' : 'prefix');
+  currencyLabel.append(currencyInput);
   const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
   const startInput = document.createElement('input'); startInput.className = 'rate-start'; startInput.type = 'date'; startInput.value = rate.startDate || ''; startLabel.append(startInput);
   const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
   const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());
-  row.append(loginLabel, rateLabel, startLabel, endLabel, remove); $('rates-list').append(row);
+  row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
 function renderLocalPreferences(preferences) {
@@ -418,10 +497,14 @@ function billingPayload() {
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
     const login = row.querySelector('.rate-login').value.trim();
     const value = row.querySelector('.rate-value').value.trim();
-    if (!login && !value) continue;
-    if (!login || !value) throw new Error('Enter both a GitHub user and an hourly rate');
+    const currency = row.querySelector('.rate-currency').value.trim();
+    if (!login && !value && !currency) continue;
+    if (!login || !value || !currency) throw new Error('Enter a GitHub user, hourly rate, and currency');
+    const position = currency === row.querySelector('.rate-currency').dataset.initialValue
+      ? row.dataset.currencyPosition : (/^[A-Za-z]{2,12}$/.test(currency) ? 'suffix' : 'prefix');
+    const combined = position === 'suffix' ? `${value} ${currency}` : `${currency}${value}`;
     rates[login] ||= [];
-    rates[login].push({ ...parseRateInput(value), startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
+    rates[login].push({ ...parseRateInput(combined), startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
   return { rates };
 }
@@ -490,20 +573,38 @@ $('device-done').addEventListener('click', async () => {
 });
 
 $('repository-search').addEventListener('input', renderRepositoryList);
-$('change-connection').addEventListener('click', () => { setupCancelled = false; showOnboarding = true; repositoryChoiceMade = true; repositoryChoiceMode = 'existing'; repositoryChoiceSummary = 'Using an existing repository'; discoveryStatus = 'idle'; renderState(); });
-
-$('connect-repository').addEventListener('click', async () => {
-  if (!selectedRepository) return;
-  $('connect-repository').disabled = true; message('Validating repository access and Clockoli storage…');
+function beginRepositoryChange() {
+  if (state?.auth?.mode === 'pat') {
+    $('advanced-settings').open = true;
+    $('advanced-pat').open = true;
+    queueMicrotask(() => $('owner').focus());
+    message('Update the PAT repository coordinates and validate them.');
+    return;
+  }
+  setupCancelled = false;
+  showOnboarding = true;
+  repositoryChoiceMade = true;
+  repositoryChoiceMode = 'existing';
+  repositoryChoiceSummary = 'Using an existing repository';
+  discoveryStatus = 'idle';
+  renderState();
+  void discoverRepositories().catch(() => {});
+}
+$('change-connection').addEventListener('click', beginRepositoryChange);
+async function checkRepositoryAccess() {
+  $('check-access').disabled = true;
+  message('Checking GitHub repository access…');
   try {
-    const result = await send({ type: 'SELECT_REPOSITORY', payload: {
-      installationId: selectedRepository.installationId, repoId: selectedRepository.repoId,
-      recentDays: Number($('recent-days').value),
-    } });
-    stopRepositoryMonitoring(); showOnboarding = false; await refreshState();
-    message(result.status === 'write_verified' ? 'Connected. Clockoli verified a repository write.' : 'Connected. Existing Clockoli storage was validated without an unnecessary write.', 'success');
-  } catch (error) { message(error.message, 'error'); showRecovery(error); $('connect-repository').disabled = false; }
-});
+    await send({ type: 'CHECK_REPOSITORY_ACCESS' });
+    await refreshState();
+    showRecovery();
+    message('Repository and branch access confirmed.', 'success');
+  } catch (error) { message(error.message, 'error'); showRecovery(error, { retry: 'access' }); }
+  finally { $('check-access').disabled = false; }
+}
+$('check-access').addEventListener('click', checkRepositoryAccess);
+
+$('connect-repository').addEventListener('click', () => void connectSelectedRepository());
 
 $('cancel-app-setup').addEventListener('click', async () => {
   clearTimeout(pollTimer);
@@ -546,7 +647,7 @@ $('clear-local').addEventListener('click', async () => {
 });
 
 
-for (const id of ['open-device-page', 'recovery-grant']) {
+for (const id of ['open-device-page']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
 $('install-app').addEventListener('click', () => { githubHandoff = true; startRepositoryMonitoring(repositoryChoiceMode === 'create' ? 'clockoli-data' : ''); });
@@ -567,15 +668,6 @@ $('change-repository-access').addEventListener('click', () => {
   renderOnboardingProgress();
   message('Review or change repository access on GitHub.');
 });
-$('change-repository-setup').addEventListener('click', () => {
-  stopRepositoryMonitoring();
-  repositoryChoiceMade = false;
-  repositoryChoiceMode = '';
-  repositoryChoiceSummary = 'Repository setup option chosen';
-  discoveryStatus = 'idle';
-  renderOnboardingProgress();
-  message('Choose whether to create a dedicated repository or use an existing one.');
-});
 $('skip-repository-creation').addEventListener('click', () => {
   repositoryChoiceMade = true;
   repositoryChoiceMode = 'existing';
@@ -587,6 +679,11 @@ $('skip-repository-creation').addEventListener('click', () => {
 async function rediscoverAfterGitHubHandoff() {
   if (!githubHandoff || document.visibilityState !== 'visible') return;
   githubHandoff = false;
+  if (repositoryRecoveryHandoff) {
+    repositoryRecoveryHandoff = false;
+    await checkRepositoryAccess();
+    return;
+  }
   if (state?.deviceAttempt?.attemptId) {
     clearTimeout(pollTimer);
     await poll(state.deviceAttempt.attemptId);
@@ -598,15 +695,28 @@ async function rediscoverAfterGitHubHandoff() {
 }
 window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
 document.addEventListener('visibilitychange', () => void rediscoverAfterGitHubHandoff());
-$('recovery-connect').addEventListener('click', () => $('authorize').click());
-$('recovery-retry').addEventListener('click', () => {
-  if (repositoryMonitorRetryPending) {
-    startRepositoryMonitoring();
-    clearTimeout(repositoryMonitorTimer);
-    repositoryMonitorTimer = null;
-    void monitorRepositories();
+$('recovery-action').addEventListener('click', () => {
+  if (!recoveryAction) return;
+  if (recoveryAction.kind === 'connect') { $('authorize').click(); return; }
+  if (recoveryAction.kind === 'choose') {
+    suppressRepositoryAutoConnect = recoveryAction.forceManualSelection;
+    beginRepositoryChange();
     return;
   }
+  if (recoveryAction.url) {
+    if (!openGitHubHandoff(recoveryAction.url)) {
+      message('Browser blocked the GitHub recovery tab. Allow popups for Clockoli and try again.', 'error');
+      return;
+    }
+    repositoryRecoveryHandoff = recoveryAction.recheckConfigured;
+    githubHandoff = true;
+    return;
+  }
+  if (recoveryAction.retry === 'access') {
+    void checkRepositoryAccess();
+    return;
+  }
+  if (repositoryMonitorRetryPending) startRepositoryMonitoring();
   if (repositoryMonitorDeadline) {
     clearTimeout(repositoryMonitorTimer);
     repositoryMonitorTimer = null;
@@ -647,7 +757,7 @@ $('export-settings').addEventListener('click', async () => {
   $('export-settings').disabled = true;
   try {
     const result = await send({ type: 'EXPORT_SETTINGS' });
-    downloadText(result.text, `clockoli-settings-${new Date().toISOString().slice(0, 10)}.json`);
+    downloadText(result.text, `clockoli-settings-backup-${new Date().toISOString().slice(0, 10)}.json`);
     await send({ type: 'MARK_SETTINGS_EXPORTED', revision: result.revision });
     await refreshLocalPreferences();
     message('Local settings backup exported. GitHub credentials and tracked data were not included.', 'success');

@@ -11,19 +11,17 @@ const content = await readFile(new URL('src/content/github.js', root), 'utf8');
 const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
 test('repository access step has one GitHub action and mode-specific instructions', () => {
-  assert.doesNotMatch(optionsHtml, /Check for repository access now/i);
-  assert.doesNotMatch(optionsHtml, /id="refresh-repositories"/i);
-  assert.doesNotMatch(optionsJs, /refresh-repositories/);
+  assert.doesNotMatch(optionsHtml, /Check for repository access now|id="refresh-repositories"/i);
+  assert.match(optionsHtml, /id="repository-setup-step"/);
   assert.match(optionsHtml, /id="repository-access-instruction"/);
-  assert.match(optionsJs, /repository-access-instruction'[\s\S]*repositoryChoiceMode === 'create'/);
+  assert.match(optionsJs, /repositoryChoiceMode === 'create'/);
   assert.match(optionsJs, /clockoli-data/);
   assert.match(optionsJs, /existing private data repository/);
-  assert.match(optionsHtml, /id="install-app"[^>]*>Choose repository access on GitHub<\/a>/);
+  assert.match(optionsHtml, /id="install-app"[^>]*>Grant repository access<\/a>/);
 });
 
 test('repository choice consistently explains data storage and adapts to one eligible repository', () => {
   assert.match(optionsHtml, /id="repository-step-instruction"/);
-  assert.match(optionsHtml, /This repository stores Clockoli time data/);
   assert.match(optionsHtml, /separate from the repositories whose tasks you track/);
   assert.doesNotMatch(optionsHtml, /issues or pull requests you track/);
   assert.match(optionsJs, /singleEligibleRepository/);
@@ -42,12 +40,12 @@ test('repository controls align and change access is a regular secondary button'
 test('billable rates and complete local settings backup are explicit extension-local features', async () => {
   const reportsHtml = await readFile(new URL('src/reports/reports.html', root), 'utf8');
   const reportsJs = await readFile(new URL('src/reports/reports.js', root), 'utf8');
-  assert.match(optionsHtml, /id="billing-settings"/);
-  assert.match(optionsHtml, /hourly rate for yourself or any other GitHub user/i);
-  assert.match(optionsHtml, /never writes rates or calculated money to the data repository/i);
-  assert.match(optionsHtml, /id="export-settings"/);
+  assert.match(optionsHtml, /id="billing-settings"[\s\S]*Rates are private to this browser/i);
+  assert.match(optionsHtml, /never written to your GitHub repository/i);
+  assert.ok(optionsHtml.indexOf('id="billing-settings"') < optionsHtml.indexOf('id="advanced-settings"'));
+  assert.match(optionsHtml, /id="export-settings"[^>]*>Export settings/);
   assert.match(optionsHtml, /id="import-settings-file"[^>]*type="file"/);
-  assert.match(optionsHtml, /GitHub credentials.*never exported/i);
+  assert.match(optionsHtml, /GitHub credentials and time entries are never included/i);
   assert.match(optionsJs, /SAVE_BILLING_SETTINGS/);
   assert.match(optionsJs, /EXPORT_SETTINGS/);
   assert.match(optionsJs, /IMPORT_SETTINGS/);
@@ -55,11 +53,9 @@ test('billable rates and complete local settings backup are explicit extension-l
   assert.match(reportsHtml, /value="billable-amount">Billable amount/);
   assert.match(reportsHtml, /id="summary-money"/);
   assert.match(reportsJs, /billableTotalsByCurrency/);
-  assert.doesNotMatch(optionsHtml, /Currency code|billing-currency/);
-  assert.match(optionsHtml, /currency sign or description/i);
+  assert.match(optionsJs, /currencyLabel\.textContent = 'Currency'/);
   assert.match(reportsJs, /No rate for/);
 });
-
 
 test('popup and GitHub use one tracker renderer with task terminology and one scroll owner', () => {
   assert.match(popupHtml, /src="\.\.\/content\/github\.js"/);
@@ -94,7 +90,6 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /title\.title = taskTitle/,
     'the full clamped title remains exposed as native accessible text');
 });
-
 
 test('tracker copy and navigation use URL tasks without item terminology', () => {
   assert.doesNotMatch(content, /Edit details|Running on this item|Running on another item|Open any GitHub issue or pull request|Task \(issue or pull request\)/);

@@ -22,56 +22,31 @@ test('settings no longer exposes the repository data convention', () => {
 
 
 test('normal settings route is GitHub App onboarding with resumable authorization and repository selection', () => {
-  assert.match(source, /Connect GitHub/i);
-  assert.match(source, /id="authorize"/);
-  assert.match(source, /id="device-code"/);
-  assert.match(source, /id="install-app"/);
-  assert.match(source, /id="repository-list"/);
-  assert.match(source, /id="connect-repository"/);
-  assert.match(source, /Repository creation does not grant Clockoli access/i);
-  assert.doesNotMatch(source, /exactly three|three clicks|three actions/i);
-  assert.match(script, /START_DEVICE_FLOW/);
-  assert.match(script, /RESUME_DEVICE_FLOW/);
-  assert.match(script, /POLL_DEVICE_FLOW/);
-  assert.match(script, /auth_denied/);
-  assert.match(script, /device_code_expired/);
-  assert.match(script, /device_flow_superseded/);
-  assert.match(script, /DISCOVER_REPOSITORIES/);
-  assert.match(script, /SELECT_REPOSITORY/);
-  assert.match(script, /user_write_required: 'your account cannot write'/);
+  assert.match(source, /Step <span id="current-step">1<\/span> of 3/i);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/);
+  for (const id of ['device-code', 'install-app', 'repository-list', 'connect-repository']) assert.match(source, new RegExp(`id="${id}"`));
+  for (const type of ['START_DEVICE_FLOW', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY']) assert.match(script, new RegExp(type));
+  for (const code of ['auth_denied', 'device_code_expired', 'device_flow_superseded']) assert.match(script, new RegExp(code));
 });
 
 test('onboarding names and explains Device activation without hiding GitHub safety warnings', () => {
-  assert.match(source, /Step <span id="current-step">1<\/span> of 4/i);
-  assert.match(source, /Device activation/i);
-  assert.match(source, /only use the code after you start Device activation/i);
-  assert.match(source, /github\.com.*Clockoli authorization you initiated/i);
-  assert.match(source, /Act on your behalf/i);
-  assert.match(source, /limited API calls/i);
-  assert.match(source, /Repository creation does not grant Clockoli access/i);
+  assert.match(source, /How it works[\s\S]*Device activation/i);
+  assert.match(source, /Only enter a code after starting this connection here/i);
+  assert.match(source, /verify that the page names Clockoli/i);
+  assert.match(source, /Act on your behalf[\s\S]*only repositories you later grant/i);
 });
 
 test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
-  assert.match(source, /id="authorize"[^>]*>Copy code and open GitHub<\/button>/i);
-  assert.match(source, /Clockoli copies the one-time code to your clipboard before GitHub opens/i);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
+  assert.match(source, /copies it before opening GitHub/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
-  assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"[^>]*>Copy<\/button>/i);
+  assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
   assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
-  assert.match(source, /id="device-wait"[^>]*aria-live="polite"/i);
-  assert.match(source, /Clockoli checks automatically every few seconds/i);
-  assert.match(script, /\$\('device-done'\)\.disabled = false/);
-  assert.match(script, /\$\('device-wait'\)\.textContent = 'Checking GitHub authorization now…'/);
-  assert.match(script, /\$\('device-wait'\)\.textContent = 'GitHub has not confirmed authorization yet.*check again automatically/);
-  assert.match(script, /GitHub has not confirmed authorization yet.*check again automatically/i);
-  assert.match(script, /state\?\.deviceAttempt\?\.attemptId === attemptId && !\$\('message'\)\.classList\.contains\('error'\)/);
   assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
-  assert.match(script, /OPEN_DEVICE_FLOW_PAGE/);
   assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
-  assert.match(worker, /START_DEVICE_FLOW'\) return deviceFlow\(\)\.start\(\);[\s\S]*OPEN_DEVICE_FLOW_PAGE[\s\S]*deviceFlow\(\)\.resume\(\)[\s\S]*attempt\.attemptId[\s\S]*chrome\.tabs\.create/);
   const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
   assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
 });
-
 
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
@@ -80,59 +55,41 @@ test('expected post-activation repository setup is neutral rather than an error'
 });
 
 test('Step 2 creates a template-backed data repository or skips to existing-repository access', () => {
-  assert.match(source, /id="access-step"[\s\S]*Create a dedicated data repository/i);
-  assert.match(source, /id="new-repository"[^>]*>Create clockoli-data on GitHub/i);
-  assert.match(source, /id="skip-repository-creation"[^>]*>I already have a repository/i);
-  assert.match(source, /directory structure and starter files/i);
-  assert.match(script, /repositoryChoiceMade/);
-  assert.match(script, /skip-repository-creation/);
-  assert.match(script, /Repository creation started/);
-  assert.match(script, /repositories\.length && !repositoryChoiceMade/);
-  assert.match(script, /Using an existing repository/);
-  assert.match(source, /id="change-repository-setup"[^>]*>Change repository setup/);
-  assert.match(script, /change-repository-setup[\s\S]*repositoryChoiceMade = false/);
+  assert.match(source, /id="repository-setup-step"[\s\S]*Create a private Clockoli data repository/i);
+  assert.match(source, /id="new-repository"[^>]*>Create private repository/i);
+  assert.match(source, /id="skip-repository-creation"[^>]*>Use existing repository/i);
+  assert.match(source, /Clockoli template[\s\S]*Only select repositories/i);
+  assert.match(script, /startRepositoryMonitoring\('clockoli-data'\)/);
 });
 
 test('Step 3 grants App access to the new or an existing repository', () => {
-  assert.match(source, /id="repository-access-step"[\s\S]*Give Clockoli access to a data repository/i);
+  assert.match(source, /id="repository-step"[\s\S]*Choose and validate the data repository/i);
   assert.match(source, /id="repository-access-instruction"/i);
-  assert.match(script, /existing private data repository/i);
-  assert.match(script, /clockoli-data/i);
-  assert.match(source, /id="install-app"[\s\S]*Choose repository access on GitHub/i);
-  assert.ok(source.indexOf('id="install-app"') > source.indexOf('id="repository-access-step"'));
+  assert.match(source, /id="install-app"[\s\S]*Grant repository access/i);
+  assert.match(source, /id="connect-repository"[^>]*>Validate and connect/i);
 });
 
-
 test('detected repository access advances to Step 4 for selection and validation', () => {
-  assert.match(source, /Step <span id="current-step">1<\/span> of 4/);
-  assert.match(source, /id="repository-step"[\s\S]*Choose and validate the data repository/i);
-  assert.match(source, /id="repository-access-complete"[\s\S]*Repository access found/i);
-  assert.match(script, /\[4, 'repository-step'\]/);
-  assert.match(script, /4: 'repository-step-title'/);
+  assert.match(source, /of 3/);
+  assert.match(source, /id="repository-access-complete"[\s\S]*Private repository access found/i);
+  assert.match(script, /\[3, 'repository-step'\]/);
+  assert.match(script, /3: 'repository-step-title'/);
+  assert.doesNotMatch(script, /\[4, 'repository-step'\]/);
 });
 
 test('onboarding renders one active step, keeps cancel below it, and names repository actions precisely', () => {
-  for (const id of ['device-step', 'access-step', 'repository-access-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
-  assert.match(script, /onboardingStep/);
+  for (const id of ['device-step', 'repository-setup-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(source, /id="repository-access-step"/);
   assert.match(script, /element\.hidden = number !== step/);
-  for (const id of ['device-step-title', 'access-step-title', 'repository-access-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
+  for (const id of ['device-step-title', 'repository-setup-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
   assert.match(script, /previousStep !== null && previousStep !== step[\s\S]*focus\(\)/);
-  assert.match(source, /Choose repository access on GitHub/i);
-  assert.doesNotMatch(source, /Check for repository access now/i);
-  assert.match(source, /Clockoli checks automatically when you return from GitHub/i);
-  assert.match(source, /Repository creation does not grant Clockoli access/i);
-  assert.match(source, /Create clockoli-data on GitHub/i);
   assert.equal((source.match(/id="install-app"/g) || []).length, 1);
-  assert.equal((source.match(/id="refresh-repositories"/g) || []).length, 0);
-  assert.doesNotMatch(source, /id="repository-recovery"|id="review-repository-access"|id="refresh-repository-access"/);
   assert.ok(source.indexOf('id="cancel-app-setup"') > source.indexOf('id="repository-step"'));
 });
 
 test('PAT setup remains an explicit advanced compatibility path without direct credential storage access', () => {
-  assert.match(source, /<details[^>]*id="advanced-pat"/);
-  assert.match(source, /Don’t want to install the GitHub App\?/i);
-  assert.doesNotMatch(source, /Personal access token compatibility/i);
-  assert.match(source, /Use a personal access token instead/i);
+  assert.match(source, /<details[^>]*id="advanced-settings"/);
+  assert.match(source, /<details[^>]*id="advanced-pat"[\s\S]*Use a personal access token/i);
   assert.doesNotMatch(script, /ChromeStore|chrome\.storage|indexedDB/);
   assert.match(script, /SAVE_CONFIG/);
 });
@@ -141,7 +98,7 @@ test('settings allows every GitHub issue and clearly scopes the recent-entry win
   assert.doesNotMatch(source, /Allowed issue owners/i);
   assert.doesNotMatch(script, /allowedIssueOwners|allowedOwners/);
   assert.match(source, /Recent entries shown in the main panel \(days\)/i);
-  assert.match(source, /only controls how many past days appear in the main tracking panel/i);
+  assert.match(source, /changes only the recent entries shown in the main panel/i);
   assert.match(source, /Track any HTTP\(S\) task URL.*title is optional/i);
 });
 
@@ -175,22 +132,14 @@ test('local reset instructions explain how to protect unsynced work', () => {
 
 test('connected settings render each action as a button with its own explanation', () => {
   assert.match(source, /id="connected-repository"[^>]*><a id="connected-repository-link"/);
-  assert.doesNotMatch(source, /id="open-repository"|Open repository/i);
-  assert.doesNotMatch(source, /id="check-access"|Check access/i);
-  assert.match(source, /class="connected-actions"/);
-  assert.match(source, /id="change-connection"[^>]*>Change data repository<\/button>[\s\S]*id="change-connection-help"[^>]*>[^<]*different private data repository/i);
-  assert.match(source, /id="disconnect"[^>]*>Disconnect this browser<\/button>[\s\S]*id="disconnect-help"[^>]*>[^<]*local sign-in/i);
-  assert.match(source, /id="revoke-action"[^>]*class="connected-action"[\s\S]*id="revoke"[^>]*class="button-link danger-link"[^>]*>Revoke Clockoli authorization on GitHub<\/a>[\s\S]*id="revoke-help"[^>]*>[^<]*sign-in approval/i);
-  assert.match(script, /\$\('revoke-action'\)\.hidden = state\.auth\?\.mode !== 'github_app'/);
-  assert.match(source, /does not uninstall the GitHub App/i);
-  assert.match(source, /does not delete repository data/i);
-  assert.match(source, /id="clear-local"/);
+  assert.match(source, /id="connected-branch-link"/);
+  for (const id of ['check-access', 'change-connection', 'disconnect']) assert.match(source, new RegExp(`id="${id}"[^>]*>`, 'i'));
+  assert.match(source, /id="revoke-action"[\s\S]*Revoke GitHub sign-in/);
+  assert.match(script, /\$\('check-access'\)\.addEventListener/);
   assert.match(script, /DISCONNECT_GITHUB_APP/);
-  assert.match(styles, /\.connected-actions\{[^}]*repeat\(auto-fit,minmax\(/);
-  assert.match(styles, /\.connected-action button,\.connected-action \.button-link\{[^}]*min-height/);
-  assert.match(styles, /\.danger-link:hover\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/);
+  assert.match(styles, /\.connection-dashboard/);
+  assert.match(styles, /\.connected-secondary-actions/);
 });
-
 
 test('Device Flow cancellation bypasses the tracker mutation executor and shares one live service', () => {
   assert.match(worker, /let activeDeviceFlow = null/);
@@ -235,16 +184,11 @@ test('repository onboarding uses full names and monitors GitHub after repository
 });
 
 test('repository reasons and recovery actions use user-facing contracts', () => {
-  for (const reason of ['private_required', 'archived', 'disabled', 'app_contents_write_required', 'user_write_required', 'initialized_default_branch_required']) {
-    assert.match(script, new RegExp(`${reason}:`));
-  }
-  for (const code of ['app_installation_required', 'org_approval_required', 'repository_access_required', 'github_app_auth_required', 'branch_policy_rejected']) {
-    assert.match(recovery, new RegExp(code));
-  }
-  assert.match(script, /ClockoliRecovery\.actionFor/);
-  for (const label of ['Choose repository access on GitHub', 'Connect GitHub', 'Retry']) assert.match(source, new RegExp(label));
-  assert.match(script, /Review repository access on GitHub/);
-  assert.doesNotMatch(source, /id="recovery-choose"|Choose another repository/i);
+  for (const reason of ['private_required', 'archived', 'disabled', 'app_contents_write_required', 'user_write_required', 'initialized_default_branch_required']) assert.match(script, new RegExp(`${reason}:`));
+  for (const code of ['app_installation_required', 'org_approval_required', 'repository_access_required', 'github_app_auth_required', 'branch_policy_rejected']) assert.match(recovery, new RegExp(code));
+  assert.match(source, /id="recovery-action"/);
+  assert.match(script, /recovery\.label/);
+  assert.doesNotMatch(source, /id="recovery-connect"|id="recovery-grant"|id="recovery-retry"/);
 });
 
 test('connected storage summary distinguishes write verification from access checking', () => {
@@ -289,8 +233,7 @@ test('compliance documentation matches any-owner tracking and durable Title stor
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
   assert.match(source, /Repositories Clockoli can use for data storage/i);
-  assert.doesNotMatch(source, /Selectable repositories are private repositories granted/i);
-  assert.match(source, /directory structure and starter files/i);
+  assert.match(source, /created from the Clockoli template/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
   assert.match(styles, /#message\.error\{[^}]*z-index:/);
 });
