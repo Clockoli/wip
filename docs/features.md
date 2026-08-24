@@ -1,21 +1,21 @@
-# RepoClock feature guide
+# Clockoli feature guide
 
 ## URL-first task tracking
 
-RepoClock treats the canonical HTTP(S) URL as the task identity. A task can be:
+Clockoli treats the canonical HTTP(S) URL as the task identity. A task can be:
 
 - a GitHub issue or pull request;
 - a ticket in another system;
 - a document, dashboard, customer record, or design;
 - any other HTTP(S) page.
 
-A title is optional. GitHub titles are metadata, not part of the durable identity. For GitHub issue and pull-request URLs, RepoClock removes navigation-only query and fragment data so opening the same task through a notification link does not create another task.
+A title is optional. GitHub titles are metadata, not part of the durable identity. For GitHub issue and pull-request URLs, Clockoli removes navigation-only query and fragment data so opening the same task through a notification link does not create another task.
 
 The toolbar popup supports any HTTP(S) active tab. The injected stopwatch and native-looking split control are limited to `github.com`.
 
 ## Active timer
 
-RepoClock maintains one GitHub-backed active timer per user.
+Clockoli maintains one GitHub-backed active timer per user.
 
 - Start records the canonical URL, optional title, and timezone-bearing Start timestamp.
 - Stop saves an optional description with the completed record.
@@ -158,7 +158,7 @@ Settings accepts non-negative hourly rates keyed by GitHub login, with a currenc
 
 ## Data repository and personal branches
 
-RepoClock validates one dedicated private GitHub repository. Each user writes routine timer data to a marked branch named:
+Clockoli validates one dedicated private GitHub repository. Each user writes routine timer data to a marked branch named:
 
 ```text
 repoclock/users/{stable-github-user-id}
@@ -172,7 +172,7 @@ See [Data, privacy, and security](data-and-privacy.md) for file formats and perm
 
 Starting requires a reachable GitHub destination. Stopping is designed to survive a temporary network failure:
 
-1. RepoClock records a stable pending completion in extension-local IndexedDB.
+1. Clockoli records a stable pending completion in extension-local IndexedDB.
 2. It appends or verifies the intended monthly record with SHA protection.
 3. It advances the retry stage locally.
 4. It removes only the matching active file.
@@ -184,10 +184,10 @@ If GitHub is temporarily unreachable, the panel can show that the completion is 
 
 ## Conflict handling
 
-RepoClock checks repository identity, branch routing, file SHA, and original record content before mutation.
+Clockoli checks repository identity, branch routing, file SHA, and original record content before mutation.
 
 - A stale monthly file is not silently overwritten.
-- Concurrent Stops converge only when RepoClock can prove the existing completion matches the timer.
+- Concurrent Stops converge only when Clockoli can prove the existing completion matches the timer.
 - A changed active timer is preserved.
 - A missing active timer with no matching completion is reported separately from a saved completion/newer-timer conflict.
 - Multi-file edits publish one Git commit after all files pass preflight.
@@ -203,8 +203,8 @@ Exported settings contain display preferences, local billing, and reference-only
 
 - **Change data repository** validates a new destination and does not delete the old repository.
 - **Disconnect this browser** removes local sign-in while leaving GitHub authorization and repository data unchanged.
-- **Revoke RepoClock authorization on GitHub** opens GitHub's authorization settings. It does not uninstall the App or delete data.
-- **Clear local configuration** removes local RepoClock credentials and settings. Stop active work and synchronize pending writes first.
+- **Revoke Clockoli authorization on GitHub** opens GitHub's authorization settings. It does not uninstall the App or delete data.
+- **Clear local configuration** removes local Clockoli credentials and settings. Stop active work and synchronize pending writes first.
 
 ## Deliberate limits
 

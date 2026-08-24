@@ -1,4 +1,4 @@
-# Troubleshooting RepoClock
+# Troubleshooting Clockoli
 
 ## Installation
 
@@ -12,12 +12,12 @@ Unpacked extensions have no automatic update channel.
 
 1. Pull or replace the extension files.
 2. Open `chrome://extensions`.
-3. Select **Reload** on RepoClock.
+3. Select **Reload** on Clockoli.
 4. Refresh open GitHub tabs.
 
 ### The GitHub stopwatch is missing
 
-- Confirm RepoClock is enabled in `chrome://extensions`.
+- Confirm Clockoli is enabled in `chrome://extensions`.
 - Refresh the GitHub tab after installation or update.
 - The injected control appears only on `https://github.com`.
 - On any other HTTP(S) site, use the pinned toolbar popup.
@@ -29,10 +29,10 @@ Unpacked extensions have no automatic update channel.
 
 GitHub user authorization and GitHub App installation are separate.
 
-1. Return to RepoClock Settings.
+1. Return to Clockoli Settings.
 2. Use **Done on GitHub—check now** if automatic checking has not completed.
 3. Continue to repository creation/access.
-4. Grant the RepoClock App access to the intended repository with **Contents: Read and write**.
+4. Grant the Clockoli App access to the intended repository with **Contents: Read and write**.
 
 ### No repository is listed
 
@@ -41,15 +41,15 @@ Check that:
 - the repository is private;
 - it is not archived or disabled;
 - your user has write access;
-- the RepoClock App installation includes it;
+- the Clockoli App installation includes it;
 - **Contents: Read and write** is granted;
 - an organization approval is not still pending.
 
-Use **Choose repository access on GitHub** to review the App installation, then return to Settings. RepoClock checks again automatically; use the visible Retry action if monitoring times out or reports a transient error.
+Use **Choose repository access on GitHub** to review the App installation, then return to Settings. Clockoli checks again automatically; use the visible Retry action if monitoring times out or reports a transient error.
 
 ### Repository validation fails
 
-RepoClock rejects unsafe destinations. Common causes are:
+Clockoli rejects unsafe destinations. Common causes are:
 
 - public repository;
 - missing user write permission;
@@ -63,7 +63,7 @@ Use a dedicated private repository with direct authenticated writes. Do not dele
 
 ### Organization approval is pending
 
-An organization owner may need to approve the GitHub App installation or repository grant. RepoClock cannot bypass that policy. After approval, return to Settings and retry discovery.
+An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings and retry discovery.
 
 ### Fine-grained PAT setup fails
 
@@ -96,26 +96,26 @@ The active timer's canonical URL differs from the page currently open. Select th
 
 ### Start works on GitHub but not another site
 
-The GitHub stopwatch is an injected convenience. For another site, pin and open RepoClock from the browser toolbar. The active page must use `http:` or `https:`.
+The GitHub stopwatch is an injected convenience. For another site, pin and open Clockoli from the browser toolbar. The active page must use `http:` or `https:`.
 
 ### A GitHub notification link created unexpected task behavior
 
-RepoClock canonicalizes GitHub issue/PR URLs by removing query strings and fragments. The stored task should be the base issue or pull-request URL. Generic non-GitHub query strings are preserved because they may identify different work.
+Clockoli canonicalizes GitHub issue/PR URLs by removing query strings and fragments. The stored task should be the base issue or pull-request URL. Generic non-GitHub query strings are preserved because they may identify different work.
 
 ### A long timer asks for confirmation
 
-RepoClock warns before saving an entry longer than 12 hours. This catches forgotten timers but does not reject them. Verify the duration, choose to save, or edit the time first.
+Clockoli warns before saving an entry longer than 12 hours. This catches forgotten timers but does not reject them. Verify the duration, choose to save, or edit the time first.
 
 ## Synchronization and conflicts
 
 ### “Saved locally and waiting to sync with GitHub”
 
-RepoClock has preserved the Stop operation in extension-local storage but could not finish the GitHub write.
+Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write.
 
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
 - Choose **Sync now**.
-- RepoClock also retries at startup and approximately once per minute.
+- Clockoli also retries at startup and approximately once per minute.
 
 A new timer is blocked until the pending completion is synchronized or resolved.
 
@@ -132,25 +132,25 @@ Check:
 - whether the repository was renamed or transferred;
 - whether another person manually changed the relevant active/monthly file.
 
-RepoClock classifies authentication, access, destination, rate-limit, network, validation, and conflict failures differently. Follow the action shown in the panel rather than repeatedly reconnecting for a transient error.
+Clockoli classifies authentication, access, destination, rate-limit, network, validation, and conflict failures differently. Follow the action shown in the panel rather than repeatedly reconnecting for a transient error.
 
-### RepoClock preserved a newer timer
+### Clockoli preserved a newer timer
 
-Another browser or device changed the remote active timer before this completion finished. RepoClock does not delete a newer timer from a stale Stop. Inspect the pending conflict and repository history before choosing a recovery action.
+Another browser or device changed the remote active timer before this completion finished. Clockoli does not delete a newer timer from a stale Stop. Inspect the pending conflict and repository history before choosing a recovery action.
 
 ### The active timer is missing and no completion exists
 
-RepoClock could not prove that the timer was completed. It reports the missing-active state rather than inventing a record. Inspect `active/`, the represented monthly file, and Git history before resolving the pending operation.
+Clockoli could not prove that the timer was completed. It reports the missing-active state rather than inventing a record. Inspect `active/`, the represented monthly file, and Git history before resolving the pending operation.
 
 ## Editing time
 
 ### Scrolling does not change a time value
 
-This is intentional. Wheel and trackpad gestures scroll the panel normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. RepoClock does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
+This is intentional. Wheel and trackpad gestures scroll the panel normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. Clockoli does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
 
 ### Editing one row changed a neighboring row
 
-RepoClock maintains the chronological boundary between adjacent records:
+Clockoli maintains the chronological boundary between adjacent records:
 
 - moving Start into the previous interval moves the previous Stop;
 - moving Stop into the next interval moves the next Start.
@@ -163,11 +163,11 @@ The represented intervals still intersect after correction. Endpoint-touching re
 
 ### Inline edit or Delete reports a stale or changed record
 
-The monthly file changed after the panel loaded. Reload recent entries, review the latest record, and repeat the intended action. RepoClock refuses to retarget an edit or delete by array position alone.
+The monthly file changed after the panel loaded. Reload recent entries, review the latest record, and repeat the intended action. Clockoli refuses to retarget an edit or delete by array position alone.
 
 ### A manually edited file cannot be read
 
-RepoClock parses the entire monthly file and does not silently skip malformed blocks. Check:
+Clockoli parses the entire monthly file and does not silently skip malformed blocks. Check:
 
 - recognized `URL`, optional `Title`, `Start`, `End`, and optional `Description` fields;
 - a valid HTTP(S) URL without embedded credentials;
@@ -201,7 +201,7 @@ Title enrichment can be unavailable because of repository visibility, permission
 
 ### Reports says to choose a shorter period
 
-RepoClock enforces bounded file, byte, and record budgets so one report cannot make unbounded authenticated requests. Choose a shorter period and load again.
+Clockoli enforces bounded file, byte, and record budgets so one report cannot make unbounded authenticated requests. Choose a shorter period and load again.
 
 ### Billable amount is zero or incomplete
 
@@ -222,11 +222,11 @@ Downloads use the currently loaded report, date range, facets, and local rates. 
 
 ### I cannot change repository or authentication mode
 
-RepoClock blocks transitions that could strand active or pending work. Stop active timers and synchronize or resolve every pending entry first.
+Clockoli blocks transitions that could strand active or pending work. Stop active timers and synchronize or resolve every pending entry first.
 
 ### Disconnect did not revoke GitHub access
 
-**Disconnect this browser** removes local sign-in. Revoking RepoClock user authorization, changing the GitHub App installation, and deleting repository data are separate GitHub/administrative actions.
+**Disconnect this browser** removes local sign-in. Revoking Clockoli user authorization, changing the GitHub App installation, and deleting repository data are separate GitHub/administrative actions.
 
 ### Settings import did not reconnect GitHub
 
@@ -236,7 +236,7 @@ This is intentional. The JSON backup excludes credentials and applies only displ
 
 Include:
 
-- RepoClock commit or package identity;
+- Clockoli commit or package identity;
 - Chrome/Chromium version;
 - the visible error text and recovery action;
 - whether the surface was GitHub, popup, Tasks, Reports, or Settings;

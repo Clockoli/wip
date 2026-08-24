@@ -39,7 +39,7 @@ function currentElapsedSeconds() {
 function setError(error = '') {
   const root = $('error'), text = error?.message || String(error || '');
   root.replaceChildren(document.createTextNode(text));
-  const recovery = globalThis.RepoClockRecovery.actionFor(error?.code), label = recovery?.label || '';
+  const recovery = globalThis.ClockoliRecovery.actionFor(error?.code), label = recovery?.label || '';
   if (label) {
     const action = document.createElement('button'); action.type = 'button'; action.className = 'button secondary'; action.textContent = label;
     action.addEventListener('click', () => { if (recovery.kind === 'retry') void load(); else void send({ type: 'OPEN_OPTIONS' }); });

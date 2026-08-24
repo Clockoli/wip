@@ -19,7 +19,7 @@ export class GitHubPermissionError extends GitHubApiError {
   constructor(message = 'The token does not have access to the configured repository.') { super(message, 403, 'permission'); }
 }
 export class GitHubOrganizationApprovalError extends GitHubApiError {
-  constructor(message = 'This organization must approve RepoClock before its installations are available.') { super(message, 403, 'org_approval_required'); }
+  constructor(message = 'This organization must approve Clockoli before its installations are available.') { super(message, 403, 'org_approval_required'); }
 }
 export class GitHubRateLimitError extends GitHubApiError {
   constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403) { super(message, status, 'rate_limit'); }
@@ -202,7 +202,7 @@ export class GitHubClient {
     validateBranch(`${normalized}probe`);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
     const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
-    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('RepoClock user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
+    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('Clockoli user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
     const fullPrefix = `refs/heads/${normalized}`;
     return body.map(item => String(item?.ref || '')).filter(ref => ref.startsWith(fullPrefix))
       .map(ref => validateBranch(ref.slice('refs/heads/'.length))).sort();

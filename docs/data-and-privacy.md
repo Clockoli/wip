@@ -1,6 +1,6 @@
 # Data, privacy, and security
 
-RepoClock separates durable shared time data from browser-local secrets and preferences.
+Clockoli separates durable shared time data from browser-local secrets and preferences.
 
 ## Architecture at a glance
 
@@ -16,13 +16,13 @@ Chrome extension UI ── trusted messages ── Manifest V3 service worker
                                       private GitHub data repository
 ```
 
-There is no RepoClock application server between the extension and GitHub.
+There is no Clockoli application server between the extension and GitHub.
 
 ## What the GitHub repository stores
 
 The durable repository can contain:
 
-- a RepoClock format and user mapping marker;
+- a Clockoli format and user mapping marker;
 - a personal-branch ownership marker;
 - one active timer per user;
 - completed monthly time records;
@@ -41,7 +41,7 @@ Duration and billable amount are calculated. They are not persisted in time reco
 
 ## What remains local to the extension
 
-RepoClock uses extension-origin IndexedDB for:
+Clockoli uses extension-origin IndexedDB for:
 
 - GitHub App access/refresh credentials or PAT compatibility credentials;
 - resumable Device Flow state;
@@ -63,7 +63,7 @@ The repository's default branch owns the shared marker:
 .repoclock/config.json
 ```
 
-RepoClock provisions a personal branch for each GitHub user:
+Clockoli provisions a personal branch for each GitHub user:
 
 ```text
 repoclock/users/{stable-github-user-id}
@@ -122,11 +122,11 @@ Older GitHub issue/PR blocks remain readable and are projected into the URL-firs
 Normal Device Flow setup has two separate grants:
 
 1. **User authorization** identifies the signed-in GitHub user and gives the browser a user access token.
-2. **GitHub App installation access** limits which repositories RepoClock can access.
+2. **GitHub App installation access** limits which repositories Clockoli can access.
 
-The data repository must grant **Contents: Read and write** to the RepoClock App. The signed-in user also needs appropriate repository and branch rights. RepoClock does not request repository Administration permission just to create a data repository; setup opens GitHub's repository-creation form instead.
+The data repository must grant **Contents: Read and write** to the Clockoli App. The signed-in user also needs appropriate repository and branch rights. Clockoli does not request repository Administration permission just to create a data repository; setup opens GitHub's repository-creation form instead.
 
-Tracking a URL does not post time data back to that page or source system. A GitHub issue/PR can be tracked without giving RepoClock write access to its source repository. Metadata enrichment is available only when the authenticated user can read the relevant GitHub task.
+Tracking a URL does not post time data back to that page or source system. A GitHub issue/PR can be tracked without giving Clockoli write access to its source repository. Metadata enrichment is available only when the authenticated user can read the relevant GitHub task.
 
 The advanced PAT path should use a fine-grained token restricted to the one private data repository with **Contents: Read and write**.
 
@@ -134,13 +134,13 @@ The advanced PAT path should use a fine-grained token restricted to the one priv
 
 ### Page versus extension
 
-GitHub pages are untrusted input. RepoClock's privileged GitHub credentials remain in extension-controlled contexts. Content-script requests are allowlisted and bound to a validated canonical sender URL; extension-only pages have their own message policy.
+GitHub pages are untrusted input. Clockoli's privileged GitHub credentials remain in extension-controlled contexts. Content-script requests are allowlisted and bound to a validated canonical sender URL; extension-only pages have their own message policy.
 
 The GitHub control uses a closed Shadow DOM and rejects synthetic privileged activation. This reduces the page's ability to inspect or programmatically trigger extension controls.
 
 ### Repository verification
 
-Before writing, RepoClock verifies the configured repository's stable GitHub ID, canonical owner/name, private visibility, branch route, and accessibility. Repository rename/transfer recovery is bounded and identity-based; RepoClock does not silently write to a different repository that happens to occupy old coordinates.
+Before writing, Clockoli verifies the configured repository's stable GitHub ID, canonical owner/name, private visibility, branch route, and accessibility. Repository rename/transfer recovery is bounded and identity-based; Clockoli does not silently write to a different repository that happens to occupy old coordinates.
 
 ### Storage ownership
 
@@ -162,7 +162,7 @@ Repository adoption fails closed:
 
 ## Offline behavior
 
-RepoClock is not fully offline-first:
+Clockoli is not fully offline-first:
 
 - Start requires a reachable GitHub repository.
 - Stop can be persisted locally and retried.
@@ -170,11 +170,11 @@ RepoClock is not fully offline-first:
 - **Sync now** requests an immediate retry.
 - A new Start is blocked while a completion is pending or conflicted.
 
-Do not clear browser data or RepoClock local configuration while a Stop is waiting to synchronize.
+Do not clear browser data or Clockoli local configuration while a Stop is waiting to synchronize.
 
 ## Reports cache
 
-Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, RepoClock downloads only monthly blobs whose immutable Git SHA is not already cached.
+Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
 
 Cache entries are scoped to repository, branch, user, and configuration generation as appropriate. Configuration changes cancel stale loads and prevent old results from being committed into a new context.
 
@@ -184,7 +184,7 @@ The cache is an optimization, not the authoritative time store.
 
 Hourly rates and their currency signs or descriptions stay in extension-local IndexedDB. They are not written to GitHub and are not included in shared time records.
 
-Billable money uses integer minor units and tracked seconds. RepoClock aggregates before final rounding to avoid accumulating per-record rounding errors.
+Billable money uses integer minor units and tracked seconds. Clockoli aggregates before final rounding to avoid accumulating per-record rounding errors.
 
 The settings JSON backup can include rates, so protect that backup according to the sensitivity of your rate card.
 
@@ -206,6 +206,6 @@ Import validates the entire file and applies supported local preferences atomica
 
 Anyone with read access to the data repository can inspect stored task URLs, titles, timestamps, descriptions, and user branches. URLs and descriptions can reveal sensitive customer or project information.
 
-Use separate data repositories when groups have different access boundaries. Grant the RepoClock App access only to the intended repository and use **Only select repositories** during installation.
+Use separate data repositories when groups have different access boundaries. Grant the Clockoli App access only to the intended repository and use **Only select repositories** during installation.
 
 Git history helps recovery and review, but a GitHub repository administrator can rewrite or delete history. Use repository policy and optional `git clone --mirror` backups when stronger retention is required.

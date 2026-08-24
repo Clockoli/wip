@@ -172,7 +172,7 @@ test('pre-marker canonical files are parsed strictly before initialization', asy
     async validateBranch() {},
     async getText(path) {
       if (path === '.repoclock/config.json') throw notFound();
-      return { text: 'not a valid RepoClock record\n', sha: 'bad' };
+      return { text: 'not a valid Clockoli record\n', sha: 'bad' };
     },
     async listRepositoryFiles() { return ['active/alice.txt']; },
     async putText() { throw new Error('must not write'); },

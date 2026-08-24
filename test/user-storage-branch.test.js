@@ -44,7 +44,7 @@ test('existing user branch fails closed when stable ownership metadata identifie
   await assert.rejects(() => ensureUserStorageBranch(github, { id: 123, login: 'alice' }, 'main'), /different GitHub account/i);
 });
 
-test('branch discovery accepts only marker-backed deterministic RepoClock user branches', async () => {
+test('branch discovery accepts only marker-backed deterministic Clockoli user branches', async () => {
   const state = network(), github = new BranchClient(state, 'main');
   for (const user of [{ id: 2, login: 'bob' }, { id: 1, login: 'alice' }]) {
     const branch = userStorageBranch(user.id); state.branches.add(branch);

@@ -129,7 +129,7 @@ test('blocked transitions explain exactly how to protect running and unsynced wo
   const active = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { activeCache: { startedAt: 'x' } } });
   await assert.rejects(() => coordinator(active).clearLocalConfiguration(), /stop the active timer/i);
   const pending = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { pendingWrites: [{ id: 'one' }] } });
-  await assert.rejects(() => coordinator(pending).clearLocalConfiguration(), /open RepoClock.*finish syncing.*pending changes/i);
+  await assert.rejects(() => coordinator(pending).clearLocalConfiguration(), /open Clockoli.*finish syncing.*pending changes/i);
 });
 
 test('disconnect is local, generation-checked, and refuses to discard active or pending work', async () => {

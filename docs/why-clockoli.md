@@ -1,17 +1,17 @@
-# Why RepoClock
+# Why Clockoli
 
-RepoClock is not a hosted time-tracking service with GitHub added as an integration. GitHub is the durable data layer, and the browser extension is the application.
+Clockoli is not a hosted time-tracking service with GitHub added as an integration. GitHub is the durable data layer, and the browser extension is the application.
 
 That design changes who controls the records, how they can be inspected, and what happens if you stop using the product.
 
 ## The short version
 
-Choose RepoClock when you want:
+Choose Clockoli when you want:
 
 - time data in a private repository you control;
 - a readable, portable format instead of a vendor-only database;
 - direct Git history for review, backup, and recovery;
-- no RepoClock server or second SaaS account;
+- no Clockoli server or second SaaS account;
 - one task model that works with GitHub and arbitrary HTTP(S) pages;
 - repository-wide team reports without writing private rates to the shared repository.
 
@@ -19,26 +19,26 @@ Choose a conventional hosted tracker when your priority is turnkey installation,
 
 ## How the model differs
 
-| Question | RepoClock | Conventional hosted tracker | Browser-local timer | Spreadsheet/manual notes |
+| Question | Clockoli | Conventional hosted tracker | Browser-local timer | Spreadsheet/manual notes |
 |---|---|---|---|---|
 | Where are records stored? | Readable files in your private GitHub repository | Vendor-managed database | One browser profile or vendor sync | A file you maintain |
 | Who controls retention and access? | Your repository administrators | Vendor and workspace administrators | The local profile owner | File owner |
 | Can you read the data without the product? | Yes, as text and Git history | Usually through the product or an export | Product-dependent | Yes |
-| Is a separate application server required? | No RepoClock server | Yes | Not always | No |
+| Is a separate application server required? | No Clockoli server | Yes | Not always | No |
 | Is task identity tied to one issue tracker? | No; any HTTP(S) URL | Product-dependent | Product-dependent | No |
 | Team reporting | Shared private repository and marked personal branches | Hosted workspace | Usually limited | Manual aggregation |
 | Billing privacy | Rates stay in each browser | Commonly stored in the workspace | Product-dependent | File-dependent |
 | Automatic updates/mobile/reminders | Not in the current beta | Common | Product-dependent | No |
 
-This is a design comparison, not a claim that one category is universally better. RepoClock deliberately trades some SaaS convenience for control and transparency.
+This is a design comparison, not a claim that one category is universally better. Clockoli deliberately trades some SaaS convenience for control and transparency.
 
 ## Advantages of the Git-backed approach
 
 ### 1. Data ownership is structural
 
-RepoClock does not promise that you can export later; it writes directly to storage you already control. Repository access rules, organization policy, backup, retention, and deletion apply from the first tracked entry.
+Clockoli does not promise that you can export later; it writes directly to storage you already control. Repository access rules, organization policy, backup, retention, and deletion apply from the first tracked entry.
 
-If RepoClock is unavailable, the time records still exist as ordinary text in GitHub and in any repository backup.
+If Clockoli is unavailable, the time records still exist as ordinary text in GitHub and in any repository backup.
 
 ### 2. The format is portable
 
@@ -50,17 +50,17 @@ This can be read by a person, cloned with Git, parsed by a small script, or tran
 
 Edits and deletes change Git files, so prior versions remain in normal Git history. You can inspect who changed a file, compare versions, or restore an earlier commit.
 
-Git history is not tamper-proof against repository administrators; they can rewrite it. RepoClock therefore provides strong inspectability and practical recovery, not immutable compliance logging.
+Git history is not tamper-proof against repository administrators; they can rewrite it. Clockoli therefore provides strong inspectability and practical recovery, not immutable compliance logging.
 
-### 4. There is no RepoClock data server
+### 4. There is no Clockoli data server
 
-The extension communicates directly with GitHub. RepoClock does not operate a second server that receives tracked URLs, descriptions, or billing settings.
+The extension communicates directly with GitHub. Clockoli does not operate a second server that receives tracked URLs, descriptions, or billing settings.
 
 This reduces the number of systems that must be trusted and operated. GitHub is still a dependency, and GitHub availability and API limits still matter.
 
 ### 5. Tasks are URL-first
 
-Issue-only trackers work well until work starts in a document, support console, customer portal, design tool, or another repository host. RepoClock uses a canonical HTTP(S) URL as the identity, so the same timer can follow the work wherever it lives.
+Issue-only trackers work well until work starts in a document, support console, customer portal, design tool, or another repository host. Clockoli uses a canonical HTTP(S) URL as the identity, so the same timer can follow the work wherever it lives.
 
 GitHub issues and pull requests receive richer metadata when available, but provider metadata never becomes a requirement for tracking.
 
@@ -78,13 +78,13 @@ This is useful when time should be shared but commercial terms should not. The t
 
 ### 8. Safety is visible rather than implicit
 
-RepoClock validates repository identity, privacy, branch routing, storage ownership, record shape, and file versions before writing. It uses Git SHAs and atomic commits for linked or cross-month corrections.
+Clockoli validates repository identity, privacy, branch routing, storage ownership, record shape, and file versions before writing. It uses Git SHAs and atomic commits for linked or cross-month corrections.
 
 Repository adoption and migration fail closed: incompatible files, unknown ownership, active work, or pending writes block a risky transition instead of being guessed around.
 
 ## Compared with an issue-tracker timer
 
-RepoClock keeps the useful contextual behavior—a stopwatch inside GitHub and metadata for issues/PRs—without making those coordinates the durable model.
+Clockoli keeps the useful contextual behavior—a stopwatch inside GitHub and metadata for issues/PRs—without making those coordinates the durable model.
 
 That gives you:
 
@@ -93,11 +93,11 @@ That gives you:
 - backward-compatible reading of older GitHub issue/PR records;
 - meaningful Source grouping by GitHub repository or generic hostname.
 
-Generic URLs do not need provider metadata. RepoClock tracks, groups, searches, and reports them by URL and optional title.
+Generic URLs do not need provider metadata. Clockoli tracks, groups, searches, and reports them by URL and optional title.
 
 ## Compared with a spreadsheet
 
-A spreadsheet gives strong control but depends on consistent manual entry. RepoClock adds:
+A spreadsheet gives strong control but depends on consistent manual entry. Clockoli adds:
 
 - a live one-click timer;
 - contextual URL capture;
@@ -107,17 +107,17 @@ A spreadsheet gives strong control but depends on consistent manual entry. RepoC
 - structured Tasks and Reports;
 - recoverable offline Stop operations.
 
-A spreadsheet remains better for unconstrained custom modeling. RepoClock can create completed manual entries in bulk on the Times page while retaining its validated monthly storage format.
+A spreadsheet remains better for unconstrained custom modeling. Clockoli can create completed manual entries in bulk on the Times page while retaining its validated monthly storage format.
 
 ## Compared with a local-only browser timer
 
 Local-only storage is simple and private but can disappear with a browser profile, remain unavailable on another machine, and provide no natural team audit trail.
 
-RepoClock uses the browser for credentials, preferences, retry state, and private billing rates, but treats GitHub as the durable source for timers and completed records. That enables multi-browser state, repository backup, and team reporting while keeping sensitive commercial settings local.
+Clockoli uses the browser for credentials, preferences, retry state, and private billing rates, but treats GitHub as the durable source for timers and completed records. That enables multi-browser state, repository backup, and team reporting while keeping sensitive commercial settings local.
 
 ## Tradeoffs to consider
 
-RepoClock is intentionally opinionated:
+Clockoli is intentionally opinionated:
 
 - GitHub is required for authentication and durable storage.
 - Everyone who tracks into a shared repository needs appropriate GitHub access.

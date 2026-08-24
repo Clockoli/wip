@@ -19,11 +19,11 @@ export function userBranchMetadataText(user) {
 
 export function parseUserBranchMetadata(text) {
   let value;
-  try { value = JSON.parse(String(text)); } catch { throw new Error('RepoClock user branch metadata is not valid JSON'); }
+  try { value = JSON.parse(String(text)); } catch { throw new Error('Clockoli user branch metadata is not valid JSON'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).sort().join(',') !== 'githubUserId,storageLogin,version'
       || value.version !== 1 || !validIdentity({ id: value.githubUserId, login: value.storageLogin })) {
-    throw new Error('RepoClock user branch metadata is invalid');
+    throw new Error('Clockoli user branch metadata is invalid');
   }
   return { id: value.githubUserId, login: value.storageLogin };
 }
@@ -38,12 +38,12 @@ export async function ensureUserStorageBranch(github, user, sourceBranch) {
     const file = await branchGithub.getText(USER_METADATA_PATH);
     const actual = parseUserBranchMetadata(file.text);
     if (actual.id !== user.id || actual.login.toLowerCase() !== user.login.toLowerCase()) {
-      throw new Error('RepoClock user branch belongs to a different GitHub account');
+      throw new Error('Clockoli user branch belongs to a different GitHub account');
     }
   } catch (error) {
     if (!notFound(error)) throw error;
-    if (!ensured.created) throw new Error('Existing RepoClock user branch is missing ownership metadata');
-    await branchGithub.putText(USER_METADATA_PATH, expected, 'Initialize RepoClock user storage branch');
+    if (!ensured.created) throw new Error('Existing Clockoli user branch is missing ownership metadata');
+    await branchGithub.putText(USER_METADATA_PATH, expected, 'Initialize Clockoli user storage branch');
   }
   return { branch, github: branchGithub };
 }
@@ -57,13 +57,13 @@ export async function discoverUserStorageBranches(github, { signal } = {}) {
     try {
       const file = await branchGithub.getText(USER_METADATA_PATH, { signal });
       const user = parseUserBranchMetadata(file.text);
-      if (branch !== userStorageBranch(user.id)) throw new Error('RepoClock user branch name does not match its stable GitHub identity');
-      if (users.some(item => item.id === user.id || item.login.toLowerCase() === user.login.toLowerCase())) throw new Error('RepoClock user branch metadata is duplicated');
+      if (branch !== userStorageBranch(user.id)) throw new Error('Clockoli user branch name does not match its stable GitHub identity');
+      if (users.some(item => item.id === user.id || item.login.toLowerCase() === user.login.toLowerCase())) throw new Error('Clockoli user branch metadata is duplicated');
       users.push({ ...user, branch, github: branchGithub });
     } catch (error) {
       if (!notFound(error)) throw error;
       // Ignore branch names from pre-release experiments that do not carry the
-      // fail-closed RepoClock ownership marker.
+      // fail-closed Clockoli ownership marker.
     }
   }
   return users.sort((a, b) => a.id - b.id);

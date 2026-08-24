@@ -1,31 +1,31 @@
-# RepoClock
+# Clockoli
 
-RepoClock is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no RepoClock application server and no separate time-tracking database.
+Clockoli is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no Clockoli application server and no separate time-tracking database.
 
-Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. RepoClock captures the URL as the task identity; a title and description are optional.
+Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
 
-## Why RepoClock
+## Why Clockoli
 
-Most time trackers put your records in a vendor database. RepoClock writes readable text files to Git instead:
+Most time trackers put your records in a vendor database. Clockoli writes readable text files to Git instead:
 
 - **You own the data.** Access, retention, backup, and deletion follow the rules of your GitHub repository.
-- **The history is inspectable.** Time files are readable without RepoClock, and edits remain visible in Git history.
-- **There is no RepoClock backend.** The extension talks directly to GitHub.
+- **The history is inspectable.** Time files are readable without Clockoli, and edits remain visible in Git history.
+- **There is no Clockoli backend.** The extension talks directly to GitHub.
 - **It works beyond one issue tracker.** Any valid HTTP(S) URL can be a task.
 - **It still feels native on GitHub.** A stopwatch appears in the GitHub header, while the browser toolbar popup works on other sites.
 - **Team reporting does not require a second data silo.** Team members can write to isolated personal branches in one shared private repository; Reports reads them together.
 
-RepoClock is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why RepoClock](docs/why-repoclock.md) for a detailed comparison and the tradeoffs.
+Clockoli is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why Clockoli](docs/why-clockoli.md) for a detailed comparison and the tradeoffs.
 
 ## Current beta installation
 
-RepoClock currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.13`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.14`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
    ```bash
-   git clone git@github.com:repoclock/repoclock.git
-   cd repoclock
+   git clone git@github.com:clockoli/clockoli.git
+   cd clockoli
    git switch main
    git pull --ff-only
    ```
@@ -33,7 +33,7 @@ RepoClock currently runs as a trusted unpacked extension. This checkout and its 
 2. Open `chrome://extensions` in Chrome or another Chromium browser.
 3. Enable **Developer mode**.
 4. Select **Load unpacked** and choose the repository root, the directory that contains `manifest.json`.
-5. Pin RepoClock to the browser toolbar.
+5. Pin Clockoli to the browser toolbar.
 6. Open **Settings** and complete the four GitHub connection steps.
 
 If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
@@ -43,13 +43,13 @@ Full setup instructions: [Getting started](docs/getting-started.md).
 ## Start tracking
 
 1. Open the page you want to track.
-2. Select the RepoClock toolbar icon.
+2. Select the Clockoli toolbar icon.
 3. Choose **Start tracking this task**.
-4. When you finish, open RepoClock and choose **Stop and save**. Add a description if it will help later.
+4. When you finish, open Clockoli and choose **Stop and save**. Add a description if it will help later.
 
 On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
 
-RepoClock permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
+Clockoli permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
 
 ## Features
 
@@ -112,7 +112,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
 - [Feature guide](docs/features.md)
-- [Why RepoClock](docs/why-repoclock.md)
+- [Why Clockoli](docs/why-clockoli.md)
 - [Data, privacy, and security](docs/data-and-privacy.md)
 - [Time-data repository setup](docs/time-data-repository.md)
 - [Troubleshooting](docs/troubleshooting.md)

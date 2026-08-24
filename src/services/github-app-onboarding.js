@@ -147,35 +147,35 @@ function exactKeys(value, keys) {
 
 function parseMarker(text) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).byteLength > MAX_MARKER_BYTES) {
-    throw new OnboardingError('The existing RepoClock repository marker is too large.', 'incompatible_storage_format');
+    throw new OnboardingError('The existing Clockoli repository marker is too large.', 'incompatible_storage_format');
   }
   let marker;
   try { marker = JSON.parse(text); }
-  catch { throw new OnboardingError('The existing RepoClock repository marker is not valid JSON.', 'incompatible_storage_format'); }
+  catch { throw new OnboardingError('The existing Clockoli repository marker is not valid JSON.', 'incompatible_storage_format'); }
   if (!exactKeys(marker, ['repositoryFormatVersion', 'createdAt', 'createdBy', 'users'])
       || marker.repositoryFormatVersion !== REPOSITORY_FORMAT_VERSION) {
-    throw new OnboardingError('This repository uses an unsupported RepoClock storage format.', 'incompatible_storage_format');
+    throw new OnboardingError('This repository uses an unsupported Clockoli storage format.', 'incompatible_storage_format');
   }
   if (!exactKeys(marker.createdBy, ['id', 'login'])
       || !validMarkerCreatedAt(marker.createdAt)
       || !Number.isSafeInteger(marker.createdBy.id) || marker.createdBy.id <= 0 || !validLogin(marker.createdBy.login)) {
-    throw new OnboardingError('The existing RepoClock repository marker is invalid.', 'incompatible_storage_format');
+    throw new OnboardingError('The existing Clockoli repository marker is invalid.', 'incompatible_storage_format');
   }
   if (!marker.users || typeof marker.users !== 'object' || Array.isArray(marker.users)
       || Object.keys(marker.users).length > MAX_MARKER_USERS) {
-    throw new OnboardingError('The existing RepoClock user mapping is invalid.', 'incompatible_storage_format');
+    throw new OnboardingError('The existing Clockoli user mapping is invalid.', 'incompatible_storage_format');
   }
   const users = {}, assignedLogins = new Set();
   for (const [id, login] of Object.entries(marker.users)) {
     const normalized = typeof login === 'string' ? login.toLowerCase() : '';
     if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)) || !validLogin(login) || assignedLogins.has(normalized)) {
-      throw new OnboardingError('The existing RepoClock user mapping is invalid.', 'incompatible_storage_format');
+      throw new OnboardingError('The existing Clockoli user mapping is invalid.', 'incompatible_storage_format');
     }
     assignedLogins.add(normalized);
     users[id] = login;
   }
   if (users[String(marker.createdBy.id)] !== marker.createdBy.login) {
-    throw new OnboardingError('The existing RepoClock marker ownership is invalid.', 'incompatible_storage_format');
+    throw new OnboardingError('The existing Clockoli marker ownership is invalid.', 'incompatible_storage_format');
   }
   return {
     repositoryFormatVersion: marker.repositoryFormatVersion,
@@ -200,13 +200,13 @@ async function validateExistingFiles(github, entries) {
     if (!reserved) continue;
     if (compatibleDirectory(path, entry)) continue;
     if (path === '.repoclock' || path === 'active' || path === 'times') {
-      throw new OnboardingError(`The repository contains a non-directory RepoClock root at ${path}.`, 'incompatible_storage_format');
+      throw new OnboardingError(`The repository contains a non-directory Clockoli root at ${path}.`, 'incompatible_storage_format');
     }
     if (entry.type !== 'blob' || entry.mode !== '100644') {
-      throw new OnboardingError(`The repository contains an incompatible RepoClock tree entry at ${path || '(unknown path)'}.`, 'incompatible_storage_format');
+      throw new OnboardingError(`The repository contains an incompatible Clockoli tree entry at ${path || '(unknown path)'}.`, 'incompatible_storage_format');
     }
     if (path === MARKER_PATH || ['.repoclock/.gitkeep', 'active/.gitkeep', 'times/.gitkeep'].includes(path)) continue;
-    if (path.startsWith('.repoclock/')) throw new OnboardingError('The repository contains an incompatible RepoClock control path.', 'incompatible_storage_format');
+    if (path.startsWith('.repoclock/')) throw new OnboardingError('The repository contains an incompatible Clockoli control path.', 'incompatible_storage_format');
     if (path.startsWith('active/')) {
       if (!/^active\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.txt$/.test(path)) {
         throw new OnboardingError('The repository contains an incompatible active-timer path.', 'incompatible_storage_format');
@@ -221,7 +221,7 @@ async function validateExistingFiles(github, entries) {
       relevant.push({ path, type: 'monthly', user: parsed.user, month: parsed.month });
     }
   }
-  if (relevant.length > MAX_LEGACY_FILES) throw new OnboardingError('Existing RepoClock storage has too many files to validate safely.', 'legacy_layout_budget');
+  if (relevant.length > MAX_LEGACY_FILES) throw new OnboardingError('Existing Clockoli storage has too many files to validate safely.', 'legacy_layout_budget');
   let bytes = 0;
   for (let index = 0; index < relevant.length; index += 6) {
     const batch = relevant.slice(index, index + 6);
@@ -229,12 +229,12 @@ async function validateExistingFiles(github, entries) {
     for (let offset = 0; offset < batch.length; offset += 1) {
       const item = batch[offset], file = files[offset];
       bytes += new TextEncoder().encode(file.text).byteLength;
-      if (bytes > MAX_LEGACY_BYTES) throw new OnboardingError('Existing RepoClock storage is too large to validate safely.', 'legacy_layout_budget');
+      if (bytes > MAX_LEGACY_BYTES) throw new OnboardingError('Existing Clockoli storage is too large to validate safely.', 'legacy_layout_budget');
       try {
         if (item.type === 'active') parseActiveText(file.text, { user: item.user, path: item.path, sha: file.sha });
         else parseMonthlyText(file.text, { user: item.user, month: item.month, path: item.path, sha: file.sha });
       } catch (error) {
-        throw new OnboardingError(`Existing RepoClock data is incompatible at ${item.path}: ${error.message}`, 'incompatible_storage_format');
+        throw new OnboardingError(`Existing Clockoli data is incompatible at ${item.path}: ${error.message}`, 'incompatible_storage_format');
       }
     }
   }
@@ -268,16 +268,16 @@ export class RepositoryInitializer {
   async initialize(user, { expectedRepositoryId, selectedBranch, branchMode = 'default', requiredStorageLogin = '' } = {}) {
     if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validLogin(user?.login)) throw new OnboardingError('GitHub returned an invalid user identity.', 'invalid_github_response');
     const storageLogin = requiredStorageLogin || user.login;
-    if (!validLogin(storageLogin)) throw new OnboardingError('The existing RepoClock storage login is invalid.', 'incompatible_storage_format');
+    if (!validLogin(storageLogin)) throw new OnboardingError('The existing Clockoli storage login is invalid.', 'incompatible_storage_format');
     const validateFreshRepository = async ({ allowEmpty = false, acceptCreatedDefaultBranch = false } = {}) => {
       const fresh = await this.github.validateRepository();
       if (expectedRepositoryId !== undefined && fresh.id !== expectedRepositoryId) {
         throw new OnboardingError('The selected repository identity changed during validation. Refresh repository access and choose it again.', 'repository_identity_changed');
       }
-      if (fresh.private !== true) throw new OnboardingError('RepoClock requires a private repository.', 'private_required');
+      if (fresh.private !== true) throw new OnboardingError('Clockoli requires a private repository.', 'private_required');
       if (fresh.archived === true || fresh.disabled === true) throw new OnboardingError('The selected repository is not writable.', 'repository_unavailable');
       if (fresh.permissions?.push !== true) throw new OnboardingError('Your GitHub account cannot write to this repository.', 'user_write_required');
-      if (!allowEmpty && !fresh.default_branch) throw new OnboardingError('RepoClock could not create the first commit in this empty repository. Open it on GitHub, add a README, then try again.', 'empty_repository');
+      if (!allowEmpty && !fresh.default_branch) throw new OnboardingError('Clockoli could not create the first commit in this empty repository. Open it on GitHub, add a README, then try again.', 'empty_repository');
       if (!acceptCreatedDefaultBranch && branchMode === 'default' && fresh.default_branch && selectedBranch && selectedBranch !== fresh.default_branch) {
         throw new OnboardingError('The repository default branch changed during setup. Check access and select the repository again.', 'repository_branch_changed');
       }
@@ -288,12 +288,12 @@ export class RepositoryInitializer {
       const text = markerText(user, storageLogin, this.now);
       parseMarker(text);
       try {
-        await this.github.putInitialText(MARKER_PATH, text, 'Initialize RepoClock storage');
+        await this.github.putInitialText(MARKER_PATH, text, 'Initialize Clockoli storage');
         repository = await validateFreshRepository({ acceptCreatedDefaultBranch: true });
         return result('write_verified', storageLogin, repository, repository.default_branch);
       } catch (initializationError) {
         if (isNotFound(initializationError)) {
-          throw new OnboardingError('RepoClock could not create the first commit. Open the repository on GitHub, choose “Add a README”, commit it to the default branch, then return here and try again.', 'empty_repository');
+          throw new OnboardingError('Clockoli could not create the first commit. Open the repository on GitHub, choose “Add a README”, commit it to the default branch, then return here and try again.', 'empty_repository');
         }
         throw initializationError;
       }
@@ -303,7 +303,7 @@ export class RepositoryInitializer {
     catch (error) {
       if (isNotFound(error) && branchMode === 'default') return initializeEmptyRepository();
       if (isNotFound(error) && selectedBranch && selectedBranch !== repository.default_branch) {
-        throw new OnboardingError('The existing custom branch is unavailable to the RepoClock GitHub App. Resolve the branch or choose another repository.', 'custom_branch_unverified');
+        throw new OnboardingError('The existing custom branch is unavailable to the Clockoli GitHub App. Resolve the branch or choose another repository.', 'custom_branch_unverified');
       }
       if (isNotFound(error)) throw new OnboardingError('The selected branch is unavailable. Choose another repository or branch.', 'custom_branch_unverified');
       throw error;
@@ -343,7 +343,7 @@ export class RepositoryInitializer {
       parseMarker(text);
       try {
         await validateFreshRepository();
-        await this.github.putText(MARKER_PATH, text, file ? 'Register RepoClock user' : 'Initialize RepoClock storage', file?.sha);
+        await this.github.putText(MARKER_PATH, text, file ? 'Register Clockoli user' : 'Initialize Clockoli storage', file?.sha);
         return result('write_verified', storageLogin, repository, selectedBranch);
       } catch (error) {
         if (isConflict(error) || error?.status === 422 || error?.code === 'validation') {
@@ -354,11 +354,11 @@ export class RepositoryInitializer {
           } catch (readError) {
             if (!isNotFound(readError)) throw readError;
           }
-          throw new OnboardingError("GitHub's branch rules do not allow RepoClock to write its storage marker to the selected branch.", 'branch_policy_rejected');
+          throw new OnboardingError("GitHub's branch rules do not allow Clockoli to write its storage marker to the selected branch.", 'branch_policy_rejected');
         }
         throw error;
       }
     }
-    throw new OnboardingError('RepoClock storage changed repeatedly during initialization. Try again.', 'initialization_conflict');
+    throw new OnboardingError('Clockoli storage changed repeatedly during initialization. Try again.', 'initialization_conflict');
   }
 }

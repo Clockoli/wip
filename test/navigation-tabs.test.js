@@ -21,7 +21,7 @@ test('every standalone page exposes the same same-window page tabs', () => {
     const html = read(file);
     const nav = html.match(/<nav class="page-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
     assert.ok(nav, `${current} must render page tabs`);
-    assert.match(nav, /aria-label="RepoClock pages"/);
+    assert.match(nav, /aria-label="Clockoli pages"/);
     for (const [label, href] of Object.entries(hrefs)) {
       assert.match(nav, new RegExp(`<a href="${href.replaceAll('.', '\\.') }"${label === current ? ' aria-current="page"' : ''}>${label}<\\/a>`), `${current} must link to ${label}`);
     }

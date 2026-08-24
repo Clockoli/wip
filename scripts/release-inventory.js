@@ -32,8 +32,10 @@ function localReferences(file, text) {
 
 function manifestEntries(manifest) {
   const entries = [
+    ...Object.values(manifest.icons || {}),
     manifest.background?.service_worker,
     manifest.action?.default_popup,
+    ...Object.values(manifest.action?.default_icon || {}),
     manifest.options_page,
     ...RUNTIME_PAGE_ENTRIES,
     ...(manifest.content_scripts || []).flatMap(item => [...(item.js || []), ...(item.css || [])]),

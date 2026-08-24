@@ -461,7 +461,7 @@ function recoveryFor(code) {
   const context = { globalThis: null, Set, Object, String };
   context.globalThis = context;
   vm.runInNewContext(recoverySource, context);
-  return context.RepoClockRecovery.actionFor(code);
+  return context.ClockoliRecovery.actionFor(code);
 }
 
 test('destination reachability fails closed on canonical coordinate drift before confirming file absence', async () => {
@@ -554,19 +554,19 @@ test('runtime mutations fail closed when stable repository identity has not been
 test('guarded first commit fails closed if a default branch appears after the configured ref check', async () => {
   const calls = [];
   let repositoryReads = 0;
-  const empty = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
+  const empty = { id: 77, full_name: 'acme/clockoli-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
   const initialized = { ...empty, default_branch: 'trunk' };
   const client = new GitHubClient({
-    token: 'secret', owner: 'acme', repo: 'repoclock-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    token: 'secret', owner: 'acme', repo: 'clockoli-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
-      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repositoryReads++ === 0 ? empty : initialized);
+      if (!options.method && url.endsWith('/repos/acme/clockoli-data')) return response(200, repositoryReads++ === 0 ? empty : initialized);
       if (!options.method && url.endsWith('/branches/main')) return response(404, { message: 'Not Found' });
       throw new Error('must not write after the default branch changes');
     },
   });
   await assert.rejects(
-    () => client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage'),
+    () => client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize Clockoli storage'),
     error => error.code === 'repository_branch_changed',
   );
   assert.equal(calls.length, 3);
@@ -575,21 +575,21 @@ test('guarded first commit fails closed if a default branch appears after the co
 
 test('GitHub client can make the guarded first commit in an empty repository without naming a nonexistent branch', async () => {
   const calls = [];
-  const repository = { id: 77, full_name: 'acme/repoclock-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
+  const repository = { id: 77, full_name: 'acme/clockoli-data', private: true, archived: false, disabled: false, default_branch: null, permissions: { push: true } };
   const client = new GitHubClient({
-    token: 'secret', owner: 'acme', repo: 'repoclock-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
+    token: 'secret', owner: 'acme', repo: 'clockoli-data', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
-      if (!options.method && url.endsWith('/repos/acme/repoclock-data')) return response(200, repository);
+      if (!options.method && url.endsWith('/repos/acme/clockoli-data')) return response(200, repository);
       if (!options.method && url.endsWith('/branches/main')) return response(404, { message: 'Not Found' });
       return response(201, { content: { sha: 'marker' }, commit: { sha: 'initial' } });
     },
   });
-  await client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize RepoClock storage');
+  await client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize Clockoli storage');
   assert.equal(calls.length, 4);
   const payload = JSON.parse(calls[3].options.body);
   assert.equal(payload.branch, undefined);
-  assert.equal(payload.message, 'Initialize RepoClock storage');
+  assert.equal(payload.message, 'Initialize Clockoli storage');
   assert.equal(calls[3].options.method, 'PUT');
 });
 

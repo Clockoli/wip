@@ -8,4 +8,4 @@ export function githubAppInstallationUrl() {
 }
 
 export const GITHUB_AUTHORIZATIONS_URL = 'https://github.com/settings/apps/authorizations';
-export const GITHUB_NEW_REPOSITORY_URL = 'https://github.com/new?owner=%40me&name=repoclock-data&description=Private%20RepoClock%20time%20data&visibility=private&template_owner=repoclock&template_name=data-template';
+export const GITHUB_NEW_REPOSITORY_URL = 'https://github.com/new?owner=%40me&name=clockoli-data&description=Private%20Clockoli%20time%20data&visibility=private&template_owner=repoclock&template_name=data-template';

@@ -159,10 +159,10 @@ export class ChromeStore {
       const state = { ...structuredClone(DEFAULT_STATE), ...values };
       if (state.dataVersion === version) return { result: state };
       if (state.dataVersion > version) {
-        throw storageFormatError(`RepoClock local data version ${state.dataVersion} is newer than supported version ${version}.`);
+        throw storageFormatError(`Clockoli local data version ${state.dataVersion} is newer than supported version ${version}.`);
       }
       if (state.dataVersion !== 2 && (state.activeCache || (state.pendingWrites || []).length)) {
-        throw storageFormatError('RepoClock cannot safely migrate accepted active or pending work from this local data version.');
+        throw storageFormatError('Clockoli cannot safely migrate accepted active or pending work from this local data version.');
       }
       const reset = state.dataVersion === 2 && version === 3
         ? { activeCache: state.activeCache, recentCache: [], pendingWrites: migrateV2PendingWrites(state.pendingWrites), dataVersion: version }

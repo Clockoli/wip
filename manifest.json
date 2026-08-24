@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "RepoClock",
-  "version": "0.1.13",
+  "name": "Clockoli",
+  "version": "0.1.14",
   "description": "Track time on any task URL and store records in a private GitHub repository.",
   "permissions": [
     "alarms",
@@ -19,8 +19,14 @@
     "type": "module"
   },
   "action": {
-    "default_title": "RepoClock",
-    "default_popup": "src/popup/popup.html"
+    "default_title": "Clockoli",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "src/assets/clockoli-16.png",
+      "32": "src/assets/clockoli-32.png",
+      "48": "src/assets/clockoli-48.png",
+      "128": "src/assets/clockoli-128.png"
+    }
   },
   "options_page": "src/options/options.html",
   "content_scripts": [
@@ -35,5 +41,11 @@
       "run_at": "document_idle"
     }
   ],
-  "minimum_chrome_version": "102"
+  "minimum_chrome_version": "102",
+  "icons": {
+    "16": "src/assets/clockoli-16.png",
+    "32": "src/assets/clockoli-32.png",
+    "48": "src/assets/clockoli-48.png",
+    "128": "src/assets/clockoli-128.png"
+  }
 }

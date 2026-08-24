@@ -778,7 +778,7 @@ The previous version remains in Git history.`)) return;
   function renderTimesPage() {
     const page = el('main', undefined, 'times-page');
     const header = el('header', undefined, 'times-header');
-    const heading = el('div'); heading.append(el('strong', 'RepoClock'), el('h1', 'Times'));
+    const heading = el('div'); heading.append(el('strong', 'Clockoli'), el('h1', 'Times'));
     header.append(heading); page.append(header);
     const body = el('div', undefined, 'times-body');
     if (!pageState.configured && recentLoaded) {
@@ -841,7 +841,7 @@ The previous version remains in Git history.`)) return;
     menu.addEventListener('scroll', updateScrollState, { passive: true });
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header');
-    const heading = el('div'); heading.append(el('strong', 'RepoClock'), el('div', 'Time tracker', 'muted'));
+    const heading = el('div'); heading.append(el('strong', 'Clockoli'), el('div', 'Time tracker', 'muted'));
     const syncText = pageState.pendingCount ? `${pageState.pendingCount} waiting to sync` : 'Synced'; heading.append(el('div', syncText, 'muted'));
     const headerActions = el('div', undefined, 'header-actions');
     const tasks = button('Tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open tasks';
@@ -883,7 +883,7 @@ The previous version remains in Git history.`)) return;
         startButton.disabled = !current || pageState.pendingCount > 0;
         body.append(startButton);
         if (pageState.pendingCount) body.append(el('div', 'Sync or resolve the pending entry before starting.', 'muted'));
-        else if (!current) body.append(el('div', 'RepoClock tracks any HTTP(S) task URL; a title is optional.', 'muted'));
+        else if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
       if (pageState.pendingCount) body.append(button('Sync now', 'secondary wide', async (event, node) => {
         node.disabled = true;
@@ -918,7 +918,7 @@ The previous version remains in Git history.`)) return;
       const more = el('div', undefined, 'more-times'); more.append(button('View more times', 'secondary', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); })); body.append(more);
     }
     if (errorText) {
-      const error = el('div', errorText, 'error'), recovery = globalThis.RepoClockRecovery.actionFor(errorCode), label = recovery?.label || '';
+      const error = el('div', errorText, 'error'), recovery = globalThis.ClockoliRecovery.actionFor(errorCode), label = recovery?.label || '';
       if (label) error.append(button(label, 'secondary wide', async () => {
         if (recovery.kind === 'retry') {
           errorText = ''; errorCode = ''; renderUi();

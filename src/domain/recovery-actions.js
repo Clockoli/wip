@@ -27,5 +27,5 @@
     return Object.freeze({ kind, label: labels[kind] });
   }
 
-  globalThis.RepoClockRecovery = Object.freeze({ actionFor });
+  globalThis.ClockoliRecovery = Object.freeze({ actionFor });
 })();

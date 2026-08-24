@@ -12,8 +12,8 @@ const popup = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url
 
 test('tasks page is a recent tracked-work list without GitHub issue-list clutter', () => {
   assert.match(html, /<h1>Recently tracked work<\/h1>/);
-  assert.match(html, /class="brand-name">RepoClock<\/div>/);
-  assert.match(html, /<header class="app-header">[\s\S]*RepoClock[\s\S]*<h1>Recently tracked work<\/h1>[\s\S]*<\/header>/);
+  assert.match(html, /class="brand-name">Clockoli<\/div>/);
+  assert.match(html, /<header class="app-header">[\s\S]*Clockoli[\s\S]*<h1>Recently tracked work<\/h1>[\s\S]*<\/header>/);
   assert.doesNotMatch(html, /id="source"/);
   assert.doesNotMatch(js, /result\.sourceRepository|result\.branch/);
   assert.doesNotMatch(html, /class="eyebrow"/);
@@ -47,13 +47,13 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
     'the full clamped task title remains available without expanding the row');
 });
 
-test('visible extension branding is RepoClock and Tasks uses neutral GitHub buttons', () => {
+test('visible extension branding is Clockoli and Tasks uses neutral GitHub buttons', () => {
   for (const surface of [manifest, popup, html, content]) {
     assert.doesNotMatch(surface, /GitHub Private Time Tracker|Private Time Tracker/);
   }
-  assert.match(manifest, /"name":\s*"RepoClock"/);
-  assert.match(manifest, /"default_title":\s*"RepoClock"/);
-  assert.match(content, /heading\.append\(el\('strong', 'RepoClock'\)/);
+  assert.match(manifest, /"name":\s*"Clockoli"/);
+  assert.match(manifest, /"default_title":\s*"Clockoli"/);
+  assert.match(content, /heading\.append\(el\('strong', 'Clockoli'\)/);
   assert.match(content, /const ROOT_ID = 'repoclock-root'/);
   assert.match(css, /\.timer-button\{[^}]*border:1px solid var\(--button-default-borderColor-rest\)[^}]*background:var\(--button-default-bgColor-rest\)[^}]*color:var\(--button-default-fgColor-rest\)/);
   assert.match(css, /\.timer-button:hover\{[^}]*background:var\(--button-default-bgColor-hover\)/);

@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>RepoClock Settings</title>
+  <title>Clockoli Settings</title>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
 </head>
 <body>
 <div class="page-tabs-shell">
-  <nav class="page-tabs" aria-label="RepoClock pages">
+  <nav class="page-tabs" aria-label="Clockoli pages">
     <a href="../times/times.html">Times</a>
     <a href="../tasks/tasks.html">Tasks</a>
     <a href="../reports/reports.html">Reports</a>
@@ -18,20 +18,20 @@
 </div>
 <main>
   <header class="hero">
-    <div class="mark" aria-hidden="true">RC</div>
-    <div><h1>RepoClock</h1><p>Private time tracking stored in a GitHub repository you control.</p></div>
+    <img class="mark" src="../assets/clockoli.svg" alt="">
+    <div><h1>Clockoli</h1><p>Private time tracking stored in a GitHub repository you control.</p></div>
   </header>
 
   <div id="message" role="status" aria-live="polite"></div>
 
   <section class="card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title">Connect GitHub</h2><p>Complete four guided steps to connect RepoClock to one private data repository.</p></div>
+      <div><h2 id="connection-title">Connect GitHub</h2><p>Complete four guided steps to connect Clockoli to one private data repository.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
     <div id="build-warning" class="notice error-notice" hidden>
-      This development build does not yet include the public RepoClock GitHub App client ID. The personal access token option remains available below.
+      This development build does not yet include the public Clockoli GitHub App client ID. The personal access token option remains available below.
     </div>
     <div id="recovery-actions" class="notice" hidden>
       <div class="actions">
@@ -58,8 +58,8 @@
           <p id="disconnect-help" class="help">Remove only this browser’s local sign-in. Repository data and GitHub authorization remain unchanged.</p>
         </div>
         <div id="revoke-action" class="connected-action">
-          <a id="revoke" class="button-link danger-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer" aria-describedby="revoke-help">Revoke RepoClock authorization on GitHub</a>
-          <p id="revoke-help" class="help">Remove RepoClock’s sign-in approval from your GitHub account. This does not uninstall the GitHub App. It does not delete repository data.</p>
+          <a id="revoke" class="button-link danger-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer" aria-describedby="revoke-help">Revoke Clockoli authorization on GitHub</a>
+          <p id="revoke-help" class="help">Remove Clockoli’s sign-in approval from your GitHub account. This does not uninstall the GitHub App. It does not delete repository data.</p>
         </div>
       </div>
     </div>
@@ -78,26 +78,26 @@
 
         <section id="device-step" class="onboarding-step" aria-labelledby="device-step-title">
           <h3 id="device-step-title" tabindex="-1">Device activation</h3>
-          <p>Device activation securely signs this RepoClock extension in to GitHub without asking you to create or paste a personal access token.</p>
+          <p>Device activation securely signs this Clockoli extension in to GitHub without asking you to create or paste a personal access token.</p>
           <div class="explanation">
             <strong>Why GitHub warns about device codes</strong>
-            <p>Only use the code after you start Device activation in this extension. GitHub warns against codes sent by someone else because they could connect an app you did not choose. RepoClock requests this one-time code directly from GitHub and shows it here. On GitHub, verify that the page names <strong>RepoClock by RepoClock</strong>. If you did not start this process, cancel it.</p>
+            <p>Only use the code after you start Device activation in this extension. GitHub warns against codes sent by someone else because they could connect an app you did not choose. Clockoli requests this one-time code directly from GitHub and shows it here. On GitHub, verify that you reached <strong>github.com</strong> for the Clockoli authorization you initiated here. If you did not start this process, cancel it.</p>
           </div>
           <div class="explanation">
             <strong>What “Act on your behalf” means here</strong>
-            <p>This is GitHub’s standard wording for limited API calls made with your approval. RepoClock can verify your GitHub identity, find RepoClock installations you can access, and—only after you grant a repository—read and write that repository’s contents. It cannot access repositories you do not grant or change your account or organization settings.</p>
-            <p class="help">During beta, GitHub may say RepoClock is new or has few users. That is an age and adoption notice, not an additional permission.</p>
+            <p>This is GitHub’s standard wording for limited API calls made with your approval. Clockoli can verify your GitHub identity, find Clockoli installations you can access, and—only after you grant a repository—read and write that repository’s contents. It cannot access repositories you do not grant or change your account or organization settings.</p>
+            <p class="help">During beta, GitHub may say Clockoli is new or has few users. That is an age and adoption notice, not an additional permission.</p>
           </div>
 
           <div id="authorize-panel">
             <button id="authorize" type="button">Copy code and open GitHub</button>
-            <p class="help">RepoClock copies the one-time code to your clipboard before GitHub opens, so you can paste it immediately.</p>
+            <p class="help">Clockoli copies the one-time code to your clipboard before GitHub opens, so you can paste it immediately.</p>
           </div>
 
           <div id="device-panel" class="notice" hidden>
             <p><strong>Because you just started Device activation here, you can enter this code on GitHub:</strong></p>
             <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
-            <p id="device-wait" class="help" aria-live="polite">RepoClock checks automatically every few seconds.</p>
+            <p id="device-wait" class="help" aria-live="polite">Clockoli checks automatically every few seconds.</p>
             <div class="actions">
               <button id="device-done" type="button">Done on GitHub—check now</button>
               <a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a>
@@ -107,30 +107,30 @@
 
         <section id="access-step" class="onboarding-step" aria-labelledby="access-step-title" hidden>
           <h3 id="access-step-title" tabindex="-1">Create a dedicated data repository</h3>
-          <p>GitHub will create a private <strong>repoclock-data</strong> repository from RepoClock’s template, including the directory structure and starter files.</p>
+          <p>GitHub will create a private <strong>clockoli-data</strong> repository from Clockoli’s template, including the directory structure and starter files.</p>
           <div class="actions repository-actions">
-            <a id="new-repository" class="button-link" target="_blank" rel="noreferrer">Create repoclock-data on GitHub</a>
+            <a id="new-repository" class="button-link" target="_blank" rel="noreferrer">Create clockoli-data on GitHub</a>
             <button id="skip-repository-creation" type="button" class="secondary">I already have a repository</button>
           </div>
-          <p class="help">GitHub opens a prefilled form. Review it and select <strong>Create repository</strong>. Repository creation does not grant RepoClock access; that is Step 3.</p>
+          <p class="help">GitHub opens a prefilled form. Review it and select <strong>Create repository</strong>. Repository creation does not grant Clockoli access; that is Step 3.</p>
         </section>
 
         <section id="repository-access-step" class="onboarding-step" aria-labelledby="repository-access-step-title" hidden>
-          <h3 id="repository-access-step-title" tabindex="-1">Give RepoClock access to a data repository</h3>
-          <p id="repository-access-instruction">On GitHub, choose <strong>Only select repositories</strong> and add the private repository that will store RepoClock data.</p>
+          <h3 id="repository-access-step-title" tabindex="-1">Give Clockoli access to a data repository</h3>
+          <p id="repository-access-instruction">On GitHub, choose <strong>Only select repositories</strong> and add the private repository that will store Clockoli data.</p>
           <div class="actions repository-actions">
             <a id="install-app" class="button-link" target="_blank" rel="noreferrer">Choose repository access on GitHub</a>
           </div>
-          <p class="help">RepoClock checks automatically when you return from GitHub.</p>
+          <p class="help">Clockoli checks automatically when you return from GitHub.</p>
           <button id="change-repository-setup" type="button" class="link-button">Change repository setup</button>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Choose and validate the data repository</h3>
-          <p id="repository-step-instruction">RepoClock detected repository access. Choose the private repository that should store RepoClock data.</p>
+          <p id="repository-step-instruction">Clockoli detected repository access. Choose the private repository that should store Clockoli data.</p>
           <fieldset>
-            <legend id="repository-choice-legend">Repositories RepoClock can use for data storage</legend>
-            <p class="help">This repository stores RepoClock time data. It can be separate from the repositories whose tasks you track. Unavailable repositories include the reason they cannot be used.</p>
+            <legend id="repository-choice-legend">Repositories Clockoli can use for data storage</legend>
+            <p class="help">This repository stores Clockoli time data. It can be separate from the repositories whose tasks you track. Unavailable repositories include the reason they cannot be used.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
@@ -145,7 +145,7 @@
 
       <div id="setup-cancelled" class="cancelled-state" hidden>
         <h3>Setup cancelled</h3>
-        <p>The pending device activation and uncommitted GitHub App setup were removed. Existing RepoClock settings were preserved.</p>
+        <p>The pending device activation and uncommitted GitHub App setup were removed. Existing Clockoli settings were preserved.</p>
         <button id="resume-setup" type="button" class="secondary">Resume setup</button>
       </div>
     </div>
@@ -167,7 +167,7 @@
     <div class="card-heading">
       <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user, including its currency sign or description. Optional dates define when each rate applies.</p></div>
     </div>
-    <p class="help"><strong>Rates stay only in this browser’s extension-local storage.</strong> RepoClock never writes rates or calculated money to the data repository.</p>
+    <p class="help"><strong>Rates stay only in this browser’s extension-local storage.</strong> Clockoli never writes rates or calculated money to the data repository.</p>
     <form id="billing-form">
       <div id="rates-list" class="rates-list"></div>
       <div class="actions billing-actions">
@@ -179,7 +179,7 @@
 
   <section id="settings-backup" class="card" aria-labelledby="settings-backup-title">
     <div class="card-heading">
-      <div><h2 id="settings-backup-title">Local settings backup</h2><p>Export or import RepoClock settings as a readable JSON text file.</p></div>
+      <div><h2 id="settings-backup-title">Local settings backup</h2><p>Export or import Clockoli settings as a readable JSON text file.</p></div>
     </div>
     <p class="help">The file includes display settings, billable rates with their currencies, and repository coordinates. GitHub credentials, Device Flow codes, active timers, pending writes, and tracked time are never exported. Repository coordinates are reference-only on import; importing does not reconnect GitHub or change the current data repository.</p>
     <div id="settings-export-reminder" class="notice" hidden>
@@ -194,7 +194,7 @@
 
   <details id="advanced-pat" class="card advanced">
     <summary>Don’t want to install the GitHub App?</summary>
-    <p><strong>Use a personal access token instead.</strong> This advanced option is for existing PAT setups or environments where the GitHub App cannot be installed. RepoClock never displays a stored token.</p>
+    <p><strong>Use a personal access token instead.</strong> This advanced option is for existing PAT setups or environments where the GitHub App cannot be installed. Clockoli never displays a stored token.</p>
     <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
     <form id="settings-form">
       <fieldset><legend>Private time-data repository</legend>
@@ -209,7 +209,7 @@
     </form>
     <hr>
     <h3>Local data</h3>
-    <p class="help">Clear this browser’s RepoClock settings and credentials without deleting repository data or revoking GitHub authorization. Before clearing, stop any running timer and use Sync in RepoClock until no pending changes remain. This prevents losing work that exists only in this browser.</p>
+    <p class="help">Clear this browser’s Clockoli settings and credentials without deleting repository data or revoking GitHub authorization. Before clearing, stop any running timer and use Sync in Clockoli until no pending changes remain. This prevents losing work that exists only in this browser.</p>
     <button id="clear-local" type="button" class="danger">Clear local configuration</button>
   </details>
 </main>

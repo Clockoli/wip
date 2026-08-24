@@ -16,14 +16,14 @@ test('repository access step has one GitHub action and mode-specific instruction
   assert.doesNotMatch(optionsJs, /refresh-repositories/);
   assert.match(optionsHtml, /id="repository-access-instruction"/);
   assert.match(optionsJs, /repository-access-instruction'[\s\S]*repositoryChoiceMode === 'create'/);
-  assert.match(optionsJs, /repoclock-data/);
+  assert.match(optionsJs, /clockoli-data/);
   assert.match(optionsJs, /existing private data repository/);
   assert.match(optionsHtml, /id="install-app"[^>]*>Choose repository access on GitHub<\/a>/);
 });
 
 test('repository choice consistently explains data storage and adapts to one eligible repository', () => {
   assert.match(optionsHtml, /id="repository-step-instruction"/);
-  assert.match(optionsHtml, /This repository stores RepoClock time data/);
+  assert.match(optionsHtml, /This repository stores Clockoli time data/);
   assert.match(optionsHtml, /separate from the repositories whose tasks you track/);
   assert.doesNotMatch(optionsHtml, /issues or pull requests you track/);
   assert.match(optionsJs, /singleEligibleRepository/);

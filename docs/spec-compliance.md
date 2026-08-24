@@ -1,6 +1,6 @@
 # Draft 2 specification compliance
 
-Source analyzed: RepoClock GitHub onboarding specification, Draft 2 dated 2026-08-20, plus the subsequently delivered URL-first task, personal-branch, Tasks, Reports, and local-billing requirements.
+Source analyzed: Clockoli GitHub onboarding specification, Draft 2 dated 2026-08-20, plus the subsequently delivered URL-first task, personal-branch, Tasks, Reports, and local-billing requirements.
 
 ## Selected defaults
 

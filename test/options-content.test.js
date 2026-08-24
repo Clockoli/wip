@@ -28,7 +28,7 @@ test('normal settings route is GitHub App onboarding with resumable authorizatio
   assert.match(source, /id="install-app"/);
   assert.match(source, /id="repository-list"/);
   assert.match(source, /id="connect-repository"/);
-  assert.match(source, /Repository creation does not grant RepoClock access/i);
+  assert.match(source, /Repository creation does not grant Clockoli access/i);
   assert.doesNotMatch(source, /exactly three|three clicks|three actions/i);
   assert.match(script, /START_DEVICE_FLOW/);
   assert.match(script, /RESUME_DEVICE_FLOW/);
@@ -45,20 +45,20 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /Step <span id="current-step">1<\/span> of 4/i);
   assert.match(source, /Device activation/i);
   assert.match(source, /only use the code after you start Device activation/i);
-  assert.match(source, /RepoClock by RepoClock/i);
+  assert.match(source, /github\.com.*Clockoli authorization you initiated/i);
   assert.match(source, /Act on your behalf/i);
   assert.match(source, /limited API calls/i);
-  assert.match(source, /Repository creation does not grant RepoClock access/i);
+  assert.match(source, /Repository creation does not grant Clockoli access/i);
 });
 
 test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
   assert.match(source, /id="authorize"[^>]*>Copy code and open GitHub<\/button>/i);
-  assert.match(source, /RepoClock copies the one-time code to your clipboard before GitHub opens/i);
+  assert.match(source, /Clockoli copies the one-time code to your clipboard before GitHub opens/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"[^>]*>Copy<\/button>/i);
   assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
   assert.match(source, /id="device-wait"[^>]*aria-live="polite"/i);
-  assert.match(source, /RepoClock checks automatically every few seconds/i);
+  assert.match(source, /Clockoli checks automatically every few seconds/i);
   assert.match(script, /\$\('device-done'\)\.disabled = false/);
   assert.match(script, /\$\('device-wait'\)\.textContent = 'Checking GitHub authorization now…'/);
   assert.match(script, /\$\('device-wait'\)\.textContent = 'GitHub has not confirmed authorization yet.*check again automatically/);
@@ -75,13 +75,13 @@ test('Device activation copies the code before opening GitHub and offers an imme
 
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(onboarding, /Install RepoClock on a private repository, then check again/);
+  assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
   assert.match(script, /Device activation is complete—nothing went wrong.*choose access on GitHub/i);
 });
 
 test('Step 2 creates a template-backed data repository or skips to existing-repository access', () => {
   assert.match(source, /id="access-step"[\s\S]*Create a dedicated data repository/i);
-  assert.match(source, /id="new-repository"[^>]*>Create repoclock-data on GitHub/i);
+  assert.match(source, /id="new-repository"[^>]*>Create clockoli-data on GitHub/i);
   assert.match(source, /id="skip-repository-creation"[^>]*>I already have a repository/i);
   assert.match(source, /directory structure and starter files/i);
   assert.match(script, /repositoryChoiceMade/);
@@ -94,10 +94,10 @@ test('Step 2 creates a template-backed data repository or skips to existing-repo
 });
 
 test('Step 3 grants App access to the new or an existing repository', () => {
-  assert.match(source, /id="repository-access-step"[\s\S]*Give RepoClock access to a data repository/i);
+  assert.match(source, /id="repository-access-step"[\s\S]*Give Clockoli access to a data repository/i);
   assert.match(source, /id="repository-access-instruction"/i);
   assert.match(script, /existing private data repository/i);
-  assert.match(script, /repoclock-data/i);
+  assert.match(script, /clockoli-data/i);
   assert.match(source, /id="install-app"[\s\S]*Choose repository access on GitHub/i);
   assert.ok(source.indexOf('id="install-app"') > source.indexOf('id="repository-access-step"'));
 });
@@ -119,9 +119,9 @@ test('onboarding renders one active step, keeps cancel below it, and names repos
   assert.match(script, /previousStep !== null && previousStep !== step[\s\S]*focus\(\)/);
   assert.match(source, /Choose repository access on GitHub/i);
   assert.doesNotMatch(source, /Check for repository access now/i);
-  assert.match(source, /RepoClock checks automatically when you return from GitHub/i);
-  assert.match(source, /Repository creation does not grant RepoClock access/i);
-  assert.match(source, /Create repoclock-data on GitHub/i);
+  assert.match(source, /Clockoli checks automatically when you return from GitHub/i);
+  assert.match(source, /Repository creation does not grant Clockoli access/i);
+  assert.match(source, /Create clockoli-data on GitHub/i);
   assert.equal((source.match(/id="install-app"/g) || []).length, 1);
   assert.equal((source.match(/id="refresh-repositories"/g) || []).length, 0);
   assert.doesNotMatch(source, /id="repository-recovery"|id="review-repository-access"|id="refresh-repository-access"/);
@@ -163,7 +163,7 @@ test('recent-entry display preference is independent from GitHub App and PAT aut
 
 test('PAT transitions explain exactly how to finish pending synchronization', async () => {
   const configuration = await readFile(new URL('../src/services/configuration.js', import.meta.url), 'utf8');
-  assert.match(configuration, /Open RepoClock and finish syncing its pending changes before changing GitHub authentication/);
+  assert.match(configuration, /Open Clockoli and finish syncing its pending changes before changing GitHub authentication/);
   assert.doesNotMatch(configuration, /Sync pending entries before changing GitHub authentication/);
 });
 
@@ -180,7 +180,7 @@ test('connected settings render each action as a button with its own explanation
   assert.match(source, /class="connected-actions"/);
   assert.match(source, /id="change-connection"[^>]*>Change data repository<\/button>[\s\S]*id="change-connection-help"[^>]*>[^<]*different private data repository/i);
   assert.match(source, /id="disconnect"[^>]*>Disconnect this browser<\/button>[\s\S]*id="disconnect-help"[^>]*>[^<]*local sign-in/i);
-  assert.match(source, /id="revoke-action"[^>]*class="connected-action"[\s\S]*id="revoke"[^>]*class="button-link danger-link"[^>]*>Revoke RepoClock authorization on GitHub<\/a>[\s\S]*id="revoke-help"[^>]*>[^<]*sign-in approval/i);
+  assert.match(source, /id="revoke-action"[^>]*class="connected-action"[\s\S]*id="revoke"[^>]*class="button-link danger-link"[^>]*>Revoke Clockoli authorization on GitHub<\/a>[\s\S]*id="revoke-help"[^>]*>[^<]*sign-in approval/i);
   assert.match(script, /\$\('revoke-action'\)\.hidden = state\.auth\?\.mode !== 'github_app'/);
   assert.match(source, /does not uninstall the GitHub App/i);
   assert.match(source, /does not delete repository data/i);
@@ -216,14 +216,14 @@ test('repository onboarding uses full names and monitors GitHub after repository
   assert.match(script, /setTimeout\(.*monitorRepositories/s);
   assert.match(script, /new-repository.*startRepositoryMonitoring/s);
   assert.match(script, /install-app.*startRepositoryMonitoring/s);
-  assert.match(script, /repositoryChoiceMode === 'create' \? 'repoclock-data' : ''/);
-  assert.match(script, /startRepositoryMonitoring\('repoclock-data'\)/);
+  assert.match(script, /repositoryChoiceMode === 'create' \? 'clockoli-data' : ''/);
+  assert.match(script, /startRepositoryMonitoring\('clockoli-data'\)/);
   assert.match(script, /repositoryAccessDetected = repositoryChoiceMode === 'create'/);
-  assert.match(script, /repositories\.some\(repository => repository\.repo === 'repoclock-data'\)/);
-  assert.match(script, /expectedRepository = repositoryChoiceMode === 'create'[\s\S]*repository\.repo === 'repoclock-data' && repository\.eligible/);
+  assert.match(script, /repositories\.some\(repository => repository\.repo === 'clockoli-data'\)/);
+  assert.match(script, /expectedRepository = repositoryChoiceMode === 'create'[\s\S]*repository\.repo === 'clockoli-data' && repository\.eligible/);
   assert.match(script, /const accessedRepository = repositoryMonitorExpectedName/);
   assert.match(script, /relevantCandidates = repositoryChoiceMode === 'create'/);
-  assert.match(script, /still cannot see repoclock-data.*Grant that repository access/i);
+  assert.match(script, /still cannot see clockoli-data.*Grant that repository access/i);
   assert.match(script, /still cannot see an eligible repository/i);
   assert.match(script, /visibilitychange/);
   assert.match(script, /addEventListener\('focus'/);
@@ -241,7 +241,7 @@ test('repository reasons and recovery actions use user-facing contracts', () => 
   for (const code of ['app_installation_required', 'org_approval_required', 'repository_access_required', 'github_app_auth_required', 'branch_policy_rejected']) {
     assert.match(recovery, new RegExp(code));
   }
-  assert.match(script, /RepoClockRecovery\.actionFor/);
+  assert.match(script, /ClockoliRecovery\.actionFor/);
   for (const label of ['Choose repository access on GitHub', 'Connect GitHub', 'Retry']) assert.match(source, new RegExp(label));
   assert.match(script, /Review repository access on GitHub/);
   assert.doesNotMatch(source, /id="recovery-choose"|Choose another repository/i);
@@ -270,7 +270,7 @@ test('tracking and reporting surfaces expose code-specific recovery actions', as
     readFile(new URL('../src/tasks/tasks.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/reports/reports.js', import.meta.url), 'utf8'),
   ]);
-  for (const runtime of [content, tasks, reports]) assert.match(runtime, /RepoClockRecovery\.actionFor/);
+  for (const runtime of [content, tasks, reports]) assert.match(runtime, /ClockoliRecovery\.actionFor/);
   for (const code of ['authentication', 'org_approval_required', 'repository_access_required']) assert.match(recovery, new RegExp(code));
   for (const label of ['Connect GitHub', 'Grant access', 'Choose another repository', 'Retry']) assert.match(recovery, new RegExp(label));
 });
@@ -288,7 +288,7 @@ test('compliance documentation matches any-owner tracking and durable Title stor
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Repositories RepoClock can use for data storage/i);
+  assert.match(source, /Repositories Clockoli can use for data storage/i);
   assert.doesNotMatch(source, /Selectable repositories are private repositories granted/i);
   assert.match(source, /directory structure and starter files/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);

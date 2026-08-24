@@ -9,6 +9,11 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const EXPECTED_RUNTIME_INVENTORY = [
   'manifest.json',
   'src/api/github-client.js',
+  'src/assets/clockoli-128.png',
+  'src/assets/clockoli-16.png',
+  'src/assets/clockoli-32.png',
+  'src/assets/clockoli-48.png',
+  'src/assets/clockoli.svg',
   'src/auth/github-app-auth.js',
   'src/background/message-policy.js',
   'src/background/serial-executor.js',

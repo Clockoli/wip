@@ -155,7 +155,7 @@ export class ConfigurationService {
     }
     const protectedTransition = changesDestination || changesUser || changesAuthMode;
     if (protectedTransition) {
-      if ((state.pendingWrites || []).length) throw new Error('Open RepoClock and finish syncing its pending changes before changing GitHub authentication, the time-data repository, or GitHub user.');
+      if ((state.pendingWrites || []).length) throw new Error('Open Clockoli and finish syncing its pending changes before changing GitHub authentication, the time-data repository, or GitHub user.');
       if (await this.previousActive(previousConfig, authSnapshot.auth, previousToken, { ...state, user: previousStorageLogin })) {
         throw new Error('Stop the active timer before changing GitHub authentication, the time-data repository, or GitHub user.');
       }

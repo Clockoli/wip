@@ -1,25 +1,25 @@
-# Getting started with RepoClock
+# Getting started with Clockoli
 
-RepoClock is a Chrome/Chromium extension. It uses GitHub for sign-in and stores time records in a dedicated private GitHub repository.
+Clockoli is a Chrome/Chromium extension. It uses GitHub for sign-in and stores time records in a dedicated private GitHub repository.
 
 ## What you need
 
 - Chrome or another Chromium browser, version 102 or newer.
 - A GitHub account.
-- Access to the current RepoClock source checkout or a trusted current extracted package.
-- Permission to create a private GitHub repository, or write access to a private repository already used by your team for RepoClock data.
+- Access to the current Clockoli source checkout or a trusted current extracted package.
+- Permission to create a private GitHub repository, or write access to a private repository already used by your team for Clockoli data.
 
-The data repository is separate from the repositories, documents, tickets, and pages you track. RepoClock does not need write access to a source repository just because one of its issues or pull requests is a task.
+The data repository is separate from the repositories, documents, tickets, and pages you track. Clockoli does not need write access to a source repository just because one of its issues or pull requests is a task.
 
 ## 1. Install the current beta
 
-The current trusted checkout and its locally built package identify as `v0.1.13`. The published `v0.1.11` package predates the product described in this documentation.
+The current trusted checkout and its locally built package identify as `v0.1.14`. The published `v0.1.11` package predates the product described in this documentation.
 
 1. Clone or update the repository:
 
    ```bash
-   git clone git@github.com:repoclock/repoclock.git
-   cd repoclock
+   git clone git@github.com:clockoli/clockoli.git
+   cd clockoli
    git switch main
    git pull --ff-only
    ```
@@ -27,8 +27,8 @@ The current trusted checkout and its locally built package identify as `v0.1.13`
 2. Open `chrome://extensions`.
 3. Enable **Developer mode**.
 4. Select **Load unpacked**.
-5. Choose the directory containing RepoClock's `manifest.json`.
-6. Pin RepoClock to the toolbar so it is available on non-GitHub pages.
+5. Choose the directory containing Clockoli's `manifest.json`.
+6. Pin Clockoli to the toolbar so it is available on non-GitHub pages.
 
 If you received a trusted ZIP, extract it first and select the extracted directory. Do not select the ZIP itself.
 
@@ -38,27 +38,27 @@ An unpacked extension does not update automatically:
 
 1. Pull the latest trusted source or replace the extracted package directory.
 2. Open `chrome://extensions`.
-3. Select **Reload** on the RepoClock card.
+3. Select **Reload** on the Clockoli card.
 4. Refresh any already-open GitHub tabs so they receive the current content script.
 
 ## 2. Connect GitHub
 
-RepoClock Settings opens after the first installation. You can reopen it from the gear button in the RepoClock panel or from the extension details page.
+Clockoli Settings opens after the first installation. You can reopen it from the gear button in the Clockoli panel or from the extension details page.
 
 Normal setup has four guided steps.
 
 ### Step 1: activate the device
 
 1. Select **Copy code and open GitHub**.
-2. On GitHub, verify that the authorization page names **RepoClock by RepoClock**.
+2. On GitHub, verify that you reached **github.com** for the Clockoli authorization you initiated in Settings.
 3. Paste the one-time code and approve the request.
-4. Return to RepoClock. It checks the result automatically; **Done on GitHub—check now** is also available.
+4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.
 
 Device activation signs this browser in without asking you to create or paste a personal access token. GitHub authorization and GitHub App repository access are separate steps.
 
 ### Step 2: create or choose a data repository
 
-For a new setup, use **Create repoclock-data on GitHub**. GitHub opens a prefilled private-repository form based on RepoClock's template.
+For a new setup, use **Create clockoli-data on GitHub**. GitHub opens a prefilled private-repository form based on Clockoli's template.
 
 If you already have a suitable repository, select **I already have a repository**.
 
@@ -67,20 +67,20 @@ A suitable repository must be:
 - private;
 - not archived or disabled;
 - writable by your GitHub user;
-- granted to the RepoClock GitHub App with **Contents: Read and write**;
+- granted to the Clockoli GitHub App with **Contents: Read and write**;
 - compatible with direct writes under its branch rules.
 
 ### Step 3: grant repository access
 
 Select **Choose repository access on GitHub**. Use **Only select repositories** and grant access only to the data repository.
 
-Creating a repository does not grant the GitHub App access to it. RepoClock monitors access when you return from GitHub.
+Creating a repository does not grant the GitHub App access to it. Clockoli monitors access when you return from GitHub.
 
 ### Step 4: validate the repository
 
-Select the repository and choose **Validate and use selected repository**. RepoClock checks privacy, permissions, repository identity, branch routing, and storage compatibility before enabling tracking.
+Select the repository and choose **Validate and use selected repository**. Clockoli checks privacy, permissions, repository identity, branch routing, and storage compatibility before enabling tracking.
 
-RepoClock creates or verifies its repository marker and provisions a personal branch named from your stable GitHub user ID. Routine timer writes go to that personal branch.
+Clockoli creates or verifies its repository marker and provisions a personal branch named from your stable GitHub user ID. Routine timer writes go to that personal branch.
 
 ## Advanced PAT setup
 
@@ -93,7 +93,7 @@ Create a fine-grained personal access token restricted to the one private data r
 - branch;
 - token.
 
-RepoClock validates the GitHub identity, private repository, branch, and write route before saving the configuration. A stored token is never displayed again.
+Clockoli validates the GitHub identity, private repository, branch, and write route before saving the configuration. A stored token is never displayed again.
 
 ## 3. Track your first task
 
@@ -102,17 +102,17 @@ A task is a canonical HTTP(S) URL. The title is optional.
 ### From any website
 
 1. Open the page you want to track.
-2. Select the RepoClock toolbar icon.
+2. Select the Clockoli toolbar icon.
 3. Choose **Start tracking this task**.
 4. Work normally.
-5. Open RepoClock again and choose **Stop and save**.
+5. Open Clockoli again and choose **Stop and save**.
 6. Add an optional description before stopping if useful.
 
 The popup reads the active tab's current URL and title when you start. Internal browser pages such as `chrome://extensions` cannot be tasks because they are not HTTP(S) pages.
 
 ### From GitHub
 
-RepoClock adds a split stopwatch control before your GitHub avatar:
+Clockoli adds a split stopwatch control before your GitHub avatar:
 
 - the stopwatch opens the tracking panel for the current GitHub URL;
 - the arrow opens navigation to **Tasks**, **Times**, and **Reports**.
@@ -121,7 +121,7 @@ GitHub issue and pull-request titles can be used as optional metadata when GitHu
 
 ### One timer at a time
 
-RepoClock permits one active timer per connected GitHub account. The panel says:
+Clockoli permits one active timer per connected GitHub account. The panel says:
 
 - **Tracking this task** when the active timer matches the current page;
 - **Tracking another task** when a different URL is active.
@@ -138,7 +138,7 @@ Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start 
 - Select the displayed URL, title, or description to edit those fields in the same draft; Enter also saves it.
 - Choose **Delete** to remove an entry. The previous repository version remains in Git history.
 
-If moving a boundary crosses the adjacent record, RepoClock changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
+If moving a boundary crosses the adjacent record, Clockoli changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
 
 ## 5. Open Tasks, Times, and Reports
 
@@ -172,11 +172,11 @@ It does not contain credentials, device codes, active timers, pending writes, or
 
 For shared reporting:
 
-1. Use one dedicated private RepoClock data repository.
-2. Grant the RepoClock GitHub App access only to that repository.
+1. Use one dedicated private Clockoli data repository.
+2. Grant the Clockoli GitHub App access only to that repository.
 3. Give each team member the GitHub rights needed to read and write it.
-4. Have every person install RepoClock, activate their own GitHub account, and select the same data repository.
-5. RepoClock provisions a marked personal branch for each stable GitHub user ID.
+4. Have every person install Clockoli, activate their own GitHub account, and select the same data repository.
+5. Clockoli provisions a marked personal branch for each stable GitHub user ID.
 6. Reports discovers those branches and combines the visible records.
 
 Repository readers can see every stored URL, title, timestamp, and description included in shared reporting. Use separate data repositories for groups with different access boundaries.

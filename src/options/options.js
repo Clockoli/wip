@@ -51,7 +51,7 @@ function setLink(id, value) {
 }
 
 function showRecovery(error = null) {
-  const recovery = globalThis.RepoClockRecovery.actionFor(error?.code);
+  const recovery = globalThis.ClockoliRecovery.actionFor(error?.code);
   const actions = $('recovery-actions');
   const connect = recovery?.kind === 'connect';
   const reviewAccess = ['grant', 'choose', 'repair'].includes(recovery?.kind);
@@ -93,7 +93,7 @@ function renderOnboardingProgress() {
   $('repository-access-complete').hidden = step < 4;
   $('repository-choice-summary').textContent = repositoryChoiceSummary;
   $('repository-access-instruction').textContent = repositoryChoiceMode === 'create'
-    ? 'On GitHub, choose Only select repositories and add repoclock-data.'
+    ? 'On GitHub, choose Only select repositories and add clockoli-data.'
     : 'On GitHub, choose Only select repositories and add your existing private data repository.';
   if (previousStep !== null && previousStep !== step) {
     queueMicrotask(() => $({ 1: 'device-step-title', 2: 'access-step-title', 3: 'repository-access-step-title', 4: 'repository-step-title' }[step]).focus());
@@ -159,7 +159,7 @@ function renderDeviceAttempt(attempt) {
   $('device-done').disabled = false;
   setLink('open-device-page', attempt.verificationUri);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
-  $('device-wait').textContent = `RepoClock checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
+  $('device-wait').textContent = `Clockoli checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
   schedulePoll(attempt);
 }
 
@@ -173,7 +173,7 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
-      message(`Device activation complete for ${result.githubLogin}. Next, give RepoClock access to a data repository.`, 'success');
+      message(`Device activation complete for ${result.githubLogin}. Next, give Clockoli access to a data repository.`, 'success');
       discoveryStatus = 'idle';
       await refreshState();
       await discoverRepositories().catch(() => {});
@@ -198,7 +198,7 @@ async function poll(attemptId) {
 function repositoryReason(repository) {
   const labels = {
     private_required: 'private repositories only', archived: 'archived', disabled: 'disabled',
-    app_contents_write_required: 'RepoClock needs Contents: write',
+    app_contents_write_required: 'Clockoli needs Contents: write',
     user_write_required: 'your account cannot write',
     initialized_default_branch_required: 'initialize a default branch first',
   };
@@ -212,7 +212,7 @@ function renderRepositoryList() {
   root.replaceChildren();
   if (!visible.length) {
     const empty = document.createElement('p'); empty.className = 'help';
-    empty.textContent = repositories.length ? 'No repository matches this search.' : 'No repositories are visible. Install RepoClock or grant repository access on GitHub, then check again.';
+    empty.textContent = repositories.length ? 'No repository matches this search.' : 'No repositories are visible. Install Clockoli or grant repository access on GitHub, then check again.';
     root.append(empty); return;
   }
   const eligible = visible.filter(repository => repository.eligible);
@@ -231,7 +231,7 @@ function renderRepositoryList() {
     if (repository.needsInitialization || !repository.eligible) {
       const details = document.createElement('small');
       details.textContent = repository.needsInitialization
-        ? 'Empty repository — RepoClock will create the first commit automatically.'
+        ? 'Empty repository — Clockoli will create the first commit automatically.'
         : `Unavailable · ${repositoryReason(repository)}`;
       copy.append(details);
     }
@@ -245,10 +245,10 @@ function renderRepositories(result) {
   repositories = result.repositories;
   if (repositories.length && !repositoryChoiceMade) { repositoryChoiceMade = true; repositoryChoiceMode = 'existing'; repositoryChoiceSummary = 'Using an existing repository'; }
   repositoryAccessDetected = repositoryChoiceMode === 'create'
-    ? repositories.some(repository => repository.repo === 'repoclock-data')
+    ? repositories.some(repository => repository.repo === 'clockoli-data')
     : repositories.length > 0;
   const expectedRepository = repositoryChoiceMode === 'create'
-    ? repositories.find(repository => repository.repo === 'repoclock-data' && repository.eligible)
+    ? repositories.find(repository => repository.repo === 'clockoli-data' && repository.eligible)
     : null;
   selectedRepository = expectedRepository || repositories.find(repository => previousSelection
     && repository.installationId === previousSelection.installationId
@@ -257,11 +257,11 @@ function renderRepositories(result) {
   const eligibleRepositories = repositories.filter(repository => repository.eligible);
   const singleEligibleRepository = eligibleRepositories.length === 1 && repositories.length === 1;
   $('repository-step-instruction').textContent = singleEligibleRepository
-    ? `RepoClock detected access to ${eligibleRepositories[0].fullName}. Validate it as the repository that stores RepoClock data.`
-    : 'RepoClock detected repository access. Choose the private repository that should store RepoClock data.';
+    ? `Clockoli detected access to ${eligibleRepositories[0].fullName}. Validate it as the repository that stores Clockoli data.`
+    : 'Clockoli detected repository access. Choose the private repository that should store Clockoli data.';
   $('repository-choice-legend').textContent = singleEligibleRepository
-    ? 'Data repository RepoClock can access'
-    : 'Repositories RepoClock can use for data storage';
+    ? 'Data repository Clockoli can access'
+    : 'Repositories Clockoli can use for data storage';
   $('connect-repository').disabled = !selectedRepository;
   $('repository-search').value = '';
   $('repository-search-label').hidden = repositories.length < 10;
@@ -278,21 +278,21 @@ async function discoverRepositories({ monitoring = false, deadline = 0 } = {}) {
   discoveryStatus = 'loading';
   renderOnboardingProgress();
   discoveryPromise = (async () => {
-    if (!monitoring) message('Refreshing RepoClock installation and repository access…');
+    if (!monitoring) message('Refreshing Clockoli installation and repository access…');
     showRecovery();
     try {
       const result = await bounded(send({ type: 'DISCOVER_REPOSITORIES' }));
       discoveryStatus = 'ready';
       renderRepositories(result);
       const relevantCandidates = repositoryChoiceMode === 'create'
-        ? result.candidates.filter(repository => repository.repo === 'repoclock-data')
+        ? result.candidates.filter(repository => repository.repo === 'clockoli-data')
         : result.candidates;
       if (!repositoryAccessDetected && repositoryChoiceMode === 'create') {
-        message('RepoClock still cannot see repoclock-data. Grant that repository access on GitHub; automatic checking will continue.');
+        message('Clockoli still cannot see clockoli-data. Grant that repository access on GitHub; automatic checking will continue.');
       } else if (relevantCandidates.length === 1) {
         message('Repository access was detected and the eligible data repository was selected automatically. Validate it to finish setup.', 'success');
       } else if (relevantCandidates.length > 1) {
-        message('Repository access was detected. Choose the private repository that should store RepoClock data.');
+        message('Repository access was detected. Choose the private repository that should store Clockoli data.');
       } else if (result.repositories.length) {
         message('Repository access was detected, but none can be used yet. Review each repository below for the reason.');
       } else {
@@ -324,7 +324,7 @@ function finishRepositoryMonitoring() {
   repositoryMonitorRetryPending = true;
   discoveryStatus = 'error';
   renderOnboardingProgress();
-  message(`RepoClock stopped checking after five minutes.${detail} Review repository access on GitHub, then select Retry.`, 'error');
+  message(`Clockoli stopped checking after five minutes.${detail} Review repository access on GitHub, then select Retry.`, 'error');
   showRecovery({ code: 'repository_monitor_timeout' });
 }
 
@@ -349,20 +349,20 @@ async function monitorRepositories() {
       message(selectedRepository
         ? 'Repository access was detected. Validate the selected repository to finish setup.'
         : result.candidates.length
-          ? 'Repository access was detected. Choose the repository RepoClock should use.'
+          ? 'Repository access was detected. Choose the repository Clockoli should use.'
           : 'Repository access was detected, but the repository cannot be used yet. Review its availability reason.');
       return;
     }
     message(repositoryMonitorExpectedName
-      ? `RepoClock still cannot see ${repositoryMonitorExpectedName}. On GitHub, choose access, select Only select repositories, and add ${repositoryMonitorExpectedName}. Automatic checking will continue.`
-      : 'RepoClock still cannot see an eligible repository. On GitHub, choose access, select Only select repositories, and add your data repository. Automatic checking will continue.');
+      ? `Clockoli still cannot see ${repositoryMonitorExpectedName}. On GitHub, choose access, select Only select repositories, and add ${repositoryMonitorExpectedName}. Automatic checking will continue.`
+      : 'Clockoli still cannot see an eligible repository. On GitHub, choose access, select Only select repositories, and add your data repository. Automatic checking will continue.');
   } catch (error) {
     if (error.code === 'repository_monitor_timeout') {
       finishRepositoryMonitoring();
       return;
     }
     repositoryMonitorLastError = error;
-    message(`Could not check GitHub: ${error.message} RepoClock will keep retrying.`, 'error');
+    message(`Could not check GitHub: ${error.message} Clockoli will keep retrying.`, 'error');
     showRecovery(error);
   }
   repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 2500);
@@ -374,7 +374,7 @@ function startRepositoryMonitoring(expectedName = '') {
   repositoryMonitorLastError = null;
   repositoryMonitorRetryPending = false;
   repositoryMonitorDeadline = Date.now() + (5 * 60 * 1000);
-  message(expectedName ? `Waiting for ${expectedName} and RepoClock access…` : 'Waiting for eligible repository access…');
+  message(expectedName ? `Waiting for ${expectedName} and Clockoli access…` : 'Waiting for eligible repository access…');
   repositoryMonitorTimer = setTimeout(() => void monitorRepositories(), 1500);
 }
 
@@ -458,12 +458,12 @@ $('authorize').addEventListener('click', async () => {
     } catch {
       $('device-code').focus();
       $('device-code').select();
-      message('The code is ready, but RepoClock could not copy it automatically. Copy it here before opening GitHub.', 'error');
+      message('The code is ready, but Clockoli could not copy it automatically. Copy it here before opening GitHub.', 'error');
       return;
     }
     githubHandoff = true;
     await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-    message('Device code copied. Paste it on GitHub, authorize RepoClock, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
+    message('Device code copied. Paste it on GitHub, authorize Clockoli, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
   } catch (error) { message(error.message, 'error'); }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
@@ -483,8 +483,8 @@ $('device-done').addEventListener('click', async () => {
   try {
     await poll(attemptId);
     if (state?.deviceAttempt?.attemptId === attemptId && !$('message').classList.contains('error')) {
-      $('device-wait').textContent = 'GitHub has not confirmed authorization yet. RepoClock will check again automatically.';
-      message('GitHub has not confirmed authorization yet. RepoClock will check again automatically.');
+      $('device-wait').textContent = 'GitHub has not confirmed authorization yet. Clockoli will check again automatically.';
+      message('GitHub has not confirmed authorization yet. Clockoli will check again automatically.');
     }
   } finally { $('device-done').disabled = !state?.deviceAttempt; }
 });
@@ -494,14 +494,14 @@ $('change-connection').addEventListener('click', () => { setupCancelled = false;
 
 $('connect-repository').addEventListener('click', async () => {
   if (!selectedRepository) return;
-  $('connect-repository').disabled = true; message('Validating repository access and RepoClock storage…');
+  $('connect-repository').disabled = true; message('Validating repository access and Clockoli storage…');
   try {
     const result = await send({ type: 'SELECT_REPOSITORY', payload: {
       installationId: selectedRepository.installationId, repoId: selectedRepository.repoId,
       recentDays: Number($('recent-days').value),
     } });
     stopRepositoryMonitoring(); showOnboarding = false; await refreshState();
-    message(result.status === 'write_verified' ? 'Connected. RepoClock verified a repository write.' : 'Connected. Existing RepoClock storage was validated without an unnecessary write.', 'success');
+    message(result.status === 'write_verified' ? 'Connected. Clockoli verified a repository write.' : 'Connected. Existing Clockoli storage was validated without an unnecessary write.', 'success');
   } catch (error) { message(error.message, 'error'); showRecovery(error); $('connect-repository').disabled = false; }
 });
 
@@ -526,7 +526,7 @@ $('resume-setup').addEventListener('click', () => {
 });
 
 $('disconnect').addEventListener('click', async () => {
-  if (!window.confirm('Disconnect this browser? RepoClock will preserve local tracking data and the repository configuration.')) return;
+  if (!window.confirm('Disconnect this browser? Clockoli will preserve local tracking data and the repository configuration.')) return;
   $('disconnect').disabled = true;
   try { stopRepositoryMonitoring(); await send({ type: 'DISCONNECT_GITHUB_APP' }); setupCancelled = false; showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
   catch (error) { message(error.message, 'error'); }
@@ -534,13 +534,13 @@ $('disconnect').addEventListener('click', async () => {
 });
 
 $('clear-local').addEventListener('click', async () => {
-  if (!window.confirm('Clear local RepoClock configuration? This does not delete repository data or revoke GitHub authorization.')) return;
+  if (!window.confirm('Clear local Clockoli configuration? This does not delete repository data or revoke GitHub authorization.')) return;
   $('clear-local').disabled = true;
   try {
     await send({ type: 'CLEAR_LOCAL_CONFIGURATION' });
     stopRepositoryMonitoring(); repositories = []; repositoryAccessDetected = false; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
     await refreshState();
-    message('Local RepoClock configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
+    message('Local Clockoli configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
   } catch (error) { message(error.message, 'error'); }
   finally { $('clear-local').disabled = false; }
 });
@@ -549,14 +549,14 @@ $('clear-local').addEventListener('click', async () => {
 for (const id of ['open-device-page', 'recovery-grant']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
-$('install-app').addEventListener('click', () => { githubHandoff = true; startRepositoryMonitoring(repositoryChoiceMode === 'create' ? 'repoclock-data' : ''); });
+$('install-app').addEventListener('click', () => { githubHandoff = true; startRepositoryMonitoring(repositoryChoiceMode === 'create' ? 'clockoli-data' : ''); });
 $('new-repository').addEventListener('click', () => {
   repositoryChoiceMade = true;
   repositoryChoiceMode = 'create';
   repositoryChoiceSummary = 'Repository creation started';
   githubHandoff = true;
   renderOnboardingProgress();
-  startRepositoryMonitoring('repoclock-data');
+  startRepositoryMonitoring('clockoli-data');
 });
 $('change-repository-access').addEventListener('click', () => {
   stopRepositoryMonitoring();
@@ -647,7 +647,7 @@ $('export-settings').addEventListener('click', async () => {
   $('export-settings').disabled = true;
   try {
     const result = await send({ type: 'EXPORT_SETTINGS' });
-    downloadText(result.text, `repoclock-settings-${new Date().toISOString().slice(0, 10)}.json`);
+    downloadText(result.text, `clockoli-settings-${new Date().toISOString().slice(0, 10)}.json`);
     await send({ type: 'MARK_SETTINGS_EXPORTED', revision: result.revision });
     await refreshLocalPreferences();
     message('Local settings backup exported. GitHub credentials and tracked data were not included.', 'success');

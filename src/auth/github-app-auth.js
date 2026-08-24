@@ -15,7 +15,7 @@ export class GitHubAppAuthError extends Error {
 
 function requireClientId(clientId) {
   const value = String(clientId || '').trim();
-  if (!value || value.length > 200) throw new GitHubAppAuthError('RepoClock GitHub App is not configured in this build.', 'github_app_unconfigured');
+  if (!value || value.length > 200) throw new GitHubAppAuthError('Clockoli GitHub App is not configured in this build.', 'github_app_unconfigured');
   return value;
 }
 
@@ -46,7 +46,7 @@ function oauthError(body, status = 0) {
   const code = String(body?.error || 'authentication_failed');
   if (code === 'access_denied') return new GitHubAppAuthError('GitHub authorization was denied.', 'auth_denied', status);
   if (code === 'expired_token') return new GitHubAppAuthError('The GitHub device code expired. Start again.', 'device_code_expired', status);
-  if (code === 'incorrect_client_credentials' || code === 'incorrect_device_code') return new GitHubAppAuthError('GitHub rejected this RepoClock authorization attempt. Start again.', 'invalid_device_flow', status);
+  if (code === 'incorrect_client_credentials' || code === 'incorrect_device_code') return new GitHubAppAuthError('GitHub rejected this Clockoli authorization attempt. Start again.', 'invalid_device_flow', status);
   if (code === 'unsupported_grant_type') return new GitHubAppAuthError('GitHub rejected the authorization grant.', 'invalid_device_flow', status);
   return new GitHubAppAuthError('GitHub authentication failed.', 'authentication_failed', status);
 }
@@ -227,7 +227,7 @@ export class DeviceFlowService {
     const user = await jsonResponse(userResponse);
     if (!userResponse.ok || !Number.isSafeInteger(user?.id) || user.id <= 0 || typeof user?.login !== 'string' || !user.login) {
       const code = userResponse.status === 401 ? 'auth_expired' : 'invalid_auth_response';
-      throw new GitHubAppAuthError('GitHub authorized RepoClock but did not return a valid user identity.', code, userResponse.status);
+      throw new GitHubAppAuthError('GitHub authorized Clockoli but did not return a valid user identity.', code, userResponse.status);
     }
     const saved = await this.store.saveAuthorizedGitHubApp({
       mode: 'github_app', candidateId: attempt.id, githubUserId: user.id, githubLogin: user.login, ...pair,
@@ -324,9 +324,9 @@ export class CredentialBroker {
   async getAccessToken({ forceRefresh = false, rejectedToken = '' } = {}) {
     const snapshot = await this.store.getAuthSnapshot();
     const auth = snapshot.auth;
-    if (!auth?.accessToken) throw new GitHubAppAuthError('Connect RepoClock to GitHub.', 'auth_required');
+    if (!auth?.accessToken) throw new GitHubAppAuthError('Connect Clockoli to GitHub.', 'auth_required');
     if (auth.mode === 'pat') return auth.accessToken;
-    if (auth.mode !== 'github_app') throw new GitHubAppAuthError('RepoClock authentication is invalid.', 'auth_required');
+    if (auth.mode !== 'github_app') throw new GitHubAppAuthError('Clockoli authentication is invalid.', 'auth_required');
     if (forceRefresh && rejectedToken && rejectedToken !== auth.accessToken) return auth.accessToken;
     if (!forceRefresh && Number(auth.accessTokenExpiresAt) - this.now() > this.refreshWindowMs) return auth.accessToken;
     if (!this.refreshPromise) {
@@ -338,7 +338,7 @@ export class CredentialBroker {
   async refresh(snapshot) {
     const auth = snapshot.auth, now = this.now();
     if (!auth?.refreshToken || Number(auth.refreshTokenExpiresAt) <= now) {
-      throw new GitHubAppAuthError('RepoClock needs to reconnect to GitHub.', 'auth_expired');
+      throw new GitHubAppAuthError('Clockoli needs to reconnect to GitHub.', 'auth_expired');
     }
     const clientId = requireClientId(this.clientId);
     const response = await this.fetchImpl(TOKEN_URL, {

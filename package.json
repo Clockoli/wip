@@ -1,9 +1,9 @@
 {
-  "name": "github-time-tracker-extension",
-  "version": "0.1.13",
+  "name": "clockoli-extension",
+  "version": "0.1.14",
   "private": true,
   "type": "module",
-  "description": "Private GitHub-backed task time tracking Chrome extension",
+  "description": "Clockoli private GitHub-backed task time tracking Chrome extension",
   "scripts": {
     "test": "node --test",
     "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
@@ -11,5 +11,13 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clockoli/clockoli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/clockoli/clockoli/issues"
+  },
+  "homepage": "https://github.com/clockoli/clockoli#readme"
 }

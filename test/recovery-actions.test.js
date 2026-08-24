@@ -7,7 +7,7 @@ const source = await readFile(new URL('../src/domain/recovery-actions.js', impor
 const context = {};
 vm.createContext(context);
 vm.runInContext(source, context);
-const classify = code => JSON.parse(JSON.stringify(context.RepoClockRecovery.actionFor(code)));
+const classify = code => JSON.parse(JSON.stringify(context.ClockoliRecovery.actionFor(code)));
 
 test('shared recovery taxonomy distinguishes reconnect, grant, choose, repair, and retry states', () => {
   for (const code of ['authentication', 'auth_required', 'auth_expired', 'github_app_auth_required', 'authentication_failed']) {
@@ -38,7 +38,7 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
   assert.deepEqual(JSON.parse(manifest).content_scripts[0].js, ['src/domain/recovery-actions.js', 'src/content/github.js']);
   for (const html of [optionsHtml, tasksHtml, reportsHtml]) assert.match(html, /\.\.\/domain\/recovery-actions\.js/);
   for (const runtime of [options, content, tasks, reports]) {
-    assert.match(runtime, /RepoClockRecovery\.actionFor/);
+    assert.match(runtime, /ClockoliRecovery\.actionFor/);
     assert.doesNotMatch(runtime, /function recoveryLabel/);
   }
 });

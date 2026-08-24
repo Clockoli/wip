@@ -7,7 +7,7 @@ import sys
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUTPUT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path('/tmp/repoclock-release.zip')
+OUTPUT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path('/tmp/clockoli-release.zip')
 
 def inventory():
     result = subprocess.run(
