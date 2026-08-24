@@ -42,5 +42,5 @@
 7. Content script never receives token/config secrets and renders untrusted text with text nodes.
 8. Invalid owner/repo/login/path/date/issue data is rejected before an API write.
 9. Repository-wide reports load matching immutable blobs without exposing credentials or storage SHAs, and all facet/chart changes rerender locally.
-10. The split GitHub header opens timer management for any GitHub HTTP(S) task URL and exposes Tasks/Times/Reports navigation without exposing privileged time, task, or report data to content scripts.
+10. The split GitHub header opens timer management for any GitHub HTTP(S) task URL and exposes Top tasks/Activity/Reports navigation without exposing privileged time, task, or report data to content scripts.
 11. Automated Node tests, network-disabled Node 22 tests, real-Chromium UI checks, static extension validation, and exact-snapshot review pass before packaging.

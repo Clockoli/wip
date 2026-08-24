@@ -11,9 +11,8 @@ const manifest = fs.readFileSync(new URL('../manifest.json', import.meta.url), '
 const popup = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
 
 test('tasks page is a recent tracked-work list without GitHub issue-list clutter', () => {
-  assert.match(html, /<h1>Recently tracked work<\/h1>/);
-  assert.match(html, /class="brand-name">Clockoli<\/div>/);
-  assert.match(html, /<header class="app-header">[\s\S]*Clockoli[\s\S]*<h1>Recently tracked work<\/h1>[\s\S]*<\/header>/);
+  assert.match(html, /<title>Top tasks · Clockoli<\/title>/);
+  assert.doesNotMatch(html, /<h1>|class="app-header"|class="brand-logo"/);
   assert.doesNotMatch(html, /id="source"/);
   assert.doesNotMatch(js, /result\.sourceRepository|result\.branch/);
   assert.doesNotMatch(html, /class="eyebrow"/);
@@ -53,7 +52,7 @@ test('visible extension branding is Clockoli and Tasks uses neutral GitHub butto
   }
   assert.match(manifest, /"name":\s*"Clockoli"/);
   assert.match(manifest, /"default_title":\s*"Clockoli"/);
-  assert.match(content, /heading\.append\(el\('strong', 'Clockoli'\)/);
+  assert.doesNotMatch(content, /heading\.append\(el\('strong', 'Clockoli'\)/);
   assert.match(content, /const ROOT_ID = 'repoclock-root'/);
   assert.match(css, /\.timer-button\{[^}]*border:1px solid var\(--button-default-borderColor-rest\)[^}]*background:var\(--button-default-bgColor-rest\)[^}]*color:var\(--button-default-fgColor-rest\)/);
   assert.match(css, /\.timer-button:hover\{[^}]*background:var\(--button-default-bgColor-hover\)/);
@@ -71,12 +70,13 @@ test('standalone selects use an inset custom caret while the GitHub header caret
   assert.doesNotMatch(content, /trigger-menu[^}]*translateX/);
 });
 
-test('GitHub header uses a separately clickable split trigger and a Reports/Tasks navigation menu', () => {
+test('GitHub header uses a separately clickable split trigger and a Reports/Top tasks/Activity navigation menu', () => {
   assert.match(content, /trigger-main/);
   assert.match(content, /trigger-menu/);
   assert.match(content, /renderNavigationMenu/);
   assert.match(content, /button\('Reports'/);
-  assert.match(content, /button\('Tasks'/);
+  assert.match(content, /button\('Top tasks'/);
+  assert.match(content, /button\('Activity'/);
   assert.match(content, /type:\s*'OPEN_TASKS'/);
   assert.match(worker, /src\/tasks\/tasks\.html/);
 });

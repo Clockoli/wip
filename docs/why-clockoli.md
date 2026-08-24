@@ -107,7 +107,7 @@ A spreadsheet gives strong control but depends on consistent manual entry. Clock
 - structured Tasks and Reports;
 - recoverable offline Stop operations.
 
-A spreadsheet remains better for unconstrained custom modeling. Clockoli can create completed manual entries in bulk on the Times page while retaining its validated monthly storage format.
+A spreadsheet remains better for unconstrained custom modeling. Clockoli can create completed manual entries in bulk on the Activity page while retaining its validated monthly storage format.
 
 ## Compared with a local-only browser timer
 

@@ -11,7 +11,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Browser | Chrome/Chromium Manifest V3; Chrome 102+ |
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
 | Descriptions | Optional, maximum 2,000 characters |
-| Manual entries | All-or-nothing bulk creation of completed dated URL tasks on the Times page |
+| Manual entries | All-or-nothing bulk creation of completed dated URL tasks on the Activity page |
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
 | Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly-file read per represented month; globally sorted by editable start timestamp; maximum 50 returned |
 | Issue owners | Any canonical GitHub issue or pull request may be tracked |

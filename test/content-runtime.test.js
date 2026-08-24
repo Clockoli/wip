@@ -1059,7 +1059,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
 });
 
-test('split header navigation tracks a generic GitHub URL and still opens Tasks', async () => {
+test('split header navigation tracks a generic GitHub URL and still opens Top tasks', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
@@ -1087,7 +1087,7 @@ test('split header navigation tracks a generic GitHub URL and still opens Tasks'
   assert.equal(main.getAttribute('aria-haspopup'), 'dialog');
   assert.equal(arrow.getAttribute('aria-haspopup'), 'menu');
   await arrow.onclick({ isTrusted: true });
-  const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Tasks');
+  const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Top tasks');
   assert.ok(tasks?.onclick);
   await tasks.onclick({ isTrusted: true });
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TASKS'), { type: 'OPEN_TASKS' });

@@ -35,8 +35,8 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
     assert.match(content, new RegExp(`['\"]${value}['\"]`));
   }
   assert.match(content, /Filter by URL or optional title/);
-  assert.match(content, /View more times/);
-  assert.match(content, /button\('Times'/);
+  assert.match(content, /View activity/);
+  assert.match(content, /button\('Activity'/);
   assert.match(content, /BULK_ADD_TIMES/);
   assert.match(policy, /'OPEN_TIMES'/);
   assert.match(policy, /'LOAD_TIMES'/);
@@ -67,15 +67,15 @@ test('browser action popup has a stable width without the self-shrinking viewpor
 
 
 test('Times is covered by extension-page validation and candidate versions are distinct and aligned', () => {
-  assert.equal(manifest.version, '0.1.15');
+  assert.equal(manifest.version, '0.1.16');
   assert.equal(packageJson.version, manifest.version);
   assert.match(validator, /manifest\.version !== packageJson\.version/);
   assert.ok((validator.match(/'src\/times\/times\.html'/g) || []).length >= 2,
     'Times must be checked for existence and extension-page HTML security');
 });
 
-test('acceptance plan matches URL-first tracking and Tasks Times Reports navigation', () => {
+test('acceptance plan matches URL-first tracking and Top tasks Activity Reports navigation', () => {
   assert.match(plan, /any GitHub HTTP\(S\) task URL/);
-  assert.match(plan, /Tasks\/Times\/Reports navigation/);
+  assert.match(plan, /Top tasks\/Activity\/Reports navigation/);
   assert.doesNotMatch(plan, /timer management only on issue\/PR pages|Reports\/Tasks navigation everywhere/);
 });

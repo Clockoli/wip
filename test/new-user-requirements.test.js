@@ -104,7 +104,7 @@ test('tracker copy and navigation use URL tasks without item terminology', () =>
   assert.match(content, /'this'/);
   assert.match(content, /'another'/);
   assert.match(content, /tracking-another/);
-  assert.match(content, /const tasks = button\('Tasks', 'reports-button'/);
+  assert.match(content, /const tasks = button\('Top tasks', 'reports-button'/);
   assert.match(content, /taskUrl/);
   assert.match(content, /Task URL/);
 });

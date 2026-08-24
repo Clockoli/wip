@@ -10,18 +10,14 @@
 <body>
 <div class="page-tabs-shell">
   <nav class="page-tabs" aria-label="Clockoli pages">
-    <a href="../times/times.html">Times</a>
-    <a href="../tasks/tasks.html">Tasks</a>
-    <a href="../reports/reports.html">Reports</a>
-    <a href="../options/options.html" aria-current="page">Settings</a>
+    <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli.svg" alt=""><span>CLOCKOLI</span></a>
+    <a class="page-tab" href="../times/times.html">Activity</a>
+    <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
+    <a class="page-tab" href="../reports/reports.html">Reports</a>
+    <a class="page-tab" href="../options/options.html" aria-current="page">Settings</a>
   </nav>
 </div>
 <main>
-  <header class="hero">
-    <img class="mark" src="../assets/clockoli.svg" alt="">
-    <div><h1>Clockoli</h1><p>Private time tracking stored in a GitHub repository you control.</p></div>
-  </header>
-
   <div id="message" role="status" aria-live="polite"></div>
 
   <section class="card" aria-labelledby="connection-title">

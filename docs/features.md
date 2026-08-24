@@ -39,7 +39,7 @@ The GitHub panel and browser toolbar popup use the same tracking component. They
 - relative day labels and stored wall time;
 - unified inline time/metadata correction and Delete.
 
-The GitHub split control survives GitHub's client-side navigation and mounts next to the authenticated user's avatar. Its arrow always opens Tasks/Times/Reports navigation.
+The GitHub split control survives GitHub's client-side navigation and mounts next to the authenticated user's avatar. Its arrow always opens Top tasks/Activity/Reports navigation.
 
 ## Recent entries
 
@@ -76,7 +76,7 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 
 **Delete** requires confirmation and uses the loaded file version and original record content to avoid deleting the wrong entry after another edit. Git history retains the previous file version unless a repository administrator rewrites history.
 
-## Tasks page
+## Top tasks page
 
 **Recently tracked work** aggregates the current user's completed and running sessions by canonical URL.
 
@@ -88,7 +88,7 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 
 The page reads only the current user's monthly paths before hydrating optional GitHub issue/PR titles. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 
-## Times page
+## Activity page
 
 Times loads the current user's completed entries for Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range.
 
