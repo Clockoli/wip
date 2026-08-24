@@ -13,7 +13,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/assets/clockoli-16.png',
   'src/assets/clockoli-32.png',
   'src/assets/clockoli-48.png',
-  'src/assets/clockoli.svg',
+  'src/assets/clockoli-with-text.svg',
   'src/auth/github-app-auth.js',
   'src/background/message-policy.js',
   'src/background/serial-executor.js',

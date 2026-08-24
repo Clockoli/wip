@@ -22,7 +22,8 @@ test('every standalone page exposes one shared branded same-window navigation ro
     const nav = html.match(/<nav class="page-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
     assert.ok(nav, `${current} must render page tabs`);
     assert.match(nav, /aria-label="Clockoli pages"/);
-    assert.match(nav, /class="page-brand"[^>]*>[\s\S]*clockoli\.svg[\s\S]*<span>CLOCKOLI<\/span>/, `${current} must show the Clockoli mark and wordmark in the navigation row`);
+    assert.match(nav, /class="page-brand"[^>]*>[\s\S]*clockoli-with-text\.svg/, `${current} must use the combined Clockoli logo and product name asset`);
+    assert.doesNotMatch(nav, /<span>CLOCKOLI<\/span>|clockoli\.svg/, `${current} must not reconstruct the combined brand from separate mark and text elements`);
     for (const [label, href] of Object.entries(hrefs)) {
       assert.match(nav, new RegExp(`<a class="page-tab" href="${href.replaceAll('.', '\\.') }"${label === current ? ' aria-current="page"' : ''}>${label}<\\/a>`), `${current} must link to ${label}`);
     }
