@@ -29,6 +29,14 @@ test('visible extension identity is Clockoli with complete logo assets', () => {
   assert.match(runtimeText, /Clockoli/);
 });
 
+test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch icon', () => {
+  const content = read('src/content/github.js');
+  assert.match(content, /function clockoliMark\(/);
+  assert.match(content, /main\.append\(clockoliMark\(22\)\)/);
+  assert.match(content, /\.clockoli-mark/);
+  assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
+});
+
 test('rename preserves legacy storage, branch, DOM, settings, and GitHub App identities', () => {
   const compatibility = [
     'src/content/github.js', 'src/domain/local-settings.js', 'src/tasks/tasks.js',

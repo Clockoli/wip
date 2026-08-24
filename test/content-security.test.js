@@ -16,7 +16,7 @@ test('GitHub page cannot reach or synthesize privileged panel controls', () => {
 test('time tracker uses a native-style GitHub header menu instead of a floating corner card', () => {
   assert.match(source, /\.AppHeader-actions/);
   assert.match(source, /img\.avatar/);
-  assert.match(source, /octicon-stopwatch/);
+  assert.match(source, /clockoli-mark/);
   assert.match(source, /icon\('triangle-down'/);
   assert.match(source, /aria-expanded/);
   assert.doesNotMatch(source, /position:\s*fixed;\s*right:20px;\s*bottom:20px/);

@@ -115,6 +115,30 @@
     const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); shape.setAttribute('d', path); svg.append(shape); return svg;
   }
 
+  function clockoliMark(size = 22) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '65 78 296 310'); svg.setAttribute('width', String(size)); svg.setAttribute('height', String(size));
+    svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('class', 'clockoli-mark');
+    const shape = (tag, attributes) => {
+      const node = document.createElementNS(ns, tag);
+      for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+      svg.append(node); return node;
+    };
+    shape('path', {
+      d: 'M136 257C142 269 148 281 149 301L149 350C149 368 161 379 178 380L244 380C262 380 274 370 275 352L275 303C276 283 282 271 289 259C274 251 256 247 236 246L188 246C168 247 151 250 136 257Z',
+      fill: '#b9e477', stroke: '#16834f', 'stroke-width': '7', 'stroke-linejoin': 'round',
+    });
+    shape('path', {
+      d: 'M136 263C126 271 111 275 98 270C81 264 72 246 74 226C76 204 87 187 103 180C101 162 109 146 123 135C132 128 142 124 154 124C165 102 186 89 210 89C237 89 259 102 271 123C290 121 307 129 318 142C327 152 331 165 329 178C344 184 352 200 353 219C354 241 344 260 327 269C313 277 297 274 287 266C280 272 270 276 259 275C248 274 240 268 235 258C230 266 222 270 211 270C201 270 192 266 186 257C181 266 171 271 160 271C150 271 142 268 136 263Z',
+      fill: '#69c647', stroke: '#16834f', 'stroke-width': '7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    });
+    shape('path', { d: 'M211 220L164 178M211 220L280 150', fill: 'none', stroke: '#fff', 'stroke-width': '11', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+    shape('circle', { cx: '211', cy: '220', r: '13', fill: '#fff' });
+    shape('circle', { cx: '211', cy: '220', r: '6', fill: '#69c647' });
+    return svg;
+  }
+
   function formatElapsed(startedAt) {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
     return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
@@ -951,7 +975,7 @@ The previous version remains in Git history.`)) return;
     const style = el('style', `
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
-      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .trigger.running .octicon-stopwatch { color:var(--fgColor-open,#1a7f37) } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
+      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .clockoli-mark { display:block; width:22px; height:22px; flex:none } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
       .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:8px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,#fff); border-inline:1px solid var(--borderColor-muted,#d1d9e0b3) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(140px,.7fr) minmax(150px,1fr) minmax(150px,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } .times-filter { grid-column:1/-1 } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,#59636e); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
       header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:#ff2d55; color:#fff; box-shadow:0 0 0 2px #ff2d5533 }
       a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
@@ -969,7 +993,7 @@ The previous version remains in Git history.`)) return;
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
     main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(menuOpen));
-    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(icon('stopwatch', STOPWATCH_PATH));
+    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(clockoliMark(22));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
       const activatedTask = taskFromLocation();
