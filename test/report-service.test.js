@@ -67,6 +67,51 @@ test('unchanged branch snapshot reuses persistent SHA blobs without blob request
   assert.equal(records.length, 3);
 });
 
+test('ETag-only report cache is refreshed unconditionally instead of failing on 304', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache();
+  cache.value = { version: 1, repositoryKey: github.repositoryKey, etag: github.etag, files: [], blobs: {} };
+  github.notModified = true;
+
+  const records = await new ReportService({ github, cache }).loadRange({ startDate: '2026-08-17', endDate: '2026-08-18' });
+
+  assert.equal(github.snapshots[0].etag, '', 'an ETag without a complete cached file snapshot must not be sent');
+  assert.equal(records.length, 3);
+  assert.equal(cache.value.snapshotReady, true);
+});
+
+test('explicit incomplete or malformed cache markers never authorize a conditional snapshot request', async () => {
+  for (const snapshotReady of [false, 'yes', 1, null]) {
+    const github = new FakeGitHub(), cache = new MemoryReportCache();
+    cache.value = {
+      version: 1,
+      repositoryKey: github.repositoryKey,
+      etag: github.etag,
+      snapshotReady,
+      files: [...github.files].slice(0, 1).map(([path, file]) => ({ path, sha: file.sha, size: new TextEncoder().encode(file.text).length })),
+      blobs: {},
+    };
+    github.notModified = true;
+
+    const records = await new ReportService({ github, cache }).loadRange({ startDate: '2026-08-17', endDate: '2026-08-18' });
+
+    assert.equal(github.snapshots[0].etag, '', `marker ${String(snapshotReady)} must force an unconditional snapshot refresh`);
+    assert.equal(records.length, 3);
+    assert.equal(cache.value.snapshotReady, true);
+  }
+});
+
+test('a confirmed empty report snapshot can use its ETag on a warm reload', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache();
+  github.files.clear();
+  const service = new ReportService({ github, cache });
+
+  assert.deepEqual(await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' }), []);
+  assert.equal(cache.value.snapshotReady, true);
+  github.notModified = true;
+  assert.deepEqual(await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' }), []);
+  assert.equal(github.snapshots.at(-1).etag, '"one"');
+});
+
 test('changed branch fetches only blobs whose immutable SHA is missing', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache(), service = new ReportService({ github, cache });
   await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });

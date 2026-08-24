@@ -1,5 +1,5 @@
 import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
-import { billableMinorForRecord, rateMinorForUser } from './local-settings.js';
+import { billableMinorForRecord, rateForUser } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
 const METRICS = new Set(['total-time', 'avg-time', 'task-count', 'billable-amount']);
@@ -158,7 +158,18 @@ export function buildAnalytics(records, options = {}) {
   if (!AXES.has(horizontalAxis)) throw new Error('Invalid horizontal axis');
   if (!AXES.has(stackBy)) throw new Error('Invalid stack dimension');
   const buckets = new Map(), series = new Map();
+  let billableCurrency = options.currency || '';
   for (const record of records ?? []) {
+    const recordDate = record.entryDate || String(record.startedAt || '').slice(0, 10);
+    const recordRate = rateForUser(record.user, options.rates || {}, recordDate);
+    if (metric === 'billable-amount') {
+      if (!recordRate) continue;
+      if (!billableCurrency) billableCurrency = recordRate.currency;
+      if (recordRate.currency !== billableCurrency) {
+        if (!options.currency) throw new Error('Select one currency for billable analytics');
+        continue;
+      }
+    }
     const bucketPart = axisPart(record, horizontalAxis), seriesPart = axisPart(record, stackBy);
     series.set(seriesPart.key, seriesPart);
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
@@ -187,7 +198,7 @@ export function buildAnalytics(records, options = {}) {
     return { key: bucket.key, label: bucket.label, totalValue, segments };
   });
   return {
-    metric, horizontalAxis, stackBy, series: seriesList, buckets: bucketList,
+    metric, horizontalAxis, stackBy, currency: billableCurrency, series: seriesList, buckets: bucketList,
     maxValue: Math.max(0, ...bucketList.map(item => item.totalValue)),
   };
 }
@@ -203,26 +214,29 @@ function hms(seconds) {
   return [Math.floor(value / 3600), Math.floor(value % 3600 / 60), value % 60].map(item => String(item).padStart(2, '0')).join(':');
 }
 
-export function exportTimesheet(records, { format, startDate, endDate, rates = null, currency = 'USD' }) {
+export function exportTimesheet(records, { format, startDate, endDate, rates = null }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
-  const entries = ordered.map(record => ({
-    person: record.user,
-    repository: repository(record),
-    type: record.issue?.type === 'pull_request' ? 'Pull request' : record.issue?.type === 'issue' ? 'Issue' : 'URL',
-    number: record.issue?.number ?? '',
-    url: taskUrlOf(record),
-    start: record.startedAt,
-    end: record.endedAt,
-    duration: hms(record.durationSeconds),
-    durationSeconds: record.durationSeconds,
-    ...(rates ? {
-      hourlyRate: rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) === null ? '' : (rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) / 100).toFixed(2),
-      billableAmount: rateMinorForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) === null ? '' : (billableMinorForRecord(record, rates) / 100).toFixed(2),
-      currency,
-    } : {}),
-    description: record.description || '',
-  }));
+  const entries = ordered.map(record => {
+    const rate = rates ? rateForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) : null;
+    return {
+      person: record.user,
+      repository: repository(record),
+      type: record.issue?.type === 'pull_request' ? 'Pull request' : record.issue?.type === 'issue' ? 'Issue' : 'URL',
+      number: record.issue?.number ?? '',
+      url: taskUrlOf(record),
+      start: record.startedAt,
+      end: record.endedAt,
+      duration: hms(record.durationSeconds),
+      durationSeconds: record.durationSeconds,
+      ...(rates ? {
+        hourlyRate: rate ? (rate.amountMinorPerHour / 100).toFixed(2) : '',
+        billableAmount: rate ? (billableMinorForRecord(record, rates) / 100).toFixed(2) : '',
+        currency: rate?.currency || '',
+      } : {}),
+      description: record.description || '',
+    };
+  });
   if (format === 'csv') {
     const rows = [rates
       ? ['Person', 'Repository', 'Type', 'Number', 'URL', 'Start', 'End', 'Duration', 'Duration seconds', 'Hourly rate', 'Billable amount', 'Currency', 'Description']

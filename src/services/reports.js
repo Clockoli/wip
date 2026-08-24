@@ -23,7 +23,7 @@ function mergeReportRecords(primary, fallback) {
 }
 
 function emptyCache(repositoryKey) {
-  return { version: CACHE_VERSION, repositoryKey, etag: '', files: [], blobs: {} };
+  return { version: CACHE_VERSION, repositoryKey, etag: '', snapshotReady: false, files: [], blobs: {} };
 }
 
 function normalizeCache(value, repositoryKey) {
@@ -37,7 +37,11 @@ function normalizeCache(value, repositoryKey) {
   for (const [sha, text] of Object.entries(value.blobs)) {
     if (/^[0-9a-f]{40}$/i.test(sha) && typeof text === 'string') blobs[sha] = text;
   }
-  return { version: CACHE_VERSION, repositoryKey, etag: typeof value.etag === 'string' ? value.etag : '', files, blobs };
+  const completeFiles = files.length === value.files.length;
+  const hasSnapshotMarker = Object.prototype.hasOwnProperty.call(value, 'snapshotReady');
+  const snapshotReady = completeFiles
+    && (value.snapshotReady === true || (!hasSnapshotMarker && files.length > 0));
+  return { version: CACHE_VERSION, repositoryKey, etag: typeof value.etag === 'string' ? value.etag : '', snapshotReady, files, blobs };
 }
 
 function budgetValue(value, fallback, label) {
@@ -98,14 +102,20 @@ export class ReportService {
 
     const repositoryKey = this.github.repositoryKey || 'repository';
     const cache = await this.readCache(repositoryKey);
-    const snapshotEtag = user && cache.files.some(file => !Number.isSafeInteger(file.size)) ? '' : cache.etag;
-    const snapshot = await this.github.listTextFilesSnapshot('times/', { etag: snapshotEtag, signal });
+    const needsSizes = user && cache.files.some(file => !Number.isSafeInteger(file.size));
+    const snapshotEtag = cache.snapshotReady && !needsSizes ? cache.etag : '';
+    let snapshot = await this.github.listTextFilesSnapshot('times/', { etag: snapshotEtag, signal });
     signal?.throwIfAborted();
+    if (snapshot.notModified && !cache.snapshotReady) {
+      snapshot = await this.github.listTextFilesSnapshot('times/', { etag: '', signal });
+      signal?.throwIfAborted();
+    }
     if (snapshot.notModified) {
-      if (!cache.files.length) throw new Error('GitHub returned an unchanged report snapshot without a local cache');
+      if (!cache.snapshotReady) throw new Error('GitHub returned 304 for an unconditional report snapshot request');
       cache.etag = snapshot.etag || cache.etag;
     } else {
       cache.etag = snapshot.etag || '';
+      cache.snapshotReady = true;
       cache.files = snapshot.files ?? [];
       const currentShas = new Set(cache.files.map(file => file.sha));
       cache.blobs = Object.fromEntries(Object.entries(cache.blobs).filter(([sha]) => currentShas.has(sha)));

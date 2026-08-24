@@ -5,8 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RepoClock Settings</title>
   <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="../styles/page-tabs.css">
 </head>
 <body>
+<div class="page-tabs-shell">
+  <nav class="page-tabs" aria-label="RepoClock pages">
+    <a href="../times/times.html">Times</a>
+    <a href="../tasks/tasks.html">Tasks</a>
+    <a href="../reports/reports.html">Reports</a>
+    <a href="../options/options.html" aria-current="page">Settings</a>
+  </nav>
+</div>
 <main>
   <header class="hero">
     <div class="mark" aria-hidden="true">RC</div>
@@ -156,12 +165,10 @@
 
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
-      <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user, with optional start and end dates. Leave a date blank for an open-ended period.</p></div>
+      <div><h2 id="billing-title">Billable rates</h2><p>Set an hourly rate for yourself or any other GitHub user, including its currency sign or description. Optional dates define when each rate applies.</p></div>
     </div>
     <p class="help"><strong>Rates stay only in this browser’s extension-local storage.</strong> RepoClock never writes rates or calculated money to the data repository.</p>
     <form id="billing-form">
-      <label>Currency code<input id="billing-currency" required maxlength="3" value="USD" autocomplete="off" aria-describedby="currency-help"></label>
-      <p id="currency-help" class="help">Use one three-letter currency code, such as USD, EUR, or GBP, for all rates.</p>
       <div id="rates-list" class="rates-list"></div>
       <div class="actions billing-actions">
         <button id="add-rate" type="button" class="secondary">Add rate period</button>
@@ -174,7 +181,7 @@
     <div class="card-heading">
       <div><h2 id="settings-backup-title">Local settings backup</h2><p>Export or import RepoClock settings as a readable JSON text file.</p></div>
     </div>
-    <p class="help">The file includes display settings, billable rates, currency, and repository coordinates. GitHub credentials, Device Flow codes, active timers, pending writes, and tracked time are never exported. Repository coordinates are reference-only on import; importing does not reconnect GitHub or change the current data repository.</p>
+    <p class="help">The file includes display settings, billable rates with their currencies, and repository coordinates. GitHub credentials, Device Flow codes, active timers, pending writes, and tracked time are never exported. Repository coordinates are reference-only on import; importing does not reconnect GitHub or change the current data repository.</p>
     <div id="settings-export-reminder" class="notice" hidden>
       <strong>Your local settings changed.</strong> Export an updated backup so they are easy to restore on this browser or another device.
     </div>

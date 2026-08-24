@@ -6,8 +6,8 @@ import {
 
 const effectiveRates = {
   alice: [
-    { amountMinorPerHour: 10000, startDate: '2026-01-01', endDate: '2026-06-30' },
-    { amountMinorPerHour: 12500, startDate: '2026-07-01', endDate: '' },
+    { amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-01-01', endDate: '2026-06-30' },
+    { amountMinorPerHour: 12500, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-07-01', endDate: '' },
   ],
 };
 
@@ -21,14 +21,14 @@ test('effective-dated rates select the inclusive period by record date', () => {
 
 test('billing normalization upgrades legacy rates and rejects overlapping periods', () => {
   assert.deepEqual(normalizeBillingSettings({ currency: 'usd', rates: { alice: 10000 } }), {
-    currency: 'USD', rates: { alice: [{ amountMinorPerHour: 10000, startDate: '', endDate: '' }] },
+    rates: { alice: [{ amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
   });
-  assert.deepEqual(normalizeBillingSettings({ rates: effectiveRates }), { currency: 'USD', rates: effectiveRates });
+  assert.deepEqual(normalizeBillingSettings({ rates: effectiveRates }), { rates: effectiveRates });
   assert.throws(() => normalizeBillingSettings({ rates: { alice: [
-    { amountMinorPerHour: 10000, startDate: '2026-01-01', endDate: '2026-07-01' },
-    { amountMinorPerHour: 12000, startDate: '2026-07-01', endDate: '' },
+    { amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-01-01', endDate: '2026-07-01' },
+    { amountMinorPerHour: 12000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-07-01', endDate: '' },
   ] } }), /overlap/i);
   assert.throws(() => normalizeBillingSettings({ rates: { alice: [
-    { amountMinorPerHour: 10000, startDate: '2026-08-01', endDate: '2026-07-01' },
+    { amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-08-01', endDate: '2026-07-01' },
   ] } }), /end date/i);
 });

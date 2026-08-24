@@ -54,7 +54,9 @@ test('billable rates and complete local settings backup are explicit extension-l
   assert.match(optionsHtml, /id="settings-export-reminder"/);
   assert.match(reportsHtml, /value="billable-amount">Billable amount/);
   assert.match(reportsHtml, /id="summary-money"/);
-  assert.match(reportsJs, /billableMinorTotal/);
+  assert.match(reportsJs, /billableTotalsByCurrency/);
+  assert.doesNotMatch(optionsHtml, /Currency code|billing-currency/);
+  assert.match(optionsHtml, /currency sign or description/i);
   assert.match(reportsJs, /No rate for/);
 });
 

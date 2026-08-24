@@ -379,14 +379,14 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, currency: 'USD', rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
   });
-  const saved = await store.saveBillingSettings({ currency: 'EUR', rates: { alice: [{ amountMinorPerHour: 12500, startDate: '', endDate: '' }] } });
+  const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);
   assert.equal((await store.getLocalPreferences()).exportRecommended, true);
   const exported = await store.exportSettings();
   assert.doesNotMatch(exported.text, /secret/);
-  assert.deepEqual(JSON.parse(exported.text).billing, { currency: 'EUR', rates: { alice: [{ amountMinorPerHour: 12500, startDate: '', endDate: '' }] } });
+  assert.deepEqual(JSON.parse(exported.text).billing, { rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(await store.markSettingsExported(exported.revision), true);
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
   const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));

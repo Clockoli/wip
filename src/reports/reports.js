@@ -2,12 +2,12 @@ import {
   buildAnalytics, buildFacets, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename, taskSource,
 } from '../domain/reporting.js';
-import { billableMinorTotal, rateMinorForUser } from '../domain/local-settings.js';
+import { billableTotalsByCurrency, rateForUser } from '../domain/local-settings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, sourceRepository: '', branch: '', billing: { currency: 'USD', rates: {} }, loading: false, requestId: 0, analytics: null,
+  records: [], range: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
 };
 
@@ -46,8 +46,16 @@ function svg(tag, attributes = {}, text = '') {
 const METRIC_LABELS = { 'total-time': 'Total time', 'avg-time': 'Avg time', 'task-count': 'Task count', 'billable-amount': 'Billable amount' };
 const AXIS_LABELS = { day: 'Day', week: 'Week', month: 'Month', person: 'Person', repository: 'Repository', task: 'Task' };
 
-function formatMoney(minor, currency = state.billing.currency) {
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format((Number(minor) || 0) / 100);
+function currencyPosition(currency) {
+  return $('billable-currency').selectedOptions[0]?.dataset.position
+    || (String(currency).length === 1 ? 'prefix' : 'suffix');
+}
+
+function formatMoney(minor, currency = $('billable-currency').value, position = currencyPosition(currency)) {
+  const amount = (Math.round(Number(minor) || 0) / 100).toFixed(2);
+  if (!currency) return amount;
+  const separator = String(currency).length === 1 ? '' : ' ';
+  return position === 'prefix' ? `${currency}${separator}${amount}` : `${amount}${separator}${currency}`;
 }
 
 function formatMetricValue(value, metric, { tooltip = false } = {}) {
@@ -106,15 +114,33 @@ function renderFacet(container, options, selected, query, rerender) {
   restoreFocus?.focus({ preventScroll: true });
 }
 
-function renderSummary(filtered) {
+function billableSummary(totals) {
+  return totals.length ? totals.map(item => formatMoney(item.amountMinor, item.currency, item.currencyPosition)).join(' + ') : 'Unrated';
+}
+
+function renderCurrencySelector(filtered) {
+  const select = $('billable-currency'), selected = select.value;
+  const totals = billableTotalsByCurrency(filtered, state.billing.rates);
+  select.replaceChildren();
+  for (const item of totals) {
+    const option = document.createElement('option'); option.value = item.currency; option.textContent = item.currency;
+    option.dataset.position = item.currencyPosition; select.append(option);
+  }
+  if (totals.some(item => item.currency === selected)) select.value = selected;
+  $('billable-currency-control').hidden = $('metric').value !== 'billable-amount' || totals.length < 2;
+  return totals;
+}
+
+function renderSummary(filtered, totals) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
+  const money = billableSummary(totals);
   $('summary-time').textContent = formatClockDuration(total);
-  $('summary-money').textContent = formatMoney(billableMinorTotal(filtered, state.billing.rates));
+  $('summary-money').textContent = money;
   $('summary-entries').textContent = String(filtered.length);
   $('summary-people').textContent = String(new Set(filtered.map(record => record.user)).size);
   $('summary-repositories').textContent = String(new Set(filtered.map(record => taskSource(record))).size);
-  const missingRates = [...new Set(filtered.filter(record => rateMinorForUser(record.user, state.billing.rates, record.entryDate || record.startedAt.slice(0, 10)) === null).map(record => record.user))];
-  $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${formatMoney(billableMinorTotal(filtered, state.billing.rates))}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
+  const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, record.entryDate || record.startedAt.slice(0, 10))).map(record => record.user))];
+  $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${money}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
 }
 
 function renderAnalyticsTable(analytics) {
@@ -191,12 +217,13 @@ function render() {
   $('people-all').textContent = allPeople.length && allPeople.every(value => state.people.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   const filtered = filterReportRecords(state.records, selectedFilters());
-  renderSummary(filtered);
+  const billableTotals = renderCurrencySelector(filtered);
+  renderSummary(filtered, billableTotals);
   state.analytics = buildAnalytics(filtered, {
     metric: $('metric').value,
     horizontalAxis: $('horizontal-axis').value,
     stackBy: $('stack-by').value,
-    rates: state.billing.rates,
+    rates: state.billing.rates, currency: $('billable-currency').value,
   });
   renderChart(state.analytics);
   setDownloadsAvailable(Boolean(filtered.length));
@@ -211,7 +238,7 @@ async function loadRange(range) {
     if (requestId !== state.requestId) return;
     if (!result.configured) { $('setup').hidden = false; return; }
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
-    state.billing = { currency: result.billing?.currency || 'USD', rates: result.billing?.rates || {} };
+    state.billing = { rates: result.billing?.rates || {} };
     state.people = new Set(result.records.map(record => record.user));
     state.repositories = new Set(result.records.map(record => taskSource(record)));
     $('report-content').hidden = false; render();
@@ -238,7 +265,7 @@ $('period').addEventListener('change', () => {
   } else void applyPeriod();
 });
 $('apply-period').addEventListener('click', () => void applyPeriod());
-for (const id of ['metric', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
+for (const id of ['metric', 'billable-currency', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
 $('repositories-search').addEventListener('input', event => { state.repositoriesSearch = event.target.value; render(); });
@@ -257,7 +284,7 @@ function downloadTimesheet(format, event) {
   if (!state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
-    rates: state.billing.rates, currency: state.billing.currency,
+    rates: state.billing.rates,
   });
   const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
   const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');

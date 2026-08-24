@@ -19,7 +19,7 @@ RepoClock is a good fit when data ownership and auditability matter more than on
 
 ## Current beta installation
 
-RepoClock currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.12`; the published `v0.1.11` GitHub release predates the features documented here.
+RepoClock currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.13`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
@@ -93,7 +93,7 @@ RepoClock permits one running timer per connected GitHub account. If the panel s
 - Independent Day, Week, Month, Person, Source, and Task chart dimensions.
 - CSV and JSON timesheet downloads.
 - Native print/save-to-PDF.
-- Browser-local effective-dated hourly rates and one three-letter currency code. Rates and calculated money are never written to the data repository.
+- Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to the data repository.
 
 ### Storage, sync, and privacy
 

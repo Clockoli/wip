@@ -50,7 +50,7 @@ RepoClock uses extension-origin IndexedDB for:
 - recent-entry and report caches;
 - task metadata cache;
 - recent-entry display preference;
-- currency and per-person hourly rates;
+- per-person hourly rates and each rate's currency sign or description;
 - settings-backup revision state.
 
 GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. The extension requests no `chrome.storage` permission; its data store is scoped to the extension origin.
@@ -182,7 +182,7 @@ The cache is an optimization, not the authoritative time store.
 
 ## Billing privacy
 
-Currency and hourly rates stay in extension-local IndexedDB. They are not written to GitHub and are not included in shared time records.
+Hourly rates and their currency signs or descriptions stay in extension-local IndexedDB. They are not written to GitHub and are not included in shared time records.
 
 Billable money uses integer minor units and tracked seconds. RepoClock aggregates before final rounding to avoid accumulating per-record rounding errors.
 

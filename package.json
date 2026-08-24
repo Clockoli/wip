@@ -1,6 +1,6 @@
 {
   "name": "github-time-tracker-extension",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "module",
   "description": "Private GitHub-backed task time tracking Chrome extension",

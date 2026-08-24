@@ -44,6 +44,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/user-storage-branch.js',
   'src/storage/chrome-store.js',
   'src/styles/github-primer.css',
+  'src/styles/page-tabs.css',
   'src/tasks/tasks.css',
   'src/tasks/tasks.html',
   'src/tasks/tasks.js',

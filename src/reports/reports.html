@@ -5,8 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Time tracker reports</title>
   <link rel="stylesheet" href="reports.css">
+  <link rel="stylesheet" href="../styles/page-tabs.css">
 </head>
 <body>
+  <div class="page-tabs-shell">
+    <nav class="page-tabs" aria-label="RepoClock pages">
+      <a href="../times/times.html">Times</a>
+      <a href="../tasks/tasks.html">Tasks</a>
+      <a href="../reports/reports.html" aria-current="page">Reports</a>
+      <a href="../options/options.html">Settings</a>
+    </nav>
+  </div>
   <header class="app-header">
     <h1>Reports</h1>
   </header>
@@ -49,7 +58,7 @@
     <section id="report-content" hidden>
       <div class="summary-grid" aria-label="Report summary">
         <article class="summary-card"><span>Tracked</span><strong id="summary-time">0m</strong></article>
-        <article class="summary-card"><span>Billable</span><strong id="summary-money">$0.00</strong></article>
+        <article class="summary-card"><span>Billable</span><strong id="summary-money">Unrated</strong></article>
         <article class="summary-card"><span>Entries</span><strong id="summary-entries">0</strong></article>
         <article class="summary-card"><span>People</span><strong id="summary-people">0</strong></article>
         <article class="summary-card"><span>Sources</span><strong id="summary-repositories">0</strong></article>
@@ -81,6 +90,9 @@
                     <option value="billable-amount">Billable amount</option>
                     <option value="task-count">Task count</option>
                   </select>
+                </label>
+                <label id="billable-currency-control" hidden>Currency
+                  <select id="billable-currency" aria-label="Billable currency"></select>
                 </label>
                 <label>Horizontal axis
                   <select id="horizontal-axis">

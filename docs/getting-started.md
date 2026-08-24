@@ -13,7 +13,7 @@ The data repository is separate from the repositories, documents, tickets, and p
 
 ## 1. Install the current beta
 
-The current trusted checkout and its locally built package identify as `v0.1.12`. The published `v0.1.11` package predates the product described in this documentation.
+The current trusted checkout and its locally built package identify as `v0.1.13`. The published `v0.1.11` package predates the product described in this documentation.
 
 1. Clone or update the repository:
 
@@ -156,14 +156,14 @@ Choose from 1 to 31 days of recent entries in the main panel. This changes displ
 
 ### Billable rates
 
-Choose one three-letter currency code and add hourly rates by GitHub login. Rates stay in this browser's extension-local storage. Other team members do not receive them, and the repository never stores rates or calculated money.
+Add hourly rates by GitHub login and include the currency directly in each rate, for example `$15.50`, `20.15$`, `€55.50`, `750 RUB`, or `888 GEL`. Rates stay in this browser's extension-local storage. Other team members do not receive them, and the repository never stores rates or calculated money.
 
 ### Local settings backup
 
 Export a readable JSON backup after changing display or billing settings. It contains:
 
 - recent-entry display setting;
-- currency and hourly rates;
+- hourly rates with their currency signs or descriptions;
 - repository coordinates as a reference.
 
 It does not contain credentials, device codes, active timers, pending writes, or tracked time. Import restores display and billing settings only; it does not reconnect GitHub or switch the current data repository.

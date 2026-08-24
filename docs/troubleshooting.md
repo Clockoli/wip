@@ -207,7 +207,7 @@ RepoClock enforces bounded file, byte, and record budgets so one report cannot m
 
 Open Settings and:
 
-- enter a valid three-letter currency code;
+- include a currency sign or 2–12 letter description in every hourly rate, such as `$15.50` or `750 RUB`;
 - add a non-negative hourly rate for each GitHub login (matching is case-insensitive);
 - save rates;
 - export an updated local settings backup.

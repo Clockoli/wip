@@ -144,14 +144,14 @@ The data table under the chart is loaded only when expanded, which keeps large r
 - JSON timesheet
 - Native browser print or save-to-PDF
 
-CSV and JSON include URL, Start, End, duration, person, description, and available GitHub task fields. When local rates are configured, exports also include hourly rate, billable amount, and currency.
+CSV and JSON include URL, Start, End, duration, person, description, and available GitHub task fields. When local rates are configured, each exported row also includes its effective hourly rate, billable amount, and that rate's currency.
 
 ## Local billable rates
 
-Settings accepts one three-letter currency code and non-negative hourly rates keyed by GitHub login.
+Settings accepts non-negative hourly rates keyed by GitHub login, with a currency sign or 2–12 letter description included in every rate value.
 
 - Rates are stored as integer minor units.
-- Billable totals are calculated from each person's tracked seconds and rounded after aggregation rather than rounding every record early.
+- Billable totals are calculated from each person's tracked seconds and rounded after aggregation rather than rounding every record early. Different currencies remain separate; Reports exposes a currency selector for billable charts when needed.
 - Rates and calculated amounts stay in extension-local storage.
 - A teammate's browser can use different rates for the same shared repository.
 - Missing rates contribute zero and are identified in the report summary.
