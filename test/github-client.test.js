@@ -566,7 +566,7 @@ test('guarded first commit fails closed if a default branch appears after the co
     },
   });
   await assert.rejects(
-    () => client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize Clockoli storage'),
+    () => client.putInitialText('.clockoli/config.json', '{}\n', 'Initialize Clockoli storage'),
     error => error.code === 'repository_branch_changed',
   );
   assert.equal(calls.length, 3);
@@ -585,7 +585,7 @@ test('GitHub client can make the guarded first commit in an empty repository wit
       return response(201, { content: { sha: 'marker' }, commit: { sha: 'initial' } });
     },
   });
-  await client.putInitialText('.repoclock/config.json', '{}\n', 'Initialize Clockoli storage');
+  await client.putInitialText('.clockoli/config.json', '{}\n', 'Initialize Clockoli storage');
   assert.equal(calls.length, 4);
   const payload = JSON.parse(calls[3].options.body);
   assert.equal(payload.branch, undefined);

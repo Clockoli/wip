@@ -76,7 +76,7 @@ test('repository initialization creates a versioned marker and reports a real wr
   assert.equal(result.storageLogin, 'alice');
   assert.equal(result.repositoryFormatVersion, 1);
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].path, '.repoclock/config.json');
+  assert.equal(writes[0].path, '.clockoli/config.json');
   assert.equal(writes[0].sha, undefined);
   assert.deepEqual(JSON.parse(writes[0].text), {
     repositoryFormatVersion: 1,
@@ -95,7 +95,7 @@ test('repository initialization accepts an existing compatible user mapping with
   const github = {
     validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
     validateBranch: async () => ({ name: 'main' }),
-    getText: async () => ({ path: '.repoclock/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }),
+    getText: async () => ({ path: '.clockoli/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }),
     putText: async () => { writes += 1; },
   };
   const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'renamed-login' });
@@ -112,7 +112,7 @@ test('repository initialization merges a new stable user mapping with SHA protec
   const github = {
     validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
     validateBranch: async () => ({ name: 'main' }),
-    getText: async () => ({ path: '.repoclock/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }),
+    getText: async path => { if (path === '.repoclock/config.json') throw notFound(); return { path: '.clockoli/config.json', sha: 'marker-sha', text: `${JSON.stringify(marker)}\n` }; },
     putText: async (path, text, message, sha) => { writes.push({ path, text, message, sha }); return { sha: 'new-sha' }; },
   };
   const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
@@ -126,18 +126,18 @@ test('repository initialization resolves a concurrent create by validating the w
     repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00.000Z',
     createdBy: { id: 123, login: 'alice' }, users: { '123': 'alice' },
   };
-  let reads = 0;
+  let reads = 0, conflicted = false;
   const github = {
     validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
     validateBranch: async () => ({ name: 'main' }),
     listRepositoryFiles: async () => ['README.md'],
-    getText: async () => { reads += 1; if (reads === 1) throw notFound(); return { sha: 'winner', text: JSON.stringify(winner) }; },
-    putText: async () => { throw conflict(); },
+    getText: async path => { reads += 1; if (!conflicted || path === '.repoclock/config.json') throw notFound(); return { sha: 'winner', text: JSON.stringify(winner) }; },
+    putText: async () => { conflicted = true; throw conflict(); },
   };
   const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
   assert.equal(result.status, 'access_checked');
   assert.equal(result.storageLogin, 'alice');
-  assert.equal(reads, 3);
+  assert.equal(reads, 5);
 });
 
 test('repository initialization rejects incompatible markers and occupied storage paths', async () => {
@@ -171,7 +171,7 @@ test('pre-marker canonical files are parsed strictly before initialization', asy
     async validateRepository() { return repository(); },
     async validateBranch() {},
     async getText(path) {
-      if (path === '.repoclock/config.json') throw notFound();
+      if (path === '.clockoli/config.json' || path === '.repoclock/config.json') throw notFound();
       return { text: 'not a valid Clockoli record\n', sha: 'bad' };
     },
     async listRepositoryFiles() { return ['active/alice.txt']; },
@@ -230,16 +230,16 @@ test('repository initialization merges a different concurrent create winner afte
     repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00.000Z',
     createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner' },
   };
-  let reads = 0;
+  let reads = 0, winnerAvailable = false;
   const writes = [];
   const github = {
     validateRepository: async () => ({ id: 77, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } }),
     validateBranch: async () => ({ name: 'main' }),
     listRepositoryFiles: async () => ['README.md'],
-    getText: async () => { reads += 1; if (reads === 1) throw notFound(); return { sha: 'winner-sha', text: JSON.stringify(winner) }; },
+    getText: async path => { reads += 1; if (!winnerAvailable || path === '.repoclock/config.json') throw notFound(); return { sha: 'winner-sha', text: JSON.stringify(winner) }; },
     putText: async (path, text, message, sha) => {
       writes.push({ path, text, message, sha });
-      if (writes.length === 1) { const error = new Error('already exists'); error.status = 422; error.code = 'validation'; throw error; }
+      if (writes.length === 1) { winnerAvailable = true; const error = new Error('already exists'); error.status = 422; error.code = 'validation'; throw error; }
       return { sha: 'merged-sha' };
     },
   };
@@ -316,10 +316,10 @@ test('template repository placeholders are accepted before creating the user mar
   const writes = [];
   const github = {
     validateRepository: async () => repository(77), validateBranch: async () => ({}),
-    getText: async path => { assert.equal(path, '.repoclock/config.json'); throw notFound(); },
+    getText: async path => { assert.ok(['.clockoli/config.json', '.repoclock/config.json'].includes(path)); throw notFound(); },
     listRepositoryEntries: async () => [
-      { path: '.repoclock', type: 'tree', mode: '040000' },
-      { path: '.repoclock/.gitkeep', type: 'blob', mode: '100644' },
+      { path: '.clockoli', type: 'tree', mode: '040000' },
+      { path: '.clockoli/.gitkeep', type: 'blob', mode: '100644' },
       { path: 'active', type: 'tree', mode: '040000' },
       { path: 'active/.gitkeep', type: 'blob', mode: '100644' },
       { path: 'times', type: 'tree', mode: '040000' },
@@ -330,7 +330,7 @@ test('template repository placeholders are accepted before creating the user mar
   const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
   assert.equal(result.status, 'write_verified');
   assert.equal(writes.length, 1);
-  assert.equal(writes[0][0], '.repoclock/config.json');
+  assert.equal(writes[0][0], '.clockoli/config.json');
 });
 
 test('pre-marker validation rejects non-blob entries and incompatible modes under reserved namespaces', async () => {
@@ -392,7 +392,7 @@ test('PAT migration can require the immutable legacy storage login when creating
   const github = {
     validateRepository: async () => repository(77), validateBranch: async () => ({}),
     getText: async path => {
-      if (path === '.repoclock/config.json') throw notFound();
+      if (path === '.clockoli/config.json' || path === '.repoclock/config.json') throw notFound();
       if (path.startsWith('active/')) return { text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-20T00:00:00Z\n', sha: 'a' };
       return { text: '', sha: 'b' };
     }, listRepositoryEntries: async () => [
@@ -490,7 +490,7 @@ test('repository marker rejects impossible UTC calendar timestamps instead of ac
 });
 
 test('pre-marker validation rejects blobs occupying reserved directory roots', async () => {
-  for (const path of ['.repoclock', 'active', 'times']) {
+  for (const path of ['.clockoli', 'active', 'times']) {
     let writes = 0;
     const github = {
       validateRepository: async () => repository(77), validateBranch: async () => ({}),
@@ -535,6 +535,67 @@ test('repository initialization makes the first commit automatically when the se
   assert.equal(result.status, 'write_verified');
   assert.equal(result.branch, 'main');
   assert.equal(writes.length, 1);
-  assert.equal(writes[0].path, '.repoclock/config.json');
+  assert.equal(writes[0].path, '.clockoli/config.json');
   assert.deepEqual(JSON.parse(writes[0].text).users, { '123': 'alice' });
+});
+
+test('legacy .repoclock repository marker remains readable after the Clockoli namespace migration', async () => {
+  const marker = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 123, login: 'alice' }, users: { '123': 'alice' } };
+  const reads = [];
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => { reads.push(path); if (path === '.clockoli/config.json') throw notFound(); return { sha: 'legacy', text: JSON.stringify(marker) }; },
+    putText: async () => { throw new Error('must not write'); },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'access_checked');
+  assert.deepEqual(reads, ['.clockoli/config.json', '.repoclock/config.json']);
+});
+
+test('conflicting canonical and legacy repository markers fail closed', async () => {
+  const canonical = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 123, login: 'alice' }, users: { '123': 'alice' } };
+  const legacy = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 456, login: 'mallory' }, users: { '456': 'mallory' } };
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => ({ sha: path, text: JSON.stringify(path.startsWith('.clockoli') ? canonical : legacy) }),
+    putText: async () => { throw new Error('must not write'); },
+  };
+  await assert.rejects(() => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format' && /both/i.test(error.message));
+});
+
+test('legacy-only repository updates its legacy marker until explicit migration', async () => {
+  const marker = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner' } };
+  const writes = [];
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => { if (path === '.clockoli/config.json') throw notFound(); return { sha: 'legacy', text: JSON.stringify(marker) }; },
+    putText: async (...args) => { writes.push(args); return { sha: 'updated' }; },
+  };
+  await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(writes[0][0], '.repoclock/config.json');
+  assert.equal(writes[0][3], 'legacy');
+});
+
+test('dual repository markers compare user mappings semantically rather than by JSON key order', async () => {
+  const canonical = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner', '123': 'alice' } };
+  const legacy = { ...canonical, users: { '123': 'alice', '1': 'owner' } };
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => ({ sha: path, text: JSON.stringify(path.startsWith('.clockoli') ? canonical : legacy) }),
+    putText: async () => { throw new Error('must not write'); },
+  };
+  const result = await new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' });
+  assert.equal(result.status, 'access_checked');
+});
+
+test('equal dual repository markers block new-user registration until explicit migration', async () => {
+  const marker = { repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z', createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner' } };
+  let writes = 0;
+  const github = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async path => ({ sha: path, text: JSON.stringify(marker) }),
+    putText: async () => { writes += 1; },
+  };
+  await assert.rejects(() => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format' && /remove.*legacy|migration/i.test(error.message));
+  assert.equal(writes, 0);
 });

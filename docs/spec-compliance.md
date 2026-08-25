@@ -37,8 +37,8 @@ The specification leaves several Version 1 choices open. This implementation sel
 
 ## Data and concurrency invariants
 
-- Canonical identity is the stable numeric GitHub user ID; `.repoclock/config.json` maps it to the validated storage login used in canonical file names.
-- The shared default branch owns `.repoclock/config.json`. Each current user writes active and completed data to a fail-closed, ownership-marked `repoclock/users/{stable-user-id}` branch; compatible legacy default-branch records remain readable.
+- Canonical identity is the stable numeric GitHub user ID; `.clockoli/config.json` maps it to the validated storage login used in canonical file names.
+- The shared default branch owns `.clockoli/config.json`. Each current user writes active and completed data to a fail-closed, ownership-marked `repoclock/users/{stable-user-id}` branch; compatible legacy default-branch records remain readable.
 - Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM}/{login}.txt`.
 - Each persisted block contains canonical `URL`, an optional one-line `Title`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
 - Duration is recomputed from `End - Start` and is never persisted or based on render ticks.

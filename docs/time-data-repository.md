@@ -30,14 +30,14 @@ For shared reporting:
 
 Use separate data repositories when teams have different privacy boundaries. App installation access is not enough by itself: each signed-in user still needs suitable GitHub permissions and must be able to use the repository's branch/ruleset policy.
 
-> **Compatibility namespace:** Clockoli intentionally keeps the existing `.repoclock/` control paths and `repoclock/users/` personal-branch prefix. Do not rename them; preserving these technical identifiers keeps existing installations and data readable after the product rename.
+> **Storage namespace:** New and migrated repositories use `.clockoli/` control paths. Clockoli still reads legacy `.repoclock/` markers so existing repositories remain compatible. The existing `repoclock/users/` personal-branch prefix remains unchanged because it is the stable Git ref identity used to discover existing user branches.
 
 ## Default branch and personal branches
 
 The default branch contains the shared repository marker:
 
 ```text
-.repoclock/config.json
+.clockoli/config.json
 ```
 
 Clockoli creates one user branch for each stable numeric GitHub identity:
@@ -49,7 +49,7 @@ repoclock/users/{github-user-id}
 The branch contains:
 
 ```text
-.repoclock/user.json
+.clockoli/user.json
 active/{storage-login}.txt
 times/{YYYY-MM}/{storage-login}.txt
 ```
@@ -60,7 +60,7 @@ Do not manually create a branch under `repoclock/users/` and expect Clockoli to 
 
 ## Repository marker
 
-`.repoclock/config.json` records:
+`.clockoli/config.json` records:
 
 - repository format version;
 - creation timestamp and creator;
@@ -111,7 +111,7 @@ Edits and deletions remain visible in Git history unless an administrator rewrit
 
 ## Existing repositories and migration safety
 
-Clockoli can use an existing private repository only after it validates the reserved tree and marker. It will not guess that arbitrary existing `active/`, `times/`, or `.repoclock/` content belongs to Clockoli.
+Clockoli can use an existing private repository only after it validates the reserved tree and marker. It will not guess that arbitrary existing `active/`, `times/`, or `.clockoli/` content belongs to Clockoli. Legacy `.repoclock/` markers are accepted only through the explicit compatibility fallback.
 
 Configuration, authentication-mode, repository, and branch transitions are blocked while an active timer or pending write could be stranded. Finish and synchronize work first.
 

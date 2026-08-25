@@ -19,7 +19,7 @@ Clockoli is a good fit when data ownership and auditability matter more than one
 
 ## Current beta installation
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.19`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.20`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 

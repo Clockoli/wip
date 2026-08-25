@@ -60,7 +60,7 @@ GitHub page JavaScript and content scripts do not receive credentials or raw loc
 The repository's default branch owns the shared marker:
 
 ```text
-.repoclock/config.json
+.clockoli/config.json
 ```
 
 Clockoli provisions a personal branch for each GitHub user:
@@ -72,7 +72,7 @@ repoclock/users/{stable-github-user-id}
 That branch contains an ownership marker and the user's normal timer data:
 
 ```text
-.repoclock/user.json
+.clockoli/user.json
 active/{storage-login}.txt
 times/{YYYY-MM}/{storage-login}.txt
 ```

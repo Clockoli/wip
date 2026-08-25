@@ -1,8 +1,26 @@
 const USER_BRANCH_PREFIX = 'repoclock/users/';
-const USER_METADATA_PATH = '.repoclock/user.json';
+const USER_METADATA_PATH = '.clockoli/user.json';
+const LEGACY_USER_METADATA_PATH = '.repoclock/user.json';
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 
 function notFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
+async function readUserMetadata(github, options) {
+  const optional = async path => {
+    try { return await github.getText(path, options); }
+    catch (error) { if (notFound(error)) return null; throw error; }
+  };
+  const primary = await optional(USER_METADATA_PATH);
+  const legacy = await optional(LEGACY_USER_METADATA_PATH);
+  if (primary && legacy) {
+    const primaryIdentity = parseUserBranchMetadata(primary.text);
+    const legacyIdentity = parseUserBranchMetadata(legacy.text);
+    if (primaryIdentity.id !== legacyIdentity.id || primaryIdentity.login !== legacyIdentity.login) {
+      throw new Error('Clockoli user branch contains conflicting ownership metadata in both .clockoli and legacy .repoclock paths');
+    }
+  }
+  if (primary || legacy) return primary || legacy;
+  throw Object.assign(new Error('Clockoli user branch ownership metadata is missing'), { status: 404 });
+}
 function validIdentity(user) {
   return Number.isSafeInteger(user?.id) && user.id > 0 && typeof user.login === 'string' && LOGIN_RE.test(user.login);
 }
@@ -35,7 +53,7 @@ export async function ensureUserStorageBranch(github, user, sourceBranch) {
   const branchGithub = github.forBranch(branch, 'custom');
   const expected = userBranchMetadataText(user);
   try {
-    const file = await branchGithub.getText(USER_METADATA_PATH);
+    const file = await readUserMetadata(branchGithub);
     const actual = parseUserBranchMetadata(file.text);
     if (actual.id !== user.id || actual.login.toLowerCase() !== user.login.toLowerCase()) {
       throw new Error('Clockoli user branch belongs to a different GitHub account');
@@ -55,7 +73,7 @@ export async function discoverUserStorageBranches(github, { signal } = {}) {
     signal?.throwIfAborted();
     const branchGithub = github.forBranch(branch, 'custom');
     try {
-      const file = await branchGithub.getText(USER_METADATA_PATH, { signal });
+      const file = await readUserMetadata(branchGithub, { signal });
       const user = parseUserBranchMetadata(file.text);
       if (branch !== userStorageBranch(user.id)) throw new Error('Clockoli user branch name does not match its stable GitHub identity');
       if (users.some(item => item.id === user.id || item.login.toLowerCase() === user.login.toLowerCase())) throw new Error('Clockoli user branch metadata is duplicated');
@@ -69,4 +87,4 @@ export async function discoverUserStorageBranches(github, { signal } = {}) {
   return users.sort((a, b) => a.id - b.id);
 }
 
-export { USER_BRANCH_PREFIX, USER_METADATA_PATH };
+export { LEGACY_USER_METADATA_PATH, USER_BRANCH_PREFIX, USER_METADATA_PATH };

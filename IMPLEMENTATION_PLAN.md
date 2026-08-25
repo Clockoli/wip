@@ -6,7 +6,7 @@
 - Any canonical HTTP(S) URL can be tracked. Completed manual entries can be created atomically through the Times bulk importer.
 - Backend-free GitHub App Device Flow is primary; rotating credentials and attempts remain background-owned in extension-origin IndexedDB. Fine-grained PAT is an advanced compatibility path; no credentials are sent to content scripts.
 - One configured private data repository and canonical branch (`main` by default).
-- Stable numeric GitHub user ID is canonical and `.repoclock/config.json` maps it to a validated storage login before path creation.
+- Stable numeric GitHub user ID is canonical and `.clockoli/config.json` maps it to a validated storage login before path creation.
 - Active timer: `active/{login}.txt`; completed entries: blank-line-separated records in `times/{local YYYY-MM}/{login}.txt`.
 - Every stored timestamp includes an explicit timezone; the Start timestamp’s local calendar month selects the monthly file.
 - One active timer per user. A new timer is blocked while a Stop operation is pending/conflicted.

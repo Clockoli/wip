@@ -44,9 +44,15 @@ test('rename preserves legacy storage, branch, DOM, and settings identities whil
   ].map(read).join('\n');
   for (const value of [
     'repoclock-root', 'repoclock-popup-root', 'repoclock-times-root',
-    'repoclock.tasks.period', 'repoclock-settings', '.repoclock/config.json',
+    'repoclock.tasks.period', 'repoclock-settings',
     'repoclock/users/',
   ]) assert.match(compatibility, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const storage = read('src/services/github-app-onboarding.js');
+  const userStorage = read('src/services/user-storage-branch.js');
+  assert.match(storage, /MARKER_PATH = '.clockoli\/config.json'/);
+  assert.match(storage, /LEGACY_MARKER_PATH = '.repoclock\/config.json'/);
+  assert.match(userStorage, /USER_METADATA_PATH = '.clockoli\/user.json'/);
+  assert.match(userStorage, /LEGACY_USER_METADATA_PATH = '.repoclock\/user.json'/);
   const app = read('src/config/github-app.js');
   assert.match(app, /GITHUB_APP_SLUG = 'clockoli'/);
   assert.doesNotMatch(app, /GITHUB_APP_SLUG = 'repoclock'/);
