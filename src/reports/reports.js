@@ -1,5 +1,5 @@
 import {
-  buildAnalytics, buildFacets, exportTimesheet, filterReportRecords, formatClockDuration,
+  buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename, taskSource,
 } from '../domain/reporting.js';
 import { billableTotalsByCurrency, rateForUser } from '../domain/local-settings.js';
@@ -207,6 +207,33 @@ ${detail}`)); chart.append(rect);
   }
 }
 
+function renderPrintTable(id, columns, rows) {
+  const table = $(id); table.replaceChildren();
+  const head = document.createElement('thead'), headRow = document.createElement('tr');
+  for (const [label] of columns) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; headRow.append(th); }
+  head.append(headRow); table.append(head);
+  const body = document.createElement('tbody');
+  for (const item of rows) {
+    const row = document.createElement('tr');
+    for (const [, value] of columns) { const cell = document.createElement('td'); cell.textContent = value(item); row.append(cell); }
+    body.append(row);
+  }
+  table.append(body);
+}
+
+function renderPrintableTimesheet(filtered) {
+  const printable = buildPrintableTimesheet(filtered);
+  $('print-period').textContent = `${state.range.startDate} — ${state.range.endDate}`;
+  $('print-filters').textContent = `People: ${[...state.people].sort().join(', ')} · Repositories: ${[...state.repositories].sort().join(', ')}`;
+  renderPrintTable('print-detail-table', [
+    ['Date', row => row.date], ['Person', row => row.person], ['Repository', row => row.repository],
+    ['Task', row => row.task], ['Time', row => formatClockDuration(row.seconds)],
+  ], printable.byDate);
+  renderPrintTable('print-task-table', [
+    ['Task', row => row.task], ['Repository', row => row.repository], ['Total time', row => formatClockDuration(row.seconds)],
+  ], printable.byTask);
+}
+
 function render() {
   if (!state.range) return;
   const facets = buildFacets(state.records, selectedFilters());
@@ -219,6 +246,7 @@ function render() {
   const filtered = filterReportRecords(state.records, selectedFilters());
   const billableTotals = renderCurrencySelector(filtered);
   renderSummary(filtered, billableTotals);
+  renderPrintableTimesheet(filtered);
   state.analytics = buildAnalytics(filtered, {
     metric: $('metric').value,
     horizontalAxis: $('horizontal-axis').value,

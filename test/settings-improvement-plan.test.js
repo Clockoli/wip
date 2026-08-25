@@ -77,8 +77,11 @@ test('regular local settings stay top-level while rare access controls are Advan
 });
 
 test('rates and backup copy explain locality, exclusions, and offline restoration', () => {
-  assert.match(html, /Rates are private to this browser/i);
+  assert.match(html, /Add date ranges if a rate changes over time\. Rates are private to this browser;/i);
   assert.match(html, /never written to your GitHub repository/i);
+  assert.doesNotMatch(html, /class="local-only-note"/);
+  assert.match(script, /Connected\. Existing Clockoli storage was validated\./);
+  assert.doesNotMatch(script, /without an unnecessary write/);
   assert.match(script, /rateLabel\.textContent = 'Hourly rate'/);
   assert.match(script, /currencyLabel\.textContent = 'Currency'/);
   assert.match(script, /currencyInput\.dataset\.initialValue/);
@@ -172,4 +175,22 @@ test('storage recovery suppresses one-repository auto-connect until the user val
   assert.match(script, /forceManualSelection: storageRepair/);
   assert.match(script, /suppressRepositoryAutoConnect = recoveryAction\.forceManualSelection/);
   assert.match(script, /relevantCandidates\.length === 1 && !suppressRepositoryAutoConnect/);
+});
+
+test('repository setup selection is visible, focusable, aligned, and GitHub-like', () => {
+  assert.match(html, /id="create-repository-choice"[^>]*data-repository-choice="create"/);
+  assert.match(html, /id="existing-repository-choice"[^>]*data-repository-choice="existing"/);
+  assert.match(html, /id="skip-repository-creation"[^>]*aria-pressed="false"/);
+  assert.match(html, /class="help repository-list-help">Unavailable repositories/);
+  assert.match(styles, /\.setup-choice\.selected\{/);
+  assert.match(styles, /grid-template-columns:minmax\(0,1fr\) 202px/);
+  assert.match(styles, /\.setup-choice-action\{[^}]*width:202px[^}]*text-align:center/);
+  assert.match(styles, /\.repository-option input\[type=radio\]\{[^}]*width:16px[^}]*height:16px[^}]*appearance:none/);
+  assert.match(styles, /\.repository-option input\[type=radio\]:checked::after/);
+  assert.match(styles, /\.repository-option\{[^}]*font:var\(--text-body-shorthand-medium\)[^}]*font-weight:400/);
+  assert.match(styles, /\.repository-option strong\{font:600 14px\/20px var\(--fontStack-sansSerif\)\}/);
+  assert.match(styles, /\.repository-option small\{[^}]*font:400 12px\/18px var\(--fontStack-sansSerif\)/);
+  assert.match(script, /choice\.classList\.toggle\('selected', selected\)/);
+  assert.match(script, /existing-repository-choice'\)\.scrollIntoView/);
+  assert.match(script, /queueMicrotask\(\(\) => \$\('install-app'\)\.focus\(\)\)/);
 });

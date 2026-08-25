@@ -128,6 +128,13 @@ function renderOnboardingProgress() {
   $('repository-access-instruction').textContent = repositoryChoiceMode === 'create'
     ? 'On GitHub, choose Only select repositories and add clockoli-data.'
     : 'On GitHub, choose Only select repositories and add your existing private data repository.';
+  for (const mode of ['create', 'existing']) {
+    const selected = repositoryChoiceMode === mode;
+    const choice = $(`${mode}-repository-choice`);
+    choice.classList.toggle('selected', selected);
+    choice.setAttribute('aria-current', selected ? 'step' : 'false');
+  }
+  $('skip-repository-creation').setAttribute('aria-pressed', String(repositoryChoiceMode === 'existing'));
   if (previousStep !== null && previousStep !== step) {
     queueMicrotask(() => $({ 1: 'device-step-title', 2: 'repository-setup-step-title', 3: 'repository-step-title' }[step]).focus());
   }
@@ -324,7 +331,7 @@ async function connectSelectedRepository({ automatic = false } = {}) {
     await refreshState();
     message(result.status === 'write_verified'
       ? 'Connected. Clockoli verified a repository write.'
-      : 'Connected. Existing Clockoli storage was validated without an unnecessary write.', 'success');
+      : 'Connected. Existing Clockoli storage was validated.', 'success');
     return true;
   } catch (error) {
     message(error.message, 'error');
@@ -674,6 +681,8 @@ $('skip-repository-creation').addEventListener('click', () => {
   repositoryChoiceSummary = 'Using an existing repository';
   renderOnboardingProgress();
   message('Next, choose repository access on GitHub for your existing private repository.');
+  $('existing-repository-choice').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  queueMicrotask(() => $('install-app').focus());
   void discoverRepositories().catch(() => {});
 });
 async function rediscoverAfterGitHubHandoff() {

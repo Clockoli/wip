@@ -107,13 +107,13 @@
           <h3 id="repository-setup-step-title" tabindex="-1">Choose private data storage</h3>
           <p>Use a dedicated private repository for Clockoli data. It can be separate from the repositories whose tasks you track.</p>
           <div class="setup-choice-list">
-            <div class="setup-choice preferred-choice">
+            <div id="create-repository-choice" class="setup-choice preferred-choice" data-repository-choice="create">
               <div><strong>Create a private Clockoli data repository</strong><p>Open GitHub’s prefilled form for <strong>clockoli-data</strong>, created from the Clockoli template.</p></div>
-              <a id="new-repository" class="button-link" target="_blank" rel="noreferrer">Create private repository</a>
+              <a id="new-repository" class="button-link setup-choice-action" target="_blank" rel="noreferrer">Create private repository</a>
             </div>
-            <div class="setup-choice">
+            <div id="existing-repository-choice" class="setup-choice" data-repository-choice="existing">
               <div><strong>Use an existing private repository</strong><p>Keep an existing compatible repository and grant Clockoli access to it.</p></div>
-              <button id="skip-repository-creation" type="button" class="secondary">Use existing repository</button>
+              <button id="skip-repository-creation" type="button" class="secondary setup-choice-action" aria-pressed="false">Use existing repository</button>
             </div>
           </div>
           <div class="grant-access-panel">
@@ -128,7 +128,7 @@
           <p id="repository-step-instruction">Clockoli detected repository access. Choose the private repository that should store Clockoli data.</p>
           <fieldset>
             <legend id="repository-choice-legend">Repositories Clockoli can use for data storage</legend>
-            <p class="help">Unavailable repositories include the reason they cannot be used.</p>
+            <p class="help repository-list-help">Unavailable repositories include the reason they cannot be used.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
@@ -165,9 +165,8 @@
 
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
-      <div><h2 id="billing-title">Billable rates</h2><p>Set hourly rates for people whose time appears in Clockoli reports. Add date ranges if a rate changes over time.</p></div>
+      <div><h2 id="billing-title">Billable rates</h2><p>Set hourly rates for people whose time appears in Clockoli reports. Add date ranges if a rate changes over time. Rates are private to this browser; hourly rates and calculated amounts are never written to your GitHub repository.</p></div>
     </div>
-    <p class="local-only-note"><strong>Rates are private to this browser.</strong> Hourly rates and calculated amounts are never written to your GitHub repository.</p>
     <form id="billing-form">
       <div id="rates-list" class="rates-list"></div>
       <div class="actions billing-actions">

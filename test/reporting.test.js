@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildAnalytics, buildFacets, exportTimesheet, filterReportRecords, formatClockDuration,
+  buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename, todayTrackedSeconds, validateDateRange,
 } from '../src/domain/reporting.js';
 
@@ -109,6 +109,35 @@ test('analytics rejects unknown metrics and axes', () => {
   assert.throws(() => buildAnalytics(records, { metric: 'median', horizontalAxis: 'day', stackBy: 'person' }), /metric/i);
   assert.throws(() => buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'year', stackBy: 'person' }), /horizontal axis/i);
   assert.throws(() => buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'day', stackBy: 'owner' }), /stack/i);
+});
+
+test('printable timesheet groups date-person-task detail and sorts task totals by time', () => {
+  const printable = buildPrintableTimesheet([
+    record('alice', '2026-08-18T09:00:00+00:00', '2026-08-18T10:00:00+00:00', { issue: issue('acme', 'api', 3) }),
+    record('alice', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00', { issue: issue('acme', 'app', 1) }),
+    record('bob', '2026-08-17T10:00:00+00:00', '2026-08-17T12:00:00+00:00', { issue: issue('acme', 'app', 1) }),
+  ]);
+  assert.deepEqual(printable.byDate.map(row => [row.date, row.person, row.url, row.seconds]), [
+    ['2026-08-17', 'alice', 'https://github.com/acme/app/issues/1', 3600],
+    ['2026-08-17', 'bob', 'https://github.com/acme/app/issues/1', 7200],
+    ['2026-08-18', 'alice', 'https://github.com/acme/api/issues/3', 3600],
+  ]);
+  assert.deepEqual(printable.byTask.map(row => [row.task, row.url, row.seconds]), [
+    ['#1', 'https://github.com/acme/app/issues/1', 10800],
+    ['#3', 'https://github.com/acme/api/issues/3', 3600],
+  ]);
+  assert.equal(printable.totalSeconds, 14400);
+});
+
+test('printable timesheet keeps equal non-GitHub titles unambiguous', () => {
+  const printable = buildPrintableTimesheet([
+    { user: 'alice', taskUrl: 'https://example.com/tasks/1', taskTitle: 'Customer follow-up', issue: null, startedAt: '2026-08-17T09:00:00Z', entryDate: '2026-08-17', durationSeconds: 600 },
+    { user: 'alice', taskUrl: 'https://example.com/tasks/2', taskTitle: 'Customer follow-up', issue: null, startedAt: '2026-08-17T10:00:00Z', entryDate: '2026-08-17', durationSeconds: 900 },
+  ]);
+  assert.deepEqual(printable.byTask.map(row => [row.task, row.url, row.seconds]), [
+    ['Customer follow-up — https://example.com/tasks/2', 'https://example.com/tasks/2', 900],
+    ['Customer follow-up — https://example.com/tasks/1', 'https://example.com/tasks/1', 600],
+  ]);
 });
 
 test('timesheet exports correctly escaped CSV and structured JSON', () => {

@@ -214,6 +214,28 @@ function hms(seconds) {
   return [Math.floor(value / 3600), Math.floor(value % 3600 / 60), value % 60].map(item => String(item).padStart(2, '0')).join(':');
 }
 
+export function buildPrintableTimesheet(records) {
+  const detail = new Map(), tasks = new Map();
+  for (const record of records ?? []) {
+    const date = recordDate(record), person = String(record.user || ''), url = taskUrlOf(record);
+    const repositoryName = repository(record);
+    const title = String(record.taskTitle ?? record.issueTitle ?? '').trim();
+    const number = record.issue?.number;
+    const task = number ? `#${number}${title ? ` ${title}` : ''}` : title ? `${title} — ${url}` : url;
+    const seconds = Math.max(0, Number(record.durationSeconds) || 0);
+    const detailKey = JSON.stringify([date, person, url]);
+    const detailRow = detail.get(detailKey) ?? { date, person, repository: repositoryName, task, url, seconds: 0 };
+    detailRow.seconds += seconds; detail.set(detailKey, detailRow);
+    const taskRow = tasks.get(url) ?? { repository: repositoryName, task, url, seconds: 0 };
+    taskRow.seconds += seconds; tasks.set(url, taskRow);
+  }
+  const byDate = [...detail.values()].sort((a, b) => a.date.localeCompare(b.date)
+    || a.person.localeCompare(b.person) || a.task.localeCompare(b.task) || a.url.localeCompare(b.url));
+  const byTask = [...tasks.values()].sort((a, b) => b.seconds - a.seconds
+    || a.task.localeCompare(b.task) || a.url.localeCompare(b.url));
+  return { byDate, byTask, totalSeconds: byDate.reduce((sum, row) => sum + row.seconds, 0) };
+}
+
 export function exportTimesheet(records, { format, startDate, endDate, rates = null }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
