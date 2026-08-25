@@ -456,13 +456,21 @@ async function handle(message, sender) {
   }
   const { tracker } = await context();
   switch (message.type) {
-    case 'START': return tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
+    case 'START': {
+      const result = await tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
+      if (result._pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      return result;
+    }
     case 'SWITCH_TASK': {
       const result = await tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
       if (result.pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
       return result;
     }
-    case 'STOP': return tracker.stop(message.description || '');
+    case 'STOP': {
+      const result = await tracker.stop(message.description || '', { background: true });
+      if (result.pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      return result;
+    }
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': {
       if (!message.menuData) return tracker.loadRecent(50);
@@ -488,7 +496,8 @@ async function handle(message, sender) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
-  const readOnly = reportReadOnly || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
+  const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;
   if (changesConfiguration) {

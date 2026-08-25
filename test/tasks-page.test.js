@@ -93,6 +93,9 @@ test('GitHub header uses a separately clickable split trigger and a Reports/Top 
 
 test('Top tasks exposes the same sync and refresh action as the tracking panel', () => {
   assert.match(html, /id="refresh-tasks"[^>]*aria-label="Sync and refresh"/);
+  const panelSyncPath = content.match(/const SYNC_PATH = '([^']+)'/)?.[1];
+  assert.ok(panelSyncPath);
+  assert.match(html, new RegExp(`<path d="${panelSyncPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   assert.match(js, /refresh-tasks'\)\.addEventListener[\s\S]*type: 'SYNC'[\s\S]*await load\(\)/);
 });
 

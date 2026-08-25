@@ -247,7 +247,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
     startedAt, description: '',
   };
-  let pageRequests = 0;
+  let pageRequests = 0, stopAccepted = false;
   const context = vm.createContext({
     location, document,
     chrome: { runtime: { lastError: null, sendMessage(message, callback) {
@@ -255,7 +255,8 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
         callback({ ok: true, data: { configured: true, active: pageRequests <= 2 ? active : null, pendingCount: 0 } });
-      } else if (message.type === 'STOP') callback({ ok: true, data: { pending: false } });
+      } else if (message.type === 'STOP') { stopAccepted = true; callback({ ok: true, data: { pending: true } }); }
+      else if (message.type === 'LOAD_RECENT' && stopAccepted) return;
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
@@ -271,11 +272,13 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
   const stop = createdNodes.find(node => node.tag === 'button' && node.textContent === 'Stop and save');
   assert.ok(stop?.onclick, 'Stop handler was rendered in the header menu');
-  await stop.onclick({ isTrusted: true });
+  const recentBeforeStop = messages.filter(message => message.type === 'LOAD_RECENT').length;
+  const completed = await Promise.race([stop.onclick({ isTrusted: true }).then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))]);
+  assert.equal(completed, true, 'accepted Stop renders without waiting for a remote recent-entry load');
   await new Promise(resolve => setTimeout(resolve, 0));
   const pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 2, 'only the initial cached and remote active reads occur');
-  assert.deepEqual(messages.findLast(message => message.type === 'LOAD_RECENT'), { type: 'LOAD_RECENT', menuData: true, taskUrl: active.issue.url, taskTitle: '' });
+  assert.equal(pageStateMessages.length, 3, 'Stop reconciles from the local page-state snapshot');
+  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, recentBeforeStop, 'Stop does not start a remote recent-entry load');
 });
 
 
@@ -1353,4 +1356,14 @@ test('main tracking panel switches to the current page through the durable backg
   assert.match(source, /switchToCurrent \? 'Save and switch to this task' : 'Stop and save'/);
   assert.match(source, /type: 'SWITCH_TASK'[\s\S]*type: 'STOP'/);
   assert.match(source, /pageState\.pendingCount > 0/);
+});
+
+
+test('ordinary Start and Stop use the same durable background acceptance path as switching', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /case 'START':[\s\S]*background: true[\s\S]*syncPendingNow/);
+  assert.match(worker, /case 'STOP':[\s\S]*background: true[\s\S]*syncPendingNow/);
+  assert.match(worker, /const localStateRead = \['GET_STATE', 'GET_PAGE_STATE'\]\.includes\(message\?\.type\) && !message\?\.refresh/);
+  assert.match(worker, /const readOnly = reportReadOnly \|\| localStateRead \|\|/,
+    'local state reconciliation must not wait behind the remote mutation executor');
 });

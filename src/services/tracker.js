@@ -97,7 +97,8 @@ export class TrackerService {
     return { active, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [] };
   }
 
-  async start(taskUrl, taskTitle = '', description = '') {
+  async start(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
+    if (background) return this.queueStart(taskUrl, taskTitle, description);
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('A stopped entry is still waiting to sync. Sync it before starting another timer.');
     const existing = await this.refreshActive();
@@ -116,11 +117,26 @@ export class TrackerService {
     }
   }
 
+  async queueStart(taskUrl, taskTitle = '', description = '') {
+    const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).length) throw new Error('A timer change is still waiting to sync. Sync it before starting another timer.');
+    if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
+    const startedAt = this.clock(), id = this.idFactory(startedAt.getTime());
+    const active = buildActiveTimer({ user: this.user, taskUrl: this.validateTaskUrl(taskUrl), startedAt, description, taskTitle });
+    const operation = {
+      operation: 'startTimer', id, status: 'pending', retryCount: 0, stage: 'startNext',
+      nextActive: stripInternal(active), queuedAt: startedAt.toISOString(), lastError: '',
+    };
+    const pendingActive = { ...active, _path: activeTextPath(this.user), _sha: null, _pending: true };
+    await this.store.patchState({ pendingWrites: [operation], activeCache: pendingActive });
+    return pendingActive;
+  }
+
   async switchTask(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
     const targetUrl = this.validateTaskUrl(taskUrl);
     if (background) return this.queueTaskSwitch(targetUrl, taskTitle, description);
     const current = await this.refreshActive();
-    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, '') };
+    if (!current) return { stopped: null, active: await this.queueStart(targetUrl, taskTitle, ''), pending: true };
     if (taskUrlOf(current) === targetUrl) return { stopped: null, active: current };
     const stopped = await this.stop(description);
     if (stopped.pending) throw new Error('The previous timer was saved locally but must sync before another timer can start.');
@@ -131,7 +147,7 @@ export class TrackerService {
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('A timer change is still waiting to sync. Sync it before switching again.');
     const current = state.activeCache;
-    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, '') };
+    if (!current) return { stopped: null, active: await this.queueStart(targetUrl, taskTitle, ''), pending: true };
     validateActiveTimer(current);
     if (taskUrlOf(current) === targetUrl) return { stopped: null, active: current, pending: false };
     const changedAt = this.clock(), id = this.idFactory(changedAt.getTime());
@@ -151,10 +167,31 @@ export class TrackerService {
     return { stopped: { entry, pending: true }, active: pendingActive, pending: true };
   }
 
-  stop(description = '') {
-    const result = this.stopTail.then(() => this.stopInternal(description));
+  stop(description = '', { background = false } = {}) {
+    const result = this.stopTail.then(() => background ? this.queueStop(description) : this.stopInternal(description));
     this.stopTail = result.catch(() => {});
     return result;
+  }
+
+  async queueStop(description = '') {
+    const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).length) throw new Error('A timer change is still waiting to sync. Sync it before stopping.');
+    const active = state.activeCache;
+    if (!active) throw new Error('No timer is running');
+    validateActiveTimer(active);
+    const endedAt = this.clock(), id = this.idFactory(endedAt.getTime());
+    const entry = buildEntry({ active, id, endedAt, now: endedAt, description });
+    const operation = {
+      operation: 'completeTimer', id, status: 'pending', retryCount: 0, stage: 'verifyActive',
+      monthlyPath: monthlyTextPath(this.user, active.entryDate), entry, activeSnapshot: stripInternal(active), activeSha: active._sha,
+      queuedAt: endedAt.toISOString(), lastError: '',
+    };
+    const pendingEntry = { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true };
+    await this.store.patchState({
+      pendingWrites: [operation], activeCache: null,
+      recentCache: [pendingEntry, ...(state.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
+    });
+    return { entry, pending: true };
   }
 
   async stopInternal(description = '') {
@@ -370,9 +407,11 @@ export class TrackerService {
         const latest = await this.store.getState();
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
-        const recentCache = [operation.entry, ...(latest.recentCache ?? []).filter(item =>
-          !sameCompletion(item, operation) && !(item._pending && sameDurableTimer(item, operation.activeSnapshot)))]
-          .sort(newestFirst).slice(0, 50);
+        const recentCache = operation.entry
+          ? [operation.entry, ...(latest.recentCache ?? []).filter(item =>
+            !sameCompletion(item, operation) && !(item._pending && sameDurableTimer(item, operation.activeSnapshot)))]
+            .sort(newestFirst).slice(0, 50)
+          : latest.recentCache ?? [];
         await this.store.patchState({ pendingWrites: queue, activeCache: nextActive, recentCache });
       } catch (error) {
         operation.retryCount = (operation.retryCount ?? 0) + 1;

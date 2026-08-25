@@ -475,7 +475,7 @@ function addRateRow(login = '', period = null) {
   currencyLabel.append(currencyInput);
   const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
   const startInput = document.createElement('input'); startInput.className = 'rate-start'; startInput.type = 'date'; startInput.value = rate.startDate || ''; startLabel.append(startInput);
-  const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
+  const endLabel = document.createElement('label'); endLabel.textContent = 'End date (optional)';
   const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endInput.setAttribute('aria-describedby', 'rate-date-help'); endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());

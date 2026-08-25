@@ -896,7 +896,7 @@ The previous version remains in Git history.`)) return;
             const result = await send(switchToCurrent
               ? { type: 'SWITCH_TASK', taskUrl: current.taskUrl, taskTitle: current.taskTitle || '', description: description.value }
               : { type: 'STOP', description: description.value });
-            recentLoaded = false; await refreshState(false, menuOpen);
+            recentLoaded = false; await refreshState(false, false);
             if (result.pending) setError(switchToCurrent ? 'Task switched locally and syncing with GitHub.' : 'Saved locally and waiting to sync with GitHub.');
           } catch (error) { node.disabled = false; setError(error); }
         });

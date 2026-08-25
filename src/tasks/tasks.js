@@ -97,6 +97,7 @@ function makeTimerButton(task) {
           if (result.pending) state.pendingWrites = [{ id: result.stopped?.entry?.id || 'switch-pending', status: 'pending', stage: 'verifyActive' }];
         } else {
           state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
+          if (state.active?._pending) state.pendingWrites = [{ id: 'start-pending', status: 'pending', stage: 'startNext' }];
         }
         task.activeStartedAt = state.active.startedAt;
       }

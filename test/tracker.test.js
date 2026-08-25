@@ -861,3 +861,65 @@ test('queued switch reconciles to a remote timer that races with startNext', asy
   assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
   assert.equal(store.value.activeCache._pending, undefined);
 });
+
+
+test('background Start durably queues locally before any GitHub request', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const active = await tracker.start('https://example.com/fast-start', 'Fast start', '', { background: true });
+  assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0);
+  assert.equal(active.taskUrl, 'https://example.com/fast-start');
+  assert.equal(active._pending, true);
+  assert.equal(store.value.pendingWrites[0].operation, 'startTimer');
+  assert.equal(store.value.pendingWrites[0].stage, 'startNext');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache._pending, undefined);
+});
+
+test('background Stop durably queues locally before any GitHub request', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  github.reads.length = 0; github.writes.length = 0; github.deletes.length = 0;
+  const tracker = service({ github, store }), result = await tracker.stop('Done', { background: true });
+  assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0);
+  assert.equal(result.pending, true);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+});
+
+
+test('queued background Start survives a service-worker restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  await service({ github, store }).start('https://example.com/restarted-start', 'Restarted start', '', { background: true });
+  assert.equal(github.writes.length, 0);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/restarted-start');
+  assert.equal(parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice' }).taskUrl, 'https://example.com/restarted-start');
+});
+
+test('queued background Start preserves a timer created remotely before synchronization', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  await service({ github, store }).start('https://example.com/local-target', 'Local target', '', { background: true });
+  const remote = active('2026-08-18T08:30:00+00:00', { taskUrl: 'https://example.com/remote-timer', issue: undefined });
+  seedText(github, 'active/alice.txt', serializeActiveText(remote), 'remote-sha');
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/remote-timer');
+  assert.equal(store.value.activeCache._pending, undefined);
+});
+
+test('queued background Stop survives a service-worker restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  await service({ github, store }).stop('Restarted stop', { background: true });
+  assert.equal(github.files.has('active/alice.txt'), true);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.txt'), false);
+  assert.equal(store.value.recentCache[0].description, 'Restarted stop');
+});

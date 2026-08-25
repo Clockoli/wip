@@ -196,3 +196,9 @@ test('repository setup selection is visible, focusable, aligned, and GitHub-like
   assert.match(script, /existing-repository-choice'\)\.scrollIntoView/);
   assert.match(script, /queueMicrotask\(\(\) => \$\('install-app'\)\.focus\(\)\)/);
 });
+
+
+test('billable rate End date is visibly optional and empty means current through today', () => {
+  assert.match(script, /endLabel\.textContent = 'End date \(optional\)'/);
+  assert.match(html, /id="rate-date-help"[^>]*>Leave End date empty if the rate is still current\. Clockoli applies it through today/);
+});
