@@ -97,6 +97,16 @@ function makeModernHeader() {
 
 const documentNodes = new Map();
 
+test('GitHub SPA route changes reset saved panel scroll before the next reopen', () => {
+  assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0; navigationOpen = false/);
+});
+
+test('tracking-panel rerenders preserve the current user scroll position', () => {
+  assert.match(source, /if \(event\?\.isTrusted\) menuScrollTop = menu\.scrollTop/);
+  assert.match(source, /const preservedMenuScrollTop = menuScrollTop/);
+  assert.match(source, /restoreMenuScroll\(preservedMenuScrollTop\)/);
+});
+
 test('task result rendering clamps maximum untitled URLs and titles without losing their full values', async () => {
   const exposedSource = source.replace("function taskResult(value, className = '') {", "globalThis.__taskResult = function taskResult(value, className = '') {");
   assert.notEqual(exposedSource, source, 'taskResult is exposed only inside this renderer contract test');

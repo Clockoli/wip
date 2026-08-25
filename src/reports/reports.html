@@ -46,7 +46,10 @@
     </section>
 
     <div id="error" class="notice error" role="alert" hidden></div>
-    <div id="loading" class="notice" role="status" hidden>Loading time files from GitHub…</div>
+    <div id="loading" class="notice loading-notice" role="status" aria-live="polite" hidden>
+      <div class="loading-copy"><strong id="loading-label">Connecting to GitHub…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
+      <progress id="loading-progress" max="100" value="10">10%</progress>
+    </div>
     <div id="setup" class="notice" hidden>
       Configure a private time-data repository before opening reports.
       <button id="setup-settings" class="button primary" type="button">Open Settings</button>
@@ -62,7 +65,7 @@
       </div>
 
       <section id="print-timesheet" class="print-timesheet" aria-label="Printable timesheet">
-        <header class="print-heading"><h2>Timesheet</h2><p id="print-period"></p><p id="print-filters"></p></header>
+        <header class="print-heading"><img id="print-brand" src="../assets/clockoli-with-text.svg" alt="Clockoli"><div><h2>Timesheet</h2><p id="print-period"></p><p id="print-filters"></p></div></header>
         <section aria-labelledby="print-detail-heading"><h3 id="print-detail-heading">Time by day, person and task</h3><table id="print-detail-table"></table></section>
         <section aria-labelledby="print-task-heading"><h3 id="print-task-heading">Total time by task</h3><table id="print-task-table"></table></section>
       </section>

@@ -31,6 +31,9 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.match(js, /type:\s*'LOAD_TASKS'/);
   assert.match(js, /type:\s*'START'/);
   assert.match(js, /type:\s*'STOP'/);
+  assert.match(js, /type:\s*'SWITCH_TASK'/);
+  assert.doesNotMatch(js, /!active && \(state\.active \|\| state\.pendingWrites\.length\)/,
+    'Start remains available while a different task is active');
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(css, /\.task-row/);
   assert.match(js, /className = 'task-url'/);
@@ -45,6 +48,14 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
     'maximum-length task titles are limited to two result lines');
   assert.match(js, /title\.title = task\.title/,
     'the full clamped task title remains available without expanding the row');
+});
+
+test('failed task switches reconcile from local tracker state without reloading reports', () => {
+  assert.match(js, /async function reconcileTaskState\(previousActive\)/);
+  assert.match(js, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
+  assert.match(js, /catch \(error\) \{\s*await reconcileTaskState\(activeBeforeAction\)\.catch/);
+  assert.doesNotMatch(js, /reconcileTaskState[\s\S]{0,300}type: 'LOAD_TASKS'/);
+  assert.match(js, /state\.active = result\.active \?\? null; state\.pendingWrites = result\.pendingWrites \?\? \[\]/);
 });
 
 test('visible extension branding is Clockoli and Tasks uses neutral GitHub buttons', () => {

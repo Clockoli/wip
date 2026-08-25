@@ -2,10 +2,6 @@ const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CURRENCY_CODE_RE = /^[A-Za-z]{2,12}$/;
 const CURRENCY_SYMBOL_RE = /^\p{Sc}$/u;
-const RATE_AMOUNT_SOURCE = '(?:0|[1-9]\\d{0,6})(?:\\.\\d{1,2})?';
-const RATE_CURRENCY_SOURCE = '(?:\\p{Sc}|[A-Za-z]{2,12})';
-const RATE_PREFIX_RE = new RegExp(`^(${RATE_CURRENCY_SOURCE})\\s*(${RATE_AMOUNT_SOURCE})$`, 'u');
-const RATE_SUFFIX_RE = new RegExp(`^(${RATE_AMOUNT_SOURCE})\\s*(${RATE_CURRENCY_SOURCE})$`, 'u');
 const MAX_RATE_MINOR = 100_000_000;
 
 function plainObject(value) {
@@ -26,6 +22,15 @@ function normalizeCurrency(value) {
   if (CURRENCY_SYMBOL_RE.test(currency)) return currency;
   if (CURRENCY_CODE_RE.test(currency)) return currency.toUpperCase();
   throw new Error('Rate currency must be one currency sign or a 2–12 letter description');
+}
+
+const EXCHANGE_CURRENCY_ALIASES = Object.freeze({ '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY' });
+
+export function exchangeCurrencyCode(value) {
+  const currency = normalizeCurrency(value);
+  if (EXCHANGE_CURRENCY_ALIASES[currency]) return EXCHANGE_CURRENCY_ALIASES[currency];
+  if (/^[A-Z]{3}$/.test(currency)) return currency;
+  throw new Error(`${currency} is not supported for exchange-rate conversion. Use a three-letter ISO currency code.`);
 }
 
 function defaultCurrencyPosition(currency) {
@@ -57,8 +62,14 @@ function normalizeRatePeriods(raw, login, legacyCurrency = 'USD') {
     .sort((left, right) => (left.startDate || '0000-00-00').localeCompare(right.startDate || '0000-00-00') || (left.endDate || '9999-99-99').localeCompare(right.endDate || '9999-99-99'));
   if (!periods.length) throw new Error(`Add at least one rate period for ${login}`);
   for (let index = 1; index < periods.length; index += 1) {
-    const previousEnd = periods[index - 1].endDate || '9999-99-99';
-    const currentStart = periods[index].startDate || '0000-00-00';
+    const previous = periods[index - 1], current = periods[index];
+    const currentStart = current.startDate || '0000-00-00';
+    if (!previous.endDate && current.startDate && current.startDate > (previous.startDate || '0000-00-00')) {
+      const boundary = new Date(`${current.startDate}T00:00:00Z`);
+      boundary.setUTCDate(boundary.getUTCDate() - 1);
+      previous.endDate = boundary.toISOString().slice(0, 10);
+    }
+    const previousEnd = previous.endDate || '9999-99-99';
     if (currentStart <= previousEnd) throw new Error(`Rate periods for ${login} overlap`);
   }
   return periods;
@@ -96,18 +107,13 @@ export function rateMinorToMajor(value) {
   return (minor / 100).toFixed(2);
 }
 
-export function parseRateInput(value) {
-  const text = String(value ?? '').trim();
-  let match = text.match(RATE_PREFIX_RE), currencyPosition = 'prefix';
-  let currency, amount;
-  if (match) [, currency, amount] = match;
-  else {
-    match = text.match(RATE_SUFFIX_RE); currencyPosition = 'suffix';
-    if (match) [, amount, currency] = match;
-  }
-  if (!match) throw new Error('Hourly rate must include an amount and currency, for example $15.50 or 750 RUB');
-  currency = normalizeCurrency(currency);
-  return { amountMinorPerHour: rateMajorToMinor(amount), currency, currencyPosition };
+export function parseRateFields(amount, currency) {
+  const normalizedCurrency = normalizeCurrency(currency);
+  return {
+    amountMinorPerHour: rateMajorToMinor(amount),
+    currency: normalizedCurrency,
+    currencyPosition: defaultCurrencyPosition(normalizedCurrency),
+  };
 }
 
 export function formatRateInput(rate) {

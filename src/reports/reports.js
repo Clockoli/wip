@@ -1,14 +1,15 @@
 import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
-  periodRange, reportFilename, taskSource,
+  periodRange, reportFilename, reportPdfTitle, taskSource,
 } from '../domain/reporting.js';
-import { billableTotalsByCurrency, rateForUser } from '../domain/local-settings.js';
+import { billableTotalsByCurrency, exchangeCurrencyCode, rateForUser } from '../domain/local-settings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const state = {
   records: [], range: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
+  exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null,
 };
 
 function send(message) {
@@ -23,6 +24,16 @@ function localDateValue(date = new Date()) {
   const pad = value => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+
+function showProgress(label, value = null, detail = 'This can take a moment for larger repositories.') {
+  $('loading-label').textContent = label;
+  $('loading-detail').textContent = detail;
+  if (value === null) $('loading-progress').removeAttribute('value');
+  else $('loading-progress').value = Math.max(0, Math.min(100, Number(value) || 0));
+  $('loading').hidden = false;
+}
+
+function hideProgress() { $('loading').hidden = true; }
 
 function setError(error = '') {
   const root = $('error'), text = error?.message || String(error || '');
@@ -234,6 +245,31 @@ function renderPrintableTimesheet(filtered) {
   ], printable.byTask);
 }
 
+function exchangeRequest(filtered, targetCurrency) {
+  const datedRates = filtered.map(record => ({
+    date: record.entryDate || String(record.startedAt || '').slice(0, 10),
+    rate: rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10)),
+  })).filter(item => item.rate);
+  const dates = [...new Set(datedRates.map(item => item.date))].sort();
+  const sourceCurrencies = [...new Set(datedRates.map(item => item.rate.currency))].sort();
+  return { targetCurrency, sourceCurrencies, dates };
+}
+
+async function loadBillableAnalytics(filtered, request, key) {
+  const analyticsRequestId = ++state.analyticsRequestId;
+  const progressRequestId = `fx-${state.requestId}-${analyticsRequestId}`;
+  state.progressRequestId = progressRequestId;
+  showProgress('Loading exchange rates from Frankfurter…', 85, 'Historical rates are fetched in one bulk date-range request and cached locally.');
+  try {
+    const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...request, requestId: progressRequestId } });
+    if (analyticsRequestId !== state.analyticsRequestId || key !== JSON.stringify(exchangeRequest(filtered, $('billable-currency').value))) return;
+    state.exchangeRates = result.rates; state.exchangeKey = key;
+    render();
+  } catch (error) {
+    if (analyticsRequestId === state.analyticsRequestId) { state.exchangeRates = null; state.exchangeKey = ''; $('analytics-chart').replaceChildren(); setError(error); hideProgress(); }
+  }
+}
+
 function render() {
   if (!state.range) return;
   const facets = buildFacets(state.records, selectedFilters());
@@ -247,31 +283,37 @@ function render() {
   const billableTotals = renderCurrencySelector(filtered);
   renderSummary(filtered, billableTotals);
   renderPrintableTimesheet(filtered);
-  state.analytics = buildAnalytics(filtered, {
-    metric: $('metric').value,
-    horizontalAxis: $('horizontal-axis').value,
-    stackBy: $('stack-by').value,
-    rates: state.billing.rates, currency: $('billable-currency').value,
-  });
-  renderChart(state.analytics);
   setDownloadsAvailable(Boolean(filtered.length));
+  const metric = $('metric').value, targetCurrency = $('billable-currency').value;
+  let exchangeRates = null;
+  if (metric === 'billable-amount' && targetCurrency) {
+    const request = exchangeRequest(filtered, targetCurrency), key = JSON.stringify(request);
+    if (state.exchangeKey !== key) { state.analytics = null; $('analytics-chart').replaceChildren(); void loadBillableAnalytics(filtered, request, key); return; }
+    exchangeRates = state.exchangeRates;
+  } else { state.analyticsRequestId += 1; state.exchangeRates = null; state.exchangeKey = ''; }
+  state.analytics = buildAnalytics(filtered, {
+    metric, horizontalAxis: $('horizontal-axis').value, stackBy: $('stack-by').value,
+    rates: state.billing.rates, currency: targetCurrency, exchangeRates,
+  });
+  renderChart(state.analytics); setError(); hideProgress();
 }
 
 async function loadRange(range) {
   const requestId = ++state.requestId;
-  state.range = range; state.loading = true; setError();
-  $('loading').hidden = false; $('setup').hidden = true; $('report-content').hidden = true;
+  state.progressRequestId = requestId; state.range = range; state.loading = true; state.exchangeRates = null; state.exchangeKey = ''; state.analyticsRequestId += 1; setError();
+  showProgress('Connecting to GitHub…', 10); $('setup').hidden = true; $('report-content').hidden = true;
   try {
-    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate } });
+    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, requestId } });
     if (requestId !== state.requestId) return;
     if (!result.configured) { $('setup').hidden = false; return; }
+    showProgress('Preparing report…', 80);
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {} };
     state.people = new Set(result.records.map(record => record.user));
     state.repositories = new Set(result.records.map(record => taskSource(record)));
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
-  finally { if (requestId === state.requestId) { state.loading = false; $('loading').hidden = true; } }
+  finally { if (requestId === state.requestId) { state.loading = false; if (state.progressRequestId === requestId) hideProgress(); } }
 }
 
 function currentRange() {
@@ -321,7 +363,21 @@ function downloadTimesheet(format, event) {
 }
 $('download-csv').addEventListener('click', event => downloadTimesheet('csv', event));
 $('download-json').addEventListener('click', event => downloadTimesheet('json', event));
-$('download-pdf').addEventListener('click', event => { event.preventDefault(); if (!$('download-pdf').classList.contains('disabled')) window.print(); });
+function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); }
+
+$('download-pdf').addEventListener('click', event => {
+  event.preventDefault();
+  if ($('download-pdf').classList.contains('disabled')) return;
+  const previousTitle = document.title;
+  document.title = pdfDocumentTitle();
+  addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });
+  window.print();
+});
+
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type !== 'REPORT_PROGRESS' || message.requestId !== state.progressRequestId) return;
+  showProgress(message.label || 'Working…', message.value ?? null);
+});
 
 const colorScheme = matchMedia('(prefers-color-scheme: dark)');
 colorScheme.addEventListener('change', () => {

@@ -41,10 +41,12 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('DELETE_ENTRY', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SWITCH_TASK', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
   for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES']) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
@@ -53,7 +55,9 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('SWITCH_TASK', content, origin), /not allowed/i);
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
 });
 

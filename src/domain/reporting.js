@@ -1,5 +1,5 @@
 import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
-import { billableMinorForRecord, rateForUser } from './local-settings.js';
+import { billableMinorForRecord, exchangeCurrencyCode, rateForUser } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
 const METRICS = new Set(['total-time', 'avg-time', 'task-count', 'billable-amount']);
@@ -158,24 +158,25 @@ export function buildAnalytics(records, options = {}) {
   if (!AXES.has(horizontalAxis)) throw new Error('Invalid horizontal axis');
   if (!AXES.has(stackBy)) throw new Error('Invalid stack dimension');
   const buckets = new Map(), series = new Map();
-  let billableCurrency = options.currency || '';
+  let billableCurrency = options.currency || '', billableCurrencyCode = billableCurrency ? exchangeCurrencyCode(billableCurrency) : '';
   for (const record of records ?? []) {
     const recordDate = record.entryDate || String(record.startedAt || '').slice(0, 10);
     const recordRate = rateForUser(record.user, options.rates || {}, recordDate);
+    let convertedBillableMinor = 0;
     if (metric === 'billable-amount') {
       if (!recordRate) continue;
-      if (!billableCurrency) billableCurrency = recordRate.currency;
-      if (recordRate.currency !== billableCurrency) {
-        if (!options.currency) throw new Error('Select one currency for billable analytics');
-        continue;
-      }
+      if (!billableCurrency) { billableCurrency = recordRate.currency; billableCurrencyCode = exchangeCurrencyCode(recordRate.currency); }
+      const sourceCode = exchangeCurrencyCode(recordRate.currency);
+      const factor = sourceCode === billableCurrencyCode ? 1 : Number(options.exchangeRates?.[recordDate]?.[sourceCode]);
+      if (!(factor > 0)) throw new Error(`Load ${sourceCode} to ${billableCurrencyCode} exchange rates before building billable analytics`);
+      convertedBillableMinor = billableMinorForRecord(record, options.rates || {}) * factor;
     }
     const bucketPart = axisPart(record, horizontalAxis), seriesPart = axisPart(record, stackBy);
     series.set(seriesPart.key, seriesPart);
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
     const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, billableMinor: 0, tasks: new Set() };
     cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1;
-    cell.billableMinor += billableMinorForRecord(record, options.rates || {}); cell.tasks.add(taskUrlOf(record));
+    cell.billableMinor += metric === 'billable-amount' ? convertedBillableMinor : billableMinorForRecord(record, options.rates || {}); cell.tasks.add(taskUrlOf(record));
     bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -268,6 +269,12 @@ export function exportTimesheet(records, { format, startDate, endDate, rates = n
   }
   if (format === 'json') return `${JSON.stringify({ period: { startDate, endDate }, totalSeconds, entries }, null, 2)}\n`;
   throw new Error('Unknown timesheet format');
+}
+
+export function reportPdfTitle(range, people = []) {
+  const selected = [...new Set(people)].filter(Boolean);
+  const person = selected.length === 1 ? `_${String(selected[0]).replace(/[^A-Za-z0-9._-]+/g, '-')}` : '';
+  return `Clockoli-timesheet_${range.startDate}_${range.endDate}${person}`;
 }
 
 export function reportFilename(format, startDate, endDate) {

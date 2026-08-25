@@ -8,11 +8,12 @@ const PENDING_AUTH = 'pendingAuth';
 const PENDING_AUTH_GENERATION = 'pendingAuthGeneration';
 const ONBOARDING_KEYS = ['onboardingLastVerifiedAt', 'onboardingVerificationStatus'];
 const BILLING_SETTINGS = 'billingSettings';
+const EXCHANGE_RATE_CACHE = 'exchangeRateCache';
 const LOCAL_RECENT_DAYS = 'localRecentDays';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
 const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
-const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
 
 function generationValue(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
@@ -335,6 +336,29 @@ export class ChromeStore {
 
   async saveConfiguration(config, token, statePatch) {
     return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
+  }
+
+  async getExchangeRateCache() {
+    const values = await this.backend.getMany([EXCHANGE_RATE_CACHE]);
+    return values[EXCHANGE_RATE_CACHE] ?? null;
+  }
+
+  async saveExchangeRateCache(value) {
+    await this.backend.mutateMany([EXCHANGE_RATE_CACHE], current => {
+      const existing = current[EXCHANGE_RATE_CACHE];
+      const entries = existing?.version === value.version && existing.entries && typeof existing.entries === 'object'
+        ? { ...existing.entries } : {};
+      for (const [key, incoming] of Object.entries(value.entries || {})) {
+        const current = entries[key];
+        const newerEffectiveDate = String(incoming?.effectiveDate || '').localeCompare(String(current?.effectiveDate || ''));
+        const newerFetch = String(incoming?.fetchedAt || '').localeCompare(String(current?.fetchedAt || ''));
+        if (!current || newerEffectiveDate > 0 || (newerEffectiveDate === 0 && newerFetch >= 0)) entries[key] = incoming;
+      }
+      return {
+        set: { [EXCHANGE_RATE_CACHE]: { ...value, entries } },
+        result: true,
+      };
+    });
   }
 
   async getLocalPreferences() {

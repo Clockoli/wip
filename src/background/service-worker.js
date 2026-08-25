@@ -10,6 +10,7 @@ import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { ReportService } from '../services/reports.js';
+import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
@@ -171,6 +172,20 @@ async function context() {
   };
 }
 
+function emitReportProgress(requestId, progress) {
+  if (!requestId) return;
+  try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
+}
+
+async function loadExchangeRates(message) {
+  const payload = message.payload || {};
+  emitReportProgress(payload.requestId, { label: 'Loading exchange rates from Frankfurter…', value: 85 });
+  const service = new ExchangeRateService({ cache: store });
+  const result = await service.ratesForDates(payload);
+  emitReportProgress(payload.requestId, { label: 'Applying exchange rates…', value: 95 });
+  return result;
+}
+
 async function loadReport(message) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(3);
@@ -189,7 +204,7 @@ async function loadReport(message) {
   }
   const controller = new AbortController();
   const github = githubForConfig(config);
-  const reports = new ReportService({ github, cache: store });
+  const reports = new ReportService({ github, cache: store, onProgress: progress => emitReportProgress(message.payload?.requestId, progress) });
   const promise = (async () => {
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
@@ -227,7 +242,7 @@ async function loadTimes(message, sender) {
       user = await github.getAuthenticatedUser(); controller.signal.throwIfAborted();
       if (!await store.patchStateIfGeneration({ user }, generation)) throw new DOMException('Time load was superseded by a configuration change.', 'AbortError');
     }
-    const reports = new ReportService({ github, cache: store });
+    const reports = new ReportService({ github, cache: store, onProgress: progress => emitReportProgress(message.payload?.requestId, progress) });
     const recent = await reports.loadUserRange(message.payload || {}, user, { includeStorageMetadata: true, signal: controller.signal }, {
       maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
     });
@@ -259,7 +274,7 @@ async function loadTasks(message, sender) {
   }
   const controller = new AbortController();
   const github = githubForConfig(config);
-  const reports = new ReportService({ github, cache: store });
+  const reports = new ReportService({ github, cache: store, onProgress: progress => emitReportProgress(message.payload?.requestId, progress) });
   const loadGuard = { signal: controller.signal, assertCurrent: () => loadCoordinator.assertCurrent(loadEpoch) };
   const promise = (async () => {
     let { user } = await store.getState();
@@ -327,7 +342,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'STOP', 'SYNC',
+  'LOAD_REPORT', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC',
   'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
@@ -412,6 +427,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
@@ -438,6 +454,7 @@ async function handle(message, sender) {
   const { tracker } = await context();
   switch (message.type) {
     case 'START': return tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
+    case 'SWITCH_TASK': return tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
     case 'STOP': return tracker.stop(message.description || '');
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': {
@@ -463,7 +480,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT'].includes(message?.type);
+  const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const readOnly = reportReadOnly || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
   let operation;

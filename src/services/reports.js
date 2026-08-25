@@ -51,9 +51,10 @@ function budgetValue(value, fallback, label) {
 }
 
 export class ReportService {
-  constructor({ github, cache = null, concurrency = 6 }) {
+  constructor({ github, cache = null, concurrency = 6, onProgress = null }) {
     this.github = github;
     this.cache = cache;
+    this.onProgress = typeof onProgress === 'function' ? onProgress : () => {};
     this.concurrency = Math.min(12, Math.max(1, Number(concurrency) || 6));
   }
 
@@ -66,17 +67,18 @@ export class ReportService {
   }
 
   async loadRepositoryRange(range, { defaultBranch = null, signal } = {}) {
+    this.onProgress({ label: 'Discovering people and time files…', value: 20 });
     if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
       return this.loadRange(range, { signal });
     }
     const defaultGithub = this.github.forBranch(defaultBranch, 'default');
     const users = await discoverUserStorageBranches(defaultGithub, { signal });
-    if (!users.length) return new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency }).loadRange(range, { signal });
-    const legacy = await new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency }).loadRange(range, { signal });
+    if (!users.length) return new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress }).loadRange(range, { signal });
+    const legacy = await new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress }).loadRange(range, { signal });
     const personalRecords = [];
     for (const user of users) {
       signal?.throwIfAborted();
-      const personal = await new ReportService({ github: user.github, cache: this.cache, concurrency: this.concurrency })
+      const personal = await new ReportService({ github: user.github, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress })
         .loadUserRange(range, user.login, { signal });
       personalRecords.push(...personal);
     }
@@ -101,6 +103,7 @@ export class ReportService {
     signal?.throwIfAborted();
 
     const repositoryKey = this.github.repositoryKey || 'repository';
+    this.onProgress({ label: 'Checking the local time-file cache…', value: 35 });
     const cache = await this.readCache(repositoryKey);
     const needsSizes = user && cache.files.some(file => !Number.isSafeInteger(file.size));
     const snapshotEtag = cache.snapshotReady && !needsSizes ? cache.etag : '';
@@ -137,6 +140,7 @@ export class ReportService {
       for (let offset = 0; offset < missing.length; offset += this.concurrency) {
         signal?.throwIfAborted();
         const chunk = missing.slice(offset, offset + this.concurrency);
+        this.onProgress({ label: `Downloading time files from GitHub (${Math.min(offset + chunk.length, missing.length)} of ${missing.length})…`, value: 40 + Math.round(30 * Math.min(offset + chunk.length, missing.length) / Math.max(1, missing.length)) });
         const blobs = await Promise.all(chunk.map(file => this.github.getBlobText(file.path, file.sha, { signal })));
         for (const blob of blobs) cache.blobs[blob.sha] = blob.text;
         await this.saveCache(cache);
@@ -149,6 +153,7 @@ export class ReportService {
     const actualBytes = files.reduce((sum, file) => sum + new TextEncoder().encode(cache.blobs[file.sha] ?? '').length, 0);
     if (actualBytes > maxBytes) throw new Error(`Task byte budget exceeded (${actualBytes} bytes; maximum ${maxBytes}). Choose a shorter period.`);
 
+    this.onProgress({ label: 'Preparing time records…', value: 75 });
     const records = files.flatMap(file => {
       try {
         return parseMonthlyText(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })

@@ -40,6 +40,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/reports/reports.html',
   'src/reports/reports.js',
   'src/services/configuration.js',
+  'src/services/exchange-rates.js',
   'src/services/github-app-onboarding.js',
   'src/services/onboarding-coordinator.js',
   'src/services/reports.js',

@@ -375,6 +375,32 @@ test('legacy repository identity upgrade is one generation-checked atomic mutati
 });
 
 
+test('exchange-rate cache saves atomically merge concurrent request entries', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveExchangeRateCache({ version: 2, entries: {
+    'USD|2026-08-24|EUR': { factor: 1.1, effectiveDate: '2026-08-24', fetchedAt: '2026-08-25T00:00:00Z' },
+  } });
+  await store.saveExchangeRateCache({ version: 2, entries: {
+    'EUR|2026-08-24|GBP': { factor: 1.2, effectiveDate: '2026-08-24', fetchedAt: '2026-08-25T00:00:01Z' },
+  } });
+  assert.deepEqual(Object.keys((await store.getExchangeRateCache()).entries).sort(), [
+    'EUR|2026-08-24|GBP', 'USD|2026-08-24|EUR',
+  ]);
+});
+
+test('exchange-rate cache merge never lets a fallback overwrite an exact quote', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveExchangeRateCache({ version: 2, entries: {
+    'USD|2026-08-24|EUR': { factor: 1.2, effectiveDate: '2026-08-24', fetchedAt: '2026-08-24T16:00:00Z' },
+  } });
+  await store.saveExchangeRateCache({ version: 2, entries: {
+    'USD|2026-08-24|EUR': { factor: 1.1, effectiveDate: '2026-08-21', fetchedAt: '2026-08-24T17:00:00Z' },
+  } });
+  assert.deepEqual((await store.getExchangeRateCache()).entries['USD|2026-08-24|EUR'], {
+    factor: 1.2, effectiveDate: '2026-08-24', fetchedAt: '2026-08-24T16:00:00Z',
+  });
+});
+
 test('billable rates and settings export stay local, version changes, and import atomically', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});

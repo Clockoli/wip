@@ -1,5 +1,5 @@
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
-import { parseRateInput } from '../domain/local-settings.js';
+import { parseRateFields } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -476,7 +476,7 @@ function addRateRow(login = '', period = null) {
   const startLabel = document.createElement('label'); startLabel.textContent = 'Start date';
   const startInput = document.createElement('input'); startInput.className = 'rate-start'; startInput.type = 'date'; startInput.value = rate.startDate || ''; startLabel.append(startInput);
   const endLabel = document.createElement('label'); endLabel.textContent = 'End date';
-  const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endLabel.append(endInput);
+  const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endInput.setAttribute('aria-describedby', 'rate-date-help'); endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());
   row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
@@ -507,11 +507,11 @@ function billingPayload() {
     const currency = row.querySelector('.rate-currency').value.trim();
     if (!login && !value && !currency) continue;
     if (!login || !value || !currency) throw new Error('Enter a GitHub user, hourly rate, and currency');
-    const position = currency === row.querySelector('.rate-currency').dataset.initialValue
-      ? row.dataset.currencyPosition : (/^[A-Za-z]{2,12}$/.test(currency) ? 'suffix' : 'prefix');
-    const combined = position === 'suffix' ? `${value} ${currency}` : `${currency}${value}`;
+    const parsed = parseRateFields(value, currency);
+    const currencyPosition = currency === row.querySelector('.rate-currency').dataset.initialValue
+      ? row.dataset.currencyPosition : parsed.currencyPosition;
     rates[login] ||= [];
-    rates[login].push({ ...parseRateInput(combined), startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
+    rates[login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
   return { rates };
 }

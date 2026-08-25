@@ -75,7 +75,7 @@
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
           <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Connect GitHub</button>
+            <button id="authorize" type="button">Copy code to clipboard and connect GitHub</button>
             <p class="help">GitHub will show a one-time code. Clockoli copies it before opening GitHub so you can paste it immediately.</p>
           </div>
           <details id="connection-details" class="inline-details">
@@ -169,6 +169,7 @@
     </div>
     <form id="billing-form">
       <div id="rates-list" class="rates-list"></div>
+      <p id="rate-date-help" class="help">Leave End date empty while a rate remains current; it will apply today and to future entries until you add a later rate period.</p>
       <div class="actions billing-actions">
         <button id="add-rate" type="button" class="secondary">Add rate period</button>
         <button id="save-billing" type="submit">Save billable rates</button>

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
-  periodRange, reportFilename, todayTrackedSeconds, validateDateRange,
+  periodRange, reportFilename, reportPdfTitle, todayTrackedSeconds, validateDateRange,
 } from '../src/domain/reporting.js';
 
 const issue = (owner, repo, number, type = 'issue') => ({
@@ -138,6 +138,13 @@ test('printable timesheet keeps equal non-GitHub titles unambiguous', () => {
     ['Customer follow-up — https://example.com/tasks/2', 'https://example.com/tasks/2', 900],
     ['Customer follow-up — https://example.com/tasks/1', 'https://example.com/tasks/1', 600],
   ]);
+});
+
+test('PDF title includes period and only a single selected person', () => {
+  const range = { startDate: '2026-08-01', endDate: '2026-08-31' };
+  assert.equal(reportPdfTitle(range, ['alice']), 'Clockoli-timesheet_2026-08-01_2026-08-31_alice');
+  assert.equal(reportPdfTitle(range, ['alice', 'bob']), 'Clockoli-timesheet_2026-08-01_2026-08-31');
+  assert.equal(reportPdfTitle(range, []), 'Clockoli-timesheet_2026-08-01_2026-08-31');
 });
 
 test('timesheet exports correctly escaped CSV and structured JSON', () => {

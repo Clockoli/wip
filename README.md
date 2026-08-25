@@ -19,7 +19,7 @@ Clockoli is a good fit when data ownership and auditability matter more than one
 
 ## Current beta installation
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.22`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.23`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
@@ -93,6 +93,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 - Independent Day, Week, Month, Person, Source, and Task chart dimensions.
 - CSV and JSON timesheet downloads.
 - Native print/save-to-PDF.
+- Mixed-currency billable charts converted by day with locally cached rates from [Frankfurter](https://github.com/lineofflight/frankfurter).
 - Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to the data repository.
 
 ### Storage, sync, and privacy

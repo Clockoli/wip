@@ -116,6 +116,16 @@ export class TrackerService {
     }
   }
 
+  async switchTask(taskUrl, taskTitle = '', description = '') {
+    const targetUrl = this.validateTaskUrl(taskUrl);
+    const current = await this.refreshActive();
+    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, description) };
+    if (taskUrlOf(current) === targetUrl) return { stopped: null, active: current };
+    const stopped = await this.stop();
+    if (stopped.pending) throw new Error('The previous timer was saved locally but must sync before another timer can start.');
+    return { stopped, active: await this.start(targetUrl, taskTitle, description) };
+  }
+
   stop(description = '') {
     const result = this.stopTail.then(() => this.stopInternal(description));
     this.stopTail = result.catch(() => {});

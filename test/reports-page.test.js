@@ -14,7 +14,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   for (const value of ['day', 'week', 'month', 'person', 'repository', 'task']) {
     assert.match(html, new RegExp(`<option value="${value}"`));
   }
-  for (const id of ['people-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-detail-table', 'print-task-table']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['people-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Time by day, person and task/);
   assert.match(html, /Total time by task/);
   assert.match(js, /buildPrintableTimesheet\(filtered\)/);
@@ -26,6 +26,11 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Print report or save as PDF"/);
   assert.doesNotMatch(html, /id="settings"|id="source"/);
   assert.match(js, /window\.print\(\)/);
+  assert.match(js, /reportPdfTitle\(state\.range, state\.people\)/);
+  assert.match(js, /type:\s*'GET_EXCHANGE_RATES'/);
+  assert.match(js, /Loading exchange rates/);
+  assert.match(js, /REPORT_PROGRESS/);
+  assert.match(js, /state\.progressRequestId === requestId/);
   assert.match(js, /Unselect all/);
   assert.match(js, /tracked · \${option\.count}.*entries/);
   assert.match(js, /type:\s*'LOAD_REPORT'/);
@@ -34,7 +39,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(js, /function render\(\) \{\s*if \(!state\.range\) return;/);
   assert.match(js, /requestId !== state\.requestId/);
-  assert.match(worker, /\['LOAD_REPORT', 'CANCEL_REPORT'\]\.includes\(message\?\.type\)/);
+  assert.match(worker, /\['LOAD_REPORT', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'\]\.includes\(message\?\.type\)/);
   assert.match(worker, /previous\.controller\.abort\(\)/);
   assert.match(worker, /await previous\.promise\.catch/);
   assert.match(worker, /await Promise\.allSettled/);

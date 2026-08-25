@@ -15,7 +15,7 @@
   let tick = null;
   let root = null;
   let shadow = null;
-  let menuOpen = false;
+  let menuOpen = false, menuScrollTop = 0;
   let navigationOpen = false;
   let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
   let recent = [];
@@ -314,7 +314,7 @@
 
   function setError(error = '') { errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
 
-  function closeMenu() { menuOpen = false; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
+  function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
 
   function originalRecord(entry) { return { taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
@@ -862,7 +862,10 @@ The previous version remains in Git history.`)) return;
   function renderMenu() {
     let elapsedValue = null;
     const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
-    const updateScrollState = () => menu.classList.toggle('has-more', menu.scrollHeight > menu.clientHeight + menu.scrollTop + 1);
+    const updateScrollState = event => {
+      if (event?.isTrusted) menuScrollTop = menu.scrollTop;
+      menu.classList.toggle('has-more', menu.scrollHeight > menu.clientHeight + menu.scrollTop + 1);
+    };
     menu.addEventListener('scroll', updateScrollState, { passive: true });
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
@@ -967,8 +970,16 @@ The previous version remains in Git history.`)) return;
     menu.append(reports, tasks, activity); return menu;
   }
 
+  function restoreMenuScroll(scrollTop) {
+    const menu = shadow?.querySelector('.menu');
+    if (!menu || !Number.isFinite(scrollTop)) return;
+    menu.scrollTop = scrollTop;
+    globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
+  }
+
   function renderUi() {
     if (!shadow || !root?.isConnected) return;
+    const preservedMenuScrollTop = menuScrollTop;
     clearInterval(tick); tick = null; summaryLabel = null; summaryTotalValue = null;
     shadow.replaceChildren();
     const style = el('style', `
@@ -987,7 +998,7 @@ The previous version remains in Git history.`)) return;
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
     if (timesMode) { shadow.append(style, renderTimesPage()); return; }
-    if (popupMode) { shadow.append(style, renderMenu()); return; }
+    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
@@ -997,7 +1008,7 @@ The previous version remains in Git history.`)) return;
       if (!event.isTrusted) return;
       const activatedTask = taskFromLocation();
       if (!activatedTask) return;
-      navigationOpen = false; menuOpen = !menuOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
+      navigationOpen = false; menuOpen = !menuOpen; if (!menuOpen) menuScrollTop = 0; cancelActiveInlineDraft(); errorText = ''; renderUi();
       if (menuOpen && pageState.configured) {
         try { await refreshRecent(); }
         catch (error) { setError(error); }
@@ -1007,11 +1018,12 @@ The previous version remains in Git history.`)) return;
     arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports, top tasks, and activity'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
     arrow.addEventListener('click', event => {
       if (!event.isTrusted) return;
-      menuOpen = false; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
+      menuOpen = false; menuScrollTop = 0; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
     });
     group.append(main, arrow); shadow.append(style, group);
     if (navigationOpen) shadow.append(renderNavigationMenu());
     else if (menuOpen) shadow.append(renderMenu());
+    restoreMenuScroll(preservedMenuScrollTop);
   }
 
   async function render(refresh = false) {
@@ -1036,7 +1048,7 @@ The previous version remains in Git history.`)) return;
     const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft(); menuOpen = false; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0; navigationOpen = false;
       void render(firstRender);
     } else if (route) {
       const target = headerTarget();

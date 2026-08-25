@@ -87,6 +87,18 @@ test('start writes one readable active text file with its durable issue title', 
   assert.equal(parseActiveText(file.text, { user: 'alice' }).issue.number, 123);
 });
 
+test('switching tasks stops the active timer before starting the selected task', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active('2026-08-18T08:00:00+00:00')), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  const tracker = service({ github, store });
+  const result = await tracker.switchTask('https://example.com/next', 'Next task');
+  assert.equal(result.stopped.entry.taskUrl, issue.url);
+  assert.equal(result.active.taskUrl, 'https://example.com/next');
+  assert.equal(parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice' }).taskUrl, 'https://example.com/next');
+  assert.equal(parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' })[0].taskUrl, issue.url);
+});
+
 test('start persists an arbitrary task URL with an optional empty title', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   const result = await tracker.start('https://example.com/work/42?view=full', '');

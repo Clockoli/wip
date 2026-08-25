@@ -209,3 +209,11 @@ Anyone with read access to the data repository can inspect stored task URLs, tit
 Use separate data repositories when groups have different access boundaries. Grant the Clockoli App access only to the intended repository and use **Only select repositories** during installation.
 
 Git history helps recovery and review, but a GitHub repository administrator can rewrite or delete history. Use repository policy and optional `git clone --mirror` backups when stronger retention is required.
+
+## Exchange rates for reports
+
+When **Billable amount** is selected for a report that contains more than one currency, Clockoli requests historical daily exchange rates from the public [Frankfurter API](https://frankfurter.dev/), an open-source project maintained at [lineofflight/frankfurter](https://github.com/lineofflight/frankfurter).
+
+Clockoli sends only the selected target currency, the source currency codes, and the required date range. It does not send GitHub identities, task URLs, descriptions, hourly-rate amounts, or tracked durations. A whole date range is requested in one bulk call, and the resulting per-day conversion factors are cached in extension-local storage. Dates without a published institutional rate, such as weekends, use the latest rate available on or before that date. A recent weekday fallback is rechecked for a bounded publication window so a rate requested before that day's quote is published does not become permanently stale.
+
+If Frankfurter does not provide one of the currencies, Clockoli reports that limitation instead of silently excluding billable records.

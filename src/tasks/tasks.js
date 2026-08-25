@@ -74,9 +74,10 @@ function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-  button.disabled = Boolean(state.busyUrl || (!active && (state.active || state.pendingWrites.length)));
+  button.disabled = Boolean(state.busyUrl || (!active && state.pendingWrites.length));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
+    const activeBeforeAction = state.active;
     state.busyUrl = task.taskUrl; setError(); render();
     try {
       if (active) {
@@ -87,11 +88,21 @@ function makeTimerButton(task) {
         task.activeStartedAt = null; state.active = null;
         if (result?.pending) state.pendingWrites = [{ id: result.entry?.id || 'pending', status: 'pending' }];
       } else {
-        state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
+        if (state.active) {
+          const elapsed = currentElapsedSeconds(), previous = state.tasks.find(item => sameTask(item, state.active));
+          if (elapsed > 12 * 3600 && !confirm(`The current entry is ${Math.floor(elapsed / 3600)} hours long. Save it and start this task?`)) return;
+          const result = await send({ type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.title });
+          if (previous) { previous.totalSeconds += Math.max(0, Number(result?.stopped?.entry?.durationSeconds) || elapsed); previous.activeStartedAt = null; }
+          state.active = result.active;
+        } else {
+          state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
+        }
         task.activeStartedAt = state.active.startedAt;
       }
-    } catch (error) { setError(error); }
-    finally { state.busyUrl = ''; render(); }
+    } catch (error) {
+      await reconcileTaskState(activeBeforeAction).catch(() => {});
+      setError(error);
+    } finally { state.busyUrl = ''; render(); }
   });
   return button;
 }
@@ -127,6 +138,17 @@ function render() {
     const total = activeRow?.querySelector('.tracked-time');
     if (total && activeTask) total.textContent = `${formatDuration(taskTotalSeconds(activeTask))} tracked`;
   }, 1000);
+}
+
+async function reconcileTaskState(previousActive) {
+  const result = await send({ type: 'GET_PAGE_STATE' });
+  state.configured = Boolean(result.configured);
+  state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
+  const previous = state.tasks.find(item => sameTask(item, previousActive));
+  if (!previous || sameTask(state.active, previousActive)) return;
+  const completion = (result.recent ?? []).find(entry => sameTask(entry, previousActive) && entry.startedAt === previousActive?.startedAt);
+  if (completion) previous.totalSeconds += Math.max(0, Number(completion.durationSeconds) || 0);
+  previous.activeStartedAt = null;
 }
 
 async function load() {
