@@ -9,7 +9,7 @@ const $ = id => document.getElementById(id);
 const state = {
   records: [], range: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
-  exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null,
+  exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
 };
 
 function send(message) {
@@ -28,8 +28,11 @@ function localDateValue(date = new Date()) {
 function showProgress(label, value = null, detail = 'This can take a moment for larger repositories.') {
   $('loading-label').textContent = label;
   $('loading-detail').textContent = detail;
-  if (value === null) $('loading-progress').removeAttribute('value');
-  else $('loading-progress').value = Math.max(0, Math.min(100, Number(value) || 0));
+  if (value === null && state.progressValue === 0) $('loading-progress').removeAttribute('value');
+  else if (value !== null) {
+    state.progressValue = Math.max(state.progressValue, Math.max(0, Math.min(100, Number(value) || 0)));
+    $('loading-progress').value = state.progressValue;
+  }
   $('loading').hidden = false;
 }
 
@@ -55,7 +58,7 @@ function svg(tag, attributes = {}, text = '') {
 }
 
 const METRIC_LABELS = { 'total-time': 'Total time', 'avg-time': 'Avg time', 'task-count': 'Task count', 'billable-amount': 'Billable amount' };
-const AXIS_LABELS = { day: 'Day', week: 'Week', month: 'Month', person: 'Person', repository: 'Repository', task: 'Task' };
+const AXIS_LABELS = { day: 'Day', week: 'Week', month: 'Month', person: 'Person', repository: 'Source', task: 'Task URL / title' };
 
 function currencyPosition(currency) {
   return $('billable-currency').selectedOptions[0]?.dataset.position
@@ -235,13 +238,13 @@ function renderPrintTable(id, columns, rows) {
 function renderPrintableTimesheet(filtered) {
   const printable = buildPrintableTimesheet(filtered);
   $('print-period').textContent = `${state.range.startDate} — ${state.range.endDate}`;
-  $('print-filters').textContent = `People: ${[...state.people].sort().join(', ')} · Repositories: ${[...state.repositories].sort().join(', ')}`;
+  $('print-filters').textContent = `People: ${[...state.people].sort().join(', ')}`;
   renderPrintTable('print-detail-table', [
-    ['Date', row => row.date], ['Person', row => row.person], ['Repository', row => row.repository],
-    ['Task', row => row.task], ['Time', row => formatClockDuration(row.seconds)],
+    ['Date', row => row.date], ['Person', row => row.person], ['Task URL', row => row.taskUrl],
+    ['Task title', row => row.taskTitle], ['Time', row => formatClockDuration(row.seconds)],
   ], printable.byDate);
   renderPrintTable('print-task-table', [
-    ['Task', row => row.task], ['Repository', row => row.repository], ['Total time', row => formatClockDuration(row.seconds)],
+    ['Task URL', row => row.taskUrl], ['Task title', row => row.taskTitle], ['Total time', row => formatClockDuration(row.seconds)],
   ], printable.byTask);
 }
 
@@ -300,7 +303,7 @@ function render() {
 
 async function loadRange(range) {
   const requestId = ++state.requestId;
-  state.progressRequestId = requestId; state.range = range; state.loading = true; state.exchangeRates = null; state.exchangeKey = ''; state.analyticsRequestId += 1; setError();
+  state.progressRequestId = requestId; state.progressValue = 0; state.range = range; state.loading = true; state.exchangeRates = null; state.exchangeKey = ''; state.analyticsRequestId += 1; setError();
   showProgress('Connecting to GitHub…', 10); $('setup').hidden = true; $('report-content').hidden = true;
   try {
     const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, requestId } });
@@ -309,7 +312,7 @@ async function loadRange(range) {
     showProgress('Preparing report…', 80);
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {} };
-    state.people = new Set(result.records.map(record => record.user));
+    state.people = new Set(result.currentUser ? [result.currentUser] : []);
     state.repositories = new Set(result.records.map(record => taskSource(record)));
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
@@ -384,6 +387,6 @@ colorScheme.addEventListener('change', () => {
   if (state.range && !state.loading && !$('report-content').hidden) render();
 });
 
-const initial = periodRange('this-week', localDateValue());
+const initial = periodRange('last-week', localDateValue());
 $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
 void loadRange(initial);

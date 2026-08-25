@@ -117,14 +117,14 @@ test('printable timesheet groups date-person-task detail and sorts task totals b
     record('alice', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00', { issue: issue('acme', 'app', 1) }),
     record('bob', '2026-08-17T10:00:00+00:00', '2026-08-17T12:00:00+00:00', { issue: issue('acme', 'app', 1) }),
   ]);
-  assert.deepEqual(printable.byDate.map(row => [row.date, row.person, row.url, row.seconds]), [
+  assert.deepEqual(printable.byDate.map(row => [row.date, row.person, row.taskUrl, row.seconds]), [
     ['2026-08-17', 'alice', 'https://github.com/acme/app/issues/1', 3600],
     ['2026-08-17', 'bob', 'https://github.com/acme/app/issues/1', 7200],
     ['2026-08-18', 'alice', 'https://github.com/acme/api/issues/3', 3600],
   ]);
-  assert.deepEqual(printable.byTask.map(row => [row.task, row.url, row.seconds]), [
-    ['#1', 'https://github.com/acme/app/issues/1', 10800],
-    ['#3', 'https://github.com/acme/api/issues/3', 3600],
+  assert.deepEqual(printable.byTask.map(row => [row.taskTitle, row.taskUrl, row.seconds]), [
+    ['', 'https://github.com/acme/app/issues/1', 10800],
+    ['', 'https://github.com/acme/api/issues/3', 3600],
   ]);
   assert.equal(printable.totalSeconds, 14400);
 });
@@ -134,9 +134,9 @@ test('printable timesheet keeps equal non-GitHub titles unambiguous', () => {
     { user: 'alice', taskUrl: 'https://example.com/tasks/1', taskTitle: 'Customer follow-up', issue: null, startedAt: '2026-08-17T09:00:00Z', entryDate: '2026-08-17', durationSeconds: 600 },
     { user: 'alice', taskUrl: 'https://example.com/tasks/2', taskTitle: 'Customer follow-up', issue: null, startedAt: '2026-08-17T10:00:00Z', entryDate: '2026-08-17', durationSeconds: 900 },
   ]);
-  assert.deepEqual(printable.byTask.map(row => [row.task, row.url, row.seconds]), [
-    ['Customer follow-up — https://example.com/tasks/2', 'https://example.com/tasks/2', 900],
-    ['Customer follow-up — https://example.com/tasks/1', 'https://example.com/tasks/1', 600],
+  assert.deepEqual(printable.byTask.map(row => [row.taskTitle, row.taskUrl, row.seconds]), [
+    ['Customer follow-up', 'https://example.com/tasks/2', 900],
+    ['Customer follow-up', 'https://example.com/tasks/1', 600],
   ]);
 });
 
@@ -149,7 +149,7 @@ test('PDF title includes period and only a single selected person', () => {
 
 test('timesheet exports correctly escaped CSV and structured JSON', () => {
   const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-17', endDate: '2026-08-18' });
-  assert.match(csv, /^Person,Repository,Type,Number,URL,Start,End,Duration,Duration seconds,Description\r\n/);
+  assert.match(csv, /^Person,Task URL,Task title,Start,End,Duration,Duration seconds,Description\r\n/);
   assert.match(csv, /"comma, quote "" value"/);
   assert.equal(csv.split('\r\n').length, 5);
   const formulaCsv = exportTimesheet([record('alice', '2026-08-18T01:00:00+00:00', '2026-08-18T02:00:00+00:00', { description: '=HYPERLINK("https://example.com")' })], { format: 'csv', startDate: '2026-08-18', endDate: '2026-08-18' });
@@ -158,7 +158,7 @@ test('timesheet exports correctly escaped CSV and structured JSON', () => {
   assert.deepEqual(json.period, { startDate: '2026-08-17', endDate: '2026-08-18' });
   assert.equal(json.totalSeconds, 21600);
   assert.equal(json.entries.length, 3);
-  assert.deepEqual(Object.keys(json.entries[0]), ['person', 'repository', 'type', 'number', 'url', 'start', 'end', 'duration', 'durationSeconds', 'description']);
+  assert.deepEqual(Object.keys(json.entries[0]), ['person', 'taskUrl', 'taskTitle', 'start', 'end', 'duration', 'durationSeconds', 'description']);
   assert.equal(reportFilename('csv', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.csv');
   assert.equal(reportFilename('json', '2026-08-17', '2026-08-18'), 'timesheet-2026-08-17-to-2026-08-18.json');
   assert.throws(() => exportTimesheet(records, { format: 'text', startDate: '2026-08-17', endDate: '2026-08-18' }), /format/i);
@@ -176,4 +176,13 @@ test('billable analytics and exports use local per-person rates', () => {
   const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-17', endDate: '2026-08-18', rates }));
   assert.equal(json.entries[0].currency, 'USD');
   assert.ok(Object.hasOwn(json.entries[0], 'billableAmount'));
+});
+
+
+test('timesheet exports use task URL and title without repository or provider type columns', () => {
+  const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-18', endDate: '2026-08-19' });
+  assert.match(csv, /^Person,Task URL,Task title,Start,End,Duration,Duration seconds,Description\r\n/);
+  assert.doesNotMatch(csv, /Repository|Pull request|Issue/);
+  const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-18', endDate: '2026-08-19' }));
+  assert.deepEqual(Object.keys(json.entries[0]), ['person', 'taskUrl', 'taskTitle', 'start', 'end', 'duration', 'durationSeconds', 'description']);
 });

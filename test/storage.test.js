@@ -418,7 +418,8 @@ test('billable rates and settings export stay local, version changes, and import
   const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));
   assert.equal(imported.recentDays, 12);
   assert.equal((await store.getConfigurationSnapshot()).config.recentDays, 12);
-  assert.equal((await store.getLocalPreferences()).exportRecommended, true);
+  assert.equal(imported.exportRecommended, false);
+  assert.equal((await store.getLocalPreferences()).exportRecommended, false);
 });
 
 

@@ -773,20 +773,19 @@ $('export-settings').addEventListener('click', async () => {
   } catch (error) { message(error.message || 'Could not export settings.', 'error'); }
   finally { $('export-settings').disabled = false; }
 });
-$('import-settings-file').addEventListener('change', () => { $('import-settings').disabled = !$('import-settings-file').files?.length; });
-$('import-settings').addEventListener('click', async () => {
-  const file = $('import-settings-file').files?.[0];
+$('import-settings-file').addEventListener('change', async () => {
+  const input = $('import-settings-file'), file = input.files?.[0];
   if (!file) return;
-  if (file.size > 262_144) { message('Settings file is too large.', 'error'); return; }
-  $('import-settings').disabled = true;
+  input.disabled = true;
   try {
+    if (file.size > 262_144) throw new Error('Settings file is too large.');
     const result = await send({ type: 'IMPORT_SETTINGS', text: await file.text() });
     if (state?.config) state.config.recentDays = result.recentDays;
     $('recent-days').value = result.recentDays;
     await refreshLocalPreferences();
-    message('Local settings imported. GitHub remains connected only if it was already connected.', 'success');
+    message('Local settings restored from backup. GitHub remains connected only if it was already connected.', 'success');
   } catch (error) { message(error.message || 'Could not import settings.', 'error'); }
-  finally { $('import-settings-file').value = ''; $('import-settings').disabled = true; }
+  finally { input.value = ''; input.disabled = false; }
 });
 
 $('settings-form').addEventListener('submit', async event => {

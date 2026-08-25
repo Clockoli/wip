@@ -87,7 +87,9 @@ test('rates and backup copy explain locality, exclusions, and offline restoratio
   assert.match(script, /currencyInput\.dataset\.initialValue/);
   assert.match(script, /row\.dataset\.currencyPosition/);
   assert.match(html, /Export settings/);
-  assert.match(html, /Import settings/);
+  assert.match(html, /class="file-action"[^>]*>Import settings<input id="import-settings-file"/);
+  assert.doesNotMatch(html, /id="import-settings"/);
+  assert.match(script, /import-settings-file'\)\.addEventListener\('change', async/);
   assert.match(html, /credentials.*time entries.*never included/i);
   assert.match(html, /downloaded file[\s\S]*can be restored offline/i);
   assert.match(script, /clockoli-settings-backup-/);

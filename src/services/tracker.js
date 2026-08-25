@@ -116,14 +116,39 @@ export class TrackerService {
     }
   }
 
-  async switchTask(taskUrl, taskTitle = '', description = '') {
+  async switchTask(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
     const targetUrl = this.validateTaskUrl(taskUrl);
+    if (background) return this.queueTaskSwitch(targetUrl, taskTitle, description);
     const current = await this.refreshActive();
-    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, description) };
+    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, '') };
     if (taskUrlOf(current) === targetUrl) return { stopped: null, active: current };
-    const stopped = await this.stop();
+    const stopped = await this.stop(description);
     if (stopped.pending) throw new Error('The previous timer was saved locally but must sync before another timer can start.');
-    return { stopped, active: await this.start(targetUrl, taskTitle, description) };
+    return { stopped, active: await this.start(targetUrl, taskTitle, '') };
+  }
+
+  async queueTaskSwitch(targetUrl, taskTitle = '', description = '') {
+    const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).length) throw new Error('A timer change is still waiting to sync. Sync it before switching again.');
+    const current = state.activeCache;
+    if (!current) return { stopped: null, active: await this.start(targetUrl, taskTitle, '') };
+    validateActiveTimer(current);
+    if (taskUrlOf(current) === targetUrl) return { stopped: null, active: current, pending: false };
+    const changedAt = this.clock(), id = this.idFactory(changedAt.getTime());
+    const entry = buildEntry({ active: current, id, endedAt: changedAt, now: changedAt, description });
+    const nextActive = buildActiveTimer({ user: this.user, taskUrl: targetUrl, taskTitle, startedAt: changedAt, description: '' });
+    const operation = {
+      operation: 'completeTimerAndStart', id, status: 'pending', retryCount: 0, stage: 'verifyActive',
+      monthlyPath: monthlyTextPath(this.user, current.entryDate), entry, activeSnapshot: stripInternal(current), activeSha: current._sha,
+      nextActive: stripInternal(nextActive), queuedAt: changedAt.toISOString(), lastError: '',
+    };
+    const pendingEntry = { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true };
+    const pendingActive = { ...nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true };
+    await this.store.patchState({
+      pendingWrites: [operation], activeCache: pendingActive,
+      recentCache: [pendingEntry, ...(state.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
+    });
+    return { stopped: { entry, pending: true }, active: pendingActive, pending: true };
   }
 
   stop(description = '') {
@@ -134,6 +159,9 @@ export class TrackerService {
 
   async stopInternal(description = '') {
     const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).some(operation => operation.nextActive)) {
+      throw new Error('The task switch is still syncing. Wait for it to finish before stopping.');
+    }
     const cached = state.activeCache;
     let active, activeVerified = true;
     try { active = await this.refreshActive(); }
@@ -279,12 +307,33 @@ export class TrackerService {
     }
   }
 
+  async startQueuedActive(operation) {
+    const path = activeTextPath(this.user), target = operation.nextActive;
+    if (!target) return null;
+    try {
+      const result = await this.github.putText(path, serializeActiveText(target), `timer: start ${this.user} on ${taskLabel(target)}`);
+      return { ...target, _path: path, _sha: result.sha };
+    } catch (error) {
+      if (!isConflict(error)) throw error;
+      let file;
+      try { file = await this.github.getText(path); }
+      catch (readError) { throw error; }
+      const remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
+      if (!sameDurableTimer(remote, target)) {
+        const conflict = new TrackerConflictError('Another timer started before the queued task switch completed. The queued target was preserved for recovery.');
+        conflict.remoteActive = remote;
+        throw conflict;
+      }
+      return remote;
+    }
+  }
+
   async syncPending() {
     const state = await this.store.getState(), queue = [...(state.pendingWrites ?? [])];
     for (const operation of [...queue]) {
       if (operation.status === 'conflict') continue;
       try {
-        if (!['verifyActive', 'appendMonthly', 'clearActive'].includes(operation.stage)) {
+        if (!['verifyActive', 'appendMonthly', 'clearActive', 'startNext'].includes(operation.stage)) {
           throw new TrackerConflictError('This queued completion uses an unsupported storage stage. It was preserved for manual recovery.');
         }
         if (operation.stage === 'verifyActive') {
@@ -305,27 +354,37 @@ export class TrackerService {
           } else {
             operation.stage = 'appendMonthly'; operation.lastError = ''; operation.conflictReason = '';
           }
-          await this.store.patchState({ pendingWrites: queue });
+          await this.store.patchState({ pendingWrites: queue, ...(operation.nextActive ? { activeCache: { ...operation.nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true } } : {}) });
         }
         if (operation.stage === 'appendMonthly') {
           operation.entry = await this.ensureEntry(operation);
           operation.stage = 'clearActive'; operation.lastError = '';
-          await this.store.patchState({ pendingWrites: queue });
+          await this.store.patchState({ pendingWrites: queue, ...(operation.nextActive ? { activeCache: { ...operation.nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true } } : {}) });
         }
-        await this.clearMatchingActive(operation);
+        let nextActive = null;
+        if (operation.stage !== 'startNext') {
+          await this.clearMatchingActive(operation);
+          if (operation.nextActive) { operation.stage = 'startNext'; await this.store.patchState({ pendingWrites: queue, activeCache: { ...operation.nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true } }); }
+        }
+        if (operation.stage === 'startNext') nextActive = await this.startQueuedActive(operation);
         const latest = await this.store.getState();
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
         const recentCache = [operation.entry, ...(latest.recentCache ?? []).filter(item =>
           !sameCompletion(item, operation) && !(item._pending && sameDurableTimer(item, operation.activeSnapshot)))]
           .sort(newestFirst).slice(0, 50);
-        await this.store.patchState({ pendingWrites: queue, activeCache: null, recentCache });
+        await this.store.patchState({ pendingWrites: queue, activeCache: nextActive, recentCache });
       } catch (error) {
         operation.retryCount = (operation.retryCount ?? 0) + 1;
         operation.lastError = error.message || 'GitHub is temporarily unreachable';
         operation.status = error instanceof TrackerConflictError ? 'conflict' : 'pending';
         operation.conflictReason = error instanceof TrackerConflictError ? (error.reason || '') : '';
-        await this.store.patchState({ pendingWrites: queue });
+        const remoteConflict = error instanceof TrackerConflictError && operation.stage === 'startNext' ? error.remoteActive : null;
+        const keepPendingTarget = operation.nextActive && (!remoteConflict && (!(error instanceof TrackerConflictError) || operation.stage === 'startNext'));
+        await this.store.patchState({
+          pendingWrites: queue,
+          ...(remoteConflict ? { activeCache: remoteConflict } : keepPendingTarget ? { activeCache: { ...operation.nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true } } : {}),
+        });
         if (isNotFound(error)) throw error;
       }
     }

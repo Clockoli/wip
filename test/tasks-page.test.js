@@ -89,3 +89,16 @@ test('GitHub header uses a separately clickable split trigger and a Reports/Top 
   assert.match(content, /type:\s*'OPEN_TASKS'/);
   assert.match(worker, /src\/tasks\/tasks\.html/);
 });
+
+
+test('Top tasks exposes the same sync and refresh action as the tracking panel', () => {
+  assert.match(html, /id="refresh-tasks"[^>]*aria-label="Sync and refresh"/);
+  assert.match(js, /refresh-tasks'\)\.addEventListener[\s\S]*type: 'SYNC'[\s\S]*await load\(\)/);
+});
+
+
+test('timer switching uses the durable background path and disables controls while it syncs', () => {
+  assert.match(worker, /tracker\.switchTask\([\s\S]*\{ background: true \}/);
+  assert.match(worker, /setTimeout\(\(\) => void syncPendingNow\(\)\.catch/);
+  assert.match(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
+});

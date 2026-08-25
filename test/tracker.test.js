@@ -787,3 +787,77 @@ test('bulk import starts after an interval crossing from any older monthly parti
   assert.deepEqual(github.atomicWrites[0].guards, [{ path: oldPath, sha: 'july-sha' }, { path: 'active/alice.txt', sha: null }]);
   assert.equal(github.atomicWrites[0].expectedHeadSha, 'discovery-head');
 });
+
+
+test('background switching durably queues the transition before any GitHub request and later converges', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active('2026-08-18T08:00:00+00:00')), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  const tracker = service({ github, store });
+  const accepted = await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
+  assert.equal(accepted.pending, true);
+  assert.equal(accepted.active.taskUrl, 'https://example.com/next');
+  assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0, 'the UI response waits only for durable local storage');
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimerAndStart');
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/next');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice' }).taskUrl, 'https://example.com/next');
+  assert.equal(parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' })[0].taskUrl, issue.url);
+});
+
+
+test('queued switch resumes from startNext after a service-worker restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active('2026-08-18T08:00:00+00:00')), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  const originalPut = github.putText.bind(github); let failTargetOnce = true;
+  github.putText = async (...args) => {
+    if (args[0] === 'active/alice.txt' && !github.files.has(args[0]) && failTargetOnce) { failTargetOnce = false; throw new Error('offline'); }
+    return originalPut(...args);
+  };
+  await service({ github, store }).switchTask('https://example.com/next', 'Next task', '', { background: true });
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites[0].stage, 'startNext');
+  assert.equal(store.value.activeCache._pending, true);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice' }).taskUrl, 'https://example.com/next');
+});
+
+test('queued switch preserves a newer remote timer instead of showing its optimistic target', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active('2026-08-18T08:00:00+00:00')), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  const tracker = service({ github, store });
+  await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
+  const newer = active('2026-08-18T08:30:00+00:00', { taskUrl: 'https://example.com/other', issue: undefined });
+  seedText(github, 'active/alice.txt', serializeActiveText(newer), 'newer-sha');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
+  assert.equal(github.files.has('times/2026-08/alice.txt'), false);
+});
+
+
+test('queued switch reconciles to a remote timer that races with startNext', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active('2026-08-18T08:00:00+00:00')), 'active-sha');
+  store.value.activeCache = parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice', path: 'active/alice.txt', sha: 'active-sha' });
+  const newer = active('2026-08-18T08:30:00+00:00', { taskUrl: 'https://example.com/other', issue: undefined });
+  const originalPut = github.putText.bind(github); let raceOnce = true;
+  github.putText = async (...args) => {
+    if (args[0] === 'active/alice.txt' && !github.files.has(args[0]) && raceOnce) {
+      raceOnce = false;
+      seedText(github, 'active/alice.txt', serializeActiveText(newer), 'newer-sha');
+    }
+    return originalPut(...args);
+  };
+  const tracker = service({ github, store });
+  await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].stage, 'startNext');
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
+  assert.equal(store.value.activeCache._pending, undefined);
+});

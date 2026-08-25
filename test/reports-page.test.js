@@ -55,3 +55,17 @@ test('high-cardinality analytics stays sparse in aggregation and the collapsed d
   assert.match(js, /if \(!\$\('analytics-details'\)\.open\) return;/);
   assert.match(js, /for \(const segment of bucket\.segments\)/);
 });
+
+
+test('reports use requested defaults, monotonic progress and task identity labels', () => {
+  assert.match(html, /<option value="last-week" selected>Last week<\/option>/);
+  assert.match(html, /<option value="day" selected>Day<\/option>/);
+  assert.match(html, /<option value="person" selected>Person<\/option>/);
+  assert.match(html, /<option value="total-time" selected>Total time<\/option>/);
+  assert.doesNotMatch(html, /<option value="week" selected>/);
+  assert.match(js, /const initial = periodRange\('last-week'/);
+  assert.match(js, /state\.people = new Set\(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
+  assert.match(js, /state\.progressValue = Math\.max\(state\.progressValue/);
+  assert.match(js, /Task URL \/ title/);
+  assert.doesNotMatch(js, /Repositories:/);
+});

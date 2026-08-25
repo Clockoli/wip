@@ -37,6 +37,11 @@ test('content-script START accepts a matching canonical pull request page', () =
   assert.throws(() => issueForStart({ ...pull, type: 'issue', url: 'https://github.com/acme/frontend/issues/456' }, sender, origin), /match/i);
 });
 
+test('content task switches remain bound to the current page URL', () => {
+  assert.equal(taskUrlForStart(issue.url, content, origin), issue.url);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
+});
+
 test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', extension, origin));
@@ -57,7 +62,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
-  assert.throws(() => assertMessageAllowed('SWITCH_TASK', content, origin), /not allowed/i);
+  assert.equal(assertMessageAllowed('SWITCH_TASK', content, origin), 'content');
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
 });
 

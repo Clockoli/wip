@@ -74,7 +74,7 @@ function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-  button.disabled = Boolean(state.busyUrl || (!active && state.pendingWrites.length));
+  button.disabled = Boolean(state.busyUrl || state.pendingWrites.length);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
     const activeBeforeAction = state.active;
@@ -94,6 +94,7 @@ function makeTimerButton(task) {
           const result = await send({ type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.title });
           if (previous) { previous.totalSeconds += Math.max(0, Number(result?.stopped?.entry?.durationSeconds) || elapsed); previous.activeStartedAt = null; }
           state.active = result.active;
+          if (result.pending) state.pendingWrites = [{ id: result.stopped?.entry?.id || 'switch-pending', status: 'pending', stage: 'verifyActive' }];
         } else {
           state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
         }
@@ -165,6 +166,12 @@ async function load() {
   finally { if (requestId === state.requestId) $('loading').hidden = true; }
 }
 
+$('refresh-tasks').addEventListener('click', async () => {
+  const button = $('refresh-tasks'); button.disabled = true; setError();
+  try { await send({ type: 'SYNC' }); await load(); }
+  catch (error) { setError(error); }
+  finally { button.disabled = false; }
+});
 $('task-filter').addEventListener('input', render);
 $('period').addEventListener('change', () => {
   try { localStorage.setItem(PERIOD_KEY, $('period').value); } catch { /* unavailable storage falls back to this tab */ }

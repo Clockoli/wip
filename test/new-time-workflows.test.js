@@ -67,7 +67,7 @@ test('browser action popup has a stable width without the self-shrinking viewpor
 
 
 test('Times is covered by extension-page validation and candidate versions are distinct and aligned', () => {
-  assert.equal(manifest.version, '0.1.23');
+  assert.equal(manifest.version, '0.1.24');
   assert.equal(packageJson.version, manifest.version);
   assert.match(validator, /manifest\.version !== packageJson\.version/);
   assert.ok((validator.match(/'src\/times\/times\.html'/g) || []).length >= 2,

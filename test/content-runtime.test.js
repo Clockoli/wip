@@ -582,7 +582,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
 });
 
 
-test('consecutive records for one task share one task header and keep separate time rows', async () => {
+test('each recent record keeps task identity inside its highlighted time row', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
@@ -620,11 +620,10 @@ test('consecutive records for one task share one task header and keep separate t
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
   const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href));
-  assert.equal(taskLinks.length, 3, 'two adjacent records for issue 7 render one shared task header');
-  assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 8', 'Issue 7'],
-    'the same task receives a new title link after a different task interrupts the sequence');
+  assert.equal(taskLinks.length, 4, 'every highlighted time row renders its task title');
+  assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 7', 'Issue 8', 'Issue 7']);
   assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).map(node => node.textContent),
-    [issue(7).url, issue(8).url, issue(7).url], 'each grouped title retains its canonical URL source line');
+    [issue(7).url, issue(7).url, issue(8).url, issue(7).url], 'each highlighted row retains its canonical URL source line');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
@@ -1341,4 +1340,17 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     ['2026-08-21T10:00:00+00:00', '2026-08-21T11:15:00+00:00'],
     ['2026-08-21T11:15:00+00:00', '2026-08-21T12:00:00+00:00'],
   ]);
+});
+
+
+test('each highlighted recent-entry block includes its task URL and title', () => {
+  assert.match(source, /function recentRecord\(entry, overlaps\)[\s\S]*record\.append\(taskResult\(entry, 'entry-record-task-result'\)\)/);
+  assert.doesNotMatch(source, /group\.append\(taskResult\(first, 'entry-task-result'\)\)/);
+});
+
+
+test('main tracking panel switches to the current page through the durable background command', () => {
+  assert.match(source, /switchToCurrent \? 'Save and switch to this task' : 'Stop and save'/);
+  assert.match(source, /type: 'SWITCH_TASK'[\s\S]*type: 'STOP'/);
+  assert.match(source, /pageState\.pendingCount > 0/);
 });

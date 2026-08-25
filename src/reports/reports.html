@@ -27,7 +27,7 @@
         <label>Period
           <select id="period">
             <option value="this-week">This week</option>
-            <option value="last-week">Last week</option>
+            <option value="last-week" selected>Last week</option>
             <option value="this-month">This month</option>
             <option value="last-month">Last month</option>
             <option value="this-quarter">This quarter</option>
@@ -91,7 +91,7 @@
               <div class="dimension-controls" aria-label="Chart configuration">
                 <label>Vertical axis
                   <select id="metric">
-                    <option value="total-time">Total time</option>
+                    <option value="total-time" selected>Total time</option>
                     <option value="avg-time">Avg time</option>
                     <option value="billable-amount">Billable amount</option>
                     <option value="task-count">Task count</option>
@@ -102,12 +102,12 @@
                 </label>
                 <label>Horizontal axis
                   <select id="horizontal-axis">
-                    <option value="day">Day</option>
-                    <option value="week" selected>Week</option>
+                    <option value="day" selected>Day</option>
+                    <option value="week">Week</option>
                     <option value="month">Month</option>
                     <option value="person">Person</option>
                     <option value="repository">Source</option>
-                    <option value="task">Task</option>
+                    <option value="task">Task URL / title</option>
                   </select>
                 </label>
                 <label>Stack by
@@ -117,7 +117,7 @@
                     <option value="month">Month</option>
                     <option value="person" selected>Person</option>
                     <option value="repository">Source</option>
-                    <option value="task">Task</option>
+                    <option value="task">Task URL / title</option>
                   </select>
                 </label>
               </div>

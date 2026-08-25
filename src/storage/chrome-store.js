@@ -402,10 +402,10 @@ export class ChromeStore {
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       const set = {
         [BILLING_SETTINGS]: imported.billing, [LOCAL_RECENT_DAYS]: imported.recentDays,
-        [SETTINGS_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
+        [SETTINGS_REVISION]: revision, [SETTINGS_EXPORTED_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
       };
       if (values.config) set.config = { ...values.config, recentDays: imported.recentDays };
-      return { set, result: { ...imported, revision, exportRecommended: true } };
+      return { set, result: { ...imported, revision, exportRecommended: false } };
     });
   }
 

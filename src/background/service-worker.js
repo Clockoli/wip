@@ -208,8 +208,10 @@ async function loadReport(message) {
   const promise = (async () => {
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
+    const localState = await store.getState();
     return {
       configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
+      currentUser: config.storageLogin || localState.user || auth.githubLogin || '',
       records: await reports.loadRepositoryRange(message.payload || {}, { defaultBranch: config.defaultBranch || branch, signal: controller.signal }),
       billing: await store.getLocalPreferences(),
     };
@@ -442,6 +444,7 @@ async function handle(message, sender) {
         taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
         description: state.active.description || '', issueTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
+        _pending: Boolean(state.active._pending),
       } : null;
       return {
         configured: true, active, recent: state.recent,
@@ -454,7 +457,11 @@ async function handle(message, sender) {
   const { tracker } = await context();
   switch (message.type) {
     case 'START': return tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
-    case 'SWITCH_TASK': return tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '');
+    case 'SWITCH_TASK': {
+      const result = await tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
+      if (result.pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      return result;
+    }
     case 'STOP': return tracker.stop(message.description || '');
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': {
