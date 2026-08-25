@@ -25,6 +25,10 @@ class FakeNode {
       add: (...names) => { this.className = [...new Set([...this.className.split(/\s+/).filter(Boolean), ...names])].join(' '); },
       remove: (...names) => { const removed = new Set(names); this.className = this.className.split(/\s+/).filter(name => name && !removed.has(name)).join(' '); },
       contains: name => this.className.split(/\s+/).includes(name),
+      toggle: (name, force) => {
+        const enabled = force === undefined ? !this.className.split(/\s+/).includes(name) : Boolean(force);
+        if (enabled) this.classList.add(name); else this.classList.remove(name); return enabled;
+      },
     };
   }
   get nextElementSibling() {
@@ -1355,7 +1359,7 @@ test('each highlighted recent-entry block includes its task URL and title', () =
 test('main tracking panel switches to the current page through the durable background command', () => {
   assert.match(source, /switchToCurrent \? 'Save and switch to this task' : 'Stop and save'/);
   assert.match(source, /type: 'SWITCH_TASK'[\s\S]*type: 'STOP'/);
-  assert.match(source, /pageState\.pendingCount > 0/);
+  assert.doesNotMatch(source, /stop\.disabled = pageState\.pendingCount > 0/);
 });
 
 
@@ -1366,4 +1370,15 @@ test('ordinary Start and Stop use the same durable background acceptance path as
   assert.match(worker, /const localStateRead = \['GET_STATE', 'GET_PAGE_STATE'\]\.includes\(message\?\.type\) && !message\?\.refresh/);
   assert.match(worker, /const readOnly = reportReadOnly \|\| localStateRead \|\|/,
     'local state reconciliation must not wait behind the remote mutation executor');
+});
+
+test('tracking panel observes background sync completion without manual Sync', () => {
+  assert.match(source, /function schedulePendingRefresh\(\)/);
+  assert.match(source, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
+  assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, false\)/);
+  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+  assert.match(source, /if \(!hasRunnablePending\(\)\) return/,
+    'a conflict-blocked FIFO head must stop the 500 ms UI polling loop');
+  assert.doesNotMatch(source, /Task switch is syncing with GitHub\./);
+  assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });

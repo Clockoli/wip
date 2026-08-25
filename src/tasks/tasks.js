@@ -7,6 +7,7 @@ const PULL_OPEN_PATH = 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 
 const $ = id => document.getElementById(id);
 const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', range: null };
 let tick = null;
+let pendingRefresh = null;
 
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
@@ -74,7 +75,7 @@ function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-  button.disabled = Boolean(state.busyUrl || state.pendingWrites.length);
+  button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
     const activeBeforeAction = state.active;
@@ -86,7 +87,7 @@ function makeTimerButton(task) {
         const result = await send({ type: 'STOP' });
         task.totalSeconds += Math.max(0, Number(result?.entry?.durationSeconds) || elapsed);
         task.activeStartedAt = null; state.active = null;
-        if (result?.pending) state.pendingWrites = [{ id: result.entry?.id || 'pending', status: 'pending' }];
+        if (result?.pending) state.pendingWrites.push({ id: result.entry?.id || 'pending', status: 'pending' });
       } else {
         if (state.active) {
           const elapsed = currentElapsedSeconds(), previous = state.tasks.find(item => sameTask(item, state.active));
@@ -94,10 +95,10 @@ function makeTimerButton(task) {
           const result = await send({ type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.title });
           if (previous) { previous.totalSeconds += Math.max(0, Number(result?.stopped?.entry?.durationSeconds) || elapsed); previous.activeStartedAt = null; }
           state.active = result.active;
-          if (result.pending) state.pendingWrites = [{ id: result.stopped?.entry?.id || 'switch-pending', status: 'pending', stage: 'verifyActive' }];
+          if (result.pending) state.pendingWrites.push({ id: result.stopped?.entry?.id || 'switch-pending', status: 'pending', stage: 'verifyActive' });
         } else {
           state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
-          if (state.active?._pending) state.pendingWrites = [{ id: 'start-pending', status: 'pending', stage: 'startNext' }];
+          if (state.active?._pending) state.pendingWrites.push({ id: 'start-pending', status: 'pending', stage: 'startNext' });
         }
         task.activeStartedAt = state.active.startedAt;
       }
@@ -109,11 +110,15 @@ function makeTimerButton(task) {
   return button;
 }
 
+function hasRunnablePending(queue = state.pendingWrites) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
+
 function render() {
   clearInterval(tick); tick = null;
   const tasks = visibleTasks(), list = $('task-list'); list.replaceChildren();
   $('result-count').textContent = `${tasks.length} ${tasks.length === 1 ? 'result' : 'results'}`;
   $('empty').hidden = tasks.length > 0;
+  const syncing = hasRunnablePending();
+  const refresh = $('refresh-tasks'); refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
   for (const task of tasks) {
     const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
     const main = document.createElement('div'); main.className = 'task-main'; main.append(taskIcon(task));
@@ -140,6 +145,22 @@ function render() {
     const total = activeRow?.querySelector('.tracked-time');
     if (total && activeTask) total.textContent = `${formatDuration(taskTotalSeconds(activeTask))} tracked`;
   }, 1000);
+  schedulePendingRefresh();
+}
+
+function schedulePendingRefresh() {
+  clearTimeout(pendingRefresh); pendingRefresh = null;
+  if (!hasRunnablePending()) return;
+  pendingRefresh = setTimeout(async () => {
+    try {
+      const hadPending = hasRunnablePending();
+      const result = await send({ type: 'GET_PAGE_STATE' });
+      state.configured = Boolean(result.configured); state.active = result.active ?? null;
+      state.pendingWrites = result.pendingWrites ?? [];
+      if (hadPending && !hasRunnablePending()) await load();
+      else render();
+    } catch (error) { setError(error); schedulePendingRefresh(); }
+  }, 500);
 }
 
 async function reconcileTaskState(previousActive) {
@@ -171,7 +192,7 @@ $('refresh-tasks').addEventListener('click', async () => {
   const button = $('refresh-tasks'); button.disabled = true; setError();
   try { await send({ type: 'SYNC' }); await load(); }
   catch (error) { setError(error); }
-  finally { button.disabled = false; }
+  finally { button.disabled = hasRunnablePending(); }
 });
 $('task-filter').addEventListener('input', render);
 $('period').addEventListener('change', () => {

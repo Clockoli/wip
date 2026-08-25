@@ -145,7 +145,7 @@ test('Device Flow cancellation bypasses the tracker mutation executor and shares
   assert.match(worker, /let activeDeviceFlow = null/);
   assert.match(worker, /DIRECT_DEVICE_FLOW_MESSAGES = new Set\(\[[\s\S]*POLL_DEVICE_FLOW[\s\S]*CANCEL_DEVICE_FLOW/);
   assert.match(worker, /const direct = readOnly \|\| DIRECT_DEVICE_FLOW_MESSAGES\.has/);
-  assert.match(worker, /const attempt = \(\) => direct \? handle\(message, sender\) : executor\.run/);
+  assert.match(worker, /const attempt = \(\) => direct \? handle\(message, sender\)[\s\S]*acceptsLocally \? acceptanceExecutor\.run[\s\S]*executor\.run/);
 });
 
 

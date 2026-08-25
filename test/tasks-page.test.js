@@ -100,8 +100,25 @@ test('Top tasks exposes the same sync and refresh action as the tracking panel',
 });
 
 
-test('timer switching uses the durable background path and disables controls while it syncs', () => {
+test('background timer sync never blocks timer actions and drives a disabled spinning refresh icon', () => {
   assert.match(worker, /tracker\.switchTask\([\s\S]*\{ background: true \}/);
-  assert.match(worker, /setTimeout\(\(\) => void syncPendingNow\(\)\.catch/);
-  assert.match(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
+  assert.match(worker, /const acceptanceExecutor = new SerialExecutor\(\)/);
+  assert.match(worker, /acceptsLocally[\s\S]*acceptanceExecutor\.run/,
+    'timer acceptance must not wait behind the remote synchronization executor');
+  assert.match(worker, /chrome\.alarms\.create\('sync-pending-now'/,
+    'accepted mutations schedule a durable one-shot alarm that wakes the MV3 worker');
+  assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
+  assert.match(worker, /function hasRunnablePending\(queue\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+  assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\)[\s\S]*sync-pending-now/,
+    'MV3 retry alarms must stop when a conflict blocks the FIFO head');
+  assert.match(js, /function hasRunnablePending\(queue = state\.pendingWrites\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+  assert.match(js, /const syncing = hasRunnablePending\(\)/);
+  assert.match(js, /hadPending[\s\S]*!hasRunnablePending\(\)[\s\S]*await load\(\)/,
+    'pending completion or transition to a blocking conflict must reload task aggregates');
+  assert.match(js, /refresh-tasks[\s\S]*disabled = syncing/);
+  assert.match(css, /\.icon-button\.syncing svg\{[^}]*animation:/);
+  assert.match(content, /refresh\.disabled = syncing/);
+  assert.match(content, /refresh\.classList\.toggle\('syncing', syncing\)/);
+  assert.doesNotMatch(content, /stop\.disabled = pageState\.pendingCount > 0/);
+  assert.doesNotMatch(content, /startButton\.disabled = !current \|\| pageState\.pendingCount > 0/);
 });

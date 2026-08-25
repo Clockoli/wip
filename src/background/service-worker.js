@@ -21,6 +21,7 @@ import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from
 
 const store = new ChromeStore();
 const executor = new SerialExecutor();
+const acceptanceExecutor = new SerialExecutor();
 const loadCoordinator = new ConfigurationLoadCoordinator(executor);
 const reportLoads = new Map();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
@@ -458,17 +459,17 @@ async function handle(message, sender) {
   switch (message.type) {
     case 'START': {
       const result = await tracker.start(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
-      if (result._pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      if (result._pending) requestPendingSync();
       return result;
     }
     case 'SWITCH_TASK': {
       const result = await tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
-      if (result.pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      if (result.pending) requestPendingSync();
       return result;
     }
     case 'STOP': {
       const result = await tracker.stop(message.description || '', { background: true });
-      if (result.pending) setTimeout(() => void syncPendingNow().catch(() => {}), 0);
+      if (result.pending) requestPendingSync();
       return result;
     }
     case 'SYNC': return tracker.syncPending();
@@ -489,7 +490,11 @@ async function handle(message, sender) {
       return tracker.bulkAddTimes(text);
     }
     case 'DELETE_ENTRY': return tracker.deleteEntry(message.payload);
-    case 'RESOLVE_PENDING': return tracker.resolvePendingConflict(message.id, message.action || '');
+    case 'RESOLVE_PENDING': {
+      const result = await tracker.resolvePendingConflict(message.id, message.action || '');
+      requestPendingSync();
+      return result;
+    }
     default: throw new Error('Unknown extension message');
   }
 }
@@ -503,24 +508,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (changesConfiguration) {
     try {
       assertMessageAllowed(message.type, sender, chrome.runtime.getURL(''));
-      operation = loadCoordinator.save(() => cancelReports(), () => handle(message, sender));
+      operation = acceptanceExecutor.run(() => loadCoordinator.save(() => cancelReports(), () => handle(message, sender)));
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type);
-    const attempt = () => direct ? handle(message, sender) : executor.run(() => handle(message, sender));
+    const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK'].includes(message?.type);
+    const attempt = () => direct ? handle(message, sender)
+      : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))
+        : executor.run(() => handle(message, sender));
     operation = withCurrentRepositoryRecovery(message, attempt);
   }
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
 });
 
+let pendingSync = null;
+function hasRunnablePending(queue) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
 function syncPendingNow() {
-  return withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
+  if (pendingSync) return pendingSync;
+  pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     const state = await store.ensureDataVersion(3);
     if (!(state.pendingWrites ?? []).length) return;
     const { tracker } = await context();
     await tracker.syncPending();
-  }));
+    const latest = await store.getState();
+    if (hasRunnablePending(latest.pendingWrites)) {
+      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+    }
+  })).catch(async error => {
+    const latest = await store.getState().catch(() => null);
+    if (hasRunnablePending(latest?.pendingWrites)) {
+      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+    }
+    throw error;
+  }).finally(() => { pendingSync = null; });
+  return pendingSync;
+}
+
+function requestPendingSync() {
+  chrome.alarms.create('sync-pending-now', { when: Date.now() + 250 });
+  void syncPendingNow().catch(() => {});
 }
 
 function scheduleSync() {
@@ -535,7 +562,7 @@ chrome.runtime.onInstalled.addListener(details => {
 });
 chrome.runtime.onStartup.addListener(scheduleSync);
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'sync-pending') void syncPendingNow().catch(() => {});
+  if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
 });
 
 scheduleSync();

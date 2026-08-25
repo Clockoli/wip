@@ -151,6 +151,14 @@ export class ChromeStore {
 
   async patchState(patch) { await this.backend.setMany(patch); }
 
+  async mutateState(mutate) {
+    return this.backend.mutateMany(Object.keys(DEFAULT_STATE), values => {
+      const state = { ...structuredClone(DEFAULT_STATE), ...values };
+      const patch = mutate(structuredClone(state));
+      return patch ? { set: patch, result: { ...state, ...patch } } : { result: state };
+    });
+  }
+
   async patchStateIfGeneration(patch, expectedGeneration) {
     return this.backend.setManyIfEqual(CONFIGURATION_GENERATION, expectedGeneration, patch);
   }
