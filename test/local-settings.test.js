@@ -29,12 +29,12 @@ test('billable totals multiply each user rate by tracked time without rounding r
 
 test('plain-text settings export excludes credentials and imports display plus billing', () => {
   const text = settingsExportText({
-    config: { owner: 'acme', repo: 'time-data', branch: 'repoclock/users/1', repoId: 42, recentDays: 9 },
+    config: { owner: 'acme', repo: 'time-data', branch: 'clockoli/users/1', repoId: 42, recentDays: 9 },
     billing: { currency: 'EUR', rates: { alice: 12345 } },
     exportedAt: '2026-08-22T12:00:00.000Z',
   });
   const value = JSON.parse(text);
-  assert.deepEqual(value.repository, { owner: 'acme', repo: 'time-data', branch: 'repoclock/users/1', repoId: 42 });
+  assert.deepEqual(value.repository, { owner: 'acme', repo: 'time-data', branch: 'clockoli/users/1', repoId: 42 });
   assert.equal(JSON.parse(settingsExportText({ config: { recentDays: 7 } })).repository, null);
   assert.deepEqual(value.security, { credentialsIncluded: false });
   assert.doesNotMatch(text, /accessToken|refreshToken|personal access token/i);

@@ -172,7 +172,7 @@ export function settingsExportText({ config = null, billing = {}, exportedAt = n
   const recentDays = Number(config?.recentDays ?? 7);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
   return `${JSON.stringify({
-    format: 'repoclock-settings', version: 2, exportedAt,
+    format: 'clockoli-settings', version: 2, exportedAt,
     display: { recentDays }, billing: normalized, repository,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
@@ -181,7 +181,7 @@ export function settingsExportText({ config = null, billing = {}, exportedAt = n
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
-  if (!plainObject(value) || value.format !== 'repoclock-settings' || ![1, 2].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
+  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
   const expectedKeys = ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   if (!plainObject(value.display) || Object.keys(value.display).join(',') !== 'recentDays') throw new Error('Settings file is missing display settings or has unexpected display fields');

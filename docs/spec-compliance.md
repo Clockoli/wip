@@ -15,7 +15,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 | Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
 | Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly-file read per represented month; globally sorted by editable start timestamp; maximum 50 returned |
 | Issue owners | Any canonical GitHub issue or pull request may be tracked |
-| Storage | One configured private GitHub repository; shared marker on the source branch and routine writes on a marked `repoclock/users/{stable-user-id}` personal branch |
+| Storage | One configured private GitHub repository; shared marker on the source branch and routine writes on a marked `clockoli/users/{stable-user-id}` personal branch |
 | Deletion | Allowed after explicit confirmation, with Git history retained |
 | Long entries | Warning above 12 hours |
 | Issue title | Captured when available and persisted as a bounded optional `Title` field |
@@ -30,7 +30,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 - `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across monthly text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-month entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
 - `src/storage/chrome-store.js` atomically stores background-owned Device Flow attempts, GitHub App access/refresh credentials, PAT compatibility credentials, configuration generations, recent/pending state, and repository-scoped report snapshot/blob caches in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
 - `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, unified inline edit/delete UI, sync status, and conflict acknowledgement.
-- `src/reports/*` discovers valid marked personal branches, merges compatible legacy default-branch data, and loads an inclusive Start-date range with branch ETag validation and immutable-SHA cache reuse. It provides Person/Source facets, selectable metric/axis stacked analytics (task metrics deduplicate by canonical task URL), effective-dated local-rate billing, CSV/JSON export, and native print/save-to-PDF entirely in the extension page.
+- `src/reports/*` discovers valid marked personal branches, merges valid default-branch data, and loads an inclusive Start-date range with branch ETag validation and immutable-SHA cache reuse. It provides Person/Source facets, selectable metric/axis stacked analytics (task metrics deduplicate by canonical task URL), effective-dated local-rate billing, CSV/JSON export, and native print/save-to-PDF entirely in the extension page.
 - `src/tasks/*` preselects only the authenticated user's monthly paths, aggregates repeated sessions and any active-only task by canonical task URL, sorts by completed plus running time, filters by URL/title immediately while typing, and uses the serialized tracker Start/Stop messages. Optional GitHub titles never affect task identity.
 - `src/times/*` loads authenticated-user range history, filters by URL/title, shares the inline editor, and submits all-or-nothing bulk completed entries.
 - `src/options/*` provides resumable Device Flow, installation/private-repository selection, initialization and recovery status, guarded local disconnect/reset, and an advanced PAT compatibility path.
@@ -38,7 +38,7 @@ The specification leaves several Version 1 choices open. This implementation sel
 ## Data and concurrency invariants
 
 - Canonical identity is the stable numeric GitHub user ID; `.clockoli/config.json` maps it to the validated storage login used in canonical file names.
-- The shared default branch owns `.clockoli/config.json`. Each current user writes active and completed data to a fail-closed, ownership-marked `repoclock/users/{stable-user-id}` branch; compatible legacy default-branch records remain readable.
+- The shared default branch owns `.clockoli/config.json`. Each current user writes active and completed data to a fail-closed, ownership-marked `clockoli/users/{stable-user-id}` branch; valid default-branch records remain readable.
 - Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM}/{login}.txt`.
 - Each persisted block contains canonical `URL`, an optional one-line `Title`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
 - Duration is recomputed from `End - Start` and is never persisted or based on render ticks.

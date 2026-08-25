@@ -161,10 +161,10 @@ Settings accepts non-negative hourly rates keyed by GitHub login, with a currenc
 Clockoli validates one dedicated private GitHub repository. Each user writes routine timer data to a marked branch named:
 
 ```text
-repoclock/users/{stable-github-user-id}
+clockoli/users/{stable-github-user-id}
 ```
 
-This keeps users' normal timer commits off the repository's default branch and reduces write conflicts between team members. Reports discovers the marked personal branches and merges them with compatible legacy records on the default branch.
+This keeps users' normal timer commits off the repository's default branch and reduces write conflicts between team members. Reports discovers the marked `clockoli/users/` personal branches and merges them with valid records on the default branch.
 
 See [Data, privacy, and security](data-and-privacy.md) for file formats and permissions.
 

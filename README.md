@@ -19,7 +19,7 @@ Clockoli is a good fit when data ownership and auditability matter more than one
 
 ## Current beta installation
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.20`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.21`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
@@ -86,7 +86,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 
 ### Reports and billing
 
-- Repository-wide reporting across personal storage branches and compatible legacy data.
+- Repository-wide reporting across `clockoli/users/` personal branches and valid default-branch data.
 - Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
 - People and Source facets. A Source is a GitHub owner/repository for GitHub tasks or a hostname for another URL.
 - Total time, average time per distinct task, distinct task count, and billable amount.

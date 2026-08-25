@@ -22,9 +22,10 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.doesNotMatch(html, /magnif|octicon-search|pagination|Sort|Assigned to me/i);
   assert.doesNotMatch(html, /labels|comments|assignee/i);
   assert.doesNotMatch(html, /id="settings"/);
-  assert.match(js, /const PERIOD_KEY = 'repoclock\.tasks\.period'/);
-  assert.match(js, /const LEGACY_PERIOD_KEY = 'github-private-time-tracker\.tasks\.period'/);
-  assert.match(js, /localStorage\.getItem\(PERIOD_KEY\) \|\| localStorage\.getItem\(LEGACY_PERIOD_KEY\)/);
+  assert.match(js, /const PERIOD_KEY = 'clockoli\.tasks\.period'/);
+  assert.doesNotMatch(js, /LEGACY_PERIOD_KEY/);
+  assert.match(js, /localStorage\.getItem\(PERIOD_KEY\)/);
+  assert.match(js, /savedPeriod = localStorage\.getItem\(PERIOD_KEY\) \|\| savedPeriod/);
   assert.match(js, /localStorage\.setItem\(PERIOD_KEY/);
   assert.match(js, /addEventListener\('input'/);
   assert.match(js, /type:\s*'LOAD_TASKS'/);
@@ -47,13 +48,10 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
 });
 
 test('visible extension branding is Clockoli and Tasks uses neutral GitHub buttons', () => {
-  for (const surface of [manifest, popup, html, content]) {
-    assert.doesNotMatch(surface, /GitHub Private Time Tracker|Private Time Tracker/);
-  }
   assert.match(manifest, /"name":\s*"Clockoli"/);
   assert.match(manifest, /"default_title":\s*"Clockoli"/);
   assert.doesNotMatch(content, /heading\.append\(el\('strong', 'Clockoli'\)/);
-  assert.match(content, /const ROOT_ID = 'repoclock-root'/);
+  assert.match(content, /const ROOT_ID = 'clockoli-root'/);
   assert.match(css, /\.timer-button\{[^}]*border:1px solid var\(--button-default-borderColor-rest\)[^}]*background:var\(--button-default-bgColor-rest\)[^}]*color:var\(--button-default-fgColor-rest\)/);
   assert.match(css, /\.timer-button:hover\{[^}]*background:var\(--button-default-bgColor-hover\)/);
   assert.doesNotMatch(css, /\.timer-button\{[^}]*button-primary/);

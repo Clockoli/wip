@@ -66,7 +66,7 @@ The repository's default branch owns the shared marker:
 Clockoli provisions a personal branch for each GitHub user:
 
 ```text
-repoclock/users/{stable-github-user-id}
+clockoli/users/{stable-github-user-id}
 ```
 
 That branch contains an ownership marker and the user's normal timer data:
@@ -79,7 +79,7 @@ times/{YYYY-MM}/{storage-login}.txt
 
 The stable numeric GitHub user ID is used in the branch name. The shared marker maps that stable ID to an immutable storage login used in file paths.
 
-Routine Start, Stop, Edit, and Delete operations use the personal branch. Reports discovers only branches with valid ownership metadata, reads the represented users, and merges compatible legacy default-branch data without duplicating equivalent records.
+Routine Start, Stop, Edit, and Delete operations use the personal branch. Reports discovers only `clockoli/users/` branches with valid ownership metadata, reads the represented users, and merges valid default-branch data without duplicating equivalent records.
 
 ## Text format
 

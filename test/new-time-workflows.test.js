@@ -29,7 +29,7 @@ test('main tracker uses one inline editor with Enter-save and no legacy Edit pan
 test('Times page is a packaged shared-renderer surface with requested periods, filtering, bulk input, and navigation', () => {
   for (const file of ['src/times/times.html', 'src/times/times.css']) assert.equal(fs.existsSync(new URL(`../${file}`, import.meta.url)), true, `${file} must exist`);
   const html = read('src/times/times.html');
-  assert.match(html, /repoclock-times-root/);
+  assert.match(html, /clockoli-times-root/);
   assert.match(content, /const timesMode/);
   for (const value of ['today', 'yesterday', 'this-week', 'last-week', 'this-month', 'last-month', 'custom']) {
     assert.match(content, new RegExp(`['\"]${value}['\"]`));
@@ -67,7 +67,7 @@ test('browser action popup has a stable width without the self-shrinking viewpor
 
 
 test('Times is covered by extension-page validation and candidate versions are distinct and aligned', () => {
-  assert.equal(manifest.version, '0.1.20');
+  assert.equal(manifest.version, '0.1.21');
   assert.equal(packageJson.version, manifest.version);
   assert.match(validator, /manifest\.version !== packageJson\.version/);
   assert.ok((validator.match(/'src\/times\/times\.html'/g) || []).length >= 2,

@@ -25,8 +25,8 @@ function network() { return { branches: new Set(['main']), metadata: new Map(), 
 test('each stable GitHub user gets a deterministic non-default storage branch and ownership marker', async () => {
   const state = network(), github = new BranchClient(state, 'main');
   const result = await ensureUserStorageBranch(github, { id: 123, login: 'alice' }, 'main');
-  assert.equal(result.branch, 'repoclock/users/123');
-  assert.deepEqual(state.ensureCalls, [{ target: 'repoclock/users/123', source: 'main' }]);
+  assert.equal(result.branch, 'clockoli/users/123');
+  assert.deepEqual(state.ensureCalls, [{ target: 'clockoli/users/123', source: 'main' }]);
   assert.equal(state.writes.length, 1);
   assert.equal(state.writes[0].path, '.clockoli/user.json');
   assert.deepEqual(parseUserBranchMetadata(state.metadata.get(result.branch)), { id: 123, login: 'alice' });
@@ -51,34 +51,10 @@ test('branch discovery accepts only marker-backed deterministic Clockoli user br
     const branch = userStorageBranch(user.id); state.branches.add(branch);
     state.metadata.set(branch, `${JSON.stringify({ version: 1, githubUserId: user.id, storageLogin: user.login })}\n`);
   }
-  state.branches.add('repoclock/users/999');
+  state.branches.add('clockoli/users/999');
   const users = await discoverUserStorageBranches(github);
   assert.deepEqual(users.map(({ id, login, branch }) => ({ id, login, branch })), [
-    { id: 1, login: 'alice', branch: 'repoclock/users/1' },
-    { id: 2, login: 'bob', branch: 'repoclock/users/2' },
+    { id: 1, login: 'alice', branch: 'clockoli/users/1' },
+    { id: 2, login: 'bob', branch: 'clockoli/users/2' },
   ]);
-});
-
-test('legacy .repoclock user metadata remains discoverable after new branches move to .clockoli', async () => {
-  const state = network(), github = new BranchClient(state, 'main'), branch = userStorageBranch(123);
-  state.branches.add(branch);
-  state.metadata.set(`${branch}:.repoclock/user.json`, userBranchMetadataText({ id: 123, login: 'alice' }));
-  const users = await discoverUserStorageBranches(github);
-  assert.deepEqual(users.map(({ id, login }) => ({ id, login })), [{ id: 123, login: 'alice' }]);
-});
-
-test('conflicting canonical and legacy user metadata fails closed', async () => {
-  const state = network(), github = new BranchClient(state, 'main'), branch = userStorageBranch(123);
-  state.branches.add(branch);
-  state.metadata.set(`${branch}:.clockoli/user.json`, userBranchMetadataText({ id: 123, login: 'alice' }));
-  state.metadata.set(`${branch}:.repoclock/user.json`, userBranchMetadataText({ id: 456, login: 'mallory' }));
-  await assert.rejects(() => discoverUserStorageBranches(github), /both.*metadata|conflict/i);
-});
-
-test('dual user metadata treats storage-login case differences as conflicts', async () => {
-  const state = network(), github = new BranchClient(state, 'main'), branch = userStorageBranch(123);
-  state.branches.add(branch);
-  state.metadata.set(`${branch}:.clockoli/user.json`, userBranchMetadataText({ id: 123, login: 'Alice' }));
-  state.metadata.set(`${branch}:.repoclock/user.json`, userBranchMetadataText({ id: 123, login: 'alice' }));
-  await assert.rejects(() => discoverUserStorageBranches(github), /both.*metadata|conflict/i);
 });

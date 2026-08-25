@@ -602,11 +602,11 @@ test('GitHub client validates stable repository identity before adopting an exis
     if (url.endsWith('/repos/acme/time-data')) return response(200, { id: 77, full_name: 'acme/time-data', private: true, archived: false, disabled: false, permissions: { push: true } });
     if (url.endsWith('/branches/main')) return response(200, { name: 'main' });
     if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'a'.repeat(40) } });
-    if (url.endsWith('/git/ref/heads/repoclock%2Fusers%2F123')) return response(200, { object: { sha: 'b'.repeat(40) } });
+    if (url.endsWith('/git/ref/heads/clockoli%2Fusers%2F123')) return response(200, { object: { sha: 'b'.repeat(40) } });
     throw new Error(`Unexpected ${url}`);
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'custom', expectedRepositoryId: 77, fetchImpl });
-  assert.deepEqual(await client.ensureBranch('repoclock/users/123', 'main'), { branch: 'repoclock/users/123', created: false });
+  assert.deepEqual(await client.ensureBranch('clockoli/users/123', 'main'), { branch: 'clockoli/users/123', created: false });
   assert.equal(calls[0].url.endsWith('/repos/acme/time-data'), true);
 });
 
@@ -614,18 +614,18 @@ test('GitHub client creates a user branch from a source ref and discovers bounde
   const sha = 'f'.repeat(40), calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
-    if (url.endsWith('/git/ref/heads/repoclock%2Fusers%2F123')) return response(404, { message: 'missing' });
+    if (url.endsWith('/git/ref/heads/clockoli%2Fusers%2F123')) return response(404, { message: 'missing' });
     if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha } });
-    if (url.endsWith('/git/refs') && options.method === 'POST') return response(201, { ref: 'refs/heads/repoclock/users/123', object: { sha } });
-    if (url.includes('/git/matching-refs/heads/repoclock/users/')) return response(200, [
-      { ref: 'refs/heads/repoclock/users/456' }, { ref: 'refs/heads/repoclock/users/123' },
+    if (url.endsWith('/git/refs') && options.method === 'POST') return response(201, { ref: 'refs/heads/clockoli/users/123', object: { sha } });
+    if (url.includes('/git/matching-refs/heads/clockoli/users/')) return response(200, [
+      { ref: 'refs/heads/clockoli/users/456' }, { ref: 'refs/heads/clockoli/users/123' },
     ]);
     throw new Error(`Unexpected ${url}`);
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', fetchImpl });
-  assert.deepEqual(await client.ensureBranch('repoclock/users/123', 'main'), { branch: 'repoclock/users/123', created: true });
+  assert.deepEqual(await client.ensureBranch('clockoli/users/123', 'main'), { branch: 'clockoli/users/123', created: true });
   const payload = JSON.parse(calls.find(call => call.options.method === 'POST').options.body);
-  assert.deepEqual(payload, { ref: 'refs/heads/repoclock/users/123', sha });
-  assert.deepEqual(await client.listBranches('repoclock/users/'), ['repoclock/users/123', 'repoclock/users/456']);
-  assert.equal(client.forBranch('repoclock/users/123').repositoryKey, 'acme/time-data@repoclock/users/123');
+  assert.deepEqual(payload, { ref: 'refs/heads/clockoli/users/123', sha });
+  assert.deepEqual(await client.listBranches('clockoli/users/'), ['clockoli/users/123', 'clockoli/users/456']);
+  assert.equal(client.forBranch('clockoli/users/123').repositoryKey, 'acme/time-data@clockoli/users/123');
 });

@@ -202,7 +202,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.length, 4);
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  assert.equal(actions.children.at(-2)?.id, 'repoclock-root');
+  assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -299,13 +299,13 @@ test('header control mounts when GitHub renders the authenticated header after t
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(document.getElementById('repoclock-root'), null);
+  assert.equal(document.getElementById('clockoli-root'), null);
   assert.equal(messages.length, 0);
 
   headerReady = true;
   intervals.at(-1)();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(actions.children.at(-2)?.id, 'repoclock-root');
+  assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [{ type: 'GET_PAGE_STATE', refresh: false }]);
 });
@@ -423,7 +423,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   await new Promise(resolve => setTimeout(resolve, 0));
 
   assert.equal(right.children[0], topBarActions);
-  assert.equal(right.children.at(-2)?.id, 'repoclock-root');
+  assert.equal(right.children.at(-2)?.id, 'clockoli-root');
   assert.equal(right.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [
     { type: 'GET_PAGE_STATE', refresh: false },
@@ -1079,7 +1079,7 @@ test('split header navigation tracks a generic GitHub URL and still opens Top ta
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(actions.children.at(-2)?.id, 'repoclock-root');
+  assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   const arrow = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-menu'));
@@ -1151,7 +1151,7 @@ test('header mounting falls back to a complete legacy header when the modern con
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(actions.children.at(-2)?.id, 'repoclock-root');
+  assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   assert.equal(modern.children.length, 0);
 });
@@ -1196,7 +1196,7 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
 
 test('Times bulk import preserves its draft and remains single-flight across rerenders and failure', async () => {
   documentNodes.clear(); createdNodes.length = 0;
-  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
   const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
   const document = {
     documentElement: new FakeNode('html'), activeElement: null,
@@ -1246,7 +1246,7 @@ test('Times bulk import preserves its draft and remains single-flight across rer
 
 test('Times ignores a rejected initial load after a newer period succeeds', async () => {
   documentNodes.clear(); createdNodes.length = 0;
-  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
   const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
   const document = {
     documentElement: new FakeNode('html'), activeElement: null,
@@ -1284,7 +1284,7 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
 
 test('Times keeps every linked draft row mounted while filtering and saves the full group', async () => {
   documentNodes.clear(); createdNodes.length = 0;
-  const root = new FakeNode('div'); root.id = 'repoclock-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
   const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
   const makeEntry = (id, url, title, start, end, index) => ({
     schemaVersion: 1, id, user: 'alice', taskUrl: url, taskTitle: title,

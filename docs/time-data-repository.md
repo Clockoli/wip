@@ -30,7 +30,7 @@ For shared reporting:
 
 Use separate data repositories when teams have different privacy boundaries. App installation access is not enough by itself: each signed-in user still needs suitable GitHub permissions and must be able to use the repository's branch/ruleset policy.
 
-> **Storage namespace:** New and migrated repositories use `.clockoli/` control paths. Clockoli still reads legacy `.repoclock/` markers so existing repositories remain compatible. The existing `repoclock/users/` personal-branch prefix remains unchanged because it is the stable Git ref identity used to discover existing user branches.
+> **Storage namespace:** Clockoli uses `.clockoli/` control paths and `clockoli/users/` personal branches exclusively.
 
 ## Default branch and personal branches
 
@@ -43,7 +43,7 @@ The default branch contains the shared repository marker:
 Clockoli creates one user branch for each stable numeric GitHub identity:
 
 ```text
-repoclock/users/{github-user-id}
+clockoli/users/{github-user-id}
 ```
 
 The branch contains:
@@ -54,9 +54,9 @@ active/{storage-login}.txt
 times/{YYYY-MM}/{storage-login}.txt
 ```
 
-Routine timer writes occur on the personal branch, not the default branch. This isolates users' writes and reduces shared-ref conflicts. Reports reads all valid marked personal branches and merges compatible legacy records that remain on the default branch.
+Routine timer writes occur on the personal branch, not the default branch. This isolates users' writes and reduces shared-ref conflicts. Reports reads all valid marked personal branches and any valid records on the default branch.
 
-Do not manually create a branch under `repoclock/users/` and expect Clockoli to adopt it. Existing branches must have valid ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
+Do not manually create a branch under `clockoli/users/` and expect Clockoli to adopt it. Existing branches must have valid ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
 
 ## Repository marker
 
@@ -111,11 +111,11 @@ Edits and deletions remain visible in Git history unless an administrator rewrit
 
 ## Existing repositories and migration safety
 
-Clockoli can use an existing private repository only after it validates the reserved tree and marker. It will not guess that arbitrary existing `active/`, `times/`, or `.clockoli/` content belongs to Clockoli. Legacy `.repoclock/` markers are accepted only through the explicit compatibility fallback.
+Clockoli can use an existing private repository only after it validates the reserved tree and `.clockoli/config.json` marker. It will not guess that arbitrary existing `active/`, `times/`, or `.clockoli/` content belongs to Clockoli.
 
 Configuration, authentication-mode, repository, and branch transitions are blocked while an active timer or pending write could be stranded. Finish and synchronize work first.
 
-Legacy records on the selected default/custom branch can remain readable while personal branches are introduced. Clockoli deduplicates equivalent records when Reports combines the sources.
+Valid records on the selected default/custom branch remain readable while personal branches are introduced. Clockoli deduplicates equivalent records when Reports combines the sources.
 
 ### Migration from obsolete daily files
 
@@ -125,7 +125,7 @@ Migrate all validated records in one Git commit, preserve active files byte-for-
 
 ## Branch and ruleset guidance
 
-Clockoli writes directly through the GitHub API. The selected default branch must allow the shared marker to be initialized or updated when users are registered, and each `repoclock/users/{id}` branch must permit the user's routine writes.
+Clockoli writes directly through the GitHub API. The selected default branch must allow the shared marker to be initialized or updated when users are registered, and each `clockoli/users/{id}` branch must permit the user's routine writes.
 
 A ruleset that requires pull requests for every change can prevent normal timer operations. Use a dedicated repository with a policy designed for direct, authenticated time-data writes rather than weakening rules on a source repository.
 

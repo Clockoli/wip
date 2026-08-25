@@ -54,7 +54,7 @@ Clockoli rejects unsafe destinations. Common causes are:
 - public repository;
 - missing user write permission;
 - missing App Contents-write permission;
-- incompatible `.clockoli` (or legacy `.repoclock`), `active`, or `times` content;
+- incompatible `.clockoli`, `active`, or `times` content;
 - a marker created by an unsupported format;
 - branch rules or a ruleset that rejects direct writes;
 - repository renamed/transferred or branch removed while setup was open.

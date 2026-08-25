@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ConfigurationService } from '../src/services/configuration.js';
 
 const oldConfig = { owner: 'old-org', repo: 'time-data', branch: 'main', recentDays: 7, allowedIssueOwners: ['old-org'], repoId: 77, branchMode: 'custom' };
-const provisionUserBranch = async (_github, user) => ({ branch: `repoclock/users/${user.id}` });
+const provisionUserBranch = async (_github, user) => ({ branch: `clockoli/users/${user.id}` });
 
 const newPayload = { owner: 'new-org', repo: 'time-data', branch: 'main', recentDays: 7, allowedIssueOwners: ['new-org'], token: 'new-token' };
 
@@ -283,7 +283,7 @@ test('legacy configuration promotes to a personal branch only after atomic accep
   });
   const config = await service.ensurePersonalStorageBranch();
   assert.equal(factoryOptions[0].expectedRepositoryId, 77);
-  assert.equal(config.branch, 'repoclock/users/123');
+  assert.equal(config.branch, 'clockoli/users/123');
   assert.equal(config.defaultBranch, 'main');
   assert.equal(config.storageBranchVersion, 1);
   assert.equal(store.state.reportCache, null);

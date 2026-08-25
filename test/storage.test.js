@@ -401,12 +401,12 @@ test('legacy branch promotion is atomic and refuses to redirect accepted work', 
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', repoId: 7 }, 'token', { user: 'alice', activeCache: null, pendingWrites: [], recentCache: [{ id: 'old' }] });
   let snapshot = await store.getConfigurationSnapshot();
   await backend.setMany({ activeCache: { startedAt: '2026-08-22T10:00:00Z' } });
-  assert.equal(await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'repoclock/users/123', defaultBranch: 'main', storageBranchVersion: 1 }), false);
+  assert.equal(await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'clockoli/users/123', defaultBranch: 'main', storageBranchVersion: 1 }), false);
   await backend.setMany({ activeCache: null });
-  const promoted = await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'repoclock/users/123', defaultBranch: 'main', storageBranchVersion: 1 });
+  const promoted = await store.promoteToUserStorageBranch(snapshot.generation, { owner: 'acme', repo: 'time', branch: 'main' }, { branch: 'clockoli/users/123', defaultBranch: 'main', storageBranchVersion: 1 });
   assert.ok(promoted > snapshot.generation);
   snapshot = await store.getConfigurationSnapshot();
-  assert.equal(snapshot.config.branch, 'repoclock/users/123');
+  assert.equal(snapshot.config.branch, 'clockoli/users/123');
   assert.equal(snapshot.config.defaultBranch, 'main');
   assert.equal(snapshot.config.storageBranchVersion, 1);
   assert.deepEqual((await store.getState()).recentCache, []);

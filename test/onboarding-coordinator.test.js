@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OnboardingCoordinator } from '../src/services/onboarding-coordinator.js';
 
-const provisionUserBranch = async (_github, user) => ({ branch: `repoclock/users/${user.id}` });
+const provisionUserBranch = async (_github, user) => ({ branch: `clockoli/users/${user.id}` });
 
 const candidate = {
   installationId: 88, repoId: 77, owner: 'acme', repo: 'time-data', fullName: 'acme/time-data',
@@ -98,7 +98,7 @@ test('repository selection automatically follows a default branch created during
     } }),
   });
   const result = await c.selectRepository({ installationId: 88, repoId: 77 });
-  assert.equal(result.config.branch, 'repoclock/users/123');
+  assert.equal(result.config.branch, 'clockoli/users/123');
   assert.equal(result.config.defaultBranch, 'trunk');
   assert.equal(discoveries, 2);
   assert.equal(initializations, 2);
@@ -179,7 +179,7 @@ test('PAT migration preserves a validated custom branch for the same stable repo
     } }),
   });
   await c.selectRepository({ installationId: 88, repoId: 77 });
-  assert.equal(store.config.branch, 'repoclock/users/123');
+  assert.equal(store.config.branch, 'clockoli/users/123');
   assert.equal(store.config.defaultBranch, 'worklog');
   assert.equal(factoryCalls[0].branch, 'worklog');
   assert.equal(factoryCalls[1].branch, 'worklog');
@@ -226,7 +226,7 @@ test('stable-ID recovery atomically repairs renamed repository and default-branc
   const result = await c.recoverCurrentRepository();
   assert.equal(result.config.owner, 'new-owner');
   assert.equal(result.config.repo, 'renamed-time-data');
-  assert.equal(result.config.branch, 'repoclock/users/123');
+  assert.equal(result.config.branch, 'clockoli/users/123');
   assert.equal(result.config.defaultBranch, 'new-main');
   assert.equal(result.config.branchMode, 'custom');
   assert.equal(store.saves.length, 1);

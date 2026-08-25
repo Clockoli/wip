@@ -38,7 +38,7 @@ function transactionDone(transaction) {
 }
 
 export class IndexedDbBackend {
-  constructor(factory = indexedDB, databaseName = 'github-private-time-tracker') {
+  constructor(factory = indexedDB, databaseName = 'clockoli') {
     this.factory = factory;
     this.databaseName = databaseName;
     this.database = null;

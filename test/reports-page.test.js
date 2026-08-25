@@ -21,7 +21,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
   assert.match(html, /aria-label="Print report or save as PDF"/);
-  assert.doesNotMatch(html, /GitHub Private Time Tracker|id="settings"|id="source"/);
+  assert.doesNotMatch(html, /id="settings"|id="source"/);
   assert.match(js, /window\.print\(\)/);
   assert.match(js, /Unselect all/);
   assert.match(js, /tracked · \${option\.count}.*entries/);

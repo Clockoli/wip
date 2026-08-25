@@ -1,6 +1,5 @@
 import { parseActiveText, parseMonthlyText, parseMonthlyTextPath, timestampWithTimezone } from '../domain/monthly-text.js';
 const MARKER_PATH = '.clockoli/config.json';
-const LEGACY_MARKER_PATH = '.repoclock/config.json';
 const REPOSITORY_FORMAT_VERSION = 1;
 const MAX_LEGACY_FILES = 500;
 const MAX_LEGACY_BYTES = 20 * 1024 * 1024;
@@ -188,7 +187,7 @@ function parseMarker(text) {
 
 function compatibleDirectory(path, entry) {
   return entry.type === 'tree' && entry.mode === '040000' && (
-    path === '.clockoli' || path === '.repoclock' || path === 'active' || path === 'times' || /^times\/\d{4}-(?:0[1-9]|1[0-2])$/.test(path)
+    path === '.clockoli' || path === 'active' || path === 'times' || /^times\/\d{4}-(?:0[1-9]|1[0-2])$/.test(path)
   );
 }
 
@@ -197,17 +196,17 @@ async function validateExistingFiles(github, entries) {
   for (const value of entries || []) {
     const entry = typeof value === 'string' ? { path: value, type: 'blob', mode: '100644' } : value;
     const path = typeof entry?.path === 'string' ? entry.path : '';
-    const reserved = path === '.clockoli' || path.startsWith('.clockoli/') || path === '.repoclock' || path.startsWith('.repoclock/') || path === 'active' || path.startsWith('active/') || path === 'times' || path.startsWith('times/');
+    const reserved = path === '.clockoli' || path.startsWith('.clockoli/') || path === 'active' || path.startsWith('active/') || path === 'times' || path.startsWith('times/');
     if (!reserved) continue;
     if (compatibleDirectory(path, entry)) continue;
-    if (path === '.clockoli' || path === '.repoclock' || path === 'active' || path === 'times') {
+    if (path === '.clockoli' || path === 'active' || path === 'times') {
       throw new OnboardingError(`The repository contains a non-directory Clockoli root at ${path}.`, 'incompatible_storage_format');
     }
     if (entry.type !== 'blob' || entry.mode !== '100644') {
       throw new OnboardingError(`The repository contains an incompatible Clockoli tree entry at ${path || '(unknown path)'}.`, 'incompatible_storage_format');
     }
-    if ([MARKER_PATH, LEGACY_MARKER_PATH, '.clockoli/.gitkeep', '.repoclock/.gitkeep', 'active/.gitkeep', 'times/.gitkeep'].includes(path)) continue;
-    if (path.startsWith('.clockoli/') || path.startsWith('.repoclock/')) throw new OnboardingError('The repository contains an incompatible Clockoli control path.', 'incompatible_storage_format');
+    if ([MARKER_PATH, '.clockoli/.gitkeep', 'active/.gitkeep', 'times/.gitkeep'].includes(path)) continue;
+    if (path.startsWith('.clockoli/')) throw new OnboardingError('The repository contains an incompatible Clockoli control path.', 'incompatible_storage_format');
     if (path.startsWith('active/')) {
       if (!/^active\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.txt$/.test(path)) {
         throw new OnboardingError('The repository contains an incompatible active-timer path.', 'incompatible_storage_format');
@@ -239,15 +238,6 @@ async function validateExistingFiles(github, entries) {
       }
     }
   }
-}
-
-function comparableMarker(marker) {
-  return {
-    repositoryFormatVersion: marker.repositoryFormatVersion,
-    createdAt: marker.createdAt,
-    createdBy: marker.createdBy,
-    users: Object.fromEntries(Object.entries(marker.users).sort(([left], [right]) => Number(left) - Number(right))),
-  };
 }
 
 function markerText(user, storageLogin, now) {
@@ -325,18 +315,8 @@ export class RepositoryInitializer {
         try { return await this.github.getText(path); }
         catch (error) { if (isNotFound(error)) return null; throw error; }
       };
-      const primaryFile = await readOptional(MARKER_PATH);
-      const legacyFile = await readOptional(LEGACY_MARKER_PATH);
-      if (primaryFile && legacyFile) {
-        const primaryMarker = parseMarker(primaryFile.text);
-        const legacyMarker = parseMarker(legacyFile.text);
-        if (JSON.stringify(comparableMarker(primaryMarker)) !== JSON.stringify(comparableMarker(legacyMarker))) {
-          throw new OnboardingError('This repository contains conflicting markers in both .clockoli and legacy .repoclock paths.', 'incompatible_storage_format');
-        }
-      }
-      const dualMarkers = Boolean(primaryFile && legacyFile);
-      const file = primaryFile || legacyFile;
-      const markerPath = primaryFile ? MARKER_PATH : (legacyFile ? LEGACY_MARKER_PATH : MARKER_PATH);
+      const file = await readOptional(MARKER_PATH);
+      const markerPath = MARKER_PATH;
       if (!file) {
         await validateExistingFiles(this.github, this.github.listRepositoryEntries ? await this.github.listRepositoryEntries() : await this.github.listRepositoryFiles());
         await validateFreshRepository();
@@ -357,9 +337,6 @@ export class RepositoryInitializer {
           throw new OnboardingError('The repository maps this GitHub account to a different immutable storage login.', 'storage_login_conflict');
         }
         return result('access_checked', marker.users[userId], repository, selectedBranch);
-      }
-      if (dualMarkers) {
-        throw new OnboardingError('This repository contains both .clockoli and legacy .repoclock markers. Remove the legacy marker through an explicit migration before registering another user.', 'incompatible_storage_format');
       }
       const occupied = Object.entries(marker.users).find(([id, login]) => id !== userId && login.toLowerCase() === storageLogin.toLowerCase());
       if (occupied) throw new OnboardingError('This repository path is already assigned to another GitHub account.', 'storage_login_conflict');
