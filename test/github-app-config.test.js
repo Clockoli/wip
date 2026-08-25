@@ -9,8 +9,8 @@ import {
 
 test('release build contains the public organization-owned Clockoli GitHub App identity', () => {
   assert.equal(GITHUB_APP_CLIENT_ID, 'Iv23likdAVTSplt9U2oW');
-  assert.equal(GITHUB_APP_SLUG, 'repoclock');
-  assert.equal(githubAppInstallationUrl(), 'https://github.com/apps/repoclock/installations/new');
+  assert.equal(GITHUB_APP_SLUG, 'clockoli');
+  assert.equal(githubAppInstallationUrl(), 'https://github.com/apps/clockoli/installations/new');
 });
 
 

@@ -1,7 +1,7 @@
 // Public GitHub App configuration. The client ID and slug are not secrets.
 // Never add a client secret, private key, or installation token here.
 export const GITHUB_APP_CLIENT_ID = 'Iv23likdAVTSplt9U2oW';
-export const GITHUB_APP_SLUG = 'repoclock';
+export const GITHUB_APP_SLUG = 'clockoli';
 
 export function githubAppInstallationUrl() {
   return GITHUB_APP_SLUG ? `https://github.com/apps/${encodeURIComponent(GITHUB_APP_SLUG)}/installations/new` : '';

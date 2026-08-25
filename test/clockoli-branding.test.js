@@ -37,17 +37,19 @@ test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch 
   assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
 });
 
-test('rename preserves legacy storage, branch, DOM, settings, and GitHub App identities', () => {
+test('rename preserves legacy storage, branch, DOM, and settings identities while using the Clockoli App', () => {
   const compatibility = [
     'src/content/github.js', 'src/domain/local-settings.js', 'src/tasks/tasks.js',
     'src/services/github-app-onboarding.js', 'src/services/user-storage-branch.js',
-    'src/config/github-app.js',
   ].map(read).join('\n');
   for (const value of [
     'repoclock-root', 'repoclock-popup-root', 'repoclock-times-root',
     'repoclock.tasks.period', 'repoclock-settings', '.repoclock/config.json',
-    'repoclock/users/', "GITHUB_APP_SLUG = 'repoclock'",
+    'repoclock/users/',
   ]) assert.match(compatibility, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const app = read('src/config/github-app.js');
+  assert.match(app, /GITHUB_APP_SLUG = 'clockoli'/);
+  assert.doesNotMatch(app, /GITHUB_APP_SLUG = 'repoclock'/);
 });
 
 test('downloaded settings use the Clockoli filename while preserving the legacy import format', () => {

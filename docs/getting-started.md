@@ -13,7 +13,7 @@ The data repository is separate from the repositories, documents, tickets, and p
 
 ## 1. Install the current beta
 
-The current trusted checkout and its locally built package identify as `v0.1.18`. The published `v0.1.11` package predates the product described in this documentation.
+The current trusted checkout and its locally built package identify as `v0.1.19`. The published `v0.1.11` package predates the product described in this documentation.
 
 1. Clone or update the repository:
 
