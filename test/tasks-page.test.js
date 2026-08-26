@@ -122,3 +122,25 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.doesNotMatch(content, /stop\.disabled = pageState\.pendingCount > 0/);
   assert.doesNotMatch(content, /startButton\.disabled = !current \|\| pageState\.pendingCount > 0/);
 });
+
+test('Top tasks keeps existing results visible while a spinner-only refresh runs', () => {
+  assert.doesNotMatch(html, /Loading tracked tasks from the data repository/);
+  assert.match(html, /id="loading"[^>]*aria-label="Loading tracked tasks"[\s\S]*loading-spinner/);
+  assert.match(css, /\.loading-spinner[^}]*animation:/);
+  assert.doesNotMatch(js, /setError\(\); \$\('loading'\)\.hidden = false;[^\n]*tasks-content/);
+});
+
+test('Top tasks Stop button shows seconds only during the first minute', () => {
+  assert.match(js, /if \(current && seconds < 60\) return `\$\{Math\.floor\(seconds\)\}s`/);
+  assert.match(js, /Stop: \$\{formatDuration\(currentElapsedSeconds\(\), \{ current: true \}\)\}/);
+});
+
+test('tracking panel gives Top tasks and Reports matching header icons', () => {
+  assert.match(content, /const tasks = button\('Top tasks'[\s\S]{0,250}tasks\.prepend\(icon\('checklist', TASKS_PATH\)\)/);
+  assert.match(content, /const reports = button\('Reports'[\s\S]{0,250}reports\.prepend\(icon\('graph', REPORTS_PATH\)\)/);
+});
+
+test('background reconciliation preserves an already-fresh editable Recent snapshot', () => {
+  assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
+  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
+});

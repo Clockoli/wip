@@ -1375,7 +1375,7 @@ test('ordinary Start and Stop use the same durable background acceptance path as
 test('tracking panel observes background sync completion without manual Sync', () => {
   assert.match(source, /function schedulePendingRefresh\(\)/);
   assert.match(source, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
-  assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, false\)/);
+  assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
   assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\)[^\n]*queue\[0\]\.status !== 'conflict'/);
   assert.match(source, /if \(!hasRunnablePending\(\)\) return/,
     'a conflict-blocked FIFO head must stop the 500 ms UI polling loop');

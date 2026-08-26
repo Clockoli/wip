@@ -27,6 +27,7 @@ function sameTask(a, b) { return Boolean(taskUrlOf(a) && taskUrlOf(a) === taskUr
 
 
 function formatDuration(seconds, { current = false } = {}) {
+  if (current && seconds < 60) return `${Math.floor(seconds)}s`;
   const minutes = Math.max(0, current ? Math.floor(seconds / 60) : Math.round(seconds / 60));
   const hours = Math.floor(minutes / 60), rest = minutes % 60;
   return hours ? `${hours}h ${rest}m` : `${rest}m`;
@@ -176,12 +177,12 @@ async function reconcileTaskState(previousActive) {
 
 async function load() {
   const requestId = ++state.requestId, range = taskPeriodRange($('period').value, localDateValue()); state.range = range;
-  setError(); $('loading').hidden = false; $('setup').hidden = true; $('tasks-content').hidden = true;
+  setError(); $('loading').hidden = false; $('setup').hidden = true;
   try {
     const result = await send({ type: 'LOAD_TASKS', payload: range });
     if (requestId !== state.requestId) return;
     state.configured = Boolean(result.configured);
-    if (!state.configured) { $('setup').hidden = false; return; }
+    if (!state.configured) { $('tasks-content').hidden = true; $('setup').hidden = false; return; }
     state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
     $('tasks-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }

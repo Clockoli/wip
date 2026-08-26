@@ -316,7 +316,10 @@ async function loadTasks(message, sender) {
     }
     return {
       configured: true, sourceRepository: `${config.owner}/${config.repo}`, branch,
-      tasks: aggregateTrackedTasks(records, { user, metadata, active: timerState.active }),
+      tasks: aggregateTrackedTasks(records, {
+        user, metadata, active: timerState.active, pendingWrites: timerState.pendingWrites,
+        startDate: message.payload?.startDate, endDate: message.payload?.endDate,
+      }),
       active: timerState.active,
       pendingWrites: timerState.pendingWrites,
     };

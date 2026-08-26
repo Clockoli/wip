@@ -104,3 +104,21 @@ test('arbitrary URL tasks aggregate without provider metadata and keep title opt
   ], { user: 'alice' });
   assert.deepEqual(tasks, [{ taskUrl, title: 'Optional name', totalSeconds: 300, sessionCount: 2 }]);
 });
+
+test('locally accepted pending completions participate in Top tasks without double counting persisted records', () => {
+  const taskUrl = 'https://example.com/pending';
+  const pendingEntry = {
+    user: 'alice', taskUrl, taskTitle: 'Pending task', startedAt: '2026-08-20T10:00:00Z',
+    endedAt: '2026-08-20T11:00:00Z', durationSeconds: 3600, description: 'done',
+  };
+  const pendingWrites = [{ operation: 'completeTimer', entry: pendingEntry }];
+  assert.deepEqual(aggregateTrackedTasks([], { user: 'alice', pendingWrites }), [{
+    taskUrl, title: 'Pending task', totalSeconds: 3600, sessionCount: 1,
+  }]);
+  assert.equal(aggregateTrackedTasks([pendingEntry], { user: 'alice', pendingWrites })[0].totalSeconds, 3600);
+  const winner = { ...pendingEntry, endedAt: '2026-08-20T10:55:00Z', durationSeconds: 3300, description: 'first Stop' };
+  const loser = { ...pendingEntry, endedAt: '2026-08-20T11:05:00Z', durationSeconds: 3900, description: 'second Stop' };
+  assert.deepEqual(aggregateTrackedTasks([winner], {
+    user: 'alice', pendingWrites: [{ operation: 'completeTimer', entry: loser }],
+  }), [{ taskUrl, title: 'Pending task', totalSeconds: 3300, sessionCount: 1 }]);
+});

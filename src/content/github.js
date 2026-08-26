@@ -214,7 +214,7 @@
       try {
         const data = await send({ type: 'GET_PAGE_STATE' });
         applyPageState(data);
-        if (Array.isArray(data?.recent)) applyMenuData(data.recent, false);
+        if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         renderUi();
       } catch { schedulePendingRefresh(); }
     }, 500);
@@ -889,7 +889,7 @@ The previous version remains in Git history.`)) return;
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
-    const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks';
+    const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks'; tasks.prepend(icon('checklist', TASKS_PATH));
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
     const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
     headerActions.append(tasks, reports, settings); header.append(headerActions); menu.append(header);

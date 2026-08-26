@@ -13,6 +13,10 @@ function dateValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? '').trim().slice(0, 300); }
+function sameTimer(left, right) {
+  return left?.user === right?.user && taskUrlOf(left) === taskUrlOf(right)
+    && left.startedAt === right.startedAt;
+}
 
 export function taskPeriodRange(period, today) {
   const days = PERIOD_DAYS[period];
@@ -39,10 +43,15 @@ export function sortTrackedTasks(tasks, options = {}) {
     || taskUrlOf(a).localeCompare(taskUrlOf(b)));
 }
 
-export function aggregateTrackedTasks(records, { user, metadata = new Map(), active = null } = {}) {
+export function aggregateTrackedTasks(records, { user, metadata = new Map(), active = null, pendingWrites = [], startDate = '', endDate = '' } = {}) {
   if (typeof user !== 'string' || !user) throw new Error('Task owner is required');
+  const persisted = [...(records ?? [])];
+  const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry)
+    .map(operation => operation.entry)
+    .filter(entry => (!startDate || entry.entryDate >= startDate) && (!endDate || entry.entryDate <= endDate)
+      && !persisted.some(record => sameTimer(record, entry)));
   const tasks = new Map();
-  for (const record of records ?? []) {
+  for (const record of [...persisted, ...pending]) {
     if (record?.user !== user) continue;
     const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
     const seconds = Number(record.durationSeconds);

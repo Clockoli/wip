@@ -202,7 +202,7 @@ export class TrackerService {
     const pendingEntry = { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true };
     const pendingActive = { ...nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true };
     await this.mutateState(latest => {
-      if (!sameDurableTimer(latest.activeCache, current)) throw new Error('The local timer changed before this switch was accepted. Retry the action.');
+      if (!sameTimer(latest.activeCache, current)) throw new Error('The local timer changed before this switch was accepted. Retry the action.');
       return {
         pendingWrites: [...(latest.pendingWrites ?? []), operation], activeCache: pendingActive,
         recentCache: [pendingEntry, ...(latest.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
@@ -231,7 +231,7 @@ export class TrackerService {
     };
     const pendingEntry = { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true };
     await this.mutateState(latest => {
-      if (!sameDurableTimer(latest.activeCache, active)) throw new Error('The local timer changed before Stop was accepted. Retry the action.');
+      if (!sameTimer(latest.activeCache, active)) throw new Error('The local timer changed before Stop was accepted. Retry the action.');
       return {
         pendingWrites: [...(latest.pendingWrites ?? []), operation], activeCache: null,
         recentCache: [pendingEntry, ...(latest.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
@@ -252,7 +252,7 @@ export class TrackerService {
       if (!cached || !isRetryableReadFailure(error)) throw error;
       active = cached; activeVerified = false;
     }
-    if (cached && active && !sameDurableTimer(cached, active)) throw new TrackerConflictError('The active timer changed on another device. Reload before stopping.');
+    if (cached && active && !sameTimer(cached, active)) throw new TrackerConflictError('The active timer changed on another device. Reload before stopping.');
     const candidate = active || cached;
     const existing = (state.pendingWrites ?? []).find(operation => operation.operation === 'completeTimer' && sameDurableTimer(operation.activeSnapshot, candidate));
     if (existing) { await this.store.patchState({ activeCache: null }); return { entry: existing.entry, pending: true }; }
@@ -317,7 +317,15 @@ export class TrackerService {
     const path = activeTextPath(this.user);
     try {
       const file = await this.github.getText(path), active = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-      if (sameDurableTimer(active, operation.activeSnapshot)) { operation.activeSha = file.sha; return 'matching'; }
+      if (sameTimer(active, operation.activeSnapshot)) {
+        operation.activeSha = file.sha;
+        const remoteTitle = taskTitleOf(active);
+        if (remoteTitle !== taskTitleOf(operation.activeSnapshot)) {
+          operation.activeSnapshot = { ...operation.activeSnapshot, taskTitle: remoteTitle, issueTitle: remoteTitle };
+          operation.entry = { ...operation.entry, taskTitle: remoteTitle, issueTitle: remoteTitle };
+        }
+        return 'matching';
+      }
       await this.patchActiveForOperation(operation, active);
       return 'changed';
     } catch (error) {
@@ -343,17 +351,28 @@ export class TrackerService {
     if (found) return found;
     const proposed = [...file.entries, operation.entry];
     try {
-      const result = await this.putMonthly(file, proposed, `time: add ${this.user} on ${taskLabel(operation.entry)}`);
-      return parseMonthlyText(serializeMonthlyText(proposed), { user: this.user, month: file.month, path: file.path, sha: result.sha }).at(-1);
+      const activePath = activeTextPath(this.user);
+      const result = await this.github.updateTextsAtomic([
+        { path: file.path, sha: file.sha, text: serializeMonthlyText(proposed) },
+        { path: activePath, sha: operation.activeSha, text: null },
+      ], `time: stop ${this.user} on ${taskLabel(operation.entry)}`);
+      operation.activeSha = null; operation.activeCleared = true;
+      return parseMonthlyText(serializeMonthlyText(proposed), {
+        user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
+      }).at(-1);
     } catch (error) {
       if (!isConflict(error) && error?.code !== 'validation') throw error;
       file = await this.readMonthly(operation.monthlyPath);
       found = await this.completionAlreadySaved(file, operation);
       if (found) return found;
-      if (file.entries.some(entry => sameTimer(entry, operation.activeSnapshot))) {
-        throw new Error('Another Stop is still synchronizing this timer. Retry will converge automatically.');
+      const activeState = await this.activeStateFor(operation);
+      if (activeState === 'matching') {
+        throw new Error('The repository changed while this timer was stopping. Retry will converge automatically.');
       }
-      throw new TrackerConflictError('The monthly time file changed while the timer was stopping. Retry synchronization.');
+      if (activeState === 'changed') {
+        throw new TrackerConflictError('The active timer changed on another device while this completion was syncing.');
+      }
+      throw new TrackerConflictError('The active timer disappeared before its completion was saved.');
     }
   }
 
@@ -363,7 +382,7 @@ export class TrackerService {
     if (!sha) {
       try {
         const file = await this.github.getText(path), remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-        if (!sameDurableTimer(remote, operation.activeSnapshot)) {
+        if (!sameTimer(remote, operation.activeSnapshot)) {
           await this.patchActiveForOperation(operation, remote);
           throw new TrackerConflictError('The active timer changed on another device. The completed entry was saved, but the newer timer was not cleared.', 'completion_saved_newer_timer');
         }
@@ -379,7 +398,7 @@ export class TrackerService {
         let file;
         try { file = await this.github.getText(path); } catch (readError) { await this.confirmFileMissing(readError); return; }
         const remote = parseActiveText(file.text, { user: this.user, path, sha: file.sha });
-        if (!sameDurableTimer(remote, operation.activeSnapshot)) {
+        if (!sameTimer(remote, operation.activeSnapshot)) {
           await this.patchActiveForOperation(operation, remote);
           throw new TrackerConflictError('The active timer changed while it was being cleared. The newer timer was preserved.', 'completion_saved_newer_timer');
         }
@@ -446,7 +465,7 @@ export class TrackerService {
         }
         let nextActive = null;
         if (operation.stage !== 'startNext') {
-          await this.clearMatchingActive(operation);
+          if (!operation.activeCleared) await this.clearMatchingActive(operation);
           if (operation.nextActive) { operation.stage = 'startNext'; await this.persistQueueOperation(operation, { patch: { activeCache: { ...operation.nextActive, _path: activeTextPath(this.user), _sha: null, _pending: true } } }); }
         }
         if (operation.stage === 'startNext') nextActive = await this.startQueuedActive(operation);
@@ -456,7 +475,7 @@ export class TrackerService {
           activeCache: nextActive,
           recentCache: operation.entry
             ? [operation.entry, ...(latest.recentCache ?? []).filter(item =>
-              !sameCompletion(item, operation) && !(item._pending && sameDurableTimer(item, operation.activeSnapshot)))]
+              !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
               .sort(newestFirst).slice(0, 50)
             : latest.recentCache ?? [],
         }) });
@@ -583,6 +602,8 @@ export class TrackerService {
 
   async backfillActiveIssueTitle(active, knownTitles = new Map()) {
     if (!active || taskTitleOf(active) || !knownTitles.has(taskUrlOf(active))) return active;
+    const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).some(operation => sameTimer(operation.activeSnapshot, active))) return active;
     const taskTitle = normalizePlainTitle(knownTitles.get(taskUrlOf(active)));
     if (!taskTitle) return active;
     const path = activeTextPath(this.user);
@@ -638,8 +659,8 @@ export class TrackerService {
     const persisted = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
     const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [];
     const activeCache = await this.backfillActiveIssueTitle(state.activeCache, knownTitles);
-    const pending = pendingWrites.filter(operation => operation.operation === 'completeTimer' && operation.entry
-      && startDate(operation.entry) >= earliest && startDate(operation.entry) <= today && !persisted.some(entry => sameCompletion(entry, operation)))
+    const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation.operation) && operation.entry
+      && startDate(operation.entry) >= earliest && startDate(operation.entry) <= today && !persisted.some(entry => sameTimer(entry, operation.entry)))
       .map(operation => ({ ...operation.entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true }));
     const allEntries = [...persisted, ...pending], recent = allEntries.filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit);
     const summaries = summaryRanges.map(range => ({ ...range, seconds: allEntries

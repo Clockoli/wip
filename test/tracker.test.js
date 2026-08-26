@@ -300,11 +300,11 @@ test('transient active read does not overwrite a newer durable active title from
   seedText(github, 'active/alice.txt', serializeActiveText(remote), 'current-sha');
 
   const result = await service({ github, store }).stop('must not overwrite title');
-  assert.equal(result.pending, true);
-  assert.equal(github.files.has('times/2026-08/alice.txt'), false);
-  assert.equal(parseActiveText(github.files.get('active/alice.txt').text, { user: 'alice' }).issueTitle, 'Newer durable title');
-  assert.equal(store.value.pendingWrites[0].status, 'conflict');
-  assert.equal(store.value.pendingWrites[0].conflictReason, 'active_changed_no_completion');
+  assert.equal(result.pending, false);
+  assert.equal(github.files.has('active/alice.txt'), false);
+  const saved = parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].issueTitle, 'Newer durable title');
+  assert.equal(store.value.pendingWrites.length, 0);
 });
 
 test('changed-active verification adopts an existing completion before preserving the newer timer', async () => {
@@ -577,32 +577,17 @@ test('concurrent Stops adopt the first completion instead of duplicating it', as
   assert.equal(parsed.length, 1); assert.equal(parsed[0].description, 'first'); assert.equal(second.entry.description, 'first');
 });
 
-test('simultaneous Stops converge automatically after a monthly-file create race', async () => {
-  class RacingGitHub extends FakeGitHub {
-    constructor() { super(); this.activeReads = 0; this.deleteGate = new Promise(resolve => { this.releaseDelete = resolve; }); }
-    async getText(path) {
-      const result = await super.getText(path);
-      if (path === 'active/alice.txt' && ++this.activeReads === 5) setTimeout(this.releaseDelete, 0);
-      return result;
-    }
-    async deleteFile(path, message, sha) {
-      if (path === 'active/alice.txt') await this.deleteGate;
-      return super.deleteFile(path, message, sha);
-    }
-  }
-  const github = new RacingGitHub(), aStore = new MemoryStore(), bStore = new MemoryStore();
+test('simultaneous Stops converge automatically after an atomic completion race', async () => {
+  const github = new FakeGitHub(), aStore = new MemoryStore(), bStore = new MemoryStore();
   seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active');
   const a = service({ github, store: aStore, clock: () => new Date('2026-08-18T09:00:00Z') });
   const b = service({ github, store: bStore, clock: () => new Date('2026-08-18T09:05:00Z') });
   await a.refreshActive(); await b.refreshActive();
   await Promise.all([a.stop('first'), b.stop('second')]);
-  const pendingTracker = aStore.value.pendingWrites.length ? a : b;
-  const pendingStore = aStore.value.pendingWrites.length ? aStore : bStore;
-  assert.equal(pendingStore.value.pendingWrites[0]?.status, 'pending', 'the loser remains automatically retryable');
-  await pendingTracker.syncPending();
   const parsed = parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' });
   assert.equal(parsed.length, 1);
-  assert.equal(pendingStore.value.pendingWrites.length, 0);
+  assert.equal(aStore.value.pendingWrites.length, 0);
+  assert.equal(bStore.value.pendingWrites.length, 0);
 });
 
 test('malformed monthly text fails visibly instead of silently hiding the whole month', async () => {
@@ -1045,4 +1030,120 @@ test('queued background Stop survives a service-worker restart', async () => {
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(github.files.has('active/alice.txt'), false);
   assert.equal(store.value.recentCache[0].description, 'Restarted stop');
+});
+
+test('a second Stop cannot append another completion while the first Stop is clearing the active timer', async () => {
+  class DelayedFirstCommitGitHub extends FakeGitHub {
+    constructor() {
+      super(); this.commitCalls = 0;
+      this.firstCommitStarted = new Promise(resolve => { this.markFirstCommitStarted = resolve; });
+      this.firstCommitRelease = new Promise(resolve => { this.releaseFirstCommit = resolve; });
+    }
+    async updateTextsAtomic(...args) {
+      this.commitCalls += 1;
+      if (this.commitCalls === 1) { this.markFirstCommitStarted(); await this.firstCommitRelease; }
+      const result = await super.updateTextsAtomic(...args);
+      if (this.commitCalls === 2) this.releaseFirstCommit();
+      return result;
+    }
+  }
+  const github = new DelayedFirstCommitGitHub(), aStore = new MemoryStore(), bStore = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active');
+  const a = service({ github, store: aStore, clock: () => new Date('2026-08-18T09:00:00Z'), idFactory: () => '01K2ABCDEF0123456789ABCDEF' });
+  const b = service({ github, store: bStore, clock: () => new Date('2026-08-18T09:05:00Z'), idFactory: () => '01K2ABCDEF0123456789ABCDEG' });
+  await a.refreshActive(); await b.refreshActive();
+  await a.stop('first', { background: true }); await b.stop('second', { background: true });
+  const firstSync = a.syncPending(); await github.firstCommitStarted;
+  await b.syncPending(); await firstSync;
+  const parsed = parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' });
+  assert.equal(parsed.length, 1);
+  assert.equal(aStore.value.pendingWrites.length, 0);
+  assert.equal(bStore.value.pendingWrites.length, 0);
+});
+
+test('active title backfill cannot turn a locally accepted Stop into a false timer conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const untitled = active('2026-08-18T08:00:00+00:00', { issue: undefined, taskUrl: 'https://example.com/task', taskTitle: '', issueTitle: '' });
+  seedText(github, 'active/alice.txt', serializeActiveText(untitled), 'active');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
+  const cached = await tracker.refreshActive();
+  await tracker.stop('', { background: true });
+  await tracker.backfillActiveIssueTitle(cached, new Map([[untitled.taskUrl, 'Fetched title']]));
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.txt'), false);
+  assert.equal(parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' }).length, 1);
+});
+
+test('menu data keeps a locally accepted pending task switch in Recent and summary totals', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.txt', serializeActiveText(active()), 'active');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
+  await tracker.refreshActive();
+  await tracker.switchTask('https://example.com/next', 'Next', 'done', { background: true });
+  const data = await tracker.loadMenuData();
+  assert.equal(data.pendingCount, 1);
+  assert.equal(data.recent.length, 1);
+  assert.equal(data.recent[0]._pending, true);
+  assert.equal(data.todaySeconds, 3600);
+});
+
+test('title backfill that began before Stop acceptance cannot create a false conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const untitled = active('2026-08-18T08:00:00+00:00', { issue: undefined, taskUrl: 'https://example.com/task', taskTitle: '', issueTitle: '' });
+  seedText(github, 'active/alice.txt', serializeActiveText(untitled), 'active');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
+  const cached = await tracker.refreshActive();
+  const originalPut = github.putText.bind(github); let releaseTitleWrite, titleWriteStarted;
+  const started = new Promise(resolve => { titleWriteStarted = resolve; });
+  const release = new Promise(resolve => { releaseTitleWrite = resolve; });
+  github.putText = async (...args) => {
+    if (String(args[2]).includes('add missing title')) { titleWriteStarted(); await release; }
+    return originalPut(...args);
+  };
+  const backfill = tracker.backfillActiveIssueTitle(cached, new Map([[untitled.taskUrl, 'Fetched title']]));
+  await started;
+  await tracker.stop('', { background: true });
+  releaseTitleWrite(); await backfill;
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.txt'), false);
+  assert.equal(parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' }).length, 1);
+});
+
+test('title backfill between Stop verification and atomic commit retries automatically', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const untitled = active('2026-08-18T08:00:00+00:00', { issue: undefined, taskUrl: 'https://example.com/task', taskTitle: '', issueTitle: '' });
+  seedText(github, 'active/alice.txt', serializeActiveText(untitled), 'active');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
+  await tracker.refreshActive(); await tracker.stop('', { background: true });
+  const originalAtomic = github.updateTextsAtomic.bind(github), originalPut = github.putText.bind(github); let race = true;
+  github.updateTextsAtomic = async (...args) => {
+    if (race) {
+      race = false;
+      await originalPut('active/alice.txt', serializeActiveText({ ...untitled, taskTitle: 'Fetched title', issueTitle: 'Fetched title' }), 'add missing title', github.files.get('active/alice.txt').sha);
+    }
+    return originalAtomic(...args);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0]?.status, 'pending');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyText(github.files.get('times/2026-08/alice.txt').text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].issueTitle, 'Fetched title');
+  assert.equal(store.value.recentCache.length, 1);
+  assert.equal(store.value.recentCache[0].issueTitle, 'Fetched title');
+  assert.equal(store.value.recentCache[0]._pending, undefined);
+});
+
+test('menu data deduplicates a concurrent Stop loser against the persisted winner by timer identity', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const winner = entry('2026-08-18T08:00:00Z', '2026-08-18T08:55:00Z', { issue: undefined, taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'first Stop' });
+  const loser = entry('2026-08-18T08:00:00Z', '2026-08-18T09:05:00Z', { issue: undefined, taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'second Stop' });
+  seedText(github, 'times/2026-08/alice.txt', serializeMonthlyText([winner]), 'month');
+  store.value.pendingWrites = [{ operation: 'completeTimer', entry: loser, monthlyPath: 'times/2026-08/alice.txt' }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T10:00:00Z') });
+  const menu = await tracker.loadMenuData();
+  assert.equal(menu.recent.length, 1);
+  assert.equal(menu.todaySeconds, winner.durationSeconds);
 });
