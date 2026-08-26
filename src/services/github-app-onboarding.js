@@ -1,8 +1,8 @@
-import { parseActiveText, parseMonthlyText, parseMonthlyTextPath, timestampWithTimezone } from '../domain/monthly-text.js';
+import { parseActiveRecord, parseMonthlyRecords, parseMonthlyRecordsPath, timestampWithTimezone } from '../domain/work-records.js';
 const MARKER_PATH = '.clockoli/config.json';
 const REPOSITORY_FORMAT_VERSION = 1;
-const MAX_LEGACY_FILES = 500;
-const MAX_LEGACY_BYTES = 20 * 1024 * 1024;
+const MAX_DATA_FILES = 500;
+const MAX_DATA_BYTES = 20 * 1024 * 1024;
 const MAX_MARKER_BYTES = 64 * 1024;
 const MAX_MARKER_USERS = 1000;
 const LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
@@ -208,20 +208,20 @@ async function validateExistingFiles(github, entries) {
     if ([MARKER_PATH, '.clockoli/.gitkeep', 'active/.gitkeep', 'times/.gitkeep'].includes(path)) continue;
     if (path.startsWith('.clockoli/')) throw new OnboardingError('The repository contains an incompatible Clockoli control path.', 'incompatible_storage_format');
     if (path.startsWith('active/')) {
-      if (!/^active\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.txt$/.test(path)) {
+      if (!/^active\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.json$/.test(path)) {
         throw new OnboardingError('The repository contains an incompatible active-timer path.', 'incompatible_storage_format');
       }
-      relevant.push({ path, type: 'active', user: path.slice(7, -4) });
+      relevant.push({ path, type: 'active', user: path.slice(7, -5) });
     }
     if (path.startsWith('times/')) {
-      if (!/^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.txt$/.test(path)) {
+      if (!/^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.jsonl$/.test(path)) {
         throw new OnboardingError('The repository contains an incompatible monthly time path.', 'incompatible_storage_format');
       }
-      const parsed = parseMonthlyTextPath(path);
+      const parsed = parseMonthlyRecordsPath(path);
       relevant.push({ path, type: 'monthly', user: parsed.user, month: parsed.month });
     }
   }
-  if (relevant.length > MAX_LEGACY_FILES) throw new OnboardingError('Existing Clockoli storage has too many files to validate safely.', 'legacy_layout_budget');
+  if (relevant.length > MAX_DATA_FILES) throw new OnboardingError('Existing Clockoli storage has too many files to validate safely.', 'storage_layout_budget');
   let bytes = 0;
   for (let index = 0; index < relevant.length; index += 6) {
     const batch = relevant.slice(index, index + 6);
@@ -229,10 +229,10 @@ async function validateExistingFiles(github, entries) {
     for (let offset = 0; offset < batch.length; offset += 1) {
       const item = batch[offset], file = files[offset];
       bytes += new TextEncoder().encode(file.text).byteLength;
-      if (bytes > MAX_LEGACY_BYTES) throw new OnboardingError('Existing Clockoli storage is too large to validate safely.', 'legacy_layout_budget');
+      if (bytes > MAX_DATA_BYTES) throw new OnboardingError('Existing Clockoli storage is too large to validate safely.', 'storage_layout_budget');
       try {
-        if (item.type === 'active') parseActiveText(file.text, { user: item.user, path: item.path, sha: file.sha });
-        else parseMonthlyText(file.text, { user: item.user, month: item.month, path: item.path, sha: file.sha });
+        if (item.type === 'active') parseActiveRecord(file.text, { user: item.user, path: item.path, sha: file.sha });
+        else parseMonthlyRecords(file.text, { user: item.user, month: item.month, path: item.path, sha: file.sha });
       } catch (error) {
         throw new OnboardingError(`Existing Clockoli data is incompatible at ${item.path}: ${error.message}`, 'incompatible_storage_format');
       }

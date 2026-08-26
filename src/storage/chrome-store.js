@@ -124,23 +124,6 @@ export class IndexedDbBackend {
   }
 }
 
-function migrateV2PendingWrites(pendingWrites) {
-  return (pendingWrites ?? []).map(operation => {
-    if (operation.operation !== 'completeTimer') return operation;
-    if (operation.monthlyPath) return operation;
-    const match = typeof operation.dailyPath === 'string'
-      ? operation.dailyPath.match(/^times\/(\d{4}-\d{2})-\d{2}\/([A-Za-z0-9-]+)\.txt$/)
-      : null;
-    if (!match) throw new Error('Cannot migrate a pending completion to monthly storage. Resolve it with the previous extension version first.');
-    const { dailyPath, ...rest } = operation;
-    return {
-      ...rest,
-      stage: rest.stage === 'appendDaily' ? 'appendMonthly' : rest.stage,
-      monthlyPath: `times/${match[1]}/${match[2]}.txt`,
-    };
-  });
-}
-
 export class ChromeStore {
   constructor(backend = new IndexedDbBackend()) { this.backend = backend; }
 
@@ -170,12 +153,7 @@ export class ChromeStore {
       if (state.dataVersion > version) {
         throw storageFormatError(`Clockoli local data version ${state.dataVersion} is newer than supported version ${version}.`);
       }
-      if (state.dataVersion !== 2 && (state.activeCache || (state.pendingWrites || []).length)) {
-        throw storageFormatError('Clockoli cannot safely migrate accepted active or pending work from this local data version.');
-      }
-      const reset = state.dataVersion === 2 && version === 3
-        ? { activeCache: state.activeCache, recentCache: [], pendingWrites: migrateV2PendingWrites(state.pendingWrites), dataVersion: version }
-        : { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
+      const reset = { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
       return { set: reset, result: { ...state, ...reset } };
     });
   }

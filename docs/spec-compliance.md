@@ -1,66 +1,72 @@
-# Draft 2 specification compliance
+# Version 1 specification compliance
 
-Source analyzed: Clockoli GitHub onboarding specification, Draft 2 dated 2026-08-20, plus the subsequently delivered URL-first task, personal-branch, Tasks, Reports, and local-billing requirements.
+Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered URL-first task, personal-branch, Tasks, Reports, local-billing, durable-mutation, and work-record v1 requirements.
 
 ## Selected defaults
-
-The specification leaves several Version 1 choices open. This implementation selects its recommended defaults:
 
 | Decision | Implementation |
 |---|---|
 | Browser | Chrome/Chromium Manifest V3; Chrome 102+ |
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
+| Work actors | Human and agent identities use the same work-record schema |
 | Descriptions | Optional, maximum 2,000 characters |
 | Manual entries | All-or-nothing bulk creation of completed dated URL tasks on the Activity page |
-| Offline behavior | Start requires GitHub connectivity; Stop is queued locally and retried |
-| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly-file read per represented month; globally sorted by editable start timestamp; maximum 50 returned |
-| Issue owners | Any canonical GitHub issue or pull request may be tracked |
-| Storage | One configured private GitHub repository; shared marker on the source branch and routine writes on a marked `clockoli/users/{stable-user-id}` personal branch |
+| Offline behavior | Start is accepted durably in extension-local storage and reconciled to GitHub; Stop is queued and retried |
+| Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly JSONL read per represented month; globally sorted; maximum 50 returned |
+| Storage | One private GitHub repository; shared marker on the default branch and work records on marked `clockoli/users/{stable-user-id}` branches |
 | Deletion | Allowed after explicit confirmation, with Git history retained |
 | Long entries | Warning above 12 hours |
-| Issue title | Captured when available and persisted as a bounded optional `Title` field |
-| Active state | `active/{login}.txt` is deleted after a successful Stop |
-| Authentication | Backend-free GitHub App Device Flow; fine-grained PAT retained as an advanced compatibility/migration path |
+| Active state | `active/{login}.json` is deleted after the completed record is atomically persisted |
+| Completed state | `times/{local YYYY-MM}/{login}.jsonl`, one JSON object per line |
+| Authentication | Backend-free GitHub App Device Flow; fine-grained PAT is an advanced authentication option |
 
 ## Architecture mapping
 
-- `src/content/github.js` survives dynamic GitHub navigation and inserts a closed-Shadow split stopwatch control immediately before the avatar on every GitHub page. The shared toolbar-popup renderer derives a task from any active HTTP(S) tab, refreshes that tab at Start, and uses the same timer, recent-entry inline edit/Delete, Tasks, Times, and Reports controls.
-- `src/background/service-worker.js` owns privileged messages, resumable Device Flow, rotating credentials, GitHub API access, stable-ID repository recovery, synchronization, and timer mutations.
-- `src/api/github-client.js` implements authenticated user lookup, GitHub Contents API text reads/writes/deletes, atomic multi-file commits through Git Data APIs, and bounded GraphQL hydration of tracked task titles.
-- `src/services/tracker.js` implements one active timer per authenticated user, globally ordered recent entries across monthly text files, stable-fingerprint/SHA-safe edits and deletes, and atomic cross-month entry/boundary moves, pending Stop retries, and idempotent partial-failure recovery.
-- `src/storage/chrome-store.js` atomically stores background-owned Device Flow attempts, GitHub App access/refresh credentials, PAT compatibility credentials, configuration generations, recent/pending state, and repository-scoped report snapshot/blob caches in extension-origin IndexedDB. The extension requests no `chrome.storage` permission, so GitHub content scripts cannot access this database.
-- `src/popup/*` provides the toolbar-popup version of the active timer, optional Stop description, recent records, unified inline edit/delete UI, sync status, and conflict acknowledgement.
-- `src/reports/*` discovers valid marked personal branches, merges valid default-branch data, and loads an inclusive Start-date range with branch ETag validation and immutable-SHA cache reuse. It provides Person/Source facets, selectable metric/axis stacked analytics (task metrics deduplicate by canonical task URL), effective-dated local-rate billing, CSV/JSON export, and native print/save-to-PDF entirely in the extension page.
-- `src/tasks/*` preselects only the authenticated user's monthly paths, aggregates repeated sessions and any active-only task by canonical task URL, sorts by completed plus running time, filters by URL/title immediately while typing, and uses the serialized tracker Start/Stop messages. Optional GitHub titles never affect task identity.
-- `src/times/*` loads authenticated-user range history, filters by URL/title, shares the inline editor, and submits all-or-nothing bulk completed entries.
-- `src/options/*` provides resumable Device Flow, installation/private-repository selection, initialization and recovery status, guarded local disconnect/reset, and an advanced PAT compatibility path.
+- `src/content/github.js` inserts the tracking UI and sends only validated page-safe work-item data.
+- `src/background/service-worker.js` owns credentials, GitHub API access, durable local acceptance, synchronization, and all mutations.
+- `src/api/github-client.js` provides SHA-guarded reads/writes/deletes, atomic multi-file commits, immutable blob reads, and bounded metadata hydration.
+- `src/domain/records.js` owns runtime work-record construction, stable ID invariants, timezone-aware local dates, edits, and validation.
+- `src/domain/work-records.js` is the sole persistent v1 codec and path contract. It accepts JSON/JSONL only and preserves unknown fields when rewriting supported records.
+- `src/services/tracker.js` implements one active timer per user, ID-safe edits/deletes, atomic cross-month changes, queued reconciliation, and idempotent concurrent Stop handling.
+- `src/storage/chrome-store.js` atomically stores credentials, configuration generations, accepted pending mutations, recent state, and repository-scoped report caches in extension-origin IndexedDB.
+- `src/reports/*`, `src/tasks/*`, and `src/times/*` consume the same runtime projection of v1 work records.
 
-## Data and concurrency invariants
+## Persistent data invariants
 
-- Canonical identity is the stable numeric GitHub user ID; `.clockoli/config.json` maps it to the validated storage login used in canonical file names.
-- The shared default branch owns `.clockoli/config.json`. Each current user writes active and completed data to a fail-closed, ownership-marked `clockoli/users/{stable-user-id}` branch; valid default-branch records remain readable.
-- Active state is plain text at `active/{login}.txt`; completed entries are blank-line-separated blocks at `times/{start-local YYYY-MM}/{login}.txt`.
-- Each persisted block contains canonical `URL`, an optional one-line `Title`, timezone-bearing `Start`, timezone-bearing `End`, and optional one-line `Description`; active files omit `End`.
-- Duration is recomputed from `End - Start` and is never persisted or based on render ticks.
-- A parsed record's array index is only a hint. Edits/deletes also carry the original persisted fields and locate the unique matching block, so manual reordering does not retarget an operation.
-- Changing Start to another local month moves the block between monthly files. Multi-file edits and boundary moves verify the branch tree and publish one atomic Git commit.
-- Stop verifies that a reachable remote active timer still matches the cache before queueing; retry accepts exact intended content; if another device already cleared the active timer, one unique same-URL/same-Start completion with the same durable title is treated as that concurrent Stop.
-- The active file is deleted with its known SHA and conflicts are re-read before any retry, preserving newer timers.
-- Same-destination settings changes preserve pending writes; repository/user changes are blocked while a write or active timer exists.
-- Repository coordinates, branch ownership, task URLs, optional GitHub metadata, dates, timestamps, paths, and manually maintained text fields are validated before use.
+- `schema_version` is exactly `1`; no other persistent work-record schema is supported.
+- The canonical paths are `active/{storage-login}.json` and `times/{local YYYY-MM}/{storage-login}.jsonl`.
+- Active storage contains one formatted JSON object. Monthly storage contains one compact JSON object per non-empty line.
+- Every record has a stable ULID. Stop completes the active record without changing its ID.
+- `actor` identifies who performed work. `producer` identifies the software that wrote it. Optional `execution` identifies an agent run or session.
+- `activity.started_at`, `activity.ended_at`, `created_at`, and `updated_at` are UTC. `activity.local_date` and an IANA timezone define calendar reporting and partitioning.
+- `metrics` are namespaced measurements with value, unit, aggregation, and provenance; no AI-specific fields are required at the root.
+- Unknown root and nested fields survive supported read-modify-write operations.
+- Work-item URL, title, timestamps, local date, timezone, identities, paths, metadata, metrics, and record type are validated before use.
+- A malformed active JSON or monthly JSONL file is rejected as a whole.
+- Duplicate record IDs within one monthly file are rejected.
+- Duration is derived from `ended_at - started_at` and not persisted as authoritative data.
+
+## Concurrency invariants
+
+- Git blob SHAs guard file rewrites; stable record IDs locate records independently of ordering or mutable content.
+- Start, Stop, and switch acceptance is persisted locally before asynchronous GitHub reconciliation.
+- Pending operations are FIFO and operation-ID-aware.
+- A matching concurrent completion is adopted by stable record ID instead of appended again.
+- A stale Stop never clears or resurrects a newer active timer.
+- Multi-file edits, boundary moves, and bulk imports preflight affected files and publish one atomic Git commit.
+- Repository or identity changes are blocked while accepted work could be stranded.
 
 ## Privacy and permissions
 
-- The extension writes only to the configured private time-data repository.
-- It never posts time data or descriptions to the tracked URL or source system.
-- Device codes, GitHub App access/refresh tokens, and PAT compatibility credentials are used only in extension-controlled contexts and are never returned to the content script or page.
-- Runtime host access is restricted to `https://api.github.com/*` and GitHub Device Flow endpoints under `https://github.com/login/*`.
-- Extension pages use `script-src 'self'; object-src 'none'`; runtime JavaScript, CSS, and fonts are local.
-- The configured data repository must be private and accessible on the configured branch.
-- Commit messages contain stable identifiers and durations, never free-text descriptions.
+- The extension writes only to the configured private data repository.
+- It never posts work data to the tracked URL or source system.
+- GitHub credentials and local billing settings remain in extension-controlled contexts.
+- Runtime host access is restricted to GitHub API and Device Flow endpoints.
+- Commit messages contain stable identifiers and durations, never descriptions.
+- Repository readers can inspect actors, work items, timestamps, descriptions, metadata, metrics, and execution information. Hourly rates remain local.
 
-## MVP acceptance coverage
+## Acceptance coverage
 
-Automated tests cover resumable Device Flow, token rotation/single-flight refresh, cancellation and restart races, installation/repository pagination budgets, private-write eligibility, marker initialization conflicts, PAT migration, stable-ID repository recovery, guarded disconnect/reset, arbitrary HTTP(S) task URLs, optional titles, backward-compatible GitHub issue/PR parsing, monthly path/Start-month validation, strict plain-text parsing, private-repository enforcement, sender trust boundaries, timer accuracy, SHA conflicts, pending Stop recovery, exact/concurrent completion identity, one-read-per-month loading, stable record lookup after reordering, same-month and atomic cross-month linked edits, direct inline time correction without wheel or step controls, filtered linked-draft preservation, atomic bulk entry across historical partitions and active-timer races, persistent SHA/ETag report caching, sender-scoped stale-load cancellation, personal-branch discovery, popup behavior, GitHub shortcut isolation, SPA/header recovery, complete rotating period totals beyond the recent-row cap, locale-aware panel timestamps, repository-wide range loading, Source/Person faceting, effective-dated local-rate billing, analytics aggregation across every requested axis combination, task deduplication, active-time re-sorting, user-only blob selection, load budgets, bounded cached title hydration, CSV/JSON exports, and print/save-to-PDF wiring.
+Automated tests cover strict v1 JSON/JSONL parsing, stable Start-to-Stop identity, unsupported-schema rejection, unknown-field preservation, actor/producer separation, metric validation, local-date/month partitioning, arbitrary HTTP(S) work items, durable local timer mutations, MV3 restarts, concurrent Stops, stale-title races, pending projections, SHA conflicts, ID-safe edits/deletes after reordering, atomic linked and cross-month edits, bulk import, personal-branch discovery, report caching, sender trust boundaries, Tasks/Activity/Reports views, billing, exports, and release-package validation.
 
-Reminders, mobile applications, automatic unpacked-extension updates, and Firefox packaging remain outside this release scope. Manual completed-entry creation is available through the Times bulk importer.
+The complete normative persistent format is [Data Format v1](data-format-v1.md).

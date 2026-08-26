@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf } from '../src/domain/values.js';
-import { parseActiveText, parseMonthlyText, serializeActiveText, serializeMonthlyText } from '../src/domain/monthly-text.js';
+import { parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
 
 const arbitraryUrl = 'https://example.com/docs/search?q=repo+clock#result';
+const ID = '01K2ABCDEF0123456789ABCDEF';
 
 test('task identity is an arbitrary canonical HTTP(S) URL with optional GitHub metadata', () => {
   assert.equal(normalizeTaskUrl(arbitraryUrl), arbitraryUrl);
@@ -20,38 +21,31 @@ test('task identity is an arbitrary canonical HTTP(S) URL with optional GitHub m
   }
 });
 
-test('new timers and monthly records store only task URL plus an optional task title', () => {
-  const active = buildActiveTimer({ user: 'alice', taskUrl: arbitraryUrl, taskTitle: '', startedAt: '2026-08-22T08:00:00Z' });
-  assert.equal(active.taskUrl, arbitraryUrl);
-  assert.equal(active.taskTitle, '');
-  assert.equal('issue' in active, false);
-  const entry = buildEntry({ active, id: '01K2ABCDEF0123456789ABCDEF', endedAt: '2026-08-22T09:00:00Z' });
-  assert.equal(entry.taskUrl, arbitraryUrl);
-  assert.equal('issue' in entry, false);
-
-  const activeText = serializeActiveText(active);
-  assert.equal(activeText, `URL: ${arbitraryUrl}\nStart: 2026-08-22T08:00:00Z\n`);
-  const parsedActive = parseActiveText(activeText, { user: 'alice' });
+test('new timers and monthly records persist canonical work-item identity and title', () => {
+  const active = buildActiveTimer({
+    user: 'alice', id: ID, taskUrl: arbitraryUrl, taskTitle: '', startedAt: '2026-08-22T08:00:00Z',
+    entryDate: '2026-08-22', timezone: 'UTC',
+  });
+  const entry = buildEntry({ active, endedAt: '2026-08-22T09:00:00Z' });
+  const activeJson = serializeActiveRecord(active);
+  const storedActive = JSON.parse(activeJson);
+  assert.deepEqual(storedActive.work_item, { kind: 'url', id: `url:${arbitraryUrl}`, url: arbitraryUrl, title: '' });
+  const parsedActive = parseActiveRecord(activeJson, { user: 'alice' });
   assert.equal(parsedActive.taskUrl, arbitraryUrl);
-  assert.equal(parsedActive.taskTitle, '');
+  assert.equal(parsedActive.id, ID);
   assert.equal('issue' in parsedActive, false);
 
-  const monthlyText = serializeMonthlyText([{ ...entry, taskTitle: 'Optional documentation task' }]);
-  const parsed = parseMonthlyText(monthlyText, { user: 'alice', month: '2026-08' })[0];
+  const monthlyJsonl = serializeMonthlyRecords([{ ...entry, taskTitle: 'Optional documentation task' }]);
+  const parsed = parseMonthlyRecords(monthlyJsonl, { user: 'alice', month: '2026-08' })[0];
   assert.equal(parsed.taskUrl, arbitraryUrl);
   assert.equal(parsed.taskTitle, 'Optional documentation task');
+  assert.equal(parsed.id, ID);
   assert.equal('issue' in parsed, false);
 });
 
-test('legacy GitHub-shaped runtime records remain serializable without rewriting URL data', () => {
-  const issue = { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' };
-  const text = serializeMonthlyText([{
-    schemaVersion: 1, id: '01K2ABCDEF0123456789ABCDEF', user: 'alice', issue, issueTitle: 'Legacy title',
-    startedAt: '2026-08-22T08:00:00Z', endedAt: '2026-08-22T09:00:00Z', durationSeconds: 3600,
-    description: '', createdAt: '2026-08-22T09:00:00Z', updatedAt: '2026-08-22T09:00:00Z',
-  }]);
-  assert.match(text, /^URL: https:\/\/github\.com\/acme\/app\/issues\/7\nTitle: Legacy title/m);
-  const parsed = parseMonthlyText(text, { user: 'alice', month: '2026-08' })[0];
-  assert.equal(parsed.taskUrl, issue.url);
-  assert.equal(parsed.taskTitle, 'Legacy title');
+test('old text blocks are not accepted by the sole v1 reader', () => {
+  assert.throws(() => parseMonthlyRecords(
+    'URL: https://github.com/acme/app/issues/7\nStart: 2026-08-22T08:00:00Z\nEnd: 2026-08-22T09:00:00Z\n',
+    { user: 'alice', month: '2026-08' },
+  ), /JSON/i);
 });

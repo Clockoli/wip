@@ -63,7 +63,7 @@ export class OnboardingCoordinator {
     if (!candidate) throw new OnboardingError('Clockoli no longer has access to the selected repository.', 'repository_access_required');
 
     const [{ config: previousConfig }, before] = await Promise.all([
-      this.store.getConfigurationSnapshot(), this.store.ensureDataVersion(3),
+      this.store.getConfigurationSnapshot(), this.store.ensureDataVersion(4),
     ]);
     let migrationGithub = null, migrationIdentity = null;
     const migratingPat = auth.source === 'pending' && auth.currentSnapshot.auth?.mode === 'pat';
@@ -159,7 +159,7 @@ export class OnboardingCoordinator {
     }, branchSource);
 
     // Close the validation-vs-Start/Stop race before committing the transition.
-    const after = await this.store.ensureDataVersion(3);
+    const after = await this.store.ensureDataVersion(4);
     await this.assertSafeTransition(previousConfig, after, changing);
     const recentDays = Number(payload.recentDays ?? previousConfig?.recentDays ?? 7);
     if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new OnboardingError('Recent entries shown in the main panel must be between 1 and 31 days.', 'invalid_configuration');
@@ -186,7 +186,7 @@ export class OnboardingCoordinator {
       activeCache: repositoryDataChanged ? null : after.activeCache,
       recentCache: repositoryDataChanged ? [] : (after.recentCache || []),
       pendingWrites: repositoryDataChanged ? [] : (after.pendingWrites || []),
-      dataVersion: 3,
+      dataVersion: 4,
       taskMetadataCache: null,
       onboardingLastVerifiedAt: new Date(this.now()).toISOString(),
       onboardingVerificationStatus: initialization.status,

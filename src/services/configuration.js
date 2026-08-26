@@ -1,4 +1,4 @@
-import { activeTextPath, parseActiveText } from '../domain/monthly-text.js';
+import { activeRecordPath, parseActiveRecord } from '../domain/work-records.js';
 import { validateBranch, validateOwner, validateRepo } from '../domain/values.js';
 import { ensureUserStorageBranch } from './user-storage-branch.js';
 
@@ -113,8 +113,8 @@ export class ConfigurationService {
     });
     const user = state.user || await github.getAuthenticatedUser();
     try {
-      const path = activeTextPath(user), file = await github.getText(path);
-      return parseActiveText(file.text, { user, path, sha: file.sha });
+      const path = activeRecordPath(user), file = await github.getText(path);
+      return parseActiveRecord(file.text, { user, path, sha: file.sha });
     } catch (error) {
       if (!isNotFound(error)) throw error;
       await github.assertDestinationReachable();
@@ -180,7 +180,7 @@ export class ConfigurationService {
       activeCache: preservesDataIdentity ? state.activeCache : null,
       recentCache: preservesDataIdentity ? (state.recentCache || []) : [],
       pendingWrites: preservesDataIdentity ? (state.pendingWrites ?? []) : [],
-      dataVersion: 3,
+      dataVersion: 4,
       taskMetadataCache: null,
       ...(!preservesDataIdentity ? { reportCache: null } : {}),
     };

@@ -13,7 +13,7 @@ class MemoryStore {
   constructor({ current = null, pending = null, config = null, state = {} } = {}) {
     this.current = current; this.pending = pending; this.config = config;
     this.currentGeneration = current?.generation || 0; this.pendingGeneration = pending?.generation || 0; this.configurationGeneration = 4;
-    this.state = { activeCache: null, pendingWrites: [], recentCache: [], reportCache: null, taskMetadataCache: null, user: null, dataVersion: 3, ...state };
+    this.state = { activeCache: null, pendingWrites: [], recentCache: [], reportCache: null, taskMetadataCache: null, user: null, dataVersion: 4, ...state };
     this.commits = []; this.saves = []; this.removals = 0; this.clears = 0;
   }
   async getAuthSnapshot() { return { auth: structuredClone(this.current), authGeneration: this.currentGeneration, configurationGeneration: this.configurationGeneration }; }
@@ -320,7 +320,7 @@ test('PAT to App migration proves stable account identity before preserving lega
 });
 
 test('repository selection rejects future local data before initialization and preserves it exactly', async () => {
-  const future = { activeCache: null, pendingWrites: [], recentCache: [{ future: true }], user: 'alice', dataVersion: 4 };
+  const future = { activeCache: null, pendingWrites: [], recentCache: [{ future: true }], user: 'alice', dataVersion: 5 };
   const store = new MemoryStore({
     current: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', accessToken: 'current', generation: 2 },
     config: { owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'default', repoId: 77, storageLogin: 'alice' },
@@ -330,7 +330,7 @@ test('repository selection rejects future local data before initialization and p
   await assert.rejects(
     () => coordinator(store, { initializer: { initialize: async () => { initialized += 1; throw new Error('must not initialize'); } } })
       .selectRepository({ installationId: 88, repoId: 77 }),
-    /unsupported local data version 4/,
+    /unsupported local data version 5/,
   );
   assert.equal(initialized, 0);
   assert.deepEqual(store.state, { taskMetadataCache: null, reportCache: null, ...future });

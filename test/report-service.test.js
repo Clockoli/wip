@@ -2,8 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReportService } from '../src/services/reports.js';
 
-const block = (url, start, end, description = '') => `URL: ${url}\nStart: ${start}\nEnd: ${end}\n${description ? `Description: ${description}\n` : ''}`;
-const monthly = (...blocks) => blocks.join('\n');
+const block = (url, start, end, description = '', user = 'alice') => {
+  const github = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(issues|pull)\/(\d+)$/);
+  const suffix = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'[Number(github?.[4] || 0) % 32];
+  return JSON.stringify({
+    schema_version: 1, id: `01K2ABCDEF0123456789ABCDE${suffix}`, record_type: 'work',
+    actor: { kind: 'human', id: `github:${user}`, name: user },
+    work_item: {
+      kind: github?.[3] === 'pull' ? 'github_pr' : github ? 'github_issue' : 'url', id: `url:${url}`, url, title: '',
+    },
+    activity: {
+      state: 'completed', started_at: new Date(start).toISOString(), ended_at: new Date(end).toISOString(),
+      local_date: start.slice(0, 10), timezone: 'UTC',
+    },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    description, metadata: {}, metrics: {}, created_at: new Date(start).toISOString(), updated_at: new Date(end).toISOString(),
+  });
+};
+const monthly = (...blocks) => `${blocks.join('\n')}\n`;
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
 
 class MemoryReportCache {
@@ -18,11 +34,11 @@ class FakeGitHub {
     this.etag = '"one"';
     this.notModified = false;
     this.files = new Map([
-      ['times/2026-08/alice.txt', { sha: A, text: monthly(
+      ['times/2026-08/alice.jsonl', { sha: A, text: monthly(
         block('https://github.com/acme/app/issues/1', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
         block('https://github.com/acme/api/issues/3', '2026-08-18T09:00:00+00:00', '2026-08-18T10:00:00+00:00'),
         block('https://github.com/acme/app/issues/4', '2026-08-19T09:00:00+00:00', '2026-08-19T10:00:00+00:00')) }],
-      ['times/2026-08/bob.txt', { sha: B, text: block('https://github.com/acme/app/pull/2', '2026-08-17T10:00:00+00:00', '2026-08-17T12:00:00+00:00', 'review') }],
+      ['times/2026-08/bob.jsonl', { sha: B, text: monthly(block('https://github.com/acme/app/pull/2', '2026-08-17T10:00:00+00:00', '2026-08-17T12:00:00+00:00', 'review', 'bob')) }],
     ]);
     this.snapshots = [];
     this.reads = [];
@@ -46,7 +62,7 @@ class FakeGitHub {
 test('report service loads monthly files and filters records to the inclusive date range', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache();
   const records = await new ReportService({ github, cache }).loadRange({ startDate: '2026-08-17', endDate: '2026-08-18' });
-  assert.deepEqual(github.reads.sort(), ['times/2026-08/alice.txt', 'times/2026-08/bob.txt']);
+  assert.deepEqual(github.reads.sort(), ['times/2026-08/alice.jsonl', 'times/2026-08/bob.jsonl']);
   assert.deepEqual(records.map(item => [item.user, item.entryDate, item.issue.type, item.durationSeconds]), [
     ['alice', '2026-08-17', 'issue', 3600],
     ['bob', '2026-08-17', 'pull_request', 7200],
@@ -116,10 +132,10 @@ test('changed branch fetches only blobs whose immutable SHA is missing', async (
   const github = new FakeGitHub(), cache = new MemoryReportCache(), service = new ReportService({ github, cache });
   await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });
   github.etag = '"two"';
-  github.files.set('times/2026-08/bob.txt', { sha: C, text: block('https://github.com/acme/app/pull/2', '2026-08-17T10:00:00+00:00', '2026-08-17T13:00:00+00:00', 'updated') });
+  github.files.set('times/2026-08/bob.jsonl', { sha: C, text: monthly(block('https://github.com/acme/app/pull/2', '2026-08-17T10:00:00+00:00', '2026-08-17T13:00:00+00:00', 'updated', 'bob')) });
   github.reads = [];
   const records = await service.loadRange({ startDate: '2026-08-17', endDate: '2026-08-17' });
-  assert.deepEqual(github.reads, ['times/2026-08/bob.txt']);
+  assert.deepEqual(github.reads, ['times/2026-08/bob.jsonl']);
   assert.deepEqual(records.map(record => record.durationSeconds), [3600, 10800]);
 });
 
@@ -146,17 +162,17 @@ test('report service rejects invalid ranges before touching GitHub', async () =>
 
 test('report service identifies the malformed monthly file that must be repaired', async () => {
   const github = new FakeGitHub();
-  github.files = new Map([['times/2026-08/alice.txt', { sha: 'd'.repeat(40), text: 'URL: not-a-github-url\nStart: 2026-08-18T08:00:00+00:00\nEnd: 2026-08-18T09:00:00+00:00\n' }]]);
-  await assert.rejects(() => new ReportService({ github }).loadRange({ startDate: '2026-08-18', endDate: '2026-08-18' }), /Invalid time data in times\/2026-08\/alice\.txt/);
+  github.files = new Map([['times/2026-08/alice.jsonl', { sha: 'd'.repeat(40), text: 'URL: not-a-github-url\nStart: 2026-08-18T08:00:00+00:00\nEnd: 2026-08-18T09:00:00+00:00\n' }]]);
+  await assert.rejects(() => new ReportService({ github }).loadRange({ startDate: '2026-08-18', endDate: '2026-08-18' }), /Invalid time data in times\/2026-08\/alice\.jsonl/);
 });
 
 test('current-user task loading never fetches or parses another user monthly file', async () => {
   const github = new FakeGitHub();
-  github.files.set('times/2026-08/bob.txt', { sha: B, text: 'malformed hostile data' });
+  github.files.set('times/2026-08/bob.jsonl', { sha: B, text: 'malformed hostile data' });
   const records = await new ReportService({ github }).loadUserRange(
     { startDate: '2026-08-17', endDate: '2026-08-18' }, 'alice',
   );
-  assert.deepEqual(github.reads, ['times/2026-08/alice.txt']);
+  assert.deepEqual(github.reads, ['times/2026-08/alice.jsonl']);
   assert.equal(records.every(record => record.user === 'alice'), true);
 });
 
@@ -171,7 +187,7 @@ test('current-user task loading enforces file and record budgets before returnin
   ), /record budget/i);
 });
 
-test('current-user loading refreshes a legacy size-less cache before byte preflight', async () => {
+test('current-user loading refreshes an incomplete size-less cache before byte preflight', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache(), service = new ReportService({ github, cache });
   await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });
   cache.value.files = cache.value.files.map(({ path, sha }) => ({ path, sha }));
@@ -182,15 +198,15 @@ test('current-user loading refreshes a legacy size-less cache before byte prefli
 });
 
 
-test('repository reports merge personal and legacy records for migrated users without copied duplicates', async () => {
+test('repository reports read only canonical personal branches and never merge default-branch data', async () => {
   const primary = new FakeGitHub(), personal = new FakeGitHub();
   primary.repositoryKey = 'acme/time-data@main';
   personal.repositoryKey = 'acme/time-data@clockoli/users/123';
-  primary.files.set('times/2026-08/alice.txt', { sha: A, text: monthly(
+  primary.files.set('times/2026-08/alice.jsonl', { sha: A, text: monthly(
     block('https://github.com/acme/app/issues/1', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
     block('https://github.com/acme/app/issues/8', '2026-08-17T13:00:00+00:00', '2026-08-17T14:00:00+00:00'),
   ) });
-  personal.files.set('times/2026-08/alice.txt', { sha: 'd'.repeat(40), text: monthly(
+  personal.files.set('times/2026-08/alice.jsonl', { sha: 'd'.repeat(40), text: monthly(
     block('https://github.com/acme/app/issues/1', '2026-08-17T09:00:00+00:00', '2026-08-17T10:00:00+00:00'),
     block('https://github.com/acme/app/issues/9', '2026-08-17T08:00:00+00:00', '2026-08-17T09:30:00+00:00'),
   ) });
@@ -204,17 +220,12 @@ test('repository reports merge personal and legacy records for migrated users wi
     async getReportCache(key) { return structuredClone(cacheValues.get(key) || null); },
     async saveReportCache(value) { cacheValues.set(value.repositoryKey, structuredClone(value)); },
   };
-  const legacyRecords = await new ReportService({ github: primary }).loadRange(
-    { startDate: '2026-08-17', endDate: '2026-08-17' },
-  );
-  assert.deepEqual(legacyRecords.map(record => record.issue.number), [1, 2, 8]);
   const records = await new ReportService({ github: personal, cache }).loadRepositoryRange(
     { startDate: '2026-08-17', endDate: '2026-08-17' }, { defaultBranch: 'main' },
   );
   assert.deepEqual(records.map(record => [record.user, record.issue.number, record.durationSeconds]), [
     ['alice', 9, 5400],
     ['alice', 1, 3600],
-    ['bob', 2, 7200],
-    ['alice', 8, 3600],
   ]);
+  assert.equal(primary.reads.length, 0, 'the default branch is metadata-only and never a legacy data source');
 });

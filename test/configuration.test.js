@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigurationService } from '../src/services/configuration.js';
+import { buildActiveTimer } from '../src/domain/records.js';
+import { serializeActiveRecord } from '../src/domain/work-records.js';
 
 const oldConfig = { owner: 'old-org', repo: 'time-data', branch: 'main', recentDays: 7, allowedIssueOwners: ['old-org'], repoId: 77, branchMode: 'custom' };
 const provisionUserBranch = async (_github, user) => ({ branch: `clockoli/users/${user.id}` });
+
+const canonicalActiveText = () => serializeActiveRecord(buildActiveTimer({
+  user: 'alice', id: '01K2ABCDEF0123456789ABCDEF',
+  actor: { kind: 'human', id: 'github:123', name: 'alice' },
+  taskUrl: 'https://github.com/acme/app/issues/1', startedAt: '2026-08-18T08:00:00Z',
+  entryDate: '2026-08-18', timezone: 'UTC',
+}));
 
 const newPayload = { owner: 'new-org', repo: 'time-data', branch: 'main', recentDays: 7, allowedIssueOwners: ['new-org'], token: 'new-token' };
 
@@ -36,7 +45,7 @@ function factory({ token, owner, repo }) {
   };
   return {
     getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }), getAuthenticatedUser: async () => 'alice',
-    getText: async () => ({ sha: 'active', text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-18T08:00:00Z\n' }),
+    getText: async () => ({ sha: 'active', text: canonicalActiveText() }),
   };
 }
 
@@ -105,7 +114,7 @@ test('configuration recovers the previous authenticated user before allowing a t
     getAuthenticatedIdentity: async () => ({ id: 456, login: 'bob' }), getAuthenticatedUser: async () => 'bob', validateRepository: async () => ({ id: 77, full_name: 'old-org/time-data', private: true }), validateBranch: async () => ({}),
   } : {
     getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }), getAuthenticatedUser: async () => 'alice',
-    getText: async () => { oldActiveReads += 1; return { sha: 'active', text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-18T08:00:00Z\n' }; },
+    getText: async () => { oldActiveReads += 1; return { sha: 'active', text: canonicalActiveText() }; },
   };
   const service = new ConfigurationService({ store, userBranchProvisioner: provisionUserBranch, githubFactory: identityFactory });
   await assert.rejects(() => service.save({ ...newPayload, owner: 'old-org', allowedIssueOwners: ['old-org'] }), /active timer/i);
@@ -295,7 +304,7 @@ test('legacy branch promotion refuses a remote active timer that is absent from 
     store,
     githubFactory: () => ({
       getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }),
-      getText: async path => ({ path, sha: 'a'.repeat(40), text: 'URL: https://github.com/acme/app/issues/1\nTitle: Remote task\nStart: 2026-08-18T08:00:00Z\n' }),
+      getText: async path => ({ path, sha: 'a'.repeat(40), text: canonicalActiveText() }),
     }),
     userBranchProvisioner: async (...args) => { provisioned = true; return provisionUserBranch(...args); },
   });

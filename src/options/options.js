@@ -161,7 +161,7 @@ function renderState() {
     setLink('connected-branch-link', `${state.trackingRepositoryUrl}/tree/${encodeURIComponent(branch)}`);
     const verification = state.verificationStatus === 'write_verified' ? 'Write verified'
       : state.verificationStatus === 'access_checked' ? 'Access checked' : 'Not checked';
-    $('connected-storage').textContent = `Private · Format ${state.config.repositoryFormatVersion || 'legacy'} · ${verification}`;
+    $('connected-storage').textContent = `Private · Format ${state.config.repositoryFormatVersion || 'unknown'} · ${verification}`;
     $('connected-last-check').textContent = state.lastVerifiedAt
       ? `Last access check ${new Date(state.lastVerifiedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : '';
     $('owner').value = state.config.owner || '';

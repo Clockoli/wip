@@ -44,14 +44,16 @@ test('extension store persists config, token, caches, and queue through an isola
 });
 
 
-test('unsupported old data with accepted work fails closed without clearing it', async () => {
+test('canonical local data version resets unsupported pre-release timer projections without migration', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfig({ owner: 'acme', repo: 'time-data' }, 'secret-token');
-  const accepted = { user: 'alice', activeCache: { old: true }, recentCache: [{ old: true }], pendingWrites: [{ old: true }], dataVersion: 1 };
-  await store.patchState(accepted);
-  await assert.rejects(() => store.ensureDataVersion(2), error => error.code === 'incompatible_storage_format' && /cannot safely migrate/i.test(error.message));
-  const state = await store.getState();
-  assert.deepEqual(state, accepted);
+  await store.patchState({ user: 'alice', activeCache: { obsolete: true }, recentCache: [{ obsolete: true }], pendingWrites: [{ obsolete: true }], dataVersion: 3 });
+  const state = await store.ensureDataVersion(4);
+  assert.equal(state.user, 'alice');
+  assert.equal(state.dataVersion, 4);
+  assert.equal(state.activeCache, null);
+  assert.deepEqual(state.recentCache, []);
+  assert.deepEqual(state.pendingWrites, []);
   assert.deepEqual(await store.getConfig(), { config: { owner: 'acme', repo: 'time-data' }, token: 'secret-token' });
 });
 
@@ -64,25 +66,6 @@ test('report cache is repository-scoped, persisted separately, and cleared with 
   assert.equal(await store.getReportCache('other/time@main'), null);
   await store.clearConfig();
   assert.equal(await store.getReportCache('acme/time@main'), null);
-});
-
-test('v2 pending completions migrate to monthly paths without losing active state', async () => {
-  const backend = new MemoryBackend(), store = new ChromeStore(backend);
-  const activeCache = { startedAt: '2026-08-18T08:00:00Z' };
-  await store.patchState({ activeCache, recentCache: [{ old: true }], pendingWrites: [{
-    operation: 'completeTimer', dailyPath: 'times/2026-08-18/alice.txt', id: 'one', stage: 'appendDaily',
-  }], dataVersion: 2 });
-  const state = await store.ensureDataVersion(3);
-  assert.deepEqual(state.activeCache, activeCache);
-  assert.deepEqual(state.recentCache, []);
-  assert.deepEqual(state.pendingWrites, [{ operation: 'completeTimer', monthlyPath: 'times/2026-08/alice.txt', id: 'one', stage: 'appendMonthly' }]);
-});
-
-test('v2 migration refuses to silently discard an unrecognized pending completion', async () => {
-  const backend = new MemoryBackend(), store = new ChromeStore(backend);
-  await store.patchState({ pendingWrites: [{ operation: 'completeTimer', dailyPath: '../unsafe.txt' }], dataVersion: 2 });
-  await assert.rejects(() => store.ensureDataVersion(3), /Cannot migrate a pending completion/);
-  assert.equal((await store.getState()).dataVersion, 2);
 });
 
 test('task metadata cache is repository-scoped and cleared with configuration', async () => {
@@ -280,8 +263,8 @@ test('data-version migration is one atomic backend mutation and cannot use a sta
     if (keys.includes('dataVersion')) throw new Error('state migration must not perform a split read');
     return originalGetMany(keys);
   };
-  const migrated = await store.ensureDataVersion(3);
-  assert.equal(migrated.dataVersion, 3);
+  const migrated = await store.ensureDataVersion(4);
+  assert.equal(migrated.dataVersion, 4);
   await store.saveConfiguration({ owner: 'new', repo: 'time', branch: 'main' }, 'token', { activeCache: null, pendingWrites: [], user: 'bob', dataVersion: 3 });
   backend.getMany = originalGetMany;
   const state = await store.getState();
@@ -302,10 +285,10 @@ test('onboarding verification metadata is readable and removed by full local res
 test('future data versions fail closed without deleting active or pending work', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const active = { startedAt: '2026-08-20T00:00:00Z' }, pending = [{ id: 'accepted' }];
-  await store.patchState({ activeCache: active, pendingWrites: pending, dataVersion: 4 });
-  await assert.rejects(() => store.ensureDataVersion(3), error => error.code === 'incompatible_storage_format' && /newer|unsupported|version/i.test(error.message));
+  await store.patchState({ activeCache: active, pendingWrites: pending, dataVersion: 5 });
+  await assert.rejects(() => store.ensureDataVersion(4), error => error.code === 'incompatible_storage_format' && /newer|unsupported|version/i.test(error.message));
   const state = await store.getState();
-  assert.equal(state.dataVersion, 4);
+  assert.equal(state.dataVersion, 5);
   assert.deepEqual(state.activeCache, active);
   assert.deepEqual(state.pendingWrites, pending);
 });

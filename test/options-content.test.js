@@ -224,10 +224,11 @@ test('public Device Flow resume uses validated service state rather than raw sto
   assert.doesNotMatch(worker, /RESUME_DEVICE_FLOW'\) return safeAttempt\(await store\.getDeviceAttempt\(\)\)/);
 });
 
-test('compliance documentation matches any-owner tracking and durable Title storage', async () => {
+test('compliance documentation matches any-owner tracking and durable v1 work-item titles', async () => {
   const compliance = await readFile(new URL('../docs/spec-compliance.md', import.meta.url), 'utf8');
   assert.doesNotMatch(compliance, /configurable allowlist/i);
-  assert.match(compliance, /optional one-line `Title`/i);
+  assert.match(compliance, /work-item URL, title/i);
+  assert.match(compliance, /schema_version` is exactly `1`/i);
 });
 
 

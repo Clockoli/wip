@@ -67,11 +67,15 @@ test('browser action popup has a stable width without the self-shrinking viewpor
 
 
 test('Times is covered by extension-page validation and candidate versions are distinct and aligned', () => {
-  assert.equal(manifest.version, '0.1.27');
+  assert.equal(manifest.version, '0.1.28');
   assert.equal(packageJson.version, manifest.version);
   assert.match(validator, /manifest\.version !== packageJson\.version/);
   assert.ok((validator.match(/'src\/times\/times\.html'/g) || []).length >= 2,
     'Times must be checked for existence and extension-page HTML security');
+});
+
+test('page-state active projection carries calendar identity for local-date summaries', () => {
+  assert.match(worker, /startedAt: state\.active\.startedAt[\s\S]*entryDate: state\.active\.entryDate[\s\S]*timezone: state\.active\.timezone/);
 });
 
 test('acceptance plan matches URL-first tracking and Top tasks Activity Reports navigation', () => {

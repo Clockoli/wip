@@ -1,7 +1,7 @@
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
 const USER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
-const ID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+const ID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const TASK_URL_MAX = 2048;
 
 export function normalizeTaskUrl(value) {

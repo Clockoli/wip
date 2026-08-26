@@ -42,7 +42,7 @@ If Clockoli is unavailable, the time records still exist as ordinary text in Git
 
 ### 2. The format is portable
 
-A completed record contains a URL, optional title, timezone-bearing Start and End timestamps, and an optional description. Records are grouped into monthly text files.
+A completed v1 work record contains its actor, work item, activity, producer, metadata, metrics, UTC timestamps, local date, IANA timezone, and optional description. Records are grouped into monthly JSONL files.
 
 This can be read by a person, cloned with Git, parsed by a small script, or transformed into another system. You do not need a proprietary database dump just to recover task-level time.
 

@@ -177,7 +177,7 @@
 
   function summarySeconds(frame) {
     let seconds = Math.max(0, Number(frame?.seconds) || 0);
-    const activeDate = pageState.active?.startedAt?.slice(0, 10);
+    const activeDate = pageState.active?.entryDate;
     if (activeDate && activeDate >= frame.startDate && activeDate <= frame.endDate) seconds += Math.max(0, Math.floor((Date.now() - new Date(pageState.active.startedAt).getTime()) / 1000));
     return seconds;
   }
@@ -221,24 +221,50 @@
     pendingRefreshTimer?.unref?.();
   }
 
-  function timestampParts(value) {
-    const match = String(value).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{3})?(Z|[+-]\d{2}:\d{2})$/);
+  function timestampParts(value, timezone = '') {
+    const match = String(value).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/);
     if (!match) throw new Error('Invalid timestamp offset.');
-    return { date: match[1], hour: match[2], minute: match[3], second: match[4], fraction: match[5] || '', zone: match[6] };
+    if (!timezone) return { date: match[1], hour: match[2], minute: match[3], second: match[4], fraction: match[5] || '', zone: match[6] };
+    let formatted;
+    try {
+      formatted = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+      }).formatToParts(new Date(value));
+    } catch { throw new Error('Invalid record timezone.'); }
+    const parts = Object.fromEntries(formatted.filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+    return { date: `${parts.year}-${parts.month}-${parts.day}`, hour: parts.hour, minute: parts.minute, second: parts.second, fraction: match[5] || '', zone: 'Z' };
   }
 
-  function timestampFromTimeParts(original, date, hour, minute) {
-    const parts = timestampParts(original), numericHour = Number(hour), numericMinute = Number(minute);
+  function timestampFromTimeParts(original, date, hour, minute, timezone = '') {
+    const parts = timestampParts(original, timezone), numericHour = Number(hour), numericMinute = Number(minute);
     if (!validEntryDate(date) || !Number.isInteger(numericHour) || numericHour < 0 || numericHour > 23
         || !Number.isInteger(numericMinute) || numericMinute < 0 || numericMinute > 59) throw new Error('Enter a valid date and time.');
-    const value = `${date}T${String(numericHour).padStart(2, '0')}:${String(numericMinute).padStart(2, '0')}:${parts.second}${parts.fraction}${parts.zone}`;
-    if (!validTimestamp(value)) throw new Error('Enter a valid date and time.');
-    return value;
+    if (!timezone) {
+      const value = `${date}T${String(numericHour).padStart(2, '0')}:${String(numericMinute).padStart(2, '0')}:${parts.second}${parts.fraction}${parts.zone}`;
+      if (!validTimestamp(value)) throw new Error('Enter a valid date and time.');
+      return value;
+    }
+    const [year, month, day] = date.split('-').map(Number), milliseconds = Number((parts.fraction || '.000').slice(1).padEnd(3, '0'));
+    const desired = Date.UTC(year, month - 1, day, numericHour, numericMinute, Number(parts.second), milliseconds);
+    const [originalYear, originalMonth, originalDay] = parts.date.split('-').map(Number);
+    const originalWall = Date.UTC(originalYear, originalMonth - 1, originalDay, Number(parts.hour), Number(parts.minute), Number(parts.second), milliseconds);
+    let instant = new Date(original).getTime() + desired - originalWall;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const wall = timestampParts(new Date(instant).toISOString(), timezone), [wallYear, wallMonth, wallDay] = wall.date.split('-').map(Number);
+      const represented = Date.UTC(wallYear, wallMonth - 1, wallDay, Number(wall.hour), Number(wall.minute), Number(wall.second), milliseconds);
+      instant += desired - represented;
+    }
+    const result = new Date(instant).toISOString(), verified = timestampParts(result, timezone);
+    if (verified.date !== date || Number(verified.hour) !== numericHour || Number(verified.minute) !== numericMinute || verified.second !== parts.second) {
+      throw new Error('This local time does not exist in the record timezone.');
+    }
+    return result;
   }
 
-  function timePicker(label, original, draft = null, { compact = false, onChange = () => {}, onFocus = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
-    const initial = timestampParts(template), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
+    const initial = timestampParts(template, timezone), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
     const dateField = el('input'); controls.push(dateField); dateField.type = 'date'; dateField.required = true; dateField.value = draft?.date ?? initial.date; dateField.className = 'time-date'; dateField.setAttribute('aria-label', `${label} date`);
     const values = el('div', undefined, 'time-picker-values');
@@ -251,10 +277,10 @@
       field.setAttribute('aria-invalid', String(!valid)); return valid;
     };
     const refreshValidity = () => validNumber(hourField, 23) && validNumber(minuteField, 59);
-    const value = () => { if (!refreshValidity()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value); };
+    const value = () => { if (!refreshValidity()) throw new Error('Enter a valid date and time.'); return timestampFromTimeParts(template, dateField.value, hourField.value, minuteField.value, timezone); };
     const changed = () => { refreshValidity(); onChange(currentDraft()); };
     const applyTimestamp = (timestamp, notify = false) => {
-      const parts = timestampParts(timestamp); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
+      const parts = timestampParts(timestamp, timezone); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
       if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
@@ -263,7 +289,11 @@
     return { node: group, value, draft: currentDraft, controls, focus: part => (part === 'minute' ? minuteField : hourField).focus(), reset: () => applyTimestamp(original), setValue: applyTimestamp, setDisabled: disabled => { for (const control of controls) control.disabled = disabled; } };
   }
 
-  function timestampAtOriginalOffset(original, instant) {
+  function timestampAtOriginalOffset(original, instant, timezone = '') {
+    if (timezone) {
+      if (!Number.isFinite(instant)) throw new Error('Invalid timestamp offset.');
+      return new Date(instant).toISOString();
+    }
     const match = String(original).match(/(Z|([+-])(\d{2}):(\d{2}))$/);
     if (!match || !Number.isFinite(instant)) throw new Error('Invalid timestamp offset.');
     const offset = match[1] === 'Z' ? 0 : (match[2] === '+' ? 1 : -1) * (Number(match[3]) * 60 + Number(match[4]));
@@ -334,11 +364,11 @@
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
 
-  function originalRecord(entry) { return { taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
+  function originalRecord(entry) { return { id: entry.id, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
   function sameRecord(left, right) {
     const a = originalRecord(left), b = originalRecord(right);
-    return a.issueUrl === b.issueUrl && a.issueTitle === b.issueTitle && a.startedAt === b.startedAt && a.endedAt === b.endedAt && a.description === b.description;
+    return a.id === b.id && a.issueUrl === b.issueUrl && a.issueTitle === b.issueTitle && a.startedAt === b.startedAt && a.endedAt === b.endedAt && a.description === b.description;
   }
 
   function validEntryDate(value) {
@@ -349,14 +379,14 @@
   }
 
   function validTimestamp(value) {
-    const match = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|([+-])(\d{2}):(\d{2}))$/) : null;
+    const match = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/) : null;
     if (!match) return false;
     const [, year, month, day, hour, minute, second, millis = '000', zone, sign, offsetHour = '00', offsetMinute = '00'] = match;
     const y = Number(year), mo = Number(month), d = Number(day), h = Number(hour), mi = Number(minute), sec = Number(second);
     if (mo < 1 || mo > 12 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate() || h > 23 || mi > 59 || sec > 59
         || Number(offsetHour) > 23 || Number(offsetMinute) > 59) return false;
     const offset = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (Number(offsetHour) * 60 + Number(offsetMinute));
-    const expected = Date.UTC(y, mo - 1, d, h, mi, sec, Number(millis)) - offset * 60000;
+    const expected = Date.UTC(y, mo - 1, d, h, mi, sec, Number(millis.padEnd(3, '0'))) - offset * 60000;
     return new Date(value).getTime() === expected;
   }
 
@@ -371,21 +401,35 @@
   }
 
   function validRewrittenEntry(item, position, path, sha) {
-    const required = ['_index', '_path', '_sha', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate', 'id', 'issueTitle', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl', 'updatedAt', 'user'];
-    const allowed = new Set([...required, 'issue']);
+    const required = [
+      '_index', '_path', '_sha', 'actor', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate',
+      'id', 'issueTitle', 'metadata', 'metrics', 'producer', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl',
+      'timezone', 'updatedAt', 'user',
+    ];
+    const allowed = new Set([...required, '_record', 'entryId', 'execution', 'issue']);
+    const identity = value => value && typeof value === 'object' && !Array.isArray(value)
+      && ['kind', 'id', 'name'].every(key => typeof value[key] === 'string' && value[key].trim());
+    const producer = value => value && typeof value === 'object' && !Array.isArray(value)
+      && ['kind', 'name', 'version'].every(key => typeof value[key] === 'string' && value[key].trim());
+    const object = value => value && typeof value === 'object' && !Array.isArray(value);
+    const validId = value => typeof value === 'string' && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value);
+    let timezoneOk = false;
+    try { new Intl.DateTimeFormat('en-US', { timeZone: item?.timezone }).format(new Date(0)); timezoneOk = true; } catch {}
     if (!item || typeof item !== 'object' || Object.keys(item).some(key => !allowed.has(key)) || required.some(key => !(key in item)) || item.schemaVersion !== 1
+        || !validId(item.id) || (item.entryId !== undefined && item.entryId !== item.id)
         || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
         || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
+        || !identity(item.actor) || !producer(item.producer) || !object(item.metadata) || !object(item.metrics) || !timezoneOk
         || !taskUrlOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
         || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
-        || item.entryDate !== item.startedAt.slice(0, 10) || item.createdAt !== item.endedAt || item.updatedAt !== item.endedAt
+        || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) || new Date(item.updatedAt) < new Date(item.createdAt)
         || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
         || item.taskTitle !== item.taskTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
         || typeof item.description !== 'string' || item.description.length > 2000
-        || item.description !== item.description.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()) return false;
-    const pathMatch = path.match(/^times\/(\d{4}-\d{2})\/([A-Za-z0-9-]+)\.txt$/);
+        || (item._record !== undefined && (!object(item._record) || item._record.schema_version !== 1 || item._record.id !== item.id))) return false;
+    const pathMatch = path.match(/^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\.jsonl$/);
     if (!pathMatch || pathMatch[1] !== item.entryDate.slice(0, 7) || pathMatch[2] !== item.user
-        || item.id !== `${item.entryDate.replaceAll('-', '')}${String(position).padStart(18, '0')}`) return false;
+        || timestampParts(item.startedAt, item.timezone).date !== item.entryDate) return false;
     const duration = Math.floor((new Date(item.endedAt).getTime() - new Date(item.startedAt).getTime()) / 1000);
     return Number.isInteger(item.durationSeconds) && duration >= 0 && item.durationSeconds === duration;
   }
@@ -451,7 +495,7 @@
   }
 
   function recentMeta(entry, startedAt = entry.startedAt, endedAt = entry.endedAt) {
-    const start = timestampParts(startedAt), end = timestampParts(endedAt);
+    const start = timestampParts(startedAt, entry.timezone), end = timestampParts(endedAt, entry.timezone);
     const duration = Math.max(0, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
     const endDay = end.date === start.date ? '' : `${relativeDayLabel(end.date)} `;
     return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
@@ -532,8 +576,8 @@ The previous version remains in Git history.`)) return;
     try {
       return {
         ...entry,
-        startedAt: timestampFromTimeParts(draft.start.timestamp || entry.startedAt, draft.start.date, draft.start.hour, draft.start.minute),
-        endedAt: timestampFromTimeParts(draft.stop.timestamp || entry.endedAt, draft.stop.date, draft.stop.hour, draft.stop.minute),
+        startedAt: timestampFromTimeParts(draft.start.timestamp || entry.startedAt, draft.start.date, draft.start.hour, draft.start.minute, entry.timezone),
+        endedAt: timestampFromTimeParts(draft.stop.timestamp || entry.endedAt, draft.stop.date, draft.stop.hour, draft.stop.minute, entry.timezone),
       };
     } catch { return entry; }
   }
@@ -573,8 +617,8 @@ The previous version remains in Git history.`)) return;
     const sequence = [...inlineEditors.entries()]
       .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
       .flatMap(([key, editor]) => [
-        { id: boundaryId(key, 'start'), key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, editor },
-        { id: boundaryId(key, 'stop'), key, boundary: 'stop', picker: editor.stopPicker, original: editor.entry.endedAt, editor },
+        { id: boundaryId(key, 'start'), key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, timezone: editor.entry.timezone, editor },
+        { id: boundaryId(key, 'stop'), key, boundary: 'stop', picker: editor.stopPicker, original: editor.entry.endedAt, timezone: editor.entry.timezone, editor },
       ]);
     const position = sequence.findIndex(item => item.key === entryKey(entry) && item.boundary === boundary);
     if (position < 0) return;
@@ -584,7 +628,7 @@ The previous version remains in Git history.`)) return;
     const apply = (item, timestamp) => {
       const previousGroup = inlineDrafts.get(item.key)?.group;
       mergeDraftGroup(group, previousGroup);
-      item.picker.setValue(timestampAtOriginalOffset(item.original, new Date(timestamp).getTime()));
+      item.picker.setValue(timestampAtOriginalOffset(item.original, new Date(timestamp).getTime(), item.timezone));
       touched.add(item.key);
     };
     detachIncomingBoundaryLinks(source.id);
@@ -624,7 +668,7 @@ The previous version remains in Git history.`)) return;
   }
 
   function recentTimeText(entry) {
-    const start = timestampParts(entry.startedAt), stop = timestampParts(entry.endedAt);
+    const start = timestampParts(entry.startedAt, entry.timezone), stop = timestampParts(entry.endedAt, entry.timezone);
     const stopDay = stop.date === start.date ? '' : `${relativeDayLabel(stop.date)} `;
     return `${start.hour}:${start.minute} - ${stopDay}${stop.hour}:${stop.minute}`;
   }
@@ -632,7 +676,7 @@ The previous version remains in Git history.`)) return;
   function inlineTimeEditor(entry) {
     const key = entryKey(entry), draft = inlineDrafts.get(key);
     const range = el('div', undefined, 'inline-time-range entry-meta');
-    const day = el('div', relativeDayLabel((draft?.start?.date || entry.startedAt.slice(0, 10))), 'entry-day');
+    const day = el('div', relativeDayLabel((draft?.start?.date || timestampParts(entry.startedAt, entry.timezone).date)), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
     let startPicker, stopPicker, save, cancel;
     const updateDraft = group => {
@@ -653,10 +697,10 @@ The previous version remains in Git history.`)) return;
       updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
     startPicker = timePicker('Start', entry.startedAt, draft?.start, {
-      compact: true, onChange: () => remember('start'), onFocus: part => activateTimeInput(key, 'start', part),
+      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: part => activateTimeInput(key, 'start', part),
     });
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
-      compact: true, onChange: () => remember('stop'), onFocus: part => activateTimeInput(key, 'stop', part),
+      compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: part => activateTimeInput(key, 'stop', part),
     });
     const saveGroup = async () => {
       const group = inlineDrafts.get(key)?.group || key;
@@ -702,8 +746,8 @@ The previous version remains in Git history.`)) return;
     const existing = inlineDrafts.get(key);
     inlineDrafts.set(key, {
       ...(existing || {
-        start: { ...timestampParts(entry.startedAt), timestamp: entry.startedAt },
-        stop: { ...timestampParts(entry.endedAt), timestamp: entry.endedAt },
+        start: { ...timestampParts(entry.startedAt, entry.timezone), timestamp: entry.startedAt },
+        stop: { ...timestampParts(entry.endedAt, entry.timezone), timestamp: entry.endedAt },
         group: key,
       }),
       metadataActive: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
@@ -723,7 +767,7 @@ The previous version remains in Git history.`)) return;
     record.append(taskResult(entry, 'entry-record-task-result'));
     const timeRow = el('div', undefined, 'entry-time-row'); let day;
     if (entry._pending) {
-      day = el('div', relativeDayLabel(entry.startedAt.slice(0, 10)), 'entry-day');
+      day = el('div', relativeDayLabel(timestampParts(entry.startedAt, entry.timezone).date), 'entry-day');
       const time = el('span', recentTimeText(entry), 'entry-time-range');
       const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
       const actions = el('div', undefined, 'entry-actions entry-actions-visible');

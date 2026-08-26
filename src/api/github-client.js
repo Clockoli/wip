@@ -278,7 +278,7 @@ export class GitHubClient {
     const commit = await this.request(`${base}/git/commits/${encodeURIComponent(refResponse.body?.object?.sha)}`, { signal });
     const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
-    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.txt'))
+    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.jsonl'))
       .map(({ path, sha, size }) => ({ path, sha, ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}) })).sort((a, b) => a.path.localeCompare(b.path));
     return { notModified: false, etag: snapshotEtag, headSha: refResponse.body?.object?.sha || '', files };
   }

@@ -4,7 +4,7 @@ import {
   GITHUB_APP_CLIENT_ID, githubAppInstallationUrl,
   GITHUB_AUTHORIZATIONS_URL, GITHUB_NEW_REPOSITORY_URL,
 } from '../config/github-app.js';
-import { activeTextPath } from '../domain/monthly-text.js';
+import { activeRecordPath } from '../domain/work-records.js';
 import { aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
@@ -51,7 +51,7 @@ async function remoteActiveProbe({ config, auth, state }) {
   const user = config.storageLogin || state.user || auth.githubLogin;
   if (!user) return false;
   const github = githubForConfig(config);
-  try { await github.getText(activeTextPath(user)); return true; }
+  try { await github.getText(activeRecordPath(user)); return true; }
   catch (error) {
     if (!isNotFound(error)) throw error;
     await github.assertDestinationReachable();
@@ -160,7 +160,7 @@ async function context() {
   const { config, auth } = snapshot;
   if (!config || !auth) throw new Error('Connect GitHub and choose a private time-data repository in Settings.');
   const github = githubForConfig(config);
-  const localState = await store.ensureDataVersion(3);
+  const localState = await store.ensureDataVersion(4);
   let user = config.storageLogin || localState.user;
   if (!user) {
     user = auth.githubLogin || await github.getAuthenticatedUser();
@@ -169,7 +169,7 @@ async function context() {
   return {
     config,
     reports: new ReportService({ github, cache: store }),
-    tracker: new TrackerService({ github, store, user, recentDays: config.recentDays || 7 }),
+    tracker: new TrackerService({ github, store, user, actorId: Number.isSafeInteger(auth.githubUserId) ? `github:${auth.githubUserId}` : `clockoli:${config.repoId}:${user}`, actorName: user, recentDays: config.recentDays || 7 }),
   };
 }
 
@@ -189,7 +189,7 @@ async function loadExchangeRates(message) {
 
 async function loadReport(message) {
   const loadEpoch = await loadCoordinator.beginLoad();
-  await store.ensureDataVersion(3);
+  await store.ensureDataVersion(4);
   loadCoordinator.assertCurrent(loadEpoch);
   const { config, auth } = await configuredSnapshot();
   loadCoordinator.assertCurrent(loadEpoch);
@@ -224,7 +224,7 @@ async function loadReport(message) {
 
 async function loadTimes(message, sender) {
   const loadEpoch = await loadCoordinator.beginLoad();
-  await store.ensureDataVersion(3); loadCoordinator.assertCurrent(loadEpoch);
+  await store.ensureDataVersion(4); loadCoordinator.assertCurrent(loadEpoch);
   const { config, auth, generation } = await configuredSnapshot(); loadCoordinator.assertCurrent(loadEpoch);
   if (!config || !auth) return { configured: false, recent: [] };
   const branch = config.branch || 'main', repositoryKey = `${config.owner}/${config.repo}@${branch}`;
@@ -259,7 +259,7 @@ async function loadTimes(message, sender) {
 
 async function loadTasks(message, sender) {
   const loadEpoch = await loadCoordinator.beginLoad();
-  await store.ensureDataVersion(3);
+  await store.ensureDataVersion(4);
   loadCoordinator.assertCurrent(loadEpoch);
   const snapshot = await configuredSnapshot();
   const { config, auth, generation } = snapshot;
@@ -291,7 +291,7 @@ async function loadTasks(message, sender) {
       controller.signal.throwIfAborted();
       loadCoordinator.assertCurrent(loadEpoch);
     }
-    const tracker = new TrackerService({ github, store, user, recentDays: config.recentDays || 7 });
+    const tracker = new TrackerService({ github, store, user, actorId: Number.isSafeInteger(auth.githubUserId) ? `github:${auth.githubUserId}` : `clockoli:${config.repoId}:${user}`, actorName: user, recentDays: config.recentDays || 7 });
     const initialTimerState = await refreshTaskState(executor, store, tracker, generation, loadGuard);
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
@@ -414,7 +414,7 @@ async function handle(message, sender) {
   if (message.type === 'DISCONNECT_GITHUB_APP') return onboarding.disconnect();
   if (message.type === 'CLEAR_LOCAL_CONFIGURATION') return onboarding.clearLocalConfiguration();
   if (message.type === 'SAVE_CONFIG') {
-    await store.ensureDataVersion(3);
+    await store.ensureDataVersion(4);
     return configuration.save(message.payload);
   }
   if (message.type === 'UPDATE_DISPLAY_PREFERENCES') {
@@ -447,6 +447,7 @@ async function handle(message, sender) {
       const active = state.active ? {
         taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
+        entryDate: state.active.entryDate, timezone: state.active.timezone,
         description: state.active.description || '', issueTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         _pending: Boolean(state.active._pending),
       } : null;
@@ -530,7 +531,7 @@ function hasRunnablePending(queue) { return Boolean(queue?.length && queue[0].st
 function syncPendingNow() {
   if (pendingSync) return pendingSync;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
-    const state = await store.ensureDataVersion(3);
+    const state = await store.ensureDataVersion(4);
     if (!(state.pendingWrites ?? []).length) return;
     const { tracker } = await context();
     await tracker.syncPending();

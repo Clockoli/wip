@@ -1,99 +1,162 @@
-import { entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, utcDateParts, validateEntryId, validatePathSegment } from './values.js';
+import {
+  entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl,
+  taskUrlOf, validateEntryId, validatePathSegment,
+} from './values.js';
+import { createUlid } from './ulid.js';
 
+export const DEFAULT_PRODUCER = Object.freeze({
+  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28',
+});
 
 export function normalizeTaskTitle(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
 }
 
-export function toIso(value) {
-  if (typeof value === 'string') {
-    validateTimestamp(value);
-    return value;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
-  const pad = (number, width = 2) => String(number).padStart(width, '0');
-  const offset = -date.getTimezoneOffset(), sign = offset >= 0 ? '+' : '-', absolute = Math.abs(offset);
-  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${date.getMilliseconds() ? `.${pad(date.getMilliseconds(), 3)}` : ''}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`;
-}
-
-function validateTimestamp(value, label = 'timestamp') {
-  const match = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?(Z|[+-]\d{2}:\d{2})$/) : null;
+export function validateTimestamp(value, label = 'timestamp') {
+  const match = typeof value === 'string' ? value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/) : null;
   if (!match) throw new Error(`Invalid ${label} with timezone`);
   const [, year, month, day, hour, minute, second] = match;
   const maxDay = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
-  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > maxDay || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) throw new Error(`Invalid ${label} with timezone`);
-  if (Number.isNaN(new Date(value).getTime())) throw new Error(`Invalid ${label} with timezone`);
+  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > maxDay
+      || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59
+      || Number.isNaN(new Date(value).getTime())) throw new Error(`Invalid ${label} with timezone`);
   return value;
 }
 
+export function toIso(value) {
+  if (typeof value === 'string') validateTimestamp(value);
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
+  return date.toISOString();
+}
+
+export function normalizeTimezone(value) {
+  const timezone = value === undefined ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : value;
+  if (typeof timezone !== 'string' || !timezone || timezone !== timezone.trim()) throw new Error('Invalid IANA timezone');
+  try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0)); }
+  catch { throw new Error('Invalid IANA timezone'); }
+  return timezone;
+}
+
+export function localDateInTimezone(value, timezone) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: normalizeTimezone(timezone), year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return entryDateValue({ year: parts.year, month: parts.month, day: parts.day });
+}
+
 export function durationSeconds(startedAt, endedAt) {
-  const start = new Date(startedAt).getTime();
-  const end = new Date(endedAt).getTime();
+  const start = new Date(startedAt).getTime(), end = new Date(endedAt).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end)) throw new Error('Invalid timestamp');
   if (end < start) throw new Error('End time must not be before start time');
   return Math.floor((end - start) / 1000);
 }
 
-export function buildActiveTimer({ user, taskUrl, taskTitle = '', issue, issueTitle = '', startedAt, entryId, description = '' }) {
-  const started = toIso(startedAt);
+function validateNamedIdentity(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !['kind', 'id', 'name'].every(key => typeof value[key] === 'string' && value[key].trim())) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
+
+function validateProducer(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !['kind', 'name', 'version'].every(key => typeof value[key] === 'string' && value[key].trim())) {
+    throw new Error('Invalid producer');
+  }
+  return value;
+}
+
+function actorValue(user, actor) {
+  return structuredClone(actor ?? { kind: 'human', id: `clockoli-user:${user}`, name: user });
+}
+
+function producerValue(producer) { return structuredClone(producer ?? DEFAULT_PRODUCER); }
+
+export function buildActiveTimer({
+  user, id, entryId, actor, producer, taskUrl, taskTitle = '', issue, issueTitle = '', startedAt,
+  entryDate, timezone, description = '', metadata = {}, metrics = {}, execution,
+}) {
+  const validUser = validatePathSegment(user, 'user'), started = toIso(startedAt);
+  const zone = normalizeTimezone(timezone), date = entryDate ?? localDateInTimezone(started, zone);
+  entryDateParts(date);
+  const recordId = validateEntryId(id ?? entryId ?? createUlid(new Date(started).getTime()));
+  const url = normalizeTaskUrl(taskUrl ?? issue), title = normalizeTaskTitle(taskTitle || issueTitle);
   return {
     schemaVersion: 1,
-    user: validatePathSegment(user, 'user'),
-    taskUrl: normalizeTaskUrl(taskUrl ?? issue),
-    taskTitle: normalizeTaskTitle(taskTitle || issueTitle),
-    issueTitle: normalizeTaskTitle(taskTitle || issueTitle),
-    ...(parseGitHubTaskUrl(taskUrl ?? issue) ? { issue: parseGitHubTaskUrl(taskUrl ?? issue) } : {}),
-    ...(entryId ? { entryId: validateEntryId(entryId) } : {}),
-    entryDate: entryDateValue(localDateParts(new Date(started))),
+    id: recordId,
+    entryId: recordId,
+    user: validUser,
+    actor: actorValue(validUser, actor),
+    producer: producerValue(producer),
+    taskUrl: url,
+    taskTitle: title,
+    issueTitle: title,
+    ...(parseGitHubTaskUrl(url) ? { issue: parseGitHubTaskUrl(url) } : {}),
+    entryDate: date,
+    timezone: zone,
     startedAt: started,
     description: String(description ?? '').slice(0, 2000),
+    metadata: structuredClone(metadata ?? {}),
+    metrics: structuredClone(metrics ?? {}),
+    ...(execution === undefined ? {} : { execution: structuredClone(execution) }),
     createdAt: started,
+    updatedAt: started,
   };
 }
 
 export function validateActiveTimer(active) {
   if (!active || active.schemaVersion !== 1) throw new Error('Unsupported active timer schema');
+  validateEntryId(active.id);
+  if (active.entryId !== undefined && active.entryId !== active.id) throw new Error('Active timer identity does not match record ID');
   validatePathSegment(active.user, 'user');
+  validateNamedIdentity(active.actor, 'actor');
+  validateProducer(active.producer);
   taskUrlOf(active);
-  if (active.entryId !== undefined) validateEntryId(active.entryId);
-  if (active.entryDate !== undefined) entryDateParts(active.entryDate);
+  entryDateParts(active.entryDate);
+  normalizeTimezone(active.timezone);
   validateTimestamp(active.startedAt, 'startedAt timestamp');
   validateTimestamp(active.createdAt, 'createdAt timestamp');
+  validateTimestamp(active.updatedAt ?? active.createdAt, 'updatedAt timestamp');
   if (new Date(active.createdAt).getTime() !== new Date(active.startedAt).getTime()) throw new Error('Active timer createdAt must equal startedAt');
   if (typeof active.description !== 'string' || active.description.length > 2000) throw new Error('Invalid active timer description');
-  const taskTitle = active.taskTitle ?? active.issueTitle;
-  if (taskTitle !== undefined && (typeof taskTitle !== 'string' || taskTitle !== normalizeTaskTitle(taskTitle))) throw new Error('Invalid active timer task title');
+  if (!active.metadata || typeof active.metadata !== 'object' || Array.isArray(active.metadata)) throw new Error('Invalid active timer metadata');
+  if (!active.metrics || typeof active.metrics !== 'object' || Array.isArray(active.metrics)) throw new Error('Invalid active timer metrics');
+  const title = active.taskTitle ?? active.issueTitle;
+  if (typeof title !== 'string' || title !== normalizeTaskTitle(title)) throw new Error('Invalid active timer task title');
   return active;
 }
 
-export function buildEntry({ active, id, endedAt, now = endedAt, description = active?.description ?? '' }) {
+export function buildEntry({ active, id = active?.id, endedAt, now = endedAt, description = active?.description ?? '' }) {
   if (!active) throw new Error('No active timer');
-  const started = toIso(active.startedAt), ended = toIso(endedAt), created = toIso(now);
+  validateActiveTimer(active);
+  if (id !== active.id) throw new Error('Completed record ID must match the active timer ID');
+  const ended = toIso(endedAt), updated = toIso(now);
   return {
-    schemaVersion: 1,
-    id: validateEntryId(id),
-    user: validatePathSegment(active.user, 'user'),
-    taskUrl: taskUrlOf(active),
-    taskTitle: normalizeTaskTitle(active.taskTitle ?? active.issueTitle),
-    issueTitle: normalizeTaskTitle(active.taskTitle ?? active.issueTitle),
-    ...(parseGitHubTaskUrl(taskUrlOf(active)) ? { issue: parseGitHubTaskUrl(taskUrlOf(active)) } : {}),
-    entryDate: active.entryDate ?? entryDateValue(utcDateParts(new Date(started))),
-    startedAt: started,
+    ...active,
+    id: validateEntryId(active.id),
+    entryId: active.id,
     endedAt: ended,
-    durationSeconds: durationSeconds(started, ended),
+    durationSeconds: durationSeconds(active.startedAt, ended),
     description: String(description ?? '').slice(0, 2000),
-    createdAt: created,
-    updatedAt: created,
+    createdAt: active.createdAt,
+    updatedAt: updated,
   };
 }
 
 export function validateEntry(entry) {
   if (!entry || entry.schemaVersion !== 1) throw new Error('Unsupported time entry schema');
   validateEntryId(entry.id);
+  if (entry.entryId !== undefined && entry.entryId !== entry.id) throw new Error('Entry identity does not match record ID');
   validatePathSegment(entry.user, 'user');
+  validateNamedIdentity(entry.actor, 'actor');
+  validateProducer(entry.producer);
   taskUrlOf(entry);
-  if (entry.entryDate !== undefined) entryDateParts(entry.entryDate);
+  entryDateParts(entry.entryDate);
+  normalizeTimezone(entry.timezone);
   validateTimestamp(entry.startedAt, 'startedAt timestamp');
   validateTimestamp(entry.endedAt, 'endedAt timestamp');
   validateTimestamp(entry.createdAt, 'createdAt timestamp');
@@ -102,23 +165,28 @@ export function validateEntry(entry) {
   if (!Number.isInteger(entry.durationSeconds) || entry.durationSeconds !== computed) throw new Error('Duration does not match timestamps');
   if (new Date(entry.updatedAt).getTime() < new Date(entry.createdAt).getTime()) throw new Error('updatedAt must not be before createdAt');
   if (typeof entry.description !== 'string' || entry.description.length > 2000) throw new Error('Invalid description');
-  const taskTitle = entry.taskTitle ?? entry.issueTitle;
-  if (taskTitle !== undefined && (typeof taskTitle !== 'string' || taskTitle !== normalizeTaskTitle(taskTitle))) throw new Error('Invalid task title');
+  if (!entry.metadata || typeof entry.metadata !== 'object' || Array.isArray(entry.metadata)) throw new Error('Invalid metadata');
+  if (!entry.metrics || typeof entry.metrics !== 'object' || Array.isArray(entry.metrics)) throw new Error('Invalid metrics');
+  const title = entry.taskTitle ?? entry.issueTitle;
+  if (typeof title !== 'string' || title !== normalizeTaskTitle(title)) throw new Error('Invalid task title');
   return entry;
 }
 
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
-  const currentTaskUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentTaskUrl);
-  const { issue: _legacyIssue, issueTitle: _legacyTitle, taskUrl: _oldTaskUrl, taskTitle: _oldTaskTitle, ...base } = entry;
+  const currentUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);
+  const startedAt = toIso(edits.startedAt ?? entry.startedAt), timezone = normalizeTimezone(edits.timezone ?? entry.timezone);
+  const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = entry;
+  const title = normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentUrl ? (entry.taskTitle ?? entry.issueTitle) : ''));
   const next = {
     ...base,
-    entryDate: entry.entryDate ?? entryDateValue(utcDateParts(new Date(entry.startedAt))),
     taskUrl,
-    taskTitle: normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentTaskUrl ? (entry.taskTitle ?? entry.issueTitle) : '')),
-    issueTitle: normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentTaskUrl ? (entry.taskTitle ?? entry.issueTitle) : '')),
+    taskTitle: title,
+    issueTitle: title,
     ...(parseGitHubTaskUrl(taskUrl) ? { issue: parseGitHubTaskUrl(taskUrl) } : {}),
-    startedAt: toIso(edits.startedAt ?? entry.startedAt),
+    entryDate: edits.entryDate ?? (startedAt === entry.startedAt ? entry.entryDate : localDateInTimezone(startedAt, timezone)),
+    timezone,
+    startedAt,
     endedAt: toIso(edits.endedAt ?? entry.endedAt),
     description: String(edits.description ?? entry.description).slice(0, 2000),
     updatedAt: toIso(now),

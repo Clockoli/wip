@@ -1,5 +1,5 @@
-import { parseMonthlyText, parseMonthlyTextPath } from '../domain/monthly-text.js';
-import { entryDateParts, taskUrlOf, validatePathSegment } from '../domain/values.js';
+import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
+import { entryDateParts, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
@@ -9,9 +9,8 @@ function withoutStorageMetadata(record) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')));
 }
 
-function reportRecordKey(record) {
-  return [record.user.toLowerCase(), taskUrlOf(record), record.startedAt, record.endedAt].join('\u0000');
-}
+function reportRecordKey(record) { return record.id; }
+
 
 function mergeReportRecords(primary, fallback) {
   const merged = new Map();
@@ -73,8 +72,7 @@ export class ReportService {
     }
     const defaultGithub = this.github.forBranch(defaultBranch, 'default');
     const users = await discoverUserStorageBranches(defaultGithub, { signal });
-    if (!users.length) return new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress }).loadRange(range, { signal });
-    const legacy = await new ReportService({ github: defaultGithub, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress }).loadRange(range, { signal });
+    if (!users.length) return [];
     const personalRecords = [];
     for (const user of users) {
       signal?.throwIfAborted();
@@ -82,7 +80,7 @@ export class ReportService {
         .loadUserRange(range, user.login, { signal });
       personalRecords.push(...personal);
     }
-    return mergeReportRecords(personalRecords, legacy)
+    return mergeReportRecords(personalRecords, [])
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }
 
@@ -127,7 +125,7 @@ export class ReportService {
 
     const startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
     const files = cache.files.map(file => {
-      try { return { ...file, ...parseMonthlyTextPath(file.path) }; }
+      try { return { ...file, ...parseMonthlyRecordsPath(file.path) }; }
       catch { return null; }
     }).filter(file => file && file.month >= startMonth && file.month <= endMonth && (!user || file.user === user));
 
@@ -156,7 +154,7 @@ export class ReportService {
     this.onProgress({ label: 'Preparing time records…', value: 75 });
     const records = files.flatMap(file => {
       try {
-        return parseMonthlyText(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })
+        return parseMonthlyRecords(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })
           .filter(record => record.entryDate >= startDate && record.entryDate <= endDate)
           .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record));
       } catch (error) {

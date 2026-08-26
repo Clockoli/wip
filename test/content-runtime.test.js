@@ -455,12 +455,12 @@ test('recent rows show durable titles and unified offset-preserving inline editi
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
   const entry = {
-    schemaVersion: 1, id: '20260818000000000000000000', user: 'alice',
+    schemaVersion: 1, id: '01K31P0G000000000000000001', user: 'alice',
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
-    issueTitle: 'Make ranking deterministic', entryDate: '2026-08-18',
-    startedAt: '2026-08-18T08:00:11.321-07:00', endedAt: '2026-08-18T23:58:27.123-07:00', durationSeconds: 57500,
-    description: 'Original note', createdAt: '2026-08-18T23:58:27.123-07:00', updatedAt: '2026-08-18T23:58:27.123-07:00',
-    _path: 'times/2026-08/alice.txt', _sha: 'one', _index: 0,
+    issueTitle: 'Make ranking deterministic', entryDate: '2026-11-01', timezone: 'America/Los_Angeles',
+    startedAt: '2026-11-01T09:00:11.3Z', endedAt: '2026-11-01T09:58:27.12Z', durationSeconds: 3495,
+    description: 'Original note', createdAt: '2026-11-01T09:00:11.3Z', updatedAt: '2026-11-01T09:58:27.12Z',
+    _path: 'times/2026-08/alice.jsonl', _sha: 'one', _index: 0,
   };
   const issueTitleNode = new FakeNode('bdi'); issueTitleNode.textContent = 'Make ranking deterministic';
   const document = {
@@ -500,9 +500,9 @@ test('recent rows show durable titles and unified offset-preserving inline editi
   titleDraft.value = 'Edited deterministic ranking'; titleDraft.oninput({});
   descriptionDraft.value = 'Preserve this draft'; descriptionDraft.oninput({});
   let values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
-  assert.deepEqual(values.map(node => node.value), ['08', '00', '23', '58']);
+  assert.deepEqual(values.map(node => node.value), ['01', '00', '01', '58']);
   const stopMinute = values.at(-1), stopHour = values.at(-2), stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
-  stopDate.value = '2026-08-19'; stopDate.oninput({}); stopHour.value = '00'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
+  stopDate.value = '2026-11-01'; stopDate.oninput({}); stopHour.value = '02'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
   await descriptionDraft.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.findLast(node => node.className.includes('inline-task-title')).value, 'Edited deterministic ranking');
   assert.equal(createdNodes.findLast(node => node.className.includes('inline-description')).value, 'Preserve this draft');
@@ -512,8 +512,8 @@ test('recent rows show durable titles and unified offset-preserving inline editi
   assert.equal(editMessage.payload.entries.length, 1);
   assert.equal(editMessage.payload.entries[0].edits.taskTitle, 'Edited deterministic ranking');
   assert.equal(editMessage.payload.entries[0].edits.description, 'Preserve this draft');
-  assert.equal(editMessage.payload.entries[0].edits.startedAt, entry.startedAt);
-  assert.equal(editMessage.payload.entries[0].edits.endedAt, '2026-08-19T00:00:27.123-07:00');
+  assert.equal(editMessage.payload.entries[0].edits.startedAt, '2026-11-01T09:00:11.300Z');
+  assert.equal(editMessage.payload.entries[0].edits.endedAt, '2026-11-01T10:00:27.120Z');
   assert.equal(createdNodes.some(node => node.textContent === 'Edit'), false, 'the separate Edit panel trigger is gone');
 });
 
@@ -528,7 +528,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Cached entry',
     entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
     durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
-    _path: 'times/2026-08/alice.txt', _sha: 'cached', _index: 0,
+    _path: 'times/2026-08/alice.jsonl', _sha: 'cached', _index: 0,
   };
   const refreshed = { ...cached, taskTitle: 'Refreshed entry', issueTitle: 'Refreshed entry', _sha: 'fresh' };
   let replyCachedState, replyRemoteState, replyRecent;
@@ -598,7 +598,7 @@ test('each recent record keeps task identity inside its highlighted time row', a
     schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
     entryDate: '2026-08-18', startedAt: start, endedAt: end,
     durationSeconds: (new Date(end) - new Date(start)) / 1000, description,
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: Number(id.at(-1)),
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: Number(id.at(-1)),
   });
   const entries = [
     entry('record0', 7, '2026-08-18T12:00:00+00:00', '2026-08-18T12:30:00+00:00', 'Newest pass'),
@@ -650,7 +650,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
     schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
     entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
     durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: index,
   });
   const entries = [
     entry('today-a', 7, '2026-08-21T14:00:00+00:00', '2026-08-21T15:00:00+00:00', 0),
@@ -738,7 +738,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
     schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
     entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
     durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: index,
   });
   let entries = [
     makeEntry('older', 7, '2026-08-21T14:00:00.111+00:00', '2026-08-21T15:00:43.324+00:00', 0),
@@ -856,15 +856,19 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
   const entry = (id, number, startedAt, endedAt, sha, index = number - 1) => ({
-    schemaVersion: 1, id, user: 'alice', taskUrl: `https://github.com/acme/app/issues/${number}`, taskTitle: `Issue ${number}`,
+    schemaVersion: 1, id, entryId: id, user: 'alice',
+    actor: { kind: 'human', id: 'github:1', name: 'alice' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    taskUrl: `https://github.com/acme/app/issues/${number}`, taskTitle: `Issue ${number}`,
     issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
-    issueTitle: `Issue ${number}`, entryDate: startedAt.slice(0, 10), startedAt, endedAt, durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '',
-    createdAt: endedAt, updatedAt: endedAt, _path: 'times/2026-08/alice.txt', _sha: sha, _index: index,
+    issueTitle: `Issue ${number}`, entryDate: '2026-08-18', timezone: 'Europe/Moscow', startedAt, endedAt,
+    durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '', metadata: {}, metrics: {},
+    createdAt: startedAt, updatedAt: endedAt, _path: 'times/2026-08/alice.jsonl', _sha: sha, _index: index,
   });
-  const older = entry('20260818000000000000000001', 1, '2026-08-18T09:00:00+03:00', '2026-08-18T10:00:00+03:00', 'daily', 1);
-  const newer = entry('20260818000000000000000000', 2, '2026-08-18T10:00:00+03:00', '2026-08-18T11:00:00+03:00', 'daily', 0);
-  const hidden = entry(older.id, 3, '2026-08-18T11:00:00+03:00', '2026-08-18T12:00:00+03:00', 'post-delete', 1);
-  const rewrittenOlder = { ...older, id: '20260818000000000000000000', _sha: 'post-delete', _index: 0 };
+  const older = entry('01K31P0G000000000000000001', 1, '2026-08-18T06:00:00.000Z', '2026-08-18T07:00:00.000Z', 'daily', 1);
+  const newer = entry('01K31SE6000000000000000002', 2, '2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z', 'daily', 0);
+  const hidden = entry('01K31WWM000000000000000003', 3, '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', 'post-delete', 1);
+  const rewrittenOlder = { ...older, _sha: 'post-delete', _index: 0 };
   const now = new Date(), reportDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   let loadedRecent = [newer, older], releaseDelete, deleteCalls = 0;
   const document = {
@@ -910,14 +914,14 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   const deleteRenderStart = createdNodes.length;
   releaseDelete(); await deletePromise; await new Promise(resolve => setTimeout(resolve, 0));
   const postDeleteLinks = createdNodes.slice(deleteRenderStart).filter(node => node.tag === 'a' && [older.issue.url, hidden.issue.url].includes(node.href));
-  assert.deepEqual(postDeleteLinks.map(node => node.href), [older.issue.url], 'deletion keeps only the previously visible survivor when indexes and derived IDs shift');
+  assert.deepEqual(postDeleteLinks.map(node => node.href), [older.issue.url], 'deletion keeps only the previously visible stable-ID survivor when indexes shift');
   assert.equal(createdNodes.slice(deleteRenderStart).filter(node => node.className === 'today-total-value').at(-1)?.textContent, '1h 0m',
     'confirmed direct deletion immediately subtracts its duration from matching summary frames');
   const deletion = messages.find(message => message.type === 'DELETE_ENTRY');
   assert.equal(deletion.payload.path, newer._path);
   assert.equal(deletion.payload.index, newer._index);
   assert.deepEqual(deletion.payload.original, {
-    taskUrl: newer.taskUrl, taskTitle: newer.taskTitle, issueUrl: newer.issue.url, issueTitle: newer.issueTitle,
+    id: newer.id, taskUrl: newer.taskUrl, taskTitle: newer.taskTitle, issueUrl: newer.issue.url, issueTitle: newer.issueTitle,
     startedAt: newer.startedAt, endedAt: newer.endedAt, description: '',
   });
   const survivingDelete = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
@@ -938,16 +942,38 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
 });
 
 
+test('running time uses the stored local entry date across positive and negative UTC offsets', () => {
+  const match = source.match(/  function summarySeconds\(frame\) \{[\s\S]*?\n  \}/);
+  assert.ok(match, 'summarySeconds remains testable as one focused function');
+  const evaluate = (pageState, frame, now) => {
+    class FixedDate extends Date { static now() { return now; } }
+    return vm.runInNewContext(`(() => { ${match[0]} return summarySeconds(${JSON.stringify(frame)}); })()`, { pageState, Date: FixedDate, Math });
+  };
+  const frame18 = { seconds: 0, startDate: '2026-08-18', endDate: '2026-08-18' };
+  const frame19 = { seconds: 0, startDate: '2026-08-19', endDate: '2026-08-19' };
+  const positiveOffset = { active: { entryDate: '2026-08-18', timezone: 'Pacific/Kiritimati', startedAt: '2026-08-17T23:00:00.000Z' } };
+  assert.equal(evaluate(positiveOffset, frame18, Date.parse('2026-08-18T01:00:00.000Z')), 7200);
+  const negativeOffset = { active: { entryDate: '2026-08-18', timezone: 'America/Adak', startedAt: '2026-08-19T01:00:00.000Z' } };
+  assert.equal(evaluate(negativeOffset, frame18, Date.parse('2026-08-19T02:00:00.000Z')), 3600);
+  assert.equal(evaluate(negativeOffset, frame19, Date.parse('2026-08-19T02:00:00.000Z')), 0);
+});
+
+
 test('successful Delete responses accept exact empty output and reject malformed parser-shaped entries safely', async t => {
   const recentEntry = {
-    schemaVersion: 1, id: '20260818000000000000000000', user: 'alice',
+    schemaVersion: 1, id: '01K31SE6000000000000000002', entryId: '01K31SE6000000000000000002', user: 'alice',
+    actor: { kind: 'human', id: 'github:1', name: 'alice' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    timezone: 'UTC', metadata: {}, metrics: {},
+    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Ranking regression',
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Ranking regression',
     entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
     durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
-    _path: 'times/2026-08/alice.txt', _sha: 'rewritten', _index: 0,
+    _path: 'times/2026-08/alice.jsonl', _sha: 'rewritten', _index: 0,
   };
   const secondEntry = {
-    ...recentEntry, id: '20260818000000000000000001', issue: { ...recentEntry.issue, number: 8, url: 'https://github.com/acme/app/issues/8' },
+    ...recentEntry, id: '01K31WWM000000000000000003', entryId: '01K31WWM000000000000000003', taskUrl: 'https://github.com/acme/app/issues/8',
+    issue: { ...recentEntry.issue, number: 8, url: 'https://github.com/acme/app/issues/8' },
     startedAt: '2026-08-18T10:00:00+00:00', endedAt: '2026-08-18T11:00:00+00:00',
     createdAt: '2026-08-18T11:00:00+00:00', updatedAt: '2026-08-18T11:00:00+00:00', _index: 1,
   };
@@ -956,7 +982,7 @@ test('successful Delete responses accept exact empty output and reject malformed
     ['null member', [null]],
     ['primitive member', [7]],
     ['wrong index', [{ ...recentEntry, _index: 1 }]],
-    ['wrong path', [{ ...recentEntry, _path: 'times/2026-08/bob.txt' }]],
+    ['wrong path', [{ ...recentEntry, _path: 'times/2026-08/bob.jsonl' }]],
     ['empty SHA', [{ ...recentEntry, _sha: '' }]],
     ['inconsistent SHA', [recentEntry, { ...secondEntry, _sha: 'other' }]],
     ['missing ID', [omit(recentEntry, 'id')]],
@@ -964,7 +990,7 @@ test('successful Delete responses accept exact empty output and reject malformed
     ['extra metadata', [{ ...recentEntry, unexpected: true }]],
     ['wrong schema', [{ ...recentEntry, schemaVersion: 2 }]],
     ['wrong user', [{ ...recentEntry, user: 'bob' }]],
-    ['missing issue', [omit(recentEntry, 'issue')]],
+    ['missing actor', [omit(recentEntry, 'actor')]],
     ['missing issue title', [omit(recentEntry, 'issueTitle')]],
     ['unnormalized issue title', [{ ...recentEntry, issueTitle: ' two  spaces ' }]],
     ['empty issue URL', [{ ...recentEntry, issue: { ...recentEntry.issue, url: '' } }]],
@@ -975,14 +1001,15 @@ test('successful Delete responses accept exact empty output and reject malformed
     ['empty End', [{ ...recentEntry, endedAt: '' }]],
     ['malformed End', [{ ...recentEntry, endedAt: 'not-a-time' }]],
     ['wrong entry date', [{ ...recentEntry, entryDate: '2026-02-31' }]],
-    ['wrong derived ID', [{ ...recentEntry, id: '20260818000000000000000001' }]],
+    ['entry date disagrees with Start in timezone', [{ ...recentEntry, entryDate: '2026-08-19' }]],
+    ['mismatched entry ID', [{ ...recentEntry, entryId: '01K31WWM000000000000000003' }]],
     ['wrong duration', [{ ...recentEntry, durationSeconds: 1 }]],
-    ['wrong createdAt', [{ ...recentEntry, createdAt: recentEntry.startedAt }]],
+    ['wrong createdAt', [{ ...recentEntry, createdAt: '2026-08-18T10:00:00+00:00' }]],
     ['wrong updatedAt', [{ ...recentEntry, updatedAt: recentEntry.startedAt }]],
-    ['unnormalized description', [{ ...recentEntry, description: ' two  spaces ' }]],
+    ['overlong description', [{ ...recentEntry, description: 'x'.repeat(2001) }]],
   ];
 
-  async function exercise(entries, expectFallback) {
+  async function exercise(entries, expectFallback, initialRecent = [recentEntry]) {
     documentNodes.clear(); createdNodes.length = 0;
     const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
     const { actions } = makeHeader();
@@ -997,7 +1024,7 @@ test('successful Delete responses accept exact empty output and reject malformed
         if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
         else if (message.type === 'LOAD_RECENT') {
           loadCalls += 1;
-          callback(deleted ? { ok: false, error: { code: 'error', message: 'Refresh failed' } } : { ok: true, data: [recentEntry] });
+          callback(deleted ? { ok: false, error: { code: 'error', message: 'Refresh failed' } } : { ok: true, data: initialRecent });
         } else if (message.type === 'DELETE_ENTRY') { deleted = true; callback({ ok: true, data: { deleted: true, entries } }); }
         else callback({ ok: true, data: {} });
       } } },
@@ -1019,6 +1046,16 @@ test('successful Delete responses accept exact empty output and reject malformed
   }
 
   await t.test('empty exact response after deleting the last record', () => exercise([], false));
+  const fractionalEntry = {
+    ...secondEntry, _index: 0,
+    startedAt: '2026-08-18T10:00:00.3Z', endedAt: '2026-08-18T11:00:00.3Z',
+    createdAt: '2026-08-18T11:00:00.3Z', updatedAt: '2026-08-18T11:00:00.3Z',
+  };
+  await t.test('valid one-digit fractional timestamps need no fallback reload', () => exercise([fractionalEntry], false));
+  const changedSurvivorId = '01K31WWM000000000000000004';
+  await t.test('changed stable ID', () => exercise(
+    [{ ...secondEntry, id: changedSurvivorId, entryId: changedSurvivorId, _index: 0 }], true, [secondEntry, recentEntry],
+  ));
   for (const [label, entries] of malformed) await t.test(label, () => exercise(entries, true));
 });
 
@@ -1031,7 +1068,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   const { actions } = makeHeader();
   const today = new Date(), pad = value => String(value).padStart(2, '0');
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const recentEntry = { user: 'alice', entryDate: date, durationSeconds: 5400, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: `${date}T08:00:00+00:00`, endedAt: `${date}T09:30:00+00:00`, description: '', _path: `times/${date}/alice.txt`, _sha: 'x', _index: 0 };
+  const recentEntry = { user: 'alice', entryDate: date, durationSeconds: 5400, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: `${date}T08:00:00+00:00`, endedAt: `${date}T09:30:00+00:00`, description: '', _path: `times/${date.slice(0, 7)}/alice.jsonl`, _sha: 'x', _index: 0 };
   const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
   const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
     messages.push(structuredClone(message));
@@ -1306,7 +1343,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     schemaVersion: 1, id, user: 'alice', taskUrl: url, taskTitle: title,
     entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
     durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.txt', _sha: 'same', _index: index,
+    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: index,
   });
   const entries = [
     makeEntry('x', 'https://example.com/x', 'X', '2026-08-21T10:00:00+00:00', '2026-08-21T11:00:00+00:00', 0),

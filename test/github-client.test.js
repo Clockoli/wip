@@ -23,10 +23,10 @@ test('GitHub client encodes unicode text and uses SHA for update/delete', async 
     return response(200, { content: { sha: 'newsha' }, commit: { sha: 'commitsha' } });
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', fetchImpl });
-  const file = await client.getText('active/alice.txt');
+  const file = await client.getText('active/alice.json');
   assert.equal(file.text, 'Description: ✓\n');
-  await client.putText('active/alice.txt', 'Description: Привет\n', 'update', 'oldsha');
-  await client.deleteFile('active/alice.txt', 'delete', 'newsha');
+  await client.putText('active/alice.json', 'Description: Привет\n', 'update', 'oldsha');
+  await client.deleteFile('active/alice.json', 'delete', 'newsha');
   assert.equal(JSON.parse(calls[1].options.body).sha, 'oldsha');
   assert.equal(JSON.parse(calls[2].options.body).sha, 'newsha');
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
@@ -40,16 +40,16 @@ test('GitHub client lists report text files from one tree and reads immutable bl
     if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
     if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
     if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
-      { path: 'times/2026-08/alice.txt', type: 'blob', sha },
-      { path: 'active/alice.txt', type: 'blob', sha: 'b'.repeat(40) },
+      { path: 'times/2026-08/alice.jsonl', type: 'blob', sha },
+      { path: 'active/alice.json', type: 'blob', sha: 'b'.repeat(40) },
       { path: 'times/readme.md', type: 'blob', sha: 'c'.repeat(40) },
     ] });
     if (url.endsWith(`/git/blobs/${sha}`)) return response(200, { encoding: 'base64', content: btoa('URL: https://github.com/acme/app/issues/1\n'), truncated: false });
     throw new Error(`Unexpected ${url}`);
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
-  assert.deepEqual(await client.listTextFiles('times/'), [{ path: 'times/2026-08/alice.txt', sha }]);
-  assert.equal((await client.getBlobText('times/2026-08/alice.txt', sha)).text, 'URL: https://github.com/acme/app/issues/1\n');
+  assert.deepEqual(await client.listTextFiles('times/'), [{ path: 'times/2026-08/alice.jsonl', sha }]);
+  assert.equal((await client.getBlobText('times/2026-08/alice.jsonl', sha)).text, 'URL: https://github.com/acme/app/issues/1\n');
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
 });
 
@@ -62,12 +62,12 @@ test('GitHub client returns branch ETags and accepts a conditional 304 snapshot'
       return response(200, { object: { sha: 'parent' } }, { etag: '"snapshot"' });
     }
     if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
-    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [{ path: 'times/2026-08/alice.txt', type: 'blob', sha }] });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [{ path: 'times/2026-08/alice.jsonl', type: 'blob', sha }] });
     throw new Error(`Unexpected ${url}`);
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   const first = await client.listTextFilesSnapshot('times/');
-  assert.deepEqual(first, { notModified: false, etag: '"snapshot"', headSha: 'parent', files: [{ path: 'times/2026-08/alice.txt', sha }] });
+  assert.deepEqual(first, { notModified: false, etag: '"snapshot"', headSha: 'parent', files: [{ path: 'times/2026-08/alice.jsonl', sha }] });
   const second = await client.listTextFilesSnapshot('times/', { etag: first.etag });
   assert.deepEqual(second, { notModified: true, etag: '"snapshot"' });
   assert.equal(calls.length, 4, '304 skips commit and tree requests');
@@ -103,8 +103,8 @@ test('atomic text update rejects a branch head changed after partition discovery
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   await assert.rejects(() => client.updateTextsAtomic([
-    { path: 'times/2026-09/alice.txt', sha: null, text: 'new time\n' },
-  ], 'bulk', { guards: [{ path: 'active/alice.txt', sha: null }], expectedHeadSha: 'discovery-head' }), GitHubConflictError);
+    { path: 'times/2026-09/alice.jsonl', sha: null, text: 'new time\n' },
+  ], 'bulk', { guards: [{ path: 'active/alice.json', sha: null }], expectedHeadSha: 'discovery-head' }), GitHubConflictError);
   assert.equal(writes, 0);
 });
 
@@ -115,14 +115,14 @@ test('atomic text update rejects a stale read-set guard before creating a single
     if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
     if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
     return response(200, { tree: [
-      { path: 'times/2026-09/alice.txt', type: 'blob', sha: 'month-old' },
-      { path: 'active/alice.txt', type: 'blob', sha: 'active-new' },
+      { path: 'times/2026-09/alice.jsonl', type: 'blob', sha: 'month-old' },
+      { path: 'active/alice.json', type: 'blob', sha: 'active-new' },
     ] });
   };
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   await assert.rejects(() => client.updateTextsAtomic([
-    { path: 'times/2026-09/alice.txt', sha: 'month-old', text: 'new time\n' },
-  ], 'bulk', { guards: [{ path: 'active/alice.txt', sha: null }] }), GitHubConflictError);
+    { path: 'times/2026-09/alice.jsonl', sha: 'month-old', text: 'new time\n' },
+  ], 'bulk', { guards: [{ path: 'active/alice.json', sha: null }] }), GitHubConflictError);
   assert.equal(writes, 0);
 });
 
@@ -331,13 +331,13 @@ test('GitHub client lists all repository blob paths for compatible storage inspe
       if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
       if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
       if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
-        { path: 'README.md', type: 'blob', mode: '100644' }, { path: 'active/alice.txt', type: 'blob', mode: '100644' }, { path: 'times', type: 'tree', mode: '040000' },
+        { path: 'README.md', type: 'blob', mode: '100644' }, { path: 'active/alice.json', type: 'blob', mode: '100644' }, { path: 'times', type: 'tree', mode: '040000' },
       ] });
       throw new Error(`Unexpected ${url}`);
     },
   });
   assert.deepEqual(await client.listRepositoryEntries(), [
-    { path: 'active/alice.txt', type: 'blob', mode: '100644' },
+    { path: 'active/alice.json', type: 'blob', mode: '100644' },
     { path: 'README.md', type: 'blob', mode: '100644' },
     { path: 'times', type: 'tree', mode: '040000' },
   ]);
@@ -412,7 +412,7 @@ test('mutating content requests verify the configured stable repository ID befor
     },
   });
   await assert.rejects(
-    () => client.putText('active/alice.txt', 'Start: now\n', 'start'),
+    () => client.putText('active/alice.json', 'Start: now\n', 'start'),
     error => error.code === 'repository_identity_changed',
   );
   assert.equal(calls.length, 1);
@@ -439,7 +439,7 @@ test('custom branch and canonical coordinates are revalidated before every mutat
       throw new Error(`Unexpected ${url}`);
     },
   });
-  await custom.putText('active/alice.txt', 'Start: now\n', 'start');
+  await custom.putText('active/alice.json', 'Start: now\n', 'start');
   assert.ok(branchCalls.some(call => call.url.endsWith('/branches/release')));
   assert.equal(branchCalls.at(-1).options.method, 'PUT');
 
@@ -451,7 +451,7 @@ test('custom branch and canonical coordinates are revalidated before every mutat
       return response(200, { id: 77, name: 'new-repo', full_name: 'new-owner/new-repo', owner: { login: 'new-owner' }, private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } });
     },
   });
-  await assert.rejects(() => renamed.putText('active/alice.txt', 'Start: now\n', 'start'), error => error.code === 'repository_coordinates_changed');
+  await assert.rejects(() => renamed.putText('active/alice.json', 'Start: now\n', 'start'), error => error.code === 'repository_coordinates_changed');
   assert.equal(renameCalls.length, 1);
   assert.equal(renameCalls[0].options.method, undefined);
 });
@@ -489,7 +489,7 @@ test('runtime repository-state failures produce choose-repository recovery', asy
       token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: 77, branchMode: 'default',
       fetchImpl: async () => response(200, { id: 77, full_name: 'acme/time', default_branch: 'main', permissions: { push: true }, ...state }),
     });
-    await assert.rejects(() => client.putText('active/alice.txt', 'Start: now\n', 'start'), error => {
+    await assert.rejects(() => client.putText('active/alice.json', 'Start: now\n', 'start'), error => {
       assert.equal(error.code, code);
       assert.equal(recoveryFor(error.code).kind, 'choose');
       assert.equal(recoveryFor(error.code).label, 'Choose another repository');
@@ -507,8 +507,8 @@ test('documented branch-policy rejections map to choose while genuine ref races 
     },
   });
   for (const operation of [
-    () => policy.putText('active/alice.txt', 'Start: now\n', 'start'),
-    () => policy.deleteFile('active/alice.txt', 'clear', 'old-sha'),
+    () => policy.putText('active/alice.json', 'Start: now\n', 'start'),
+    () => policy.deleteFile('active/alice.json', 'clear', 'old-sha'),
   ]) {
     await assert.rejects(operation, error => {
       assert.equal(error.code, 'branch_policy_rejected');
@@ -547,7 +547,7 @@ test('documented branch-policy rejections map to choose while genuine ref races 
 
 test('runtime mutations fail closed when stable repository identity has not been upgraded', async () => {
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: null, fetchImpl: async () => { throw new Error('must not reach GitHub'); } });
-  await assert.rejects(() => client.putText('active/alice.txt', 'Start: now\n', 'start'), error => error.code === 'repository_identity_unverified');
+  await assert.rejects(() => client.putText('active/alice.json', 'Start: now\n', 'start'), error => error.code === 'repository_identity_unverified');
 });
 
 

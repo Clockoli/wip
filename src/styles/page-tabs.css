@@ -8,5 +8,5 @@
 .page-tab:hover{color:var(--fgColor-default);text-decoration:none}
 .page-tab[aria-current="page"]{border-bottom-color:var(--borderColor-accent-emphasis);color:var(--fgColor-default)}
 .page-brand:focus-visible,.page-tab:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:-4px}
-@media(max-width:640px){.page-tabs{padding:0 8px}.page-brand{margin-right:10px}.page-brand img{width:auto;height:28px}.page-tab{padding-inline:10px}}
+@media(max-width:640px){.page-tabs{padding:0 4px}.page-brand{margin-right:4px}.page-brand img{width:auto;height:20px}.page-tab{padding-inline:4px;font-size:12px}}
 @media print{.page-tabs-shell{display:none}}

@@ -8,7 +8,7 @@
       'repository_branch_changed', 'repository_unavailable', 'private_required', 'user_write_required',
     ]),
     repair: new Set([
-      'incompatible_storage_format', 'storage_login_conflict', 'legacy_layout_budget',
+      'incompatible_storage_format', 'storage_login_conflict', 'storage_layout_budget',
       'migration_identity_mismatch', 'migration_identity_unverified',
     ]),
   });

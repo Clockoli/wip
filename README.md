@@ -19,7 +19,7 @@ Clockoli is a good fit when data ownership and auditability matter more than one
 
 ## Current beta installation
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.27`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.28`; the published `v0.1.11` GitHub release predates the features documented here.
 
 1. Clone or update this repository:
 
@@ -86,7 +86,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 
 ### Reports and billing
 
-- Repository-wide reporting across `clockoli/users/` personal branches and valid default-branch data.
+- Repository-wide reporting across marker-backed `clockoli/users/` personal branches; the default branch remains metadata-only.
 - Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
 - People and Source facets. A Source is a GitHub owner/repository for GitHub tasks or a hostname for another URL.
 - Total time, average time per distinct task, distinct task count, and billable amount.
@@ -100,7 +100,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 
 - Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
 - Dedicated private GitHub data repository, with one marked personal branch per user.
-- Human-readable monthly text files with explicit timezone offsets.
+- Human-readable monthly JSONL files with UTC timestamps plus explicit local dates and IANA timezones.
 - SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
 - Locally queued Stop operations with automatic retry when GitHub is temporarily unavailable.
 - Settings backup in readable JSON without credentials, active timers, pending writes, or tracked time.
@@ -122,7 +122,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 
 - Chrome/Chromium 102 or newer; no Firefox package.
 - Current beta installation is unpacked and has no automatic updates.
-- Starting a timer requires GitHub connectivity. Stopping can be queued locally and retried.
+- Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
 - One active timer per connected GitHub account.
 - Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
 - The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.

@@ -22,22 +22,15 @@ There is no Clockoli application server between the extension and GitHub.
 
 The durable repository can contain:
 
-- a Clockoli format and user mapping marker;
+- a Clockoli repository-format and user-mapping marker;
 - a personal-branch ownership marker;
-- one active timer per user;
-- completed monthly time records;
+- one active JSON work record per actor;
+- completed monthly JSONL work records;
 - Git commits and history created by changes to those files.
 
-A completed record stores:
+Every work record uses schema `1` and stores a stable ID, actor, work item, activity timestamps and local calendar context, producer, description, metadata, metrics, and optional execution identity. This model represents human and agent work without changing the root schema.
 
-- canonical task URL;
-- optional task title;
-- Start timestamp with timezone offset;
-- End timestamp with timezone offset;
-- optional description;
-- the user identity derived from its storage path.
-
-Duration and billable amount are calculated. They are not persisted in time records.
+Duration and billable amount are calculated. Wall-clock duration is derived from activity timestamps; hourly rates remain local.
 
 ## What remains local to the extension
 
@@ -46,7 +39,7 @@ Clockoli uses extension-origin IndexedDB for:
 - GitHub App access/refresh credentials or PAT compatibility credentials;
 - resumable Device Flow state;
 - selected configuration and generation counters;
-- pending Stop stages and conflict state;
+- pending mutation stages and conflict state;
 - recent-entry and report caches;
 - task metadata cache;
 - recent-entry display preference;
@@ -69,53 +62,41 @@ Clockoli provisions a personal branch for each GitHub user:
 clockoli/users/{stable-github-user-id}
 ```
 
-That branch contains an ownership marker and the user's normal timer data:
+That branch contains the ownership marker and canonical v1 work data:
 
 ```text
 .clockoli/user.json
-active/{storage-login}.txt
-times/{YYYY-MM}/{storage-login}.txt
+active/{storage-login}.json
+times/{YYYY-MM}/{storage-login}.jsonl
 ```
 
-The stable numeric GitHub user ID is used in the branch name. The shared marker maps that stable ID to an immutable storage login used in file paths.
+The stable numeric GitHub user ID is used in the branch name. The shared marker maps it to an immutable storage login used in file paths.
 
-Routine Start, Stop, Edit, and Delete operations use the personal branch. Reports discovers only `clockoli/users/` branches with valid ownership metadata, reads the represented users, and merges valid default-branch data without duplicating equivalent records.
+Routine Start, Stop, Edit, and Delete operations use the personal branch. Reports discovers only marked personal branches with valid ownership metadata. The default branch stores shared repository metadata, not a second copy of work records.
 
-## Text format
+## Data format v1
 
-### Active timer
+Clockoli supports one persistent data format. It does not read or migrate any earlier pre-release representation.
 
-```text
-URL: https://example.com/work/42?view=full
-Title: Optional task title
-Start: 2026-08-22T09:00:00+03:00
-Description: optional single-line text
-```
+An active file is one JSON object. A monthly file is JSON Lines with one compact completed record per non-empty line. Each record includes:
 
-### Completed record
+- `schema_version: 1`, a stable ULID, and `record_type: "work"`;
+- `actor`, independent from the writing `producer`;
+- a canonical `work_item` identity, URL, and title;
+- UTC activity timestamps plus `local_date` and an IANA timezone;
+- description, metadata, namespaced metrics, and optional agent execution identity;
+- UTC creation and update timestamps.
 
-```text
-URL: https://example.com/work/42?view=full
-Title: Optional task title
-Start: 2026-08-22T09:00:00+03:00
-End: 2026-08-22T10:15:00+03:00
-Description: optional single-line text
-```
-
-`Title` and `Description` may be omitted. Completed records in one monthly file are separated by a blank line.
-
-The month in `times/YYYY-MM/` is derived from the stored Start timestamp's represented calendar date. Every timestamp includes an explicit offset so edits do not silently reinterpret the original wall time.
+The same ID is retained when a running record becomes completed. Rewriters preserve unknown root and nested fields, allowing additive evolution without erasing data from other producers. See [Data Format v1](data-format-v1.md) for the normative contract.
 
 ### URL normalization
 
 - Only `http:` and `https:` URLs are accepted.
 - Credentials in URLs are rejected.
-- GitHub issue/PR query strings and fragments are removed because notification and navigation parameters do not change the underlying task.
-- Query strings for other sites are preserved because they may be meaningful task identity.
-- Task titles are optional and bounded to 300 characters.
+- GitHub issue/PR query strings and fragments are removed because navigation parameters do not change the work item.
+- Query strings for other sites are preserved because they may be meaningful identity.
+- Work-item titles are optional and bounded to 300 characters.
 - Descriptions are optional and bounded to 2,000 characters.
-
-Older GitHub issue/PR blocks remain readable and are projected into the URL-first model when possible.
 
 ## GitHub permissions
 
@@ -154,18 +135,18 @@ Repository adoption fails closed:
 
 ### Concurrent mutations
 
-- Git blob SHAs and original record content protect Edit and Delete from stale views.
-- A record is located by canonical content, not only by its mutable array index.
+- Git blob SHAs and stable record IDs protect Edit and Delete from stale views.
+- A record is located by its persistent ID; its mutable array index is only a UI/storage hint.
 - Linked time corrections and cross-month moves preflight every affected file and publish one Git commit.
-- Stop uses a stable operation identity and exact-content checks so retries can converge without duplicate records.
+- Stop preserves the active record ID and uses stable operation identity so retries and concurrent devices converge without duplicate records.
 - A stale completion never clears a newer active timer.
 
 ## Offline behavior
 
-Clockoli is not fully offline-first:
+Clockoli accepts timer mutations locally during temporary connectivity loss, but GitHub remains the canonical destination:
 
-- Start requires a reachable GitHub repository.
-- Stop can be persisted locally and retried.
+- Start, Stop, and task switches are persisted in the extension-local queue and retried.
+- A locally accepted mutation is not fully synchronized until its GitHub write completes.
 - Pending writes are attempted at extension startup and on a one-minute alarm.
 - **Sync now** requests an immediate retry.
 - A new Start is blocked while a completion is pending or conflicted.

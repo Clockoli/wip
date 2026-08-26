@@ -42,6 +42,7 @@ test('shared navigation styles distinguish the brand from page tabs and remain r
   assert.match(css, /\.page-brand img/);
   assert.match(css, /\.page-tab\[aria-current="page"\]/);
   assert.match(css, /overflow-x:auto/);
+  assert.match(css, /@media\(max-width:640px\)\{\.page-tabs\{padding:0 4px\}\.page-brand\{margin-right:4px\}\.page-brand img\{width:auto;height:20px\}\.page-tab\{padding-inline:4px;font-size:12px\}\}/);
 });
 
 test('Activity does not duplicate standalone navigation inside its renderer', () => {

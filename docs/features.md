@@ -164,13 +164,13 @@ Clockoli validates one dedicated private GitHub repository. Each user writes rou
 clockoli/users/{stable-github-user-id}
 ```
 
-This keeps users' normal timer commits off the repository's default branch and reduces write conflicts between team members. Reports discovers the marked `clockoli/users/` personal branches and merges them with valid records on the default branch.
+This keeps users' normal timer commits off the repository's default branch and reduces write conflicts between team members. Reports discovers work records only from marked `clockoli/users/` personal branches; the default branch stores shared repository metadata.
 
 See [Data, privacy, and security](data-and-privacy.md) for file formats and permissions.
 
-## Synchronization and offline Stop
+## Synchronization and offline mutations
 
-Starting requires a reachable GitHub destination. Stopping is designed to survive a temporary network failure:
+Start, Stop, and task switches are accepted durably in the extension-local queue, then synchronized with GitHub asynchronously:
 
 1. Clockoli records a stable pending completion in extension-local IndexedDB.
 2. It appends or verifies the intended monthly record with SHA protection.

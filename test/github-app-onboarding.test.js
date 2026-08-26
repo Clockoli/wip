@@ -5,6 +5,17 @@ import { InstallationDiscoveryService, RepositoryInitializer } from '../src/serv
 function notFound() { const error = new Error('not found'); error.status = 404; error.code = 'not_found'; return error; }
 function conflict() { const error = new Error('conflict'); error.status = 409; error.code = 'conflict'; return error; }
 
+function activeJson(user = 'alice') {
+  return `${JSON.stringify({
+    schema_version: 1, id: '01K2ABCDEF0123456789ABCDEF', record_type: 'work',
+    actor: { kind: 'human', id: 'github:123', name: user },
+    work_item: { kind: 'github_issue', id: 'url:https://github.com/acme/app/issues/1', url: 'https://github.com/acme/app/issues/1', title: '' },
+    activity: { state: 'running', started_at: '2026-08-20T00:00:00.000Z', ended_at: null, local_date: '2026-08-20', timezone: 'UTC' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    description: '', metadata: {}, metrics: {}, created_at: '2026-08-20T00:00:00.000Z', updated_at: '2026-08-20T00:00:00.000Z',
+  }, null, 2)}\n`;
+}
+
 function installation(id, overrides = {}) {
   return {
     id, account: { id: id * 10, login: `owner-${id}`, type: id === 1 ? 'User' : 'Organization' },
@@ -174,10 +185,10 @@ test('pre-marker canonical files are parsed strictly before initialization', asy
       if (path === '.clockoli/config.json' || path === '.clockoli/config.json') throw notFound();
       return { text: 'not a valid Clockoli record\n', sha: 'bad' };
     },
-    async listRepositoryFiles() { return ['active/alice.txt']; },
+    async listRepositoryFiles() { return ['active/alice.json']; },
     async putText() { throw new Error('must not write'); },
   };
-  await assert.rejects(() => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format' && /active\/alice\.txt/.test(error.message));
+  await assert.rejects(() => new RepositoryInitializer({ github }).initialize({ id: 123, login: 'alice' }), error => error.code === 'incompatible_storage_format' && /active\/alice\.json/.test(error.message));
 });
 
 test('empty repositories and branch rules have actionable recovery classifications', async () => {
@@ -340,7 +351,7 @@ test('pre-marker validation rejects non-blob entries and incompatible modes unde
     getText: async () => { throw notFound(); },
     listRepositoryEntries: async () => [
       { path: 'active/vendor', type: 'commit', mode: '160000' },
-      { path: 'times/2026-08/alice.txt', type: 'blob', mode: '120000' },
+      { path: 'times/2026-08/alice.jsonl', type: 'blob', mode: '120000' },
     ],
     putText: async () => { writes += 1; },
   };
@@ -393,11 +404,11 @@ test('PAT migration can require the immutable legacy storage login when creating
     validateRepository: async () => repository(77), validateBranch: async () => ({}),
     getText: async path => {
       if (path === '.clockoli/config.json' || path === '.clockoli/config.json') throw notFound();
-      if (path.startsWith('active/')) return { text: 'URL: https://github.com/acme/app/issues/1\nStart: 2026-08-20T00:00:00Z\n', sha: 'a' };
+      if (path.startsWith('active/')) return { text: activeJson('old-login'), sha: 'a' };
       return { text: '', sha: 'b' };
     }, listRepositoryEntries: async () => [
-      { path: 'active/old-login.txt', type: 'blob', mode: '100644' },
-      { path: 'times/2026-08/old-login.txt', type: 'blob', mode: '100644' },
+      { path: 'active/old-login.json', type: 'blob', mode: '100644' },
+      { path: 'times/2026-08/old-login.jsonl', type: 'blob', mode: '100644' },
     ],
     putText: async (_path, text) => { writes.push(JSON.parse(text)); return { sha: 'marker' }; },
   };

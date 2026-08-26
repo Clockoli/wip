@@ -19,7 +19,7 @@ test('shared recovery taxonomy distinguishes reconnect, grant, choose, repair, a
   for (const code of ['repository_access_required', 'branch_policy_rejected', 'empty_repository', 'custom_branch_unverified', 'repository_identity_unverified', 'repository_identity_changed', 'repository_coordinates_changed', 'repository_branch_changed', 'repository_unavailable', 'private_required', 'user_write_required']) {
     assert.deepEqual(classify(code), { kind: 'choose', label: 'Choose another repository' });
   }
-  for (const code of ['incompatible_storage_format', 'storage_login_conflict', 'legacy_layout_budget', 'migration_identity_mismatch', 'migration_identity_unverified']) {
+  for (const code of ['incompatible_storage_format', 'storage_login_conflict', 'storage_layout_budget', 'migration_identity_mismatch', 'migration_identity_unverified']) {
     assert.deepEqual(classify(code), { kind: 'repair', label: 'Repair storage' });
   }
   for (const code of ['rate_limit', 'github_api_error', 'error', 'conflict', 'onboarding_superseded', 'unexpected']) {
