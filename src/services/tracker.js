@@ -13,6 +13,19 @@ function isConflict(error) { return error?.status === 409 || error?.code === 'co
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
 function taskTitleOf(value) { return normalizePlainTitle(value?.taskTitle ?? value?.issueTitle); }
 function taskLabel(value) { const url = taskUrlOf(value), github = parseGitHubTaskUrl(url); return github ? `${github.owner}/${github.repo}#${github.number}` : url; }
+function githubActorRelationships(github, actor) {
+  const actorId = String(actor?.id || '').match(/^github:(\d+)$/)?.[1] || '';
+  const actorName = String(actor?.name || '').toLowerCase();
+  const matches = identity => Boolean(identity) && (actorId
+    ? String(identity.id || '') === actorId
+    : actorName && String(identity.login || '').toLowerCase() === actorName);
+  const relationships = [];
+  if (matches(github?.author)) relationships.push('author');
+  if ((github?.assignees ?? []).some(matches)) relationships.push('assignee');
+  if ((github?.pull_request?.requested_reviewers ?? []).some(value => value?.kind === 'user' && matches(value))) relationships.push('reviewer');
+  return relationships.length ? relationships : ['other'];
+}
+
 function sameTimer(a, b) { return Boolean(a?.id && b?.id) && a.id === b.id; }
 function sameCompletion(entry, operation) { return Boolean(entry?.id && operation?.entry?.id) && entry.id === operation.entry.id; }
 
@@ -70,6 +83,25 @@ export class TrackerService {
 
   buildActive(values) {
     return buildActiveTimer({ user: this.user, actor: this.actor, producer: this.producer, timezone: this.timezone, ...values });
+  }
+
+  async enrichGitHubMetadata(active) {
+    const issue = active?.issue ?? parseGitHubTaskUrl(taskUrlOf(active));
+    if (!issue || active?.metadata?.github || typeof this.github.getTaskMetadata !== 'function') return active;
+    let details;
+    try { details = (await this.github.getTaskMetadata([issue], { batchSize: 1, maxRequests: 1, includeSnapshot: true })).get(issue.url); }
+    catch { return active; }
+    if (!details?.github || typeof details.github !== 'object' || Array.isArray(details.github)) return active;
+    const github = structuredClone(details.github);
+    github.actor_relationship = githubActorRelationships(github, active.actor);
+    const title = taskTitleOf(active) || normalizePlainTitle(details.title);
+    const capturedAt = github.snapshot?.captured_at;
+    return {
+      ...active,
+      ...(title ? { taskTitle: title, issueTitle: title } : {}),
+      metadata: { ...(active.metadata ?? {}), github },
+      ...(capturedAt && !Number.isNaN(new Date(capturedAt).getTime()) ? { updatedAt: new Date(capturedAt).toISOString() } : {}),
+    };
   }
 
   uniqueRecordId(timestamp, usedIds) {
@@ -159,7 +191,7 @@ export class TrackerService {
     const existing = await this.refreshActive();
     if (existing) throw new Error(`A timer is already tracking ${taskLabel(existing)}`);
     const now = this.clock(), id = this.idFactory(now.getTime());
-    const active = this.buildActive({ id, taskUrl: this.validateTaskUrl(taskUrl), startedAt: now, description, taskTitle });
+    const active = await this.enrichGitHubMetadata(this.buildActive({ id, taskUrl: this.validateTaskUrl(taskUrl), startedAt: now, description, taskTitle }));
     const path = activeRecordPath(this.user);
     try {
       const result = await this.github.putText(path, serializeActiveRecord(active), `timer: start ${this.user} on ${taskLabel(active)}`);
@@ -431,8 +463,9 @@ export class TrackerService {
   }
 
   async startQueuedActive(operation) {
-    const path = activeRecordPath(this.user), target = operation.nextActive;
-    if (!target) return null;
+    const path = activeRecordPath(this.user), queuedTarget = operation.nextActive;
+    if (!queuedTarget) return null;
+    const target = await this.enrichGitHubMetadata(queuedTarget);
     try {
       const result = await this.github.putText(path, serializeActiveRecord(target), `timer: start ${this.user} on ${taskLabel(target)}`);
       return { ...target, _path: path, _sha: result.sha };

@@ -1,6 +1,6 @@
 {
   "name": "clockoli-extension",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "private": true,
   "type": "module",
   "description": "Clockoli private GitHub-backed task time tracking Chrome extension",

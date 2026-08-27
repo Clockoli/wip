@@ -194,35 +194,67 @@ test('setup rejects public repositories and 422 is validation, not a concurrency
 });
 
 
-test('GitHub client returns task metadata in bounded GraphQL batches', async () => {
+test('GitHub client returns canonical task metadata snapshots in bounded GraphQL batches', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
     const query = JSON.parse(options.body).query;
-    assert.match(query, /issueOrPullRequest\(number: 1\)/);
-    assert.match(query, /issueOrPullRequest\(number: 2\)/);
-    assert.match(query, /issueOrPullRequest\(number: 3\)/);
-    assert.match(query, /on Issue \{ title url \}/);
-    assert.doesNotMatch(query, /stateReason|\bstate\b/);
+    assert.match(query, /databaseId nameWithOwner/);
+    assert.match(query, /labels\(first: 50\)/);
+    assert.match(query, /milestone \{ id number title \}/);
+    assert.match(query, /reviewRequests\(first: 25\)/);
     return response(200, { data: {
-      task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Fix indexing', url: 'https://github.com/acme/app/issues/1' } },
-      task1: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Ship reports', url: 'https://github.com/acme/app/pull/2' } },
-      task2: { issueOrPullRequest: { __typename: 'Issue', title: 'Won’t implement', url: 'https://github.com/acme/app/issues/3' } },
+      task0: { id: 'R_repo', databaseId: 99, nameWithOwner: 'acme/app', issueOrPullRequest: {
+        __typename: 'Issue', id: 'I_one', databaseId: 1001, number: 1, title: 'Fix indexing', url: 'https://github.com/acme/app/issues/1', state: 'OPEN', stateReason: null,
+        createdAt: '2026-08-01T01:00:00Z', updatedAt: '2026-08-02T02:00:00Z', closedAt: null,
+        author: { id: 'U_author', databaseId: 11, login: 'author' }, assignees: { nodes: [{ id: 'U_alice', databaseId: 123, login: 'alice' }] },
+        labels: { nodes: [{ id: 'L_bug', name: 'bug', color: 'd73a4a' }] }, milestone: { id: 'M_one', number: 2, title: '1.0' },
+      } },
+      task1: { id: 'R_repo', databaseId: 99, nameWithOwner: 'acme/app', issueOrPullRequest: {
+        __typename: 'PullRequest', id: 'P_two', databaseId: 1002, number: 2, title: 'Ship reports', url: 'https://github.com/acme/app/pull/2', state: 'MERGED', merged: true, isDraft: false,
+        createdAt: '2026-08-03T03:00:00Z', updatedAt: '2026-08-04T04:00:00Z', closedAt: '2026-08-04T04:00:00Z', mergedAt: '2026-08-04T03:59:00Z',
+        author: { id: 'U_bob', databaseId: 12, login: 'bob' }, assignees: { nodes: [] }, labels: { nodes: [] }, milestone: null,
+        baseRefName: 'main', headRefName: 'feature', baseRepository: { id: 'R_repo', databaseId: 99 }, headRepository: { id: 'R_fork', databaseId: 101 },
+        reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', id: 'U_alice', databaseId: 123, login: 'alice' } }] },
+      } },
     } });
   };
-  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl, now: () => new Date('2026-08-26T12:00:00Z') });
   const issues = [
     { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
     { type: 'pull_request', owner: 'acme', repo: 'app', number: 2, url: 'https://github.com/acme/app/pull/2' },
-    { type: 'issue', owner: 'acme', repo: 'app', number: 3, url: 'https://github.com/acme/app/issues/3' },
   ];
-  assert.deepEqual(await client.getTaskMetadata(issues), new Map([
-    [issues[0].url, { title: 'Fix indexing' }],
-    [issues[1].url, { title: 'Ship reports' }],
-    [issues[2].url, { title: 'Won’t implement' }],
-  ]));
+  const metadata = await client.getTaskMetadata(issues, { includeSnapshot: true });
+  assert.equal(metadata.get(issues[0].url).title, 'Fix indexing');
+  assert.deepEqual(metadata.get(issues[0].url).github, {
+    repository: { id: 99, node_id: 'R_repo', full_name: 'acme/app' },
+    item: { number: 1, node_id: 'I_one', type: 'issue' },
+    author: { id: 11, node_id: 'U_author', login: 'author' },
+    assignees: [{ id: 123, node_id: 'U_alice', login: 'alice' }],
+    state: { value: 'open', reason: null }, labels: [{ node_id: 'L_bug', name: 'bug', color: 'd73a4a' }],
+    milestone: { node_id: 'M_one', number: 2, title: '1.0' },
+    timestamps: { created_at: '2026-08-01T01:00:00.000Z', updated_at: '2026-08-02T02:00:00.000Z', closed_at: null, merged_at: null },
+    snapshot: { captured_at: '2026-08-26T12:00:00.000Z', source_updated_at: '2026-08-02T02:00:00.000Z', provider: 'github' },
+  });
+  assert.deepEqual(metadata.get(issues[1].url).github.pull_request, {
+    draft: false, merged: true,
+    base: { repository_id: 99, repository_node_id: 'R_repo', ref: 'main' },
+    head: { repository_id: 101, repository_node_id: 'R_fork', ref: 'feature' },
+    requested_reviewers: [{ kind: 'user', id: 123, node_id: 'U_alice', login: 'alice' }],
+  });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://api.github.com/graphql');
+});
+
+test('title-only task metadata does not request snapshot connections', async () => {
+  const issue = { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async (_url, options) => {
+    const query = JSON.parse(options.body).query;
+    assert.match(query, /on Issue \{ title url \}/);
+    assert.doesNotMatch(query, /labels\(|assignees\(|reviewRequests\(|databaseId/);
+    return response(200, { data: { task0: { issueOrPullRequest: { __typename: 'Issue', title: 'Small query', url: issue.url } } } });
+  } });
+  assert.deepEqual(await client.getTaskMetadata([issue]), new Map([[issue.url, { title: 'Small query' }]]));
 });
 
 test('task metadata rejects a GraphQL node whose URL or type does not match the requested task', async () => {

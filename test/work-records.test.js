@@ -8,7 +8,7 @@ import { applyEntryEdits, buildActiveTimer, buildEntry } from '../src/domain/rec
 
 const ID = '01K2ABCDEF0123456789ABCDEF';
 const actor = { kind: 'human', id: 'github:123', name: 'alice' };
-const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' };
+const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' };
 const active = buildActiveTimer({
   user: 'alice', id: ID, actor, producer,
   taskUrl: 'https://github.com/acme/frontend/issues/123', taskTitle: 'Ranking regression',
@@ -144,6 +144,7 @@ test('unknown root and nested fields survive supported edits and rewrites', () =
 test('changing a task URL updates URL-derived identity but preserves unrelated extension fields', () => {
   const stored = JSON.parse(serializeMonthlyRecords([entry]));
   stored.work_item.provider_hint = 'keep';
+  stored.metadata = { custom: { keep: true }, github: { item: { number: 123 } } };
   const parsed = parseMonthlyRecords(`${JSON.stringify(stored)}\n`, context())[0];
   const edited = applyEntryEdits(parsed, { taskUrl: 'https://example.com/new', taskTitle: 'New task' });
   const rewritten = JSON.parse(serializeMonthlyRecords([edited]));
@@ -151,4 +152,5 @@ test('changing a task URL updates URL-derived identity but preserves unrelated e
   assert.equal(rewritten.work_item.url, 'https://example.com/new');
   assert.equal(rewritten.work_item.title, 'New task');
   assert.equal(rewritten.work_item.provider_hint, 'keep');
+  assert.deepEqual(rewritten.metadata, { custom: { keep: true } });
 });

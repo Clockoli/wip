@@ -1,11 +1,17 @@
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
 
+function normalizedDetails(value) {
+  if (!value || typeof value.title !== 'string') return null;
+  const details = { title: value.title.slice(0, 500) };
+  if (value.github && typeof value.github === 'object' && !Array.isArray(value.github)) details.github = structuredClone(value.github);
+  return details;
+}
+
 function readEntry(value, now, ttlMs) {
   if (!value || !Number.isFinite(value.fetchedAt) || now - value.fetchedAt < 0 || now - value.fetchedAt >= ttlMs) return { fresh: false, details: null };
   if (value.details === null) return { fresh: true, details: null };
-  const details = value.details;
-  if (!details || typeof details.title !== 'string') return { fresh: false, details: null };
-  return { fresh: true, details: { title: details.title.slice(0, 500) } };
+  const details = normalizedDetails(value.details);
+  return details ? { fresh: true, details } : { fresh: false, details: null };
 }
 
 export class TaskMetadataService {
@@ -35,7 +41,7 @@ export class TaskMetadataService {
       signal?.throwIfAborted();
       for (const issue of missing) {
         const loadedDetails = loaded.get(issue.url) ?? null;
-        const details = loadedDetails && typeof loadedDetails.title === 'string' ? { title: loadedDetails.title.slice(0, 500) } : null;
+        const details = normalizedDetails(loadedDetails);
         entries[issue.url] = { fetchedAt: now, details };
         if (details) metadata.set(issue.url, details);
       }

@@ -75,7 +75,7 @@ A future storage profile may repartition records without changing their logical 
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.28"
+    "version": "0.1.29"
   },
   "description": "Investigated replication failure and prepared fix",
   "metadata": {
@@ -286,7 +286,7 @@ Rules:
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.28"
+    "version": "0.1.29"
   }
 }
 ```
@@ -322,6 +322,48 @@ Rules:
 - reporting semantics for a metadata key must be documented before Clockoli aggregates it;
 - sensitive rates remain local/private configuration and are not duplicated into ordinary records;
 - `metadata.billable` may mark work as billable without storing a rate.
+
+### 10.1 GitHub work-item snapshot
+
+For canonical GitHub issue and pull-request URLs, Clockoli may capture provider context under `metadata.github` when a timer is synchronized. This namespace is optional and does not change the generic root schema.
+
+```json
+{
+  "metadata": {
+    "github": {
+      "repository": { "id": 95614931, "node_id": "R_...", "full_name": "manticoresoftware/manticoresearch" },
+      "item": { "number": 4825, "node_id": "PR_...", "type": "pull_request" },
+      "author": { "id": 28719845, "node_id": "U_...", "login": "sanikolaev" },
+      "assignees": [],
+      "actor_relationship": ["author"],
+      "state": { "value": "merged", "reason": null },
+      "labels": [],
+      "milestone": null,
+      "timestamps": {
+        "created_at": "2026-08-19T04:46:41.000Z",
+        "updated_at": "2026-08-19T06:46:18.000Z",
+        "closed_at": "2026-08-19T06:46:18.000Z",
+        "merged_at": "2026-08-19T06:46:18.000Z"
+      },
+      "snapshot": {
+        "captured_at": "2026-08-26T00:00:00.000Z",
+        "source_updated_at": "2026-08-19T06:46:18.000Z",
+        "provider": "github"
+      }
+    }
+  }
+}
+```
+
+Snapshot rules:
+
+- the namespace records provider state observed when the timer was synchronized; old records are not rewritten when GitHub later changes;
+- numeric GitHub IDs are preferred as rename-stable identities; node IDs are retained for GraphQL interoperability;
+- `author` may be `null` when GitHub no longer exposes an author;
+- `actor_relationship` may contain `author`, `assignee`, and `reviewer`; otherwise it contains `other`;
+- pull requests may additionally include `pull_request.draft`, `merged`, base/head repository and ref context, and requested reviewers;
+- full bodies, comments, timelines, reactions, and mutable aggregate counts are not stored;
+- unknown fields inside `metadata.github` must be preserved like every other extension field.
 
 ---
 

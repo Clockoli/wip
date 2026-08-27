@@ -15,7 +15,7 @@ const block = (url, start, end, description = '', user = 'alice') => {
       state: 'completed', started_at: new Date(start).toISOString(), ended_at: new Date(end).toISOString(),
       local_date: start.slice(0, 10), timezone: 'UTC',
     },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
     description, metadata: {}, metrics: {}, created_at: new Date(start).toISOString(), updated_at: new Date(end).toISOString(),
   });
 };

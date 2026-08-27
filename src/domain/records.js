@@ -5,7 +5,7 @@ import {
 import { createUlid } from './ulid.js';
 
 export const DEFAULT_PRODUCER = Object.freeze({
-  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28',
+  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29',
 });
 
 export function normalizeTaskTitle(value) {
@@ -177,9 +177,12 @@ export function applyEntryEdits(entry, edits, now = new Date()) {
   const currentUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);
   const startedAt = toIso(edits.startedAt ?? entry.startedAt), timezone = normalizeTimezone(edits.timezone ?? entry.timezone);
   const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = entry;
+  const metadata = structuredClone(entry.metadata);
+  if (taskUrl !== currentUrl) delete metadata.github;
   const title = normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentUrl ? (entry.taskTitle ?? entry.issueTitle) : ''));
   const next = {
     ...base,
+    metadata,
     taskUrl,
     taskTitle: title,
     issueTitle: title,

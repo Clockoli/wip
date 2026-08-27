@@ -63,7 +63,7 @@ class FakeGitHub {
 }
 
 const actor = { kind: 'human', id: 'github:123', name: 'alice' };
-const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' };
+const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' };
 function active(startedAt = '2026-08-18T08:00:00.000Z', override = {}) {
   const taskUrl = override.taskUrl ?? override.issue?.url ?? issue.url;
   const taskTitle = override.taskTitle ?? override.issueTitle ?? '';
@@ -103,6 +103,7 @@ function localTimestamp(year, monthIndex, day, hour = 0, minute = 0, second = 0)
 }
 function service(options = {}) {
   return new TrackerService({ github: options.github ?? new FakeGitHub(), store: options.store ?? new MemoryStore(), user: 'alice',
+    actorId: options.actorId ?? 'github:123', actorName: 'alice',
     clock: options.clock ?? (() => new Date('2026-08-18T09:00:00Z')), idFactory: options.idFactory ?? (() => fixedId),
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
 }
@@ -142,6 +143,53 @@ test('start persists an arbitrary task URL with an optional empty title', async 
   assert.equal(JSON.parse(file.text).work_item.url, 'https://example.com/work/42?view=full');
   assert.equal(JSON.parse(file.text).work_item.title, '');
   assert.equal(parseActiveRecord(file.text, { user: 'alice' }).taskUrl, result.taskUrl);
+});
+
+test('queued Start persists a GitHub metadata snapshot and actor relationship when sync becomes available', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  github.metadata.set(issue.url, {
+    title: 'API title',
+    github: {
+      repository: { id: 99, node_id: 'R_repo', full_name: 'acme/frontend' },
+      item: { number: 123, node_id: 'I_123', type: 'issue' },
+      author: { id: 50, node_id: 'U_author', login: 'author' },
+      assignees: [{ id: 123, node_id: 'U_alice', login: 'alice' }],
+      state: { value: 'open', reason: null }, labels: [], milestone: null,
+      timestamps: { created_at: '2026-08-01T00:00:00.000Z', updated_at: '2026-08-02T00:00:00.000Z', closed_at: null, merged_at: null },
+      snapshot: { captured_at: '2026-08-18T09:00:01.000Z', source_updated_at: '2026-08-02T00:00:00.000Z', provider: 'github' },
+    },
+  });
+  const accepted = await tracker.start(issue, '', '', { background: true });
+  assert.equal(accepted._pending, true);
+  assert.deepEqual(accepted.metadata, {}, 'offline acceptance does not wait for metadata');
+  await tracker.syncPending();
+  const stored = JSON.parse(github.files.get('active/alice.json').text);
+  assert.equal(stored.work_item.title, 'API title');
+  assert.deepEqual(stored.metadata.github.actor_relationship, ['assignee']);
+  assert.equal(stored.metadata.github.repository.id, 99);
+  assert.equal(github.metadataReads.length, 1);
+});
+
+test('GitHub actor relationship prefers stable ID over a matching reusable login', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  github.metadata.set(issue.url, { title: 'Reused login', github: {
+    repository: { id: 99, node_id: 'R_repo', full_name: 'acme/frontend' },
+    item: { number: 123, node_id: 'I_123', type: 'issue' },
+    author: { id: 999, node_id: 'U_other', login: 'alice' }, assignees: [],
+    state: { value: 'open', reason: null }, labels: [], milestone: null,
+    timestamps: { created_at: '2026-08-01T00:00:00.000Z', updated_at: '2026-08-02T00:00:00.000Z', closed_at: null, merged_at: null },
+    snapshot: { captured_at: '2026-08-18T09:00:01.000Z', source_updated_at: '2026-08-02T00:00:00.000Z', provider: 'github' },
+  } });
+  await tracker.start(issue, '', '', { background: true }); await tracker.syncPending();
+  assert.deepEqual(JSON.parse(github.files.get('active/alice.json').text).metadata.github.actor_relationship, ['other']);
+});
+
+test('generic URL Start never requests or stores GitHub metadata', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  await tracker.start('https://example.com/work/42', '', '', { background: true });
+  await tracker.syncPending();
+  assert.equal(github.metadataReads.length, 0);
+  assert.deepEqual(JSON.parse(github.files.get('active/alice.json').text).metadata, {});
 });
 
 test('recent load backfills missing issue titles once with the current SHA', async () => {

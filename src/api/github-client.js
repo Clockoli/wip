@@ -68,8 +68,86 @@ function encodePath(path) {
   return path.split('/').map(encodeURIComponent).join('/');
 }
 
+
+function isoTimestamp(value) {
+  if (value === null || value === undefined) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function providerIdentity(node) {
+  if (!node || typeof node.login !== 'string' || !node.login) return null;
+  return {
+    ...(Number.isSafeInteger(node.databaseId) && node.databaseId > 0 ? { id: node.databaseId } : {}),
+    ...(typeof node.id === 'string' && node.id ? { node_id: node.id } : {}),
+    login: node.login,
+  };
+}
+
+function reviewerIdentity(node) {
+  if (!node || !['User', 'Team'].includes(node.__typename)) return null;
+  const name = node.__typename === 'User' ? node.login : node.slug;
+  if (typeof name !== 'string' || !name) return null;
+  return {
+    kind: node.__typename === 'User' ? 'user' : 'team',
+    ...(Number.isSafeInteger(node.databaseId) && node.databaseId > 0 ? { id: node.databaseId } : {}),
+    ...(typeof node.id === 'string' && node.id ? { node_id: node.id } : {}),
+    ...(node.__typename === 'User' ? { login: name } : { slug: name }),
+  };
+}
+
+function repositoryIdentity(node) {
+  if (!node) return null;
+  return {
+    ...(Number.isSafeInteger(node.databaseId) && node.databaseId > 0 ? { repository_id: node.databaseId } : {}),
+    ...(typeof node.id === 'string' && node.id ? { repository_node_id: node.id } : {}),
+  };
+}
+
+function taskSnapshot(repository, node, type, capturedAt) {
+  const updatedAt = isoTimestamp(node.updatedAt);
+  const labels = (node.labels?.nodes ?? []).flatMap(label => (
+    label && typeof label.name === 'string' && typeof label.color === 'string' ? [{
+      ...(Number.isSafeInteger(label.databaseId) && label.databaseId > 0 ? { id: label.databaseId } : {}),
+      ...(typeof label.id === 'string' && label.id ? { node_id: label.id } : {}),
+      name: label.name, color: label.color,
+    }] : []
+  ));
+  const milestone = node.milestone && Number.isSafeInteger(node.milestone.number) && typeof node.milestone.title === 'string' ? {
+    ...(Number.isSafeInteger(node.milestone.databaseId) && node.milestone.databaseId > 0 ? { id: node.milestone.databaseId } : {}),
+    ...(typeof node.milestone.id === 'string' && node.milestone.id ? { node_id: node.milestone.id } : {}),
+    number: node.milestone.number, title: node.milestone.title,
+  } : null;
+  const github = {
+    repository: {
+      ...(Number.isSafeInteger(repository.databaseId) && repository.databaseId > 0 ? { id: repository.databaseId } : {}),
+      ...(typeof repository.id === 'string' && repository.id ? { node_id: repository.id } : {}),
+      full_name: repository.nameWithOwner,
+    },
+    item: { number: node.number, ...(typeof node.id === 'string' && node.id ? { node_id: node.id } : {}), type },
+    author: providerIdentity(node.author),
+    assignees: (node.assignees?.nodes ?? []).map(providerIdentity).filter(Boolean),
+    state: { value: node.merged ? 'merged' : String(node.state).toLowerCase(), reason: node.stateReason ? String(node.stateReason).toLowerCase() : null },
+    labels, milestone,
+    timestamps: {
+      created_at: isoTimestamp(node.createdAt), updated_at: updatedAt,
+      closed_at: isoTimestamp(node.closedAt), merged_at: isoTimestamp(node.mergedAt),
+    },
+    snapshot: { captured_at: capturedAt, source_updated_at: updatedAt, provider: 'github' },
+  };
+  if (type === 'pull_request') {
+    github.pull_request = {
+      draft: node.isDraft === true, merged: node.merged === true,
+      base: { ...repositoryIdentity(node.baseRepository), ref: node.baseRefName },
+      head: { ...repositoryIdentity(node.headRepository), ref: node.headRefName },
+      requested_reviewers: (node.reviewRequests?.nodes ?? []).map(value => reviewerIdentity(value?.requestedReviewer)).filter(Boolean),
+    };
+  }
+  return github;
+}
+
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date() }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -85,6 +163,7 @@ export class GitHubClient {
     this.expectedRepositoryId = expectedRepositoryId;
     this.branchMode = branchMode;
     this.fetchImpl = fetchImpl.bind(globalThis);
+    this.now = now;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
@@ -295,7 +374,7 @@ export class GitHubClient {
     return { path, sha, text: decodeBase64Utf8(body.content) };
   }
 
-  async getTaskMetadata(issues, { batchSize = 40, maxRequests = 40, signal } = {}) {
+  async getTaskMetadata(issues, { batchSize = 40, maxRequests = 40, signal, includeSnapshot = false } = {}) {
     const unique = new Map();
     for (const value of issues ?? []) {
       const issue = normalizeIssue(value); unique.set(issue.url, issue);
@@ -309,7 +388,10 @@ export class GitHubClient {
     }
     for (let offset = 0; offset < requested.length; offset += size) {
       const batch = requested.slice(offset, offset + size);
-      const fields = batch.map((issue, index) => `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title url } ... on PullRequest { title url } } }`).join('\n');
+      const common = `id databaseId number title url state createdAt updatedAt closedAt author { __typename login ... on User { id databaseId } ... on Bot { id databaseId } ... on Mannequin { id databaseId } ... on Organization { id databaseId } } assignees(first: 25) { nodes { id databaseId login } } labels(first: 50) { nodes { id name color } } milestone { id number title }`;
+      const fields = batch.map((issue, index) => includeSnapshot
+        ? `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { id databaseId nameWithOwner issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { ${common} stateReason } ... on PullRequest { ${common} merged mergedAt isDraft baseRefName headRefName baseRepository { id databaseId } headRepository { id databaseId } reviewRequests(first: 25) { nodes { requestedReviewer { __typename ... on User { id databaseId login } ... on Team { id databaseId slug } } } } } } }`
+        : `task${index}: repository(owner: "${issue.owner}", name: "${issue.repo}") { issueOrPullRequest(number: ${issue.number}) { __typename ... on Issue { title url } ... on PullRequest { title url } } }`).join('\n');
       let body;
       try {
         body = await this.request('/graphql', { method: 'POST', signal, body: JSON.stringify({ query: `query TrackedTasks {\n${fields}\n}` }) });
@@ -323,10 +405,15 @@ export class GitHubClient {
       }
       if (!body?.data && body?.errors?.length) throw new GitHubApiError('GitHub could not load tracked task details', 422);
       for (let index = 0; index < batch.length; index += 1) {
-        const issue = batch[index], node = body?.data?.[`task${index}`]?.issueOrPullRequest;
+        const issue = batch[index], repository = body?.data?.[`task${index}`], node = repository?.issueOrPullRequest;
         const expectedType = issue.type === 'pull_request' ? 'PullRequest' : 'Issue';
         if (!node || node.__typename !== expectedType || node.url !== issue.url || typeof node.title !== 'string') continue;
-        metadata.set(issue.url, { title: node.title });
+        if (!includeSnapshot) { metadata.set(issue.url, { title: node.title }); continue; }
+        if (typeof repository?.nameWithOwner !== 'string' || !Number.isSafeInteger(node.number) || node.number !== issue.number) continue;
+        const capturedAt = this.now();
+        const capturedIso = capturedAt instanceof Date && !Number.isNaN(capturedAt.getTime()) ? capturedAt.toISOString() : null;
+        if (!capturedIso) throw new Error('Invalid GitHub metadata capture time');
+        metadata.set(issue.url, { title: node.title, github: taskSnapshot(repository, node, issue.type, capturedIso) });
       }
     }
     return metadata;

@@ -858,7 +858,7 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   const entry = (id, number, startedAt, endedAt, sha, index = number - 1) => ({
     schemaVersion: 1, id, entryId: id, user: 'alice',
     actor: { kind: 'human', id: 'github:1', name: 'alice' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
     taskUrl: `https://github.com/acme/app/issues/${number}`, taskTitle: `Issue ${number}`,
     issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
     issueTitle: `Issue ${number}`, entryDate: '2026-08-18', timezone: 'Europe/Moscow', startedAt, endedAt,
@@ -963,7 +963,7 @@ test('successful Delete responses accept exact empty output and reject malformed
   const recentEntry = {
     schemaVersion: 1, id: '01K31SE6000000000000000002', entryId: '01K31SE6000000000000000002', user: 'alice',
     actor: { kind: 'human', id: 'github:1', name: 'alice' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
     timezone: 'UTC', metadata: {}, metrics: {},
     taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Ranking regression',
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Ranking regression',

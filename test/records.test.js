@@ -5,7 +5,7 @@ import { buildActiveTimer, buildEntry, applyEntryEdits, validateActiveTimer, val
 const ID = '01K2ABCDEF0123456789ABCDEF';
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 const actor = { kind: 'human', id: 'github:123', name: 'alice' };
-const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' };
+const producer = { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' };
 
 function active(overrides = {}) {
   return buildActiveTimer({

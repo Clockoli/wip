@@ -11,7 +11,7 @@ function activeJson(user = 'alice') {
     actor: { kind: 'human', id: 'github:123', name: user },
     work_item: { kind: 'github_issue', id: 'url:https://github.com/acme/app/issues/1', url: 'https://github.com/acme/app/issues/1', title: '' },
     activity: { state: 'running', started_at: '2026-08-20T00:00:00.000Z', ended_at: null, local_date: '2026-08-20', timezone: 'UTC' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.28' },
+    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
     description: '', metadata: {}, metrics: {}, created_at: '2026-08-20T00:00:00.000Z', updated_at: '2026-08-20T00:00:00.000Z',
   }, null, 2)}\n`;
 }
