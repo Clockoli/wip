@@ -1,5 +1,7 @@
 # Clockoli
 
+Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 Clockoli is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no Clockoli application server and no separate time-tracking database.
 
 Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.

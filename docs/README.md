@@ -1,5 +1,7 @@
 # Clockoli documentation
 
+For contributor setup, development invariants, testing, browser verification, and release packaging, see [Contributing to Clockoli](../CONTRIBUTING.md).
+
 Clockoli tracks time against HTTP(S) task URLs and stores the records in a private GitHub repository. Start with the setup guide, then use the topic pages when you need more detail.
 
 ## User guides
