@@ -5,7 +5,7 @@ import {
 import { createUlid } from './ulid.js';
 
 export const DEFAULT_PRODUCER = Object.freeze({
-  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29',
+  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.30',
 });
 
 export function normalizeTaskTitle(value) {

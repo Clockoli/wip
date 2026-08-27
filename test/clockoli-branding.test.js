@@ -51,6 +51,25 @@ test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch 
   assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
 });
 
+test('the Clockoli mark and tab-scoped extension icon rotate only for the current tracked task', () => {
+  const content = read('src/content/github.js');
+  const serviceWorker = read('src/background/service-worker.js');
+  assert.match(content, /sameTask\(taskFromLocation\(\), pageState\.active\)/);
+  assert.match(content, /let actionAnimationRunning = null/);
+  assert.match(content, /actionAnimationReady = true/);
+  assert.match(content, /running-current/);
+  assert.match(content, /@keyframes clockoli-task-spin/);
+  assert.match(content, /SET_ACTION_ICON_FRAME/);
+  assert.match(serviceWorker, /chrome\.action\.setIcon\(\{ path, tabId: sender\.tab\.id \}\)/);
+  for (let frame = 0; frame < 8; frame += 1) {
+    for (const size of [16, 32]) {
+      const file = `src/assets/action-spin/clockoli-${size}-${frame}.png`;
+      assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes(file)), `${file} must be packaged`);
+      assert.ok(fs.existsSync(new URL(`../${file}`, import.meta.url)), `${file} must exist`);
+    }
+  }
+});
+
 test('storage, branch, DOM, settings, and GitHub App identities are Clockoli-only', () => {
   const product = [
     'src/content/github.js', 'src/domain/local-settings.js', 'src/tasks/tasks.js',

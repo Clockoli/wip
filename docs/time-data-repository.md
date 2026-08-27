@@ -90,7 +90,7 @@ The complete normative schema and storage contract is in [Data Format v1](data-f
     "local_date": "2026-08-22",
     "timezone": "Europe/Moscow"
   },
-  "producer": { "kind": "browser_extension", "name": "clockoli-chrome", "version": "0.1.29" },
+  "producer": { "kind": "browser_extension", "name": "clockoli-chrome", "version": "0.1.30" },
   "description": "",
   "metadata": {},
   "metrics": {},

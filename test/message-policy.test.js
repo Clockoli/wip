@@ -9,6 +9,7 @@ const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url
 
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_ACTION_ICON_FRAME', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);

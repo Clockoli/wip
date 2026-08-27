@@ -193,6 +193,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   const navigationCheck = intervals.at(-1);
   assert.deepEqual(messages, [
     { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'SET_ACTION_ICON_FRAME', frame: null },
     { type: 'GET_PAGE_STATE', refresh: true },
   ]);
 
@@ -201,20 +202,20 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
     navigationCheck();
   }
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 2);
+  assert.equal(messages.length, 3);
 
   location.pathname = '/acme/app/issues/2';
   location.href = 'https://github.com/acme/app/issues/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 3);
-  assert.equal(messages[2].refresh, false);
+  assert.equal(messages.length, 4);
+  assert.equal(messages[3].refresh, false);
 
   location.pathname = '/acme/app/pull/2';
   location.href = 'https://github.com/acme/app/pull/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 4);
+  assert.equal(messages.length, 5);
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
@@ -271,6 +272,8 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
   const activeTrigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   assert.match(activeTrigger.className, /running/, 'active timer colors the header icon');
+  assert.match(activeTrigger.className, /running-current/, 'only the matching page rotates the GitHub mark');
+  assert.deepEqual(messages.find(message => message.type === 'SET_ACTION_ICON_FRAME'), { type: 'SET_ACTION_ICON_FRAME', frame: 0 });
   const trigger = activeTrigger;
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -324,7 +327,10 @@ test('header control mounts when GitHub renders the authenticated header after t
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
-  assert.deepEqual(messages, [{ type: 'GET_PAGE_STATE', refresh: false }]);
+  assert.deepEqual(messages, [
+    { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'SET_ACTION_ICON_FRAME', frame: null },
+  ]);
 });
 
 
@@ -444,6 +450,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   assert.equal(right.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [
     { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'SET_ACTION_ICON_FRAME', frame: null },
     { type: 'GET_PAGE_STATE', refresh: true },
   ]);
 });

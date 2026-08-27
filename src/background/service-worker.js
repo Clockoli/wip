@@ -24,6 +24,8 @@ const executor = new SerialExecutor();
 const acceptanceExecutor = new SerialExecutor();
 const loadCoordinator = new ConfigurationLoadCoordinator(executor);
 const reportLoads = new Map();
+const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
+const ACTION_ICON_FRAMES = 8;
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
 const configuration = new ConfigurationService({
   store,
@@ -379,6 +381,17 @@ async function handle(message, sender) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid extension message');
   const extensionOrigin = chrome.runtime.getURL('');
   assertMessageAllowed(message.type, sender, extensionOrigin);
+  if (message.type === 'SET_ACTION_ICON_FRAME') {
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Action icon updates require a browser tab');
+    const frame = message.frame;
+    if (frame !== null && (!Number.isInteger(frame) || frame < 0 || frame >= ACTION_ICON_FRAMES)) throw new Error('Invalid action icon frame');
+    const path = frame === null ? STATIC_ACTION_ICON : {
+      16: `src/assets/action-spin/clockoli-16-${frame}.png`,
+      32: `src/assets/action-spin/clockoli-32-${frame}.png`,
+    };
+    await chrome.action.setIcon({ path, tabId: sender.tab.id });
+    return { updated: true };
+  }
   if (message.type === 'OPEN_OPTIONS') { await chrome.runtime.openOptionsPage(); return { ok: true }; }
   if (message.type === 'OPEN_REPORTS') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/reports.html') }); return { ok: true };
