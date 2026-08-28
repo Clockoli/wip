@@ -285,6 +285,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
 
   const reactItem = new TimelineNode('div'); reactItem.className = 'TimelineRow-module__Timeline_Item__CWsyY Timeline-Item prc-Timeline-TimelineItem-QwDVH';
   const reactBadge = new TimelineNode('div'); reactBadge.className = 'prc-Timeline-TimelineBadgeWrapper-SZw4k';
+  const reactBadgeInner = new TimelineNode('div'); reactBadgeInner.className = 'prc-Timeline-TimelineBadge-u0qSm'; reactBadge.append(reactBadgeInner);
   const reactBody = new TimelineNode('div'); reactBody.className = 'TimelineBody row-module__body__qLUpe prc-Timeline-TimelineBody-tjOtb';
   const reactCommit = new TimelineNode('a');
   reactCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/17383f333f0eb924245c8f33ef6fbc5ceb0ab153';
@@ -295,7 +296,8 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   assert.equal(reactBody.getAttribute('data-clockoli-time-summary'), 'true', 'GitHub React TimelineBody entries are rewritten');
   assert.equal(reactBody.children[0].children[1].textContent, 'sanikolaev');
   assert.equal(reactBody.children[0].children[3].textContent, '2s');
-  assert.equal(reactBadge.children[0].tag, 'img', 'the current React timeline badge receives the Clockoli mark');
+  assert.equal(reactBadge.children[0], reactBadgeInner, 'the current React timeline wrapper keeps GitHub geometry');
+  assert.equal(reactBadgeInner.children[0].tag, 'img', 'the centered React timeline badge receives the Clockoli mark');
   await new Promise(resolve => setTimeout(resolve, 0));
 });
 

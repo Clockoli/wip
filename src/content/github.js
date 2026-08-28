@@ -184,8 +184,10 @@
       const mark = el('img', undefined, 'clockoli-timeline-mark');
       mark.src = chrome.runtime.getURL('src/assets/clockoli-16.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
       Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
-      const badge = item.querySelector?.('.TimelineItem-badge')
-        || item.querySelector?.('[class*="TimelineBadgeWrapper"]');
+      const legacyBadge = item.querySelector?.('.TimelineItem-badge');
+      const reactBadgeWrapper = item.querySelector?.('[class*="TimelineBadgeWrapper"]');
+      const badge = legacyBadge || reactBadgeWrapper?.firstElementChild
+        || reactBadgeWrapper?.children?.[0] || reactBadgeWrapper;
       badge?.replaceChildren(mark);
       const avatarLink = el('a', undefined, 'd-inline-block');
       avatarLink.href = `https://github.com/${record.actor}`;
