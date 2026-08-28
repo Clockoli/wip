@@ -162,6 +162,8 @@
     for (const commit of candidates) {
       if (commit.closest?.('[data-clockoli-time-summary]')) continue;
       const record = clockoliTimelineRecord(commit.title || commit.textContent);
+      // GitHub may truncate the final issue number to `#…`. In that case the
+      // ReferencedEvent's placement in the current issue timeline supplies the identity.
       if (!record || record.owner.toLowerCase() !== route[1].toLowerCase()
           || record.repo.toLowerCase() !== route[2].toLowerCase()
           || (record.number !== null && record.number !== Number(route[3]))) continue;

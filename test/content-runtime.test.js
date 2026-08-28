@@ -144,8 +144,8 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   );
   assert.notEqual(exposedSource, source, 'timeline beautifier is exposed only inside this renderer contract test');
   const location = {
-    protocol: 'https:', hostname: 'github.com', pathname: '/manticoresoftware/manticoresearch/pull/4862',
-    href: 'https://github.com/manticoresoftware/manticoresearch/pull/4862',
+    protocol: 'https:', hostname: 'github.com', pathname: '/manticoresoftware/manticoresearch/issues/4860',
+    href: 'https://github.com/manticoresoftware/manticoresearch/issues/4860',
   };
   const { actions } = makeHeader();
   const timeline = new TimelineNode('div');
@@ -157,7 +157,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   const body = new TimelineNode('div'); body.className = 'TimelineItem-body';
   const commit = new TimelineNode('a');
   commit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/fe64c7167890abcdef';
-  commit.title = 'time: sanikolaev tracked 45s on manticoresoftware/manticoresearch#4862';
+  commit.title = 'time: sanikolaev tracked 45s on manticoresoftware/manticoresearch#4860';
   commit.textContent = 'time: sanikolaev tracked 45s on';
   const firstTime = new TimelineNode('relative-time'); firstTime.textContent = '34 minutes ago';
   body.append(commit, firstTime); firstItem.append(firstBadge, body);
@@ -169,7 +169,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   const latestBody = new TimelineNode('div'); latestBody.className = 'TimelineItem-body';
   const latestCommit = new TimelineNode('a');
   latestCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/1234567890abcdef';
-  latestCommit.title = 'time: sanikolaev tracked 1m 32s on manticoresoftware/manticoresearch#4862';
+  latestCommit.title = 'time: sanikolaev tracked 1m 32s on manticoresoftware/manticoresearch#4860';
   latestCommit.textContent = 'time: sanikolaev tracked 1m 32s on';
   const latestTime = new TimelineNode('relative-time'); latestTime.textContent = '33 minutes ago';
   latestBody.append(latestCommit, latestTime); latestItem.append(latestBadge, latestBody);
@@ -239,7 +239,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   const thirdBody = new TimelineNode('div'); thirdBody.className = 'TimelineItem-body';
   const thirdCommit = new TimelineNode('a');
   thirdCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/234567890abcdef1';
-  thirdCommit.title = 'time: sanikolaev tracked 23s on manticoresoftware/manticoresearch#4862';
+  thirdCommit.title = 'time: sanikolaev tracked 23s on manticoresoftware/manticoresearch#4860';
   const thirdTime = new TimelineNode('relative-time'); thirdTime.textContent = '2 minutes ago';
   thirdBody.append(thirdCommit, thirdTime); thirdItem.append(thirdBadge, thirdBody); progressiveItem.append(thirdItem);
   observer.callback([{ target: thirdBody }]);
@@ -252,7 +252,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   const lazyBody = new TimelineNode('div'); lazyBody.className = 'TimelineItem-body';
   const lazyCommit = new TimelineNode('a');
   lazyCommit.href = 'https://github.com/alice/time-data/commit/1234567890abcdef';
-  lazyCommit.title = 'time: alice tracked 1h 5m 7s on manticoresoftware/manticoresearch#4862';
+  lazyCommit.title = 'time: alice tracked 1h 5m 7s on manticoresoftware/manticoresearch#4860';
   lazyCommit.textContent = 'time: alice tracked 1h 5m 7s on';
   lazyBody.append(lazyCommit); timeline.append(lazyBody);
   observer.callback([{ target: lazyBody }]);
