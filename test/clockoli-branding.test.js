@@ -49,6 +49,8 @@ test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch 
   assert.match(content, /main\.append\(clockoliMark\(22\)\)/);
   assert.match(content, /\.clockoli-mark/);
   assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
+  assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes('src/assets/clockoli-32.png')),
+    'GitHub pages can load the 2x timeline mark');
 });
 
 test('the Clockoli mark and tab-scoped extension icon rotate only for the current tracked task', () => {

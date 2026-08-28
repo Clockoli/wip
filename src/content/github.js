@@ -182,7 +182,7 @@
         color: 'var(--fgColor-muted,#59636e)',
       });
       const mark = el('img', undefined, 'clockoli-timeline-mark');
-      mark.src = chrome.runtime.getURL('src/assets/clockoli-16.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
+      mark.src = chrome.runtime.getURL('src/assets/clockoli-32.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
       Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
       const legacyBadge = item.querySelector?.('.TimelineItem-badge');
       const reactBadgeWrapper = item.querySelector?.('[class*="TimelineBadgeWrapper"]');

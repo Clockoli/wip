@@ -215,7 +215,9 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   const summary = latestBody.children[0];
   assert.equal(summary.className, 'clockoli-timeline-summary');
   assert.equal(latestBadge.children[0].tag, 'img', 'Clockoli replaces the cross-reference icon in the timeline badge');
-  assert.equal(latestBadge.children[0].src, 'chrome-extension://clockoli/src/assets/clockoli-16.png');
+  assert.equal(latestBadge.children[0].src, 'chrome-extension://clockoli/src/assets/clockoli-32.png');
+  assert.equal(latestBadge.children[0].style.width, '16px', 'the 2x timeline asset keeps the native CSS width');
+  assert.equal(latestBadge.children[0].style.height, '16px', 'the 2x timeline asset keeps the native CSS height');
   assert.equal(summary.children[0].className, 'd-inline-block');
   assert.equal(summary.children[0].children[0].className, 'avatar avatar-user');
   assert.equal(summary.children[0].children[0].width, 20);
