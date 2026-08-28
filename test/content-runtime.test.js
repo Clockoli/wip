@@ -122,6 +122,11 @@ class TimelineNode extends FakeNode {
     if (selector === '[data-clockoli-time-summary]') return this.getAttribute('data-clockoli-time-summary') !== null;
     if (selector === '.js-timeline-item') return this.classList.contains('js-timeline-item');
     if (selector === '.participant-avatar') return this.classList.contains('participant-avatar');
+    if (selector === '.participant-avatar, a[data-hovercard-type="user"][data-hovercard-url^="/users/"]') {
+      return this.classList.contains('participant-avatar')
+        || (this.tag === 'a' && this.getAttribute('data-hovercard-type') === 'user'
+          && String(this.getAttribute('data-hovercard-url') || '').startsWith('/users/'));
+    }
     if (selector === '.clockoli-participant-time') return this.classList.contains('clockoli-participant-time');
     return false;
   }
@@ -334,7 +339,7 @@ test('participant tracked totals render during idle time and refresh after lazy 
   };
   const alice = participant('alice'), bob = participant('bob'), carol = participant('carol');
   avatars.append(alice, bob, carol); participants.append(avatars);
-  let currentParticipants = participants;
+  let currentParticipants = participants, currentReactParticipants = null;
   let sidebarAssignees = null, sidebarLabels = null;
   page.append(exactAliceA, exactAliceB, legacyAlice, legacyBob, participants);
   let observer = null;
@@ -347,6 +352,7 @@ test('participant tracked totals render during idle time and refresh after lazy 
     querySelector(selector) {
       if (selector === '.AppHeader-actions') return actions;
       if (selector === '#partial-users-participants') return currentParticipants;
+      if (selector === '[data-testid="sidebar-participants-section"]') return currentReactParticipants;
       if (selector === '[data-testid="sidebar-assignees-section"]') return sidebarAssignees;
       if (selector === '[data-testid="sidebar-labels-section"]') return sidebarLabels;
       if (selector === '[data-clockoli-participants-section="true"]') {
@@ -436,31 +442,27 @@ test('participant tracked totals render during idle time and refresh after lazy 
   assert.equal(replacementAlice.querySelector('.clockoli-participant-time')?.textContent, '2m', 'a replaced GitHub participant sidebar is augmented on the next idle pass');
 
   replacement.remove(); currentParticipants = null;
-  const metadata = new TimelineNode('div');
-  sidebarAssignees = new TimelineNode('div'); sidebarAssignees.setAttribute('data-testid', 'sidebar-assignees-section'); sidebarAssignees.className = 'native-section';
-  sidebarAssignees.append(new TimelineNode('div'), new TimelineNode('div'));
-  sidebarLabels = new TimelineNode('div'); sidebarLabels.setAttribute('data-testid', 'sidebar-labels-section'); sidebarLabels.className = 'native-section';
-  sidebarLabels.append(new TimelineNode('div'), new TimelineNode('div'));
-  metadata.append(sidebarAssignees, sidebarLabels); page.append(metadata);
-  observer.callback([{ target: metadata }]); idleCallbacks.shift()();
-  const syntheticSection = document.querySelector('[data-clockoli-participants-section="true"]');
-  assert.equal(syntheticSection?.children[0]?.children[0]?.textContent, 'Participants', 'a missing native Participants block is created beside native sidebar sections');
-  assert.deepEqual(syntheticSection.querySelectorAll('.participant-avatar').map(node => node.getAttribute('data-hovercard-url')),
-    ['/users/Alice/hovercard', '/users/dave/hovercard']);
-  const syntheticAlice = syntheticSection.querySelectorAll('.participant-avatar')
-    .find(node => node.getAttribute('data-hovercard-url') === '/users/Alice/hovercard');
+  const reactParticipants = new TimelineNode('div'); reactParticipants.setAttribute('data-testid', 'sidebar-participants-section');
+  const reactAvatars = new TimelineNode('div'); reactAvatars.className = 'ParticipantsSection-module__participantsListContainer__GGvRf';
+  const reactAlice = new TimelineNode('a'); reactAlice.setAttribute('data-hovercard-type', 'user'); reactAlice.setAttribute('data-hovercard-url', '/users/Alice/hovercard');
+  reactAlice.append(new TimelineNode('img')); reactAvatars.append(reactAlice); reactParticipants.append(reactAvatars);
+  currentReactParticipants = reactParticipants; page.append(reactParticipants);
+  observer.callback([{ target: reactParticipants }]); idleCallbacks.shift()();
+  assert.equal(reactAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+    'the current GitHub Participants block is augmented without creating another section');
+  assert.equal(document.querySelector('[data-clockoli-participants-section="true"]'), null);
 
   participantFailure = 'abort';
   await context.__refreshClockoliParticipants();
   while (idleCallbacks.length) idleCallbacks.shift()();
-  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+  assert.equal(reactAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
     'a cancelled same-route refresh preserves the last exact successful total');
   assert.equal(participantRetryCallbacks.length, 0, 'cancellation does not schedule a retry');
 
   participantFailure = 'channel_closed';
   await context.__refreshClockoliParticipants();
   while (idleCallbacks.length) idleCallbacks.shift()();
-  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+  assert.equal(reactAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
     'an extension reload channel interruption preserves the last exact successful total');
   assert.equal(participantRetryCallbacks.length, 0, 'an invalidated extension context does not schedule an unusable retry');
   assert.equal(participantWarnings.length, 0, 'an expected extension reload interruption is not reported as an extension error');
@@ -468,7 +470,7 @@ test('participant tracked totals render during idle time and refresh after lazy 
   participantFailure = true;
   await context.__refreshClockoliParticipants();
   while (idleCallbacks.length) idleCallbacks.shift()();
-  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+  assert.equal(reactAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
     'a transient participant refresh failure preserves the last exact successful total');
   assert.equal(participantRetryCallbacks.length, 1, 'a transient failure schedules one bounded retry');
 
@@ -476,8 +478,19 @@ test('participant tracked totals render during idle time and refresh after lazy 
   participantRetryCallbacks.shift()();
   await new Promise(resolve => setTimeout(resolve, 0));
   while (idleCallbacks.length) idleCallbacks.shift()();
-  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '3m',
+  assert.equal(reactAlice.querySelector('.clockoli-participant-time')?.textContent, '3m',
     'the retry replaces the preserved value after a successful canonical reload');
+
+  reactParticipants.remove(); currentReactParticipants = null;
+  const metadata = new TimelineNode('div');
+  sidebarAssignees = new TimelineNode('div'); sidebarAssignees.setAttribute('data-testid', 'sidebar-assignees-section'); sidebarAssignees.className = 'native-section';
+  sidebarAssignees.append(new TimelineNode('div'), new TimelineNode('div'));
+  sidebarLabels = new TimelineNode('div'); sidebarLabels.setAttribute('data-testid', 'sidebar-labels-section'); sidebarLabels.className = 'native-section';
+  sidebarLabels.append(new TimelineNode('div'), new TimelineNode('div'));
+  metadata.append(sidebarAssignees, sidebarLabels); page.append(metadata);
+  observer.callback([{ target: metadata }]); idleCallbacks.shift()();
+  assert.equal(document.querySelector('[data-clockoli-participants-section="true"]'), null,
+    'Clockoli never creates a second Participants block when GitHub has not rendered its native block');
   await new Promise(resolve => setTimeout(resolve, 0));
 });
 

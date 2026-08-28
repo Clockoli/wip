@@ -243,39 +243,11 @@
     return completed + Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   }
 
-  function ensureClockoliParticipantsSection(hasTotals) {
-    const native = document.querySelector?.('#partial-users-participants');
-    let section = native || document.querySelector?.('[data-clockoli-participants-section="true"]');
-    if (!hasTotals) {
-      if (!native) section?.remove();
-      return native;
-    }
-    if (section) return section;
-    const labels = document.querySelector?.('[data-testid="sidebar-labels-section"]');
-    const template = document.querySelector?.('[data-testid="sidebar-assignees-section"]') || labels;
-    const container = template?.parentElement;
-    if (!container) return null;
-    section = el('div');
-    section.setAttribute('data-clockoli-participants-section', 'true');
-    if (template.className) section.className = template.className;
-    Object.assign(section.style, { display: 'flex', flexDirection: 'column', alignItems: 'stretch' });
-    const header = el('div');
-    if (template.children?.[0]?.className) header.className = template.children[0].className;
-    Object.assign(header.style, { position: 'relative', minHeight: '24px' });
-    const heading = el('h3', 'Participants');
-    const templateHeading = template.querySelector?.('h3');
-    if (templateHeading?.className) heading.className = templateHeading.className;
-    heading.setAttribute('data-component', 'Heading');
-    heading.style.position = 'static';
-    header.append(heading);
-    const body = el('div');
-    if (template.children?.[1]?.className) body.className = template.children[1].className;
-    const avatars = el('div', undefined, 'participation-avatars d-flex flex-wrap');
-    Object.assign(avatars.style, { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginLeft: '0' });
-    body.append(avatars); section.append(header, body);
-    if (labels?.parentElement === container) container.insertBefore(section, labels);
-    else container.append(section);
-    return section;
+  function findNativeParticipantsSection() {
+    const stale = document.querySelector?.('[data-clockoli-participants-section="true"]');
+    stale?.remove();
+    return document.querySelector?.('#partial-users-participants')
+      || document.querySelector?.('[data-testid="sidebar-participants-section"]') || null;
   }
 
   function augmentClockoliParticipants() {
@@ -290,13 +262,16 @@
       if (seconds === null) continue;
       totals.set(login.toLowerCase(), { ...value, login, seconds });
     }
-    const participants = ensureClockoliParticipantsSection(totals.size > 0);
+    const participants = findNativeParticipantsSection();
     if (!participants?.querySelectorAll) return;
-    const existingParticipants = [...participants.querySelectorAll('.participant-avatar')];
+    const existingParticipants = [...participants.querySelectorAll(
+      '.participant-avatar, a[data-hovercard-type="user"][data-hovercard-url^="/users/"]',
+    )];
     const byLogin = new Map(existingParticipants.map(participant => [participantLogin(participant).toLowerCase(), participant])
       .filter(([login]) => login));
     const container = existingParticipants[0]?.parentElement
-      || participants.querySelector?.('.participation-avatars') || participants;
+      || participants.querySelector?.('.participation-avatars')
+      || participants.querySelector?.('[class*="participantsListContainer"]') || participants;
     for (const participant of existingParticipants) {
       const login = participantLogin(participant).toLowerCase();
       if (participant.getAttribute?.('data-clockoli-created-participant') === 'true' && !totals.has(login)) {
