@@ -259,6 +259,26 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   assert.equal(lazyBody.getAttribute('data-clockoli-time-summary'), 'true');
   assert.equal(lazyBody.children[0].children[1].textContent, 'alice');
   assert.equal(lazyBody.children[0].children[3].textContent, '1h 5m 7s');
+
+  const truncatedBody = new TimelineNode('div'); truncatedBody.className = 'TimelineItem-body';
+  const truncatedCommit = new TimelineNode('a');
+  truncatedCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/3f97e77aec8fae26c7e8fc40e4e9d37bbd52644c';
+  truncatedCommit.title = 'time: sanikolaev tracked 1m 33s on manticoresoftware/manticoresearch#…';
+  truncatedCommit.textContent = 'time: sanikolaev tracked 1m 33s on manticoresoftware/manticoresearch#…';
+  truncatedBody.append(truncatedCommit); timeline.append(truncatedBody);
+  observer.callback([{ target: truncatedBody }]);
+  assert.equal(truncatedBody.getAttribute('data-clockoli-time-summary'), 'true', 'GitHub-truncated Clockoli headlines still render on their referenced issue');
+  assert.equal(truncatedBody.children[0].children[1].textContent, 'sanikolaev');
+  assert.equal(truncatedBody.children[0].children[3].textContent, '1m 33s');
+
+  const foreignTruncatedBody = new TimelineNode('div'); foreignTruncatedBody.className = 'TimelineItem-body';
+  const foreignTruncatedCommit = new TimelineNode('a');
+  foreignTruncatedCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/abcdef1234567890';
+  foreignTruncatedCommit.title = 'time: sanikolaev tracked 1m 33s on another/repository#…';
+  foreignTruncatedBody.append(foreignTruncatedCommit); timeline.append(foreignTruncatedBody);
+  observer.callback([{ target: foreignTruncatedBody }]);
+  assert.equal(foreignTruncatedBody.getAttribute('data-clockoli-time-summary'), null, 'a truncated headline for another repository is not rewritten');
+  assert.equal(foreignTruncatedBody.children[0], foreignTruncatedCommit);
   await new Promise(resolve => setTimeout(resolve, 0));
 });
 

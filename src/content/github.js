@@ -120,11 +120,11 @@
   function clockoliTimelineRecord(value) {
     const login = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?';
     const match = String(value || '').replace(/\s+/g, ' ').trim().match(new RegExp(
-      `^time: (${login}) tracked ((?:(?:\\d+h )?(?:\\d+m )?\\d+s)|<1m|(?:\\d+h(?: \\d+m)?|\\d+m)) on (${login})/([A-Za-z0-9_.-]{1,100})#([1-9]\\d*)(?: [0-9a-f]{7,40})?$`, 'i',
+      `^time: (${login}) tracked ((?:(?:\\d+h )?(?:\\d+m )?\\d+s)|<1m|(?:\\d+h(?: \\d+m)?|\\d+m)) on (${login})/([A-Za-z0-9_.-]{1,100})#([1-9]\\d*|…)(?: [0-9a-f]{7,40})?$`, 'i',
     ));
     return match ? {
       actor: match[1], duration: match[2], durationSeconds: trackedDurationSeconds(match[2]),
-      owner: match[3], repo: match[4], number: Number(match[5]),
+      owner: match[3], repo: match[4], number: match[5] === '…' ? null : Number(match[5]),
     } : null;
   }
 
@@ -163,7 +163,8 @@
       if (commit.closest?.('[data-clockoli-time-summary]')) continue;
       const record = clockoliTimelineRecord(commit.title || commit.textContent);
       if (!record || record.owner.toLowerCase() !== route[1].toLowerCase()
-          || record.repo.toLowerCase() !== route[2].toLowerCase() || record.number !== Number(route[3])) continue;
+          || record.repo.toLowerCase() !== route[2].toLowerCase()
+          || (record.number !== null && record.number !== Number(route[3]))) continue;
       let commitUrl;
       try { commitUrl = new URL(commit.href, location.href); } catch { continue; }
       if (commitUrl.protocol !== 'https:' || commitUrl.hostname !== 'github.com'
