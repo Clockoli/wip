@@ -76,6 +76,7 @@ class FakeNode {
     if (selector === 'relative-time, time-ago') return this.walk().find(node => ['relative-time', 'time-ago'].includes(node.tag)) ?? null;
     if (selector === '.clockoli-timeline-range-start') return this.walk().find(node => node.classList?.contains('clockoli-timeline-range-start')) ?? null;
     if (selector === '.TimelineItem-badge') return this.walk().find(node => node.classList?.contains('TimelineItem-badge')) ?? null;
+    if (selector === '[class*="TimelineBadgeWrapper"]') return this.walk().find(node => String(node.className || '').includes('TimelineBadgeWrapper')) ?? null;
     if (selector === '[data-clockoli-time-summary]') return this.walk().find(node => node.getAttribute?.('data-clockoli-time-summary') !== null) ?? null;
     if (selector === 'img.avatar') return this.walk().find(node => node.tag === 'img' && node.className.split(/\s+/).includes('avatar')) ?? null;
     if (selector === 'img[data-testid="github-avatar"]') return this.walk().find(node => node.tag === 'img' && node.getAttribute('data-testid') === 'github-avatar') ?? null;
@@ -114,6 +115,8 @@ class TimelineNode extends FakeNode {
     if (selector === 'a[href*="/commit/"]') return this.tag === 'a' && String(this.href || '').includes('/commit/');
     if (selector === '.TimelineItem') return this.classList.contains('TimelineItem');
     if (selector === '.TimelineItem-body') return this.classList.contains('TimelineItem-body');
+    if (selector === '.Timeline-Item') return this.classList.contains('Timeline-Item');
+    if (selector === '.TimelineBody') return this.classList.contains('TimelineBody');
     if (selector === '.TimelineItem-badge') return this.classList.contains('TimelineItem-badge');
     if (selector === '[data-testid="timeline-item"]') return this.getAttribute('data-testid') === 'timeline-item';
     if (selector === '[data-clockoli-time-summary]') return this.getAttribute('data-clockoli-time-summary') !== null;
@@ -279,6 +282,20 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   observer.callback([{ target: foreignTruncatedBody }]);
   assert.equal(foreignTruncatedBody.getAttribute('data-clockoli-time-summary'), null, 'a truncated headline for another repository is not rewritten');
   assert.equal(foreignTruncatedBody.children[0], foreignTruncatedCommit);
+
+  const reactItem = new TimelineNode('div'); reactItem.className = 'TimelineRow-module__Timeline_Item__CWsyY Timeline-Item prc-Timeline-TimelineItem-QwDVH';
+  const reactBadge = new TimelineNode('div'); reactBadge.className = 'prc-Timeline-TimelineBadgeWrapper-SZw4k';
+  const reactBody = new TimelineNode('div'); reactBody.className = 'TimelineBody row-module__body__qLUpe prc-Timeline-TimelineBody-tjOtb';
+  const reactCommit = new TimelineNode('a');
+  reactCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/17383f333f0eb924245c8f33ef6fbc5ceb0ab153';
+  reactCommit.textContent = 'time: sanikolaev tracked 2s on manticoresoftware/manticoresearch#4860';
+  const reactTime = new TimelineNode('relative-time'); reactTime.textContent = '1 minute ago';
+  reactBody.append(reactCommit, reactTime); reactItem.append(reactBadge, reactBody); timeline.append(reactItem);
+  observer.callback([{ target: reactBody }]);
+  assert.equal(reactBody.getAttribute('data-clockoli-time-summary'), 'true', 'GitHub React TimelineBody entries are rewritten');
+  assert.equal(reactBody.children[0].children[1].textContent, 'sanikolaev');
+  assert.equal(reactBody.children[0].children[3].textContent, '2s');
+  assert.equal(reactBadge.children[0].tag, 'img', 'the current React timeline badge receives the Clockoli mark');
   await new Promise(resolve => setTimeout(resolve, 0));
 });
 

@@ -171,9 +171,9 @@
       try { commitUrl = new URL(commit.href, location.href); } catch { continue; }
       if (commitUrl.protocol !== 'https:' || commitUrl.hostname !== 'github.com'
           || !/^\/[^/]+\/[^/]+\/commit\/[0-9a-f]{7,40}$/i.test(commitUrl.pathname)) continue;
-      const body = commit.closest?.('.TimelineItem-body');
+      const body = commit.closest?.('.TimelineItem-body, .TimelineBody');
       if (!body) continue;
-      const item = body.closest?.('.TimelineItem')
+      const item = body.closest?.('.TimelineItem, .Timeline-Item')
         || body.closest?.('.js-timeline-item, [data-testid="timeline-item"]') || body;
       const timestamp = body.querySelector?.('relative-time, time-ago');
       const summary = el('span', undefined, 'clockoli-timeline-summary');
@@ -184,7 +184,9 @@
       const mark = el('img', undefined, 'clockoli-timeline-mark');
       mark.src = chrome.runtime.getURL('src/assets/clockoli-16.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
       Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
-      item.querySelector?.('.TimelineItem-badge')?.replaceChildren(mark);
+      const badge = item.querySelector?.('.TimelineItem-badge')
+        || item.querySelector?.('[class*="TimelineBadgeWrapper"]');
+      badge?.replaceChildren(mark);
       const avatarLink = el('a', undefined, 'd-inline-block');
       avatarLink.href = `https://github.com/${record.actor}`;
       avatarLink.setAttribute('data-hovercard-type', 'user');
