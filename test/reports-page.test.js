@@ -39,7 +39,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.doesNotMatch(js, /innerHTML|outerHTML|eval\s*\(|new Function/);
   assert.match(js, /function render\(\) \{\s*if \(!state\.range\) return;/);
   assert.match(js, /requestId !== state\.requestId/);
-  assert.match(worker, /\['LOAD_REPORT', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'\]\.includes\(message\?\.type\)/);
+  assert.match(worker, /\['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'\]\.includes\(message\?\.type\)/);
   assert.match(worker, /previous\.controller\.abort\(\)/);
   assert.match(worker, /await previous\.promise\.catch/);
   assert.match(worker, /await Promise\.allSettled/);

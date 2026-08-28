@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateTrackedTasks, effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
+import { aggregateTaskParticipants, aggregateTrackedTasks, effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
 
 const issue = (number, type = 'issue', repo = 'app') => ({
   type, owner: 'acme', repo, number,
@@ -121,4 +121,68 @@ test('locally accepted pending completions participate in Top tasks without doub
   assert.deepEqual(aggregateTrackedTasks([winner], {
     user: 'alice', pendingWrites: [{ operation: 'completeTimer', entry: loser }],
   }), [{ taskUrl, title: 'Pending task', totalSeconds: 3300, sessionCount: 1 }]);
+});
+
+test('task participants aggregate every person and overlay only unsynced and active local work', () => {
+  const task = issue(42);
+  const persistedAlice = {
+    ...record(task, 600, '2026-08-19', 'Alice'),
+    startedAt: '2026-08-19T10:00:00.000Z',
+  };
+  const pendingAlice = {
+    ...record(task, 300, '2026-08-20', 'Alice'),
+    startedAt: '2026-08-20T10:00:00.000Z',
+  };
+  const alreadyPersisted = { ...persistedAlice, durationSeconds: 999 };
+  const participants = aggregateTaskParticipants([
+    persistedAlice,
+    record(task, 1200, '2026-08-20', 'bob'),
+    record(issue(99), 9999, '2026-08-20', 'carol'),
+  ], {
+    taskUrl: task.url,
+    currentUser: 'Alice',
+    pendingWrites: [
+      { operation: 'completeTimer', entry: pendingAlice },
+      { operation: 'completeTimer', entry: alreadyPersisted },
+    ],
+    active: { user: 'Alice', issue: task, startedAt: '2026-08-20T11:00:00.000Z' },
+  });
+
+  assert.deepEqual(participants, [
+    { login: 'bob', totalSeconds: 1200 },
+    { login: 'Alice', totalSeconds: 900, activeStartedAt: '2026-08-20T11:00:00.000Z' },
+  ]);
+});
+
+test('task participant index does not overlay a completion already saved before active cleanup', () => {
+  const task = issue(42);
+  const savedIndexTotal = { user: 'Alice', taskUrl: task.url, durationSeconds: 600 };
+  const savedCompletion = { ...record(task, 600, '2026-08-20', 'Alice'), startedAt: '2026-08-20T10:00:00.000Z' };
+  assert.deepEqual(aggregateTaskParticipants([savedIndexTotal], {
+    taskUrl: task.url,
+    currentUser: 'Alice',
+    pendingWrites: [{ operation: 'completeTimer', stage: 'clearActive', entry: savedCompletion }],
+  }), [{ login: 'Alice', totalSeconds: 600 }]);
+});
+
+test('task participant index does not overlay a completion after its durable commit starts', () => {
+  const task = issue(42);
+  const completion = { ...record(task, 600, '2026-08-20', 'Alice'), id: 'completion-1', startedAt: '2026-08-20T10:00:00.000Z' };
+  assert.deepEqual(aggregateTaskParticipants([
+    { user: 'Alice', taskUrl: task.url, durationSeconds: 600, recordIds: ['completion-1'] },
+  ], {
+    taskUrl: task.url,
+    currentUser: 'Alice',
+    pendingWrites: [{ operation: 'completeTimer', stage: 'commitCompletion', entry: completion }],
+  }), [{ login: 'Alice', totalSeconds: 600 }]);
+});
+
+test('task participant index overlays a completion not yet present when its durable commit is retried', () => {
+  const task = issue(42);
+  const completion = { ...record(task, 600, '2026-08-20', 'Alice'), id: 'completion-1', startedAt: '2026-08-20T10:00:00.000Z' };
+  assert.deepEqual(aggregateTaskParticipants([], {
+    taskUrl: task.url,
+    currentUser: 'Alice',
+    pendingWrites: [{ operation: 'completeTimer', stage: 'commitCompletion', entry: completion }],
+  }), [{ login: 'Alice', totalSeconds: 600 }]);
 });

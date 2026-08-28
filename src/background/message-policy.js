@@ -1,7 +1,7 @@
 import { normalizeIssue, normalizeTaskUrl, parseIssueUrl } from '../domain/values.js';
 
 const CONTENT_MESSAGES = new Set([
-  'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES',
+  'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS',
   'SET_ACTION_ICON_FRAME',
 ]);

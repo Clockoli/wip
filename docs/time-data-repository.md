@@ -46,11 +46,12 @@ Each personal branch contains:
 
 ```text
 .clockoli/user.json
+.clockoli/tasks.json
 active/{storage-login}.json
 times/{YYYY-MM}/{storage-login}.jsonl
 ```
 
-Routine work-record writes occur only on the personal branch. Reports discovers marked personal branches and reads their canonical monthly JSONL files. The default branch is repository metadata, not an alternate work-record source.
+Routine work-record writes occur only on the personal branch. Completed-record changes update monthly JSONL and `.clockoli/tasks.json` atomically. Reports discovers marked personal branches and reads their canonical monthly JSONL files. The default branch is repository metadata, not an alternate work-record source.
 
 Do not manually create a branch under `clockoli/users/`. Existing branches must have ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
 
@@ -60,6 +61,7 @@ Clockoli has one supported persistent work-record format: schema `1`. There is n
 
 - An active file is one formatted JSON object with `activity.state: "running"`.
 - A monthly file is JSON Lines: one compact completed work-record object per non-empty line.
+- `.clockoli/tasks.json` is the mandatory exact per-task projection used for cross-user GitHub sidebar totals.
 - Every record has a stable ULID assigned at Start. Stop completes that same record ID.
 - Timestamps are stored in UTC, while `activity.local_date` and an IANA `activity.timezone` preserve calendar reporting semantics.
 - `actor` identifies who performed the work; `producer` identifies what wrote the record.
@@ -114,7 +116,7 @@ Repository files remain inspectable, but editing them outside Clockoli bypasses 
 - use a valid IANA timezone;
 - keep a running record's `ended_at` as `null`;
 - do not duplicate a record across branches or monthly files;
-- make related changes as one reviewed Git commit.
+- update `.clockoli/tasks.json` to match every completed-record change and make both changes in one reviewed Git commit.
 
 Malformed files are rejected as a whole rather than partially ignored. Repair the complete file before retrying.
 
@@ -143,6 +145,8 @@ A ruleset requiring a pull request for every change can prevent normal timer ope
 ## Reports access
 
 Reports lists valid personal branches, reads represented monthly JSONL files for the selected local-date range, and downloads immutable blobs as needed.
+
+On GitHub issue and pull-request pages, participant all-time totals read one `.clockoli/tasks.json` file from each personal branch. The sidebar does not scan monthly history.
 
 Repository readers can see stored actor identities, work-item URLs and titles, timestamps, descriptions, metadata, metrics, and execution details. Local hourly rates and billable calculations are not stored in work records.
 

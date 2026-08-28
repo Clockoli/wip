@@ -103,6 +103,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 - Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
 - Dedicated private GitHub data repository, with one marked personal branch per user.
 - Human-readable monthly JSONL files with UTC timestamps plus explicit local dates and IANA timezones.
+- Exact per-task indexes for fast all-time participant totals without scanning monthly history.
 - SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
 - Locally queued Stop operations with automatic retry when GitHub is temporarily unavailable.
 - Settings backup in readable JSON without credentials, active timers, pending writes, or tracked time.

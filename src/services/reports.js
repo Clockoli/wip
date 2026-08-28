@@ -1,9 +1,11 @@
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
-import { entryDateParts, validatePathSegment } from '../domain/values.js';
+import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
+import { entryDateParts, normalizeTaskUrl, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
 const DEFAULT_USER_BUDGET = Object.freeze({ maxFiles: 13, maxBytes: 20 * 1024 * 1024, maxRecords: 100000 });
+const DEFAULT_TASK_USER_BUDGET = 1_000;
 
 function withoutStorageMetadata(record) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')));
@@ -49,12 +51,90 @@ function budgetValue(value, fallback, label) {
   return parsed;
 }
 
+function taskScanBudgetError(resource, used, maximum) {
+  const error = new Error(`Clockoli history exceeds the safe exact-participant scan limit (${used} ${resource}; maximum ${maximum}).`);
+  error.code = 'task_scan_budget';
+  return error;
+}
+
+function consumeTaskScanBudget(budget, resource, amount) {
+  if (!budget || amount <= 0) return;
+  const suffix = `${resource[0].toUpperCase()}${resource.slice(1)}`;
+  const usedKey = `used${suffix}`, maxKey = `max${suffix}`;
+  const next = budget[usedKey] + amount;
+  if (next > budget[maxKey]) throw taskScanBudgetError(resource, next, budget[maxKey]);
+  budget[usedKey] = next;
+}
+
+class RequestLimiter {
+  constructor(limit) {
+    this.limit = limit;
+    this.active = 0;
+    this.waiters = [];
+  }
+
+  async run(task, signal) {
+    signal?.throwIfAborted();
+    if (this.active >= this.limit) {
+      await new Promise((resolve, reject) => {
+        const waiter = { resolve, reject, signal, onAbort: null };
+        waiter.onAbort = () => {
+          const index = this.waiters.indexOf(waiter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+        };
+        signal?.addEventListener('abort', waiter.onAbort, { once: true });
+        this.waiters.push(waiter);
+      });
+    } else {
+      this.active += 1;
+    }
+    try {
+      signal?.throwIfAborted();
+      return await task();
+    } finally {
+      this.active -= 1;
+      const waiter = this.waiters.shift();
+      if (waiter) {
+        this.active += 1; // Reserve the released slot before waking the next caller.
+        waiter.signal?.removeEventListener('abort', waiter.onAbort);
+        waiter.resolve();
+      }
+    }
+  }
+}
+
+async function settleConcurrent(items, signal, operation) {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal.reason);
+  if (signal?.aborted) abortFromParent();
+  else signal?.addEventListener('abort', abortFromParent, { once: true });
+  let firstError = null;
+  try {
+    const results = await Promise.allSettled(items.map(async item => {
+      try { return await operation(item, controller.signal); }
+      catch (error) {
+        if (!firstError) {
+          firstError = error;
+          controller.abort(error);
+        }
+        throw error;
+      }
+    }));
+    if (firstError) throw firstError;
+    return results.map(result => result.value);
+  } finally {
+    signal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
 export class ReportService {
-  constructor({ github, cache = null, concurrency = 6, onProgress = null }) {
+  constructor({ github, cache = null, concurrency = 6, onProgress = null, requestLimiter = null }) {
     this.github = github;
     this.cache = cache;
     this.onProgress = typeof onProgress === 'function' ? onProgress : () => {};
     this.concurrency = Math.min(12, Math.max(1, Number(concurrency) || 6));
+    this.requestLimiter = requestLimiter ?? new RequestLimiter(this.concurrency);
   }
 
   async readCache(repositoryKey) {
@@ -71,17 +151,57 @@ export class ReportService {
       return this.loadRange(range, { signal });
     }
     const defaultGithub = this.github.forBranch(defaultBranch, 'default');
-    const users = await discoverUserStorageBranches(defaultGithub, { signal });
+    const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
     if (!users.length) return [];
     const personalRecords = [];
-    for (const user of users) {
+    for (let offset = 0; offset < users.length; offset += this.concurrency) {
       signal?.throwIfAborted();
-      const personal = await new ReportService({ github: user.github, cache: this.cache, concurrency: this.concurrency, onProgress: this.onProgress })
-        .loadUserRange(range, user.login, { signal });
-      personalRecords.push(...personal);
+      const chunk = await settleConcurrent(users.slice(offset, offset + this.concurrency), signal, (user, branchSignal) => (
+        new ReportService({
+          github: user.github, cache: this.cache, concurrency: this.concurrency,
+          onProgress: this.onProgress, requestLimiter: this.requestLimiter,
+        }).loadUserRange(range, user.login, { signal: branchSignal })
+      ));
+      personalRecords.push(...chunk.flat());
     }
     return mergeReportRecords(personalRecords, [])
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
+  }
+
+  async loadRepositoryTask(taskUrl, { defaultBranch = null, signal, budgets = {} } = {}) {
+    const canonicalTaskUrl = normalizeTaskUrl(taskUrl);
+    const maxUsers = budgetValue(budgets.maxUsers, DEFAULT_TASK_USER_BUDGET, 'user');
+    this.onProgress({ label: 'Discovering people and task indexes…', value: 20 });
+    if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+      const index = await this.readTaskIndex(this.github, null, { signal });
+      const record = taskIndexRecord(index, canonicalTaskUrl);
+      return record ? [record] : [];
+    }
+    const defaultGithub = this.github.forBranch(defaultBranch, 'default');
+    const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
+    if (!users.length) return [];
+    if (users.length > maxUsers) throw taskScanBudgetError('users', users.length, maxUsers);
+    const personalRecords = [];
+    for (let offset = 0; offset < users.length; offset += this.concurrency) {
+      signal?.throwIfAborted();
+      const chunk = await settleConcurrent(users.slice(offset, offset + this.concurrency), signal, async (user, branchSignal) => {
+        const index = await this.readTaskIndex(user.github, user.login, { signal: branchSignal });
+        return taskIndexRecord(index, canonicalTaskUrl);
+      });
+      personalRecords.push(...chunk.filter(Boolean));
+    }
+    return personalRecords.sort((a, b) => a.user.localeCompare(b.user));
+  }
+
+  async readTaskIndex(github, user, { signal } = {}) {
+    try {
+      const file = await this.requestLimiter.run(() => github.getText(TASK_INDEX_PATH, { signal }), signal);
+      signal?.throwIfAborted();
+      return parseTaskIndex(file.text, user ? { user } : {});
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal?.aborted) throw error;
+      throw new Error(`Clockoli task index is unavailable or invalid${user ? ` for ${user}` : ''}: ${error.message}`, { cause: error });
+    }
   }
 
   async loadUserRange(range, user, options = {}, budgets = {}) {
@@ -95,20 +215,28 @@ export class ReportService {
     });
   }
 
-  async loadRange({ startDate, endDate }, { signal, user = null, maxFiles = Infinity, maxBytes = Infinity, maxRecords = Infinity, includeStorageMetadata = false } = {}) {
+  async loadRange({ startDate, endDate }, {
+    signal, user = null, taskUrl = null, maxFiles = Infinity, maxBytes = Infinity,
+    maxRecords = Infinity, includeStorageMetadata = false, resourceBudget = null,
+  } = {}) {
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
+    const canonicalTaskUrl = taskUrl === null ? null : normalizeTaskUrl(taskUrl);
     signal?.throwIfAborted();
 
     const repositoryKey = this.github.repositoryKey || 'repository';
     this.onProgress({ label: 'Checking the local time-file cache…', value: 35 });
     const cache = await this.readCache(repositoryKey);
-    const needsSizes = user && cache.files.some(file => !Number.isSafeInteger(file.size));
+    const needsSizes = (user || resourceBudget) && cache.files.some(file => !Number.isSafeInteger(file.size));
     const snapshotEtag = cache.snapshotReady && !needsSizes ? cache.etag : '';
-    let snapshot = await this.github.listTextFilesSnapshot('times/', { etag: snapshotEtag, signal });
+    let snapshot = await this.requestLimiter.run(
+      () => this.github.listTextFilesSnapshot('times/', { etag: snapshotEtag, signal }), signal,
+    );
     signal?.throwIfAborted();
     if (snapshot.notModified && !cache.snapshotReady) {
-      snapshot = await this.github.listTextFilesSnapshot('times/', { etag: '', signal });
+      snapshot = await this.requestLimiter.run(
+        () => this.github.listTextFilesSnapshot('times/', { etag: '', signal }), signal,
+      );
       signal?.throwIfAborted();
     }
     if (snapshot.notModified) {
@@ -120,7 +248,7 @@ export class ReportService {
       cache.files = snapshot.files ?? [];
       const currentShas = new Set(cache.files.map(file => file.sha));
       cache.blobs = Object.fromEntries(Object.entries(cache.blobs).filter(([sha]) => currentShas.has(sha)));
-      await this.saveCache(cache);
+      if (!resourceBudget) await this.saveCache(cache);
     }
 
     const startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
@@ -130,8 +258,11 @@ export class ReportService {
     }).filter(file => file && file.month >= startMonth && file.month <= endMonth && (!user || file.user === user));
 
     if (files.length > maxFiles) throw new Error(`Task file budget exceeded (${files.length} files; maximum ${maxFiles}). Choose a shorter period.`);
+    consumeTaskScanBudget(resourceBudget, 'files', files.length);
     const knownBytes = files.reduce((sum, file) => sum + (Number.isSafeInteger(file.size) ? file.size : 0), 0);
     if (knownBytes > maxBytes) throw new Error(`Task byte budget exceeded (${knownBytes} bytes; maximum ${maxBytes}). Choose a shorter period.`);
+    consumeTaskScanBudget(resourceBudget, 'bytes', knownBytes);
+    if (resourceBudget && !snapshot.notModified) await this.saveCache(cache);
 
     const missing = files.filter(file => typeof cache.blobs[file.sha] !== 'string');
     try {
@@ -139,7 +270,9 @@ export class ReportService {
         signal?.throwIfAborted();
         const chunk = missing.slice(offset, offset + this.concurrency);
         this.onProgress({ label: `Downloading time files from GitHub (${Math.min(offset + chunk.length, missing.length)} of ${missing.length})…`, value: 40 + Math.round(30 * Math.min(offset + chunk.length, missing.length) / Math.max(1, missing.length)) });
-        const blobs = await Promise.all(chunk.map(file => this.github.getBlobText(file.path, file.sha, { signal })));
+        const blobs = await Promise.all(chunk.map(file => this.requestLimiter.run(
+          () => this.github.getBlobText(file.path, file.sha, { signal }), signal,
+        )));
         for (const blob of blobs) cache.blobs[blob.sha] = blob.text;
         await this.saveCache(cache);
       }
@@ -150,17 +283,25 @@ export class ReportService {
 
     const actualBytes = files.reduce((sum, file) => sum + new TextEncoder().encode(cache.blobs[file.sha] ?? '').length, 0);
     if (actualBytes > maxBytes) throw new Error(`Task byte budget exceeded (${actualBytes} bytes; maximum ${maxBytes}). Choose a shorter period.`);
+    consumeTaskScanBudget(resourceBudget, 'bytes', Math.max(0, actualBytes - knownBytes));
 
     this.onProgress({ label: 'Preparing time records…', value: 75 });
-    const records = files.flatMap(file => {
+    const records = [];
+    for (const file of files) {
       try {
-        return parseMonthlyRecords(cache.blobs[file.sha], { user: file.user, month: file.month, path: file.path, sha: file.sha })
-          .filter(record => record.entryDate >= startDate && record.entryDate <= endDate)
-          .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record));
+        const parsed = parseMonthlyRecords(cache.blobs[file.sha], {
+          user: file.user, month: file.month, path: file.path, sha: file.sha,
+        });
+        consumeTaskScanBudget(resourceBudget, 'records', parsed.length);
+        records.push(...parsed
+          .filter(record => record.entryDate >= startDate && record.entryDate <= endDate
+            && (!canonicalTaskUrl || record.taskUrl === canonicalTaskUrl))
+          .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record)));
       } catch (error) {
+        if (error?.code === 'task_scan_budget') throw error;
         throw new Error(`Invalid time data in ${file.path}: ${error.message}`);
       }
-    });
+    }
     if (records.length > maxRecords) throw new Error(`Task record budget exceeded (${records.length} records; maximum ${maxRecords}). Choose a shorter period.`);
     return records.sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }

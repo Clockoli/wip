@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TrackerConflictError, TrackerService } from '../src/services/tracker.js';
 import { parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
+import {
+  applyTaskIndexChanges, emptyTaskIndex, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH,
+} from '../src/domain/task-index.js';
 
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 const pull = { type: 'pull_request', owner: 'acme', repo: 'frontend', number: 44, url: 'https://github.com/acme/frontend/pull/44' };
@@ -93,6 +96,16 @@ function entry(startedAt, endedAt, override = {}) {
   };
 }
 function seedText(github, path, text, sha = 'seed') { github.files.set(path, { sha, text }); }
+function ensureTaskIndexFixture(github) {
+  if (github.files.has(TASK_INDEX_PATH)) return;
+  let entries = [];
+  try {
+    entries = [...github.files]
+      .filter(([path]) => /^times\/\d{4}-\d{2}\/alice\.jsonl$/.test(path))
+      .flatMap(([path, file]) => parseMonthlyRecords(file.text, { path, sha: file.sha }));
+  } catch { /* Keep malformed monthly fixtures for the production parser under test. */ }
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), { add: entries })), 'task-index');
+}
 function localTimestamp(year, monthIndex, day, hour = 0, minute = 0, second = 0) {
   const date = new Date(year, monthIndex, day, hour, minute, second, 0);
   const pad = value => String(value).padStart(2, '0');
@@ -102,11 +115,39 @@ function localTimestamp(year, monthIndex, day, hour = 0, minute = 0, second = 0)
     + `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
 }
 function service(options = {}) {
-  return new TrackerService({ github: options.github ?? new FakeGitHub(), store: options.store ?? new MemoryStore(), user: 'alice',
+  const github = options.github ?? new FakeGitHub();
+  ensureTaskIndexFixture(github);
+  return new TrackerService({ github, store: options.store ?? new MemoryStore(), user: 'alice',
     actorId: options.actorId ?? 'github:123', actorName: 'alice',
     clock: options.clock ?? (() => new Date('2026-08-18T09:00:00Z')), idFactory: options.idFactory ?? (() => fixedId),
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
 }
+
+test('completed-record mutations update the mandatory task index atomically', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const tracker = service({ github, store });
+  const stopped = await tracker.stop();
+  let index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id] });
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [
+    'times/2026-08/alice.jsonl', 'active/alice.json', TASK_INDEX_PATH,
+  ]);
+
+  const saved = stopped.entry;
+  const edited = await tracker.editEntry({
+    path: saved._path, originalSha: saved._sha, index: saved._index, original: saved,
+    edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+  index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id] });
+
+  await tracker.deleteEntry({ path: edited._path, originalSha: edited._sha, index: edited._index, original: edited });
+  index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.deepEqual(index.tasks, {});
+  assert.ok(github.atomicWrites.every(write => write.changes.some(change => change.path === TASK_INDEX_PATH)));
+});
 
 test('start writes one readable active text file with its durable issue title', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
@@ -165,6 +206,7 @@ test('queued Start persists a GitHub metadata snapshot and actor relationship wh
   await tracker.syncPending();
   const stored = JSON.parse(github.files.get('active/alice.json').text);
   assert.equal(stored.work_item.title, 'API title');
+  assert.equal(github.writes[0].message, 'timer: start alice', 'queued Start also avoids a premature issue cross-reference');
   assert.deepEqual(stored.metadata.github.actor_relationship, ['assignee']);
   assert.equal(stored.metadata.github.repository.id, 99);
   assert.equal(github.metadataReads.length, 1);
@@ -254,8 +296,18 @@ test('stop appends to one monthly JSONL file and clears active', async () => {
   assert.equal(file.text.trim().split('\n').length, 1);
   assert.equal(new Date(parseMonthlyRecords(file.text, { user: 'alice', month: '2026-08' })[0].endedAt).getTime(), new Date('2026-08-18T09:15:00Z').getTime());
   assert.equal(JSON.parse(file.text).description, 'Done');
+  assert.equal(github.writes[0].message, 'timer: start alice', 'Start does not create a premature GitHub issue cross-reference');
+  assert.equal(github.atomicWrites[0].message, 'time: alice tracked 1h 15m 0s on acme/frontend#123');
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(github.reads.filter(path => path === 'active/alice.json').length, activeReadsBeforeStop + 1, 'Stop verifies that the cached timer is still authoritative before completing it');
+});
+
+test('completion commit reports duration with second precision', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(); let now = new Date('2026-08-18T08:00:00Z');
+  const tracker = service({ github, store, clock: () => new Date(now) });
+  await tracker.start(issue); now = new Date('2026-08-18T08:00:30Z');
+  await tracker.stop();
+  assert.equal(github.atomicWrites[0].message, 'time: alice tracked 30s on acme/frontend#123');
 });
 
 test('stop does not complete a stale cached timer after another device replaces it', async () => {
@@ -519,7 +571,7 @@ test('editing one entry rewrites its monthly file once and preserves the other r
   seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z'), entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z', { issue: pull })]), 'daily');
   const tracker = service({ github, store });
   const saved = await tracker.editEntry({ path, originalSha: 'daily', index: 1, edits: { description: 'manual note', endedAt: '2026-08-18T11:30:00.000Z' } });
-  assert.equal(github.writes.length, 1);
+  assert.equal(github.writes.length, 0); assert.equal(github.atomicWrites.length, 1);
   const parsed = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
   assert.equal(parsed[0].description, ''); assert.equal(parsed[1].description, 'manual note');
   assert.equal(saved._index, 1); assert.equal(saved.durationSeconds, 5400);
@@ -554,7 +606,7 @@ test('editing Start into another day in the same month performs one SHA-guarded 
   const saved = await service({ github, store }).editEntry({ path, originalSha: 'source', index: 0,
     original: { id: intended.id, issueUrl: intended.issue.url, startedAt: intended.startedAt, endedAt: intended.endedAt, description: '' },
     edits: { startedAt: '2026-08-17T23:13:17.000Z' } });
-  assert.equal(github.atomicWrites.length, 0); assert.equal(github.writes.length, 1); assert.equal(saved._path, path);
+  assert.equal(github.atomicWrites.length, 1); assert.equal(github.writes.length, 0); assert.equal(saved._path, path);
   assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].startedAt, '2026-08-17T23:13:17.000Z');
   assert.deepEqual(store.value.recentCache.map(record => record._path), [path]);
 });
@@ -584,7 +636,7 @@ test('deleting one record keeps the monthly file; deleting the last removes it',
   assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' }).length, 1);
   const second = await tracker.deleteEntry({ path, originalSha: first.entries[0]._sha, index: first.entries[0]._index });
   assert.deepEqual(second, { deleted: true, entries: [] });
-  assert.equal(github.files.has(path), false); assert.equal(github.deletes.length, 1);
+  assert.equal(github.files.has(path), false); assert.equal(github.deletes.length, 0); assert.equal(github.atomicWrites.length, 2);
 });
 
 test('same-day boundary movement updates two entries with one GitHub write', async () => {
@@ -594,7 +646,7 @@ test('same-day boundary movement updates two entries with one GitHub write', asy
     upper: { path, originalSha: 'daily', index: 0, endedAt: '2026-08-18T10:00:00.000Z' },
     lower: { path, originalSha: 'daily', index: 1, startedAt: '2026-08-18T10:30:00.000Z' },
   });
-  assert.equal(github.writes.length, 1); assert.equal(saved.length, 2);
+  assert.equal(github.writes.length, 0); assert.equal(github.atomicWrites.length, 1); assert.equal(saved.length, 2);
   const parsed = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
   assert.equal(parsed[0].endedAt, '2026-08-18T10:00:00.000Z'); assert.equal(parsed[1].startedAt, '2026-08-18T10:30:00.000Z');
 });
@@ -611,7 +663,7 @@ test('boundary movement has no arbitrary twelve-hour cap', async () => {
   });
   const records = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
   assert.equal(records[0].durationSeconds, 49 * 3600); assert.equal(records[1].durationSeconds, 24 * 3600);
-  assert.equal(github.writes.length, 1); assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.writes.length, 0); assert.equal(github.atomicWrites.length, 1);
 });
 
 test('boundary movement rejects unequal deltas and invalid durations', async () => {
@@ -751,8 +803,8 @@ test('linked time edits save a crossed adjacent boundary in one monthly-file wri
     { path, originalSha: 'linked', index: 0, original: { id: previous.id, issueUrl: previous.issue.url, issueTitle: '', startedAt: previous.startedAt, endedAt: previous.endedAt, description: '' }, edits: { endedAt: '2026-08-18T08:30:00.000Z' } },
     { path, originalSha: 'linked', index: 1, original: { id: current.id, issueUrl: current.issue.url, issueTitle: '', startedAt: current.startedAt, endedAt: current.endedAt, description: '' }, edits: { startedAt: '2026-08-18T08:30:00.000Z' } },
   ] });
-  assert.equal(github.writes.length, 1);
-  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.writes.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
   assert.equal(saved.length, 2);
   const parsed = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
   assert.deepEqual(parsed.map(record => [record.startedAt, record.endedAt]), [
@@ -807,7 +859,7 @@ test('bulk import commits multiple monthly files atomically', async () => {
   const result = await tracker.bulkAddTimes('2026-08-31 https://example.com/a August 1\n2026-09-01 https://example.com/b September 2');
   assert.deepEqual(result, { added: 2 });
   assert.equal(github.atomicWrites.length, 1);
-  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl']);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl', TASK_INDEX_PATH]);
 });
 
 

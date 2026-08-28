@@ -42,6 +42,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/domain/records.js',
   'src/domain/recovery-actions.js',
   'src/domain/reporting.js',
+  'src/domain/task-index.js',
   'src/domain/tasks.js',
   'src/domain/ulid.js',
   'src/domain/values.js',

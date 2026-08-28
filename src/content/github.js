@@ -17,6 +17,12 @@
   let actionAnimationRunning = null;
   let actionAnimationFrame = 0;
   let actionAnimationReady = false;
+  let timelineObserver = null;
+  let participantAugmentationScheduled = false;
+  let participantLoadId = 0;
+  let participantData = null;
+  let participantRetryTimer = null;
+  const PARTICIPANT_RETRY_MS = 60_000;
   let pendingRefreshTimer = null;
   let root = null;
   let shadow = null;
@@ -26,6 +32,7 @@
   let recent = [];
   let recentLoaded = false;
   let recentFresh = false;
+  let recentFreshAfterPendingId = null;
   let loadingRecent = false;
   let recentLoad = null;
   let recentLoadId = 0;
@@ -90,6 +97,307 @@
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
   function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+
+  function trackedDurationSeconds(value) {
+    const match = String(value || '').match(/^(?:(\d+)h )?(?:(\d+)m )?(\d+)s$/);
+    if (!match) return null;
+    const hours = Number(match[1] || 0), minutes = Number(match[2] || 0), seconds = Number(match[3]);
+    return minutes < 60 && seconds < 60 ? hours * 3600 + minutes * 60 + seconds : null;
+  }
+
+  function formatTrackedDuration(totalSeconds) {
+    const total = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const hours = Math.floor(total / 3600), minutes = Math.floor((total % 3600) / 60), seconds = total % 60;
+    return `${hours ? `${hours}h ` : ''}${minutes ? `${minutes}m ` : ''}${seconds}s`;
+  }
+
+  function formatCompactTrackedDuration(totalSeconds) {
+    const total = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const hours = Math.floor(total / 3600), minutes = Math.floor((total % 3600) / 60), seconds = total % 60;
+    return [hours && `${hours}h`, minutes && `${minutes}m`, seconds && `${seconds}s`].filter(Boolean).join(' ') || '0s';
+  }
+
+  function clockoliTimelineRecord(value) {
+    const login = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?';
+    const match = String(value || '').replace(/\s+/g, ' ').trim().match(new RegExp(
+      `^time: (${login}) tracked ((?:(?:\\d+h )?(?:\\d+m )?\\d+s)|<1m|(?:\\d+h(?: \\d+m)?|\\d+m)) on (${login})/([A-Za-z0-9_.-]{1,100})#([1-9]\\d*)(?: [0-9a-f]{7,40})?$`, 'i',
+    ));
+    return match ? {
+      actor: match[1], duration: match[2], durationSeconds: trackedDurationSeconds(match[2]),
+      owner: match[3], repo: match[4], number: Number(match[5]),
+    } : null;
+  }
+
+  function mergePreviousClockoliTimelineItems(item, body, record, duration) {
+    if (!item || record.durationSeconds === null) return null;
+    let total = record.durationSeconds, previous = item.previousElementSibling;
+    let firstTimestamp = null;
+    while (previous) {
+      const previousBody = previous.matches?.('[data-clockoli-time-summary]')
+        ? previous : previous.querySelector?.('[data-clockoli-time-summary]');
+      const previousActor = previousBody?.getAttribute('data-clockoli-time-actor');
+      const previousSecondsValue = previousBody?.getAttribute('data-clockoli-time-seconds');
+      if (!previousBody || previousSecondsValue === null
+          || previousActor?.toLowerCase() !== record.actor.toLowerCase()) break;
+      const previousSeconds = Number(previousSecondsValue);
+      if (!Number.isSafeInteger(previousSeconds) || previousSeconds < 0) break;
+      const beforePrevious = previous.previousElementSibling;
+      const previousTimestamp = previousBody.querySelector?.('.clockoli-timeline-range-start')
+        || previousBody.querySelector?.('relative-time, time-ago');
+      if (previousTimestamp) firstTimestamp = previousTimestamp;
+      total += previousSeconds;
+      previous.remove();
+      previous = beforePrevious;
+    }
+    body.setAttribute('data-clockoli-time-seconds', String(total));
+    duration.textContent = formatTrackedDuration(total);
+    return firstTimestamp;
+  }
+
+  function beautifyClockoliTimeline(root = document) {
+    const route = location.pathname.match(/^\/([^/]+)\/([^/]+)\/(?:issues|pull)\/([1-9]\d*)\/?$/i);
+    if (!route || !root?.querySelectorAll) return;
+    const candidates = root.matches?.('a[href*="/commit/"]') ? [root] : [];
+    candidates.push(...root.querySelectorAll('a[href*="/commit/"]'));
+    for (const commit of candidates) {
+      if (commit.closest?.('[data-clockoli-time-summary]')) continue;
+      const record = clockoliTimelineRecord(commit.title || commit.textContent);
+      if (!record || record.owner.toLowerCase() !== route[1].toLowerCase()
+          || record.repo.toLowerCase() !== route[2].toLowerCase() || record.number !== Number(route[3])) continue;
+      let commitUrl;
+      try { commitUrl = new URL(commit.href, location.href); } catch { continue; }
+      if (commitUrl.protocol !== 'https:' || commitUrl.hostname !== 'github.com'
+          || !/^\/[^/]+\/[^/]+\/commit\/[0-9a-f]{7,40}$/i.test(commitUrl.pathname)) continue;
+      const body = commit.closest?.('.TimelineItem-body');
+      if (!body) continue;
+      const item = body.closest?.('.TimelineItem')
+        || body.closest?.('.js-timeline-item, [data-testid="timeline-item"]') || body;
+      const timestamp = body.querySelector?.('relative-time, time-ago');
+      const summary = el('span', undefined, 'clockoli-timeline-summary');
+      Object.assign(summary.style, {
+        display: 'inline-flex', alignItems: 'center', gap: '4px', minHeight: '24px',
+        color: 'var(--fgColor-muted,#59636e)',
+      });
+      const mark = el('img', undefined, 'clockoli-timeline-mark');
+      mark.src = chrome.runtime.getURL('src/assets/clockoli-16.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
+      Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
+      item.querySelector?.('.TimelineItem-badge')?.replaceChildren(mark);
+      const avatarLink = el('a', undefined, 'd-inline-block');
+      avatarLink.href = `https://github.com/${record.actor}`;
+      avatarLink.setAttribute('data-hovercard-type', 'user');
+      avatarLink.setAttribute('data-hovercard-url', `/users/${record.actor}/hovercard`);
+      const avatar = el('img', undefined, 'avatar avatar-user');
+      avatar.src = `https://github.com/${record.actor}.png?size=40`;
+      avatar.width = 20; avatar.height = 20; avatar.alt = `@${record.actor}`;
+      avatarLink.append(avatar);
+      const actor = el('a', record.actor, 'author Link--primary text-bold');
+      actor.href = `https://github.com/${record.actor}`;
+      actor.setAttribute('data-hovercard-type', 'user');
+      actor.setAttribute('data-hovercard-url', `/users/${record.actor}/hovercard`);
+      const duration = el('span', record.duration, 'clockoli-timeline-duration'); duration.style.fontWeight = '600';
+      summary.append(avatarLink, actor, document.createTextNode(' tracked '), duration);
+      body.setAttribute('data-clockoli-time-summary', 'true');
+      body.setAttribute('data-clockoli-time-actor', record.actor);
+      if (record.durationSeconds !== null) body.setAttribute('data-clockoli-time-seconds', String(record.durationSeconds));
+      body.replaceChildren(summary);
+      const firstTimestamp = mergePreviousClockoliTimelineItems(item, body, record, duration);
+      if (timestamp && firstTimestamp) {
+        const rangeStartLabel = 'fr' + 'om';
+        firstTimestamp.classList.add('clockoli-timeline-range-start');
+        summary.append(document.createTextNode(` ${rangeStartLabel} `), firstTimestamp, document.createTextNode(' to '), timestamp);
+      } else if (timestamp) summary.append(document.createTextNode(' '), timestamp);
+    }
+  }
+
+  function participantLogin(node) {
+    return String(node?.getAttribute?.('data-hovercard-url') || '')
+      .match(/^\/users\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\/hovercard$/i)?.[1] || '';
+  }
+
+  function createClockoliParticipant(login) {
+    const participant = el('a', undefined, 'participant-avatar');
+    participant.href = `https://github.com/${login}`;
+    participant.setAttribute('data-hovercard-type', 'user');
+    participant.setAttribute('data-hovercard-url', `/users/${login}/hovercard`);
+    participant.setAttribute('data-clockoli-created-participant', 'true');
+    const avatar = el('img', undefined, 'avatar avatar-user');
+    avatar.src = `https://github.com/${login}.png?size=52`;
+    avatar.width = 26; avatar.height = 26; avatar.alt = `@${login}`;
+    participant.append(avatar);
+    return participant;
+  }
+
+  function effectiveParticipantSeconds(value) {
+    const completed = Number(value?.totalSeconds);
+    if (!Number.isSafeInteger(completed) || completed < 0) return null;
+    if (!value.activeStartedAt) return completed;
+    const startedAt = new Date(value.activeStartedAt).getTime();
+    if (!Number.isFinite(startedAt)) return null;
+    return completed + Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  }
+
+  function ensureClockoliParticipantsSection(hasTotals) {
+    const native = document.querySelector?.('#partial-users-participants');
+    let section = native || document.querySelector?.('[data-clockoli-participants-section="true"]');
+    if (!hasTotals) {
+      if (!native) section?.remove();
+      return native;
+    }
+    if (section) return section;
+    const labels = document.querySelector?.('[data-testid="sidebar-labels-section"]');
+    const template = document.querySelector?.('[data-testid="sidebar-assignees-section"]') || labels;
+    const container = template?.parentElement;
+    if (!container) return null;
+    section = el('div');
+    section.setAttribute('data-clockoli-participants-section', 'true');
+    if (template.className) section.className = template.className;
+    Object.assign(section.style, { display: 'flex', flexDirection: 'column', alignItems: 'stretch' });
+    const header = el('div');
+    if (template.children?.[0]?.className) header.className = template.children[0].className;
+    Object.assign(header.style, { position: 'relative', minHeight: '24px' });
+    const heading = el('h3', 'Participants');
+    const templateHeading = template.querySelector?.('h3');
+    if (templateHeading?.className) heading.className = templateHeading.className;
+    heading.setAttribute('data-component', 'Heading');
+    heading.style.position = 'static';
+    header.append(heading);
+    const body = el('div');
+    if (template.children?.[1]?.className) body.className = template.children[1].className;
+    const avatars = el('div', undefined, 'participation-avatars d-flex flex-wrap');
+    Object.assign(avatars.style, { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginLeft: '0' });
+    body.append(avatars); section.append(header, body);
+    if (labels?.parentElement === container) container.insertBefore(section, labels);
+    else container.append(section);
+    return section;
+  }
+
+  function augmentClockoliParticipants() {
+    const taskUrl = taskUrlOf(taskFromLocation());
+    const source = participantData?.complete && participantData.taskUrl === taskUrl
+      ? participantData.participants : [];
+    const totals = new Map();
+    for (const value of source ?? []) {
+      const login = String(value?.login || '');
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login)) continue;
+      const seconds = effectiveParticipantSeconds(value);
+      if (seconds === null) continue;
+      totals.set(login.toLowerCase(), { ...value, login, seconds });
+    }
+    const participants = ensureClockoliParticipantsSection(totals.size > 0);
+    if (!participants?.querySelectorAll) return;
+    const existingParticipants = [...participants.querySelectorAll('.participant-avatar')];
+    const byLogin = new Map(existingParticipants.map(participant => [participantLogin(participant).toLowerCase(), participant])
+      .filter(([login]) => login));
+    const container = existingParticipants[0]?.parentElement
+      || participants.querySelector?.('.participation-avatars') || participants;
+    for (const participant of existingParticipants) {
+      const login = participantLogin(participant).toLowerCase();
+      if (participant.getAttribute?.('data-clockoli-created-participant') === 'true' && !totals.has(login)) {
+        participant.remove(); byLogin.delete(login); continue;
+      }
+      const existing = participant.querySelector?.('.clockoli-participant-time');
+      if (!login || !totals.has(login)) {
+        existing?.remove();
+        if (existing) { participant.style.display = ''; participant.style.alignItems = ''; }
+        continue;
+      }
+    }
+    for (const [key, value] of totals) {
+      let participant = byLogin.get(key);
+      if (!participant) {
+        participant = createClockoliParticipant(value.login);
+        container.append(participant); byLogin.set(key, participant);
+      }
+      const existing = participant.querySelector?.('.clockoli-participant-time');
+      const duration = formatCompactTrackedDuration(value.seconds);
+      const label = existing || el('span', undefined, 'clockoli-participant-time');
+      if (label.textContent !== duration) label.textContent = duration;
+      label.title = `${value.login} tracked ${duration}${value.activeStartedAt ? ', including the active timer' : ''}`;
+      label.setAttribute('aria-label', label.title);
+      Object.assign(label.style, {
+        display: 'inline-block', marginLeft: '4px', padding: '0 4px', borderRadius: '6px',
+        color: 'var(--fgColor-accent,#0969da)', background: 'var(--bgColor-accent-muted,#ddf4ff)',
+        fontSize: '11px', fontWeight: '600', lineHeight: '18px', whiteSpace: 'nowrap',
+      });
+      participant.style.display = 'inline-flex'; participant.style.alignItems = 'center';
+      if (!existing) participant.append(label);
+    }
+  }
+
+  function clearClockoliParticipantRetry() {
+    if (participantRetryTimer === null) return;
+    if (typeof clearTimeout === 'function') clearTimeout(participantRetryTimer);
+    participantRetryTimer = null;
+  }
+
+  function isExtensionContextInterruption(error) {
+    if (error?.code === 'extension_context_interrupted') return true;
+    const message = String(error?.message || '');
+    return message === 'Extension context invalidated.'
+      || message.includes('message port closed before a response was received')
+      || message.includes('message channel closed before a response was received');
+  }
+
+  function scheduleClockoliParticipantRetry(taskUrl, error) {
+    clearClockoliParticipantRetry();
+    if (error?.name === 'AbortError' || error?.code === 'aborted'
+        || error?.code === 'incomplete_participant_totals'
+        || isExtensionContextInterruption(error)) return;
+    console.warn('Clockoli participant totals are temporarily unavailable.', error);
+    if (error?.code === 'task_scan_budget') return;
+    participantRetryTimer = setTimeout(() => {
+      participantRetryTimer = null;
+      if (taskUrlOf(taskFromLocation()) === taskUrl) void refreshClockoliParticipants();
+    }, PARTICIPANT_RETRY_MS);
+  }
+
+  async function refreshClockoliParticipants() {
+    const task = taskFromLocation(), taskUrl = taskUrlOf(task);
+    clearClockoliParticipantRetry();
+    if (!taskUrl || !/^\/[^/]+\/[^/]+\/(?:issues|pull)\/[1-9]\d*\/?$/i.test(location.pathname)) {
+      participantLoadId += 1; clearClockoliParticipantRetry(); participantData = null; scheduleClockoliParticipantAugmentation(); return;
+    }
+    const loadId = ++participantLoadId;
+    try {
+      const result = await send({ type: 'LOAD_TASK_PARTICIPANTS', taskUrl });
+      if (loadId !== participantLoadId || taskUrlOf(taskFromLocation()) !== taskUrl) return;
+      if (result?.configured === false) {
+        participantData = null;
+        scheduleClockoliParticipantAugmentation();
+        return;
+      }
+      if (!result?.complete || result.taskUrl !== taskUrl || !Array.isArray(result.participants)) {
+        const error = new Error(result?.error?.message || 'Clockoli participant totals did not load completely.');
+        error.code = result?.error?.code || 'incomplete_participant_totals';
+        throw error;
+      }
+      participantData = result;
+      scheduleClockoliParticipantAugmentation();
+    } catch (error) {
+      if (loadId !== participantLoadId || taskUrlOf(taskFromLocation()) !== taskUrl) return;
+      scheduleClockoliParticipantRetry(taskUrl, error);
+    }
+  }
+
+  function scheduleClockoliParticipantAugmentation() {
+    if (participantAugmentationScheduled) return;
+    participantAugmentationScheduled = true;
+    const run = () => { participantAugmentationScheduled = false; augmentClockoliParticipants(); };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 500 });
+    else setTimeout(run, 0);
+  }
+
+  function watchClockoliTimeline() {
+    beautifyClockoliTimeline();
+    scheduleClockoliParticipantAugmentation();
+    if (timelineObserver || typeof MutationObserver !== 'function') return;
+    timelineObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) beautifyClockoliTimeline(mutation.target);
+      scheduleClockoliParticipantAugmentation();
+    });
+    timelineObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+  }
+
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -99,7 +407,11 @@
 
   function send(message) {
     return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
-      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      if (chrome.runtime.lastError) {
+        const error = new Error(chrome.runtime.lastError.message);
+        if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+        return reject(error);
+      }
       if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
       resolve(response.data);
     }));
@@ -224,9 +536,17 @@
   }
 
   function applyPageState(data) {
+    const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     pageState = data;
     if (!recentLoaded && Array.isArray(data?.recent) && data.recent.length) applyMenuData(data.recent, false);
+    if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
+        && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
+      recentFresh = true;
+      recentFreshAfterPendingId = null;
+    }
     schedulePendingRefresh();
+    const nextParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
+    if (!popupMode && previousParticipantState !== nextParticipantState) void refreshClockoliParticipants();
   }
 
   function hasRunnablePending(queue = pageState.pendingWrites) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
@@ -981,9 +1301,16 @@ The previous version remains in Git history.`)) return;
           if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
           node.disabled = true;
           try {
+            const actionRoute = popupMode ? null : `${location.protocol}//${location.hostname}${location.pathname}`;
+            const recentWasFresh = !switchToCurrent && recentFresh;
             const result = await send(switchToCurrent
               ? { type: 'SWITCH_TASK', taskUrl: current.taskUrl, taskTitle: current.taskTitle || '', description: description.value }
               : { type: 'STOP', description: description.value });
+            if (actionRoute && actionRoute !== `${location.protocol}//${location.hostname}${location.pathname}`) return;
+            if (!switchToCurrent) {
+              if (recentWasFresh && result?.entry?.id) recentFreshAfterPendingId = result.entry.id;
+              recentLoadId += 1; recentLoad = null; loadingRecent = false;
+            }
             recentLoaded = false; await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
         });
@@ -1138,11 +1465,14 @@ The previous version remains in Git history.`)) return;
     const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0; navigationOpen = false;
+      participantLoadId += 1; clearClockoliParticipantRetry(); participantData = null; scheduleClockoliParticipantAugmentation();
       void render(firstRender);
+      void refreshClockoliParticipants();
     } else if (route) {
       const target = headerTarget();
       if (!root?.isConnected || !target || root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) void render(false);
+      if (participantData?.participants?.some(value => value.activeStartedAt)) scheduleClockoliParticipantAugmentation();
     }
   }
 
@@ -1170,6 +1500,7 @@ The previous version remains in Git history.`)) return;
     });
     document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
     document.addEventListener('visibilitychange', updateTaskAnimation);
+    watchClockoliTimeline();
     navigationCheck();
     setInterval(navigationCheck, 750);
   }

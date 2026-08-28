@@ -66,13 +66,14 @@ That branch contains the ownership marker and canonical v1 work data:
 
 ```text
 .clockoli/user.json
+.clockoli/tasks.json
 active/{storage-login}.json
 times/{YYYY-MM}/{storage-login}.jsonl
 ```
 
 The stable numeric GitHub user ID is used in the branch name. The shared marker maps it to an immutable storage login used in file paths.
 
-Routine Start, Stop, Edit, and Delete operations use the personal branch. Reports discovers only marked personal branches with valid ownership metadata. The default branch stores shared repository metadata, not a second copy of work records.
+Routine Start, Stop, Edit, and Delete operations use the personal branch. Completed-record changes update the monthly JSONL and exact task-total index in one Git commit. Reports discovers only marked personal branches with valid ownership metadata. The default branch stores shared repository metadata, not a second copy of work records.
 
 ## Data format v1
 
@@ -88,6 +89,8 @@ An active file is one JSON object. A monthly file is JSON Lines with one compact
 - UTC creation and update timestamps.
 
 The same ID is retained when a running record becomes completed. Rewriters preserve unknown root and nested fields, allowing additive evolution without erasing data from other producers. See [Data Format v1](data-format-v1.md) for the normative contract.
+
+`.clockoli/tasks.json` maps each canonical task URL to exact `totalSeconds`, `sessionCount`, and sorted `recordIds` values for that personal branch. The IDs let a queued completion be deduplicated exactly across an atomic-commit retry. GitHub sidebar totals read this small index from every user branch instead of scanning all monthly files. Missing, malformed, or inconsistent indexes fail closed; Clockoli does not report them as zero.
 
 ### URL normalization
 
@@ -138,6 +141,7 @@ Repository adoption fails closed:
 - Git blob SHAs and stable record IDs protect Edit and Delete from stale views.
 - A record is located by its persistent ID; its mutable array index is only a UI/storage hint.
 - Linked time corrections and cross-month moves preflight every affected file and publish one Git commit.
+- Every completed-record add, edit, move, or delete updates `.clockoli/tasks.json` in that same commit.
 - Stop preserves the active record ID and uses stable operation identity so retries and concurrent devices converge without duplicate records.
 - A stale completion never clears a newer active timer.
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ReportService } from '../src/services/reports.js';
+import { applyTaskIndexChanges, emptyTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
 
 const block = (url, start, end, description = '', user = 'alice') => {
   const github = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(issues|pull)\/(\d+)$/);
@@ -20,6 +21,12 @@ const block = (url, start, end, description = '', user = 'alice') => {
   });
 };
 const monthly = (...blocks) => `${blocks.join('\n')}\n`;
+const taskIndex = (login, entries) => serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex(login), {
+  add: entries.map((entry, index) => ({
+    id: entry.id ?? `01K2ABCDEF0123456789ABCDE${'0123456789ABCDEFGHJKMNPQRSTVWXYZ'[index]}`,
+    ...entry,
+  })),
+}));
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
 
 class MemoryReportCache {
@@ -42,6 +49,7 @@ class FakeGitHub {
     ]);
     this.snapshots = [];
     this.reads = [];
+    this.textReads = [];
   }
   async listTextFilesSnapshot(prefix, { etag, signal } = {}) {
     assert.equal(prefix, 'times/');
@@ -57,6 +65,12 @@ class FakeGitHub {
     assert.equal(sha, file.sha);
     return { path, sha, text: file.text };
   }
+  async getText(path, { signal } = {}) {
+    signal?.throwIfAborted(); this.textReads.push(path);
+    const file = this.files.get(path);
+    if (!file) throw Object.assign(new Error('missing'), { status: 404, code: 'not_found' });
+    return { path, sha: file.sha, text: file.text };
+  }
 }
 
 test('report service loads monthly files and filters records to the inclusive date range', async () => {
@@ -69,6 +83,33 @@ test('report service loads monthly files and filters records to the inclusive da
     ['alice', '2026-08-18', 'issue', 3600],
   ]);
   assert.equal(Object.keys(records[0]).some(key => key.startsWith('_')), false);
+});
+
+test('task participant loading reads only the mandatory per-user task index', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache();
+  github.files.set(TASK_INDEX_PATH, { sha: 'd'.repeat(40), text: taskIndex('alice', [
+    { taskUrl: 'https://github.com/acme/app/issues/1', durationSeconds: 1800 },
+    { taskUrl: 'https://github.com/acme/app/issues/1', durationSeconds: 3600 },
+    { taskUrl: 'https://github.com/acme/app/issues/99', durationSeconds: 999 },
+  ]) });
+
+  const records = await new ReportService({ github, cache }).loadRepositoryTask(
+    'https://github.com/acme/app/issues/1',
+  );
+
+  assert.deepEqual(records, [{
+    user: 'alice', taskUrl: 'https://github.com/acme/app/issues/1', durationSeconds: 5400,
+    recordIds: ['01K2ABCDEF0123456789ABCDE0', '01K2ABCDEF0123456789ABCDE1'],
+  }]);
+  assert.deepEqual(github.textReads, [TASK_INDEX_PATH]);
+  assert.deepEqual(github.reads, [], 'sidebar task totals must not read monthly blobs');
+});
+
+test('task participant loading fails closed when the first-version index is missing or malformed', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache();
+  await assert.rejects(() => new ReportService({ github, cache }).loadRepositoryTask('https://github.com/acme/app/issues/1'), /task index/i);
+  github.files.set(TASK_INDEX_PATH, { sha: 'd'.repeat(40), text: '{"version":1}' });
+  await assert.rejects(() => new ReportService({ github, cache }).loadRepositoryTask('https://github.com/acme/app/issues/1'), /task index/i);
 });
 
 test('unchanged branch snapshot reuses persistent SHA blobs without blob requests', async () => {
@@ -228,4 +269,84 @@ test('repository reports read only canonical personal branches and never merge d
     ['alice', 1, 3600],
   ]);
   assert.equal(primary.reads.length, 0, 'the default branch is metadata-only and never a legacy data source');
+});
+
+test('repository task loading reads one index per personal branch with bounded concurrency', async () => {
+  const primary = new FakeGitHub(), users = ['alice', 'bob', 'carol'];
+  const clients = new Map([['main', primary]]);
+  let active = 0, maxActive = 0;
+  for (const [index, login] of users.entries()) {
+    const branch = `clockoli/users/${index + 1}`, client = new FakeGitHub();
+    client.repositoryKey = `acme/time-data@${branch}`;
+    client.files = new Map([[TASK_INDEX_PATH, {
+      sha: String(index + 1).repeat(40),
+      text: taskIndex(login, [{ taskUrl: 'https://github.com/acme/app/issues/1', durationSeconds: 3600 }]),
+    }]]);
+    client.getText = async (path, { signal } = {}) => {
+      if (path === '.clockoli/user.json') return { text: JSON.stringify({ version: 1, githubUserId: index + 1, storageLogin: login }) };
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      try { signal?.throwIfAborted(); return { path, ...client.files.get(path) }; }
+      finally { active -= 1; }
+    };
+    clients.set(branch, client);
+  }
+  for (const client of clients.values()) client.forBranch = branch => clients.get(branch);
+  primary.listBranches = async () => [...clients.keys()].filter(branch => branch !== 'main');
+
+  const records = await new ReportService({ github: primary, concurrency: 2 }).loadRepositoryTask(
+    'https://github.com/acme/app/issues/1', { defaultBranch: 'main' },
+  );
+
+  assert.deepEqual(records.map(record => record.user).sort(), users);
+  assert.equal(maxActive, 2, 'task index reads must not exceed the configured cap');
+  assert.ok([...clients.values()].every(client => client.reads.length === 0), 'monthly blobs are never read');
+});
+
+test('repository task loading aborts and settles sibling index reads before rejecting', async () => {
+  const primary = new FakeGitHub(), clients = new Map([['main', primary]]);
+  const failure = new Error('branch scan failed');
+  let siblingAborted = false, saves = 0, parentRejected = false, workAfterReject = false;
+  for (const [index, login] of ['alice', 'bob'].entries()) {
+    const branch = `clockoli/users/${index + 1}`, client = new FakeGitHub();
+    client.repositoryKey = `acme/time-data@${branch}`;
+    client.getText = async (path, { signal } = {}) => {
+      if (path === '.clockoli/user.json') return { text: JSON.stringify({ version: 1, githubUserId: index + 1, storageLogin: login }) };
+      if (index === 0) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        throw failure;
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          workAfterReject ||= parentRejected;
+          resolve({ text: taskIndex(login, []) });
+        }, 100);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          siblingAborted = true;
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+    clients.set(branch, client);
+  }
+  for (const client of clients.values()) client.forBranch = branch => clients.get(branch);
+  primary.listBranches = async () => [...clients.keys()].filter(branch => branch !== 'main');
+  const cache = {
+    async getReportCache() { return null; },
+    async saveReportCache() { saves += 1; workAfterReject ||= parentRejected; },
+  };
+
+  await assert.rejects(
+    () => new ReportService({ github: primary, cache, concurrency: 2 }).loadRepositoryTask(
+      'https://github.com/acme/app/issues/1', { defaultBranch: 'main' },
+    ).finally(() => { parentRejected = true; }),
+    error => error?.cause === failure && /task index/i.test(error.message),
+  );
+  await new Promise(resolve => setTimeout(resolve, 120));
+
+  assert.equal(siblingAborted, true, 'the first branch failure must abort sibling scans');
+  assert.equal(saves, 0, 'task-index reads do not persist partial report caches');
+  assert.equal(workAfterReject, false, 'no sibling work may continue after the parent rejects');
 });

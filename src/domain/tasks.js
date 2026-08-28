@@ -14,8 +14,42 @@ function dateValue(date) {
 }
 function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? '').trim().slice(0, 300); }
 function sameTimer(left, right) {
+  if (right?.id && Array.isArray(left?.recordIds) && left.recordIds.includes(right.id)) return true;
   return left?.user === right?.user && taskUrlOf(left) === taskUrlOf(right)
     && left.startedAt === right.startedAt;
+}
+
+export function aggregateTaskParticipants(records, {
+  taskUrl, currentUser = '', active = null, pendingWrites = [],
+} = {}) {
+  const canonicalTaskUrl = taskUrlOf(taskUrl);
+  if (!canonicalTaskUrl) throw new Error('Task URL is required');
+  const persisted = [...(records ?? [])];
+  const pending = pendingWrites
+    .filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry
+      && !['clearActive', 'startNext'].includes(operation.stage))
+    .map(operation => operation.entry)
+    .filter(entry => (!currentUser || String(entry?.user).toLowerCase() === currentUser.toLowerCase())
+      && !persisted.some(record => sameTimer(record, entry)));
+  const totals = new Map();
+  for (const record of [...persisted, ...pending]) {
+    if (taskUrlOf(record) !== canonicalTaskUrl) continue;
+    const login = String(record?.user || '').trim(), key = login.toLowerCase();
+    const seconds = Number(record?.durationSeconds);
+    if (!login || !Number.isFinite(seconds) || seconds < 0) throw new Error('Invalid task participant record');
+    const existing = totals.get(key) ?? { login, totalSeconds: 0 };
+    existing.totalSeconds += seconds; totals.set(key, existing);
+  }
+  if (active && taskUrlOf(active) === canonicalTaskUrl
+      && (!currentUser || String(active.user).toLowerCase() === currentUser.toLowerCase())) {
+    const login = String(active.user || currentUser).trim(), key = login.toLowerCase();
+    const startedAt = new Date(active.startedAt);
+    if (!login || Number.isNaN(startedAt.getTime())) throw new Error('Invalid active task participant');
+    const existing = totals.get(key) ?? { login, totalSeconds: 0 };
+    existing.activeStartedAt = startedAt.toISOString(); totals.set(key, existing);
+  }
+  return [...totals.values()]
+    .sort((a, b) => b.totalSeconds - a.totalSeconds || a.login.localeCompare(b.login));
 }
 
 export function taskPeriodRange(period, today) {

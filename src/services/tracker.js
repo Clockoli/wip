@@ -1,6 +1,7 @@
 import { activeRecordPath, assertUserMonthlyRecordsPath, localTimestamp, monthlyRecordsPath, normalizePlainTitle, parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../domain/work-records.js';
 import { applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
 import { parseBulkTimeText } from '../domain/bulk-time.js';
+import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
 import { entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
 
@@ -13,6 +14,11 @@ function isConflict(error) { return error?.status === 409 || error?.code === 'co
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
 function taskTitleOf(value) { return normalizePlainTitle(value?.taskTitle ?? value?.issueTitle); }
 function taskLabel(value) { const url = taskUrlOf(value), github = parseGitHubTaskUrl(url); return github ? `${github.owner}/${github.repo}#${github.number}` : url; }
+function trackedDurationLabel(value) {
+  const total = Math.max(0, Math.floor(Number(value?.durationSeconds) || 0));
+  const hours = Math.floor(total / 3600), minutes = Math.floor((total % 3600) / 60), seconds = total % 60;
+  return `${hours ? `${hours}h ` : ''}${minutes ? `${minutes}m ` : ''}${seconds}s`;
+}
 function githubActorRelationships(github, actor) {
   const actorId = String(actor?.id || '').match(/^github:(\d+)$/)?.[1] || '';
   const actorName = String(actor?.name || '').toLowerCase();
@@ -194,7 +200,7 @@ export class TrackerService {
     const active = await this.enrichGitHubMetadata(this.buildActive({ id, taskUrl: this.validateTaskUrl(taskUrl), startedAt: now, description, taskTitle }));
     const path = activeRecordPath(this.user);
     try {
-      const result = await this.github.putText(path, serializeActiveRecord(active), `timer: start ${this.user} on ${taskLabel(active)}`);
+      const result = await this.github.putText(path, serializeActiveRecord(active), `timer: start ${this.user}`);
       const cached = { ...active, _path: path, _sha: result.sha };
       await this.store.patchState({ activeCache: cached });
       return cached;
@@ -362,6 +368,25 @@ export class TrackerService {
     return this.github.putText(file.path, text, message, file.sha || undefined);
   }
 
+  async readTaskIndex() {
+    try {
+      const file = await this.github.getText(TASK_INDEX_PATH);
+      return { path: TASK_INDEX_PATH, sha: file.sha, index: parseTaskIndex(file.text, { user: this.user }) };
+    } catch (error) {
+      if (isNotFound(error)) throw new Error('The mandatory Clockoli task index is missing from this personal branch.', { cause: error });
+      throw error;
+    }
+  }
+
+  async updateCompletedRecords(changes, message, { remove = [], add = [], guards = [], expectedHeadSha = null } = {}) {
+    const indexFile = await this.readTaskIndex();
+    const index = applyTaskIndexChanges(indexFile.index, { remove, add });
+    return this.github.updateTextsAtomic([
+      ...changes,
+      { path: TASK_INDEX_PATH, sha: indexFile.sha, text: serializeTaskIndex(index) },
+    ], message, { guards, expectedHeadSha });
+  }
+
   async activeStateFor(operation) {
     const path = activeRecordPath(this.user);
     try {
@@ -405,10 +430,10 @@ export class TrackerService {
     const proposed = [...file.entries, operation.entry];
     try {
       const activePath = activeRecordPath(this.user);
-      const result = await this.github.updateTextsAtomic([
+      const result = await this.updateCompletedRecords([
         { path: file.path, sha: file.sha, text: serializeMonthlyRecords(proposed) },
         { path: activePath, sha: operation.activeSha, text: null },
-      ], `time: stop ${this.user} on ${taskLabel(operation.entry)}`);
+      ], `time: ${this.user} tracked ${trackedDurationLabel(operation.entry)} on ${taskLabel(operation.entry)}`, { add: [operation.entry] });
       operation.activeSha = null; operation.activeCleared = true;
       return parseMonthlyRecords(serializeMonthlyRecords(proposed), {
         user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
@@ -467,7 +492,7 @@ export class TrackerService {
     if (!queuedTarget) return null;
     const target = await this.enrichGitHubMetadata(queuedTarget);
     try {
-      const result = await this.github.putText(path, serializeActiveRecord(target), `timer: start ${this.user} on ${taskLabel(target)}`);
+      const result = await this.github.putText(path, serializeActiveRecord(target), `timer: start ${this.user}`);
       return { ...target, _path: path, _sha: result.sha };
     } catch (error) {
       if (!isConflict(error)) throw error;
@@ -489,7 +514,7 @@ export class TrackerService {
     for (const operation of [...queue]) {
       if (operation.status === 'conflict') break;
       try {
-        if (!['verifyActive', 'appendMonthly', 'clearActive', 'startNext'].includes(operation.stage)) {
+        if (!['verifyActive', 'appendMonthly', 'commitCompletion', 'clearActive', 'startNext'].includes(operation.stage)) {
           throw new TrackerConflictError('This queued completion uses an unsupported storage stage. It was preserved for manual recovery.');
         }
         if (operation.stage === 'verifyActive') {
@@ -513,6 +538,10 @@ export class TrackerService {
           await this.persistQueueOperation(operation, { patch: operation.nextActive ? { activeCache: { ...operation.nextActive, _path: activeRecordPath(this.user), _sha: null, _pending: true } } : {} });
         }
         if (operation.stage === 'appendMonthly') {
+          operation.stage = 'commitCompletion'; operation.lastError = '';
+          await this.persistQueueOperation(operation, { patch: operation.nextActive ? { activeCache: { ...operation.nextActive, _path: activeRecordPath(this.user), _sha: null, _pending: true } } : {} });
+        }
+        if (operation.stage === 'commitCompletion') {
           operation.entry = await this.ensureEntry(operation);
           operation.stage = 'clearActive'; operation.lastError = '';
           await this.persistQueueOperation(operation, { patch: operation.nextActive ? { activeCache: { ...operation.nextActive, _path: activeRecordPath(this.user), _sha: null, _pending: true } } : {} });
@@ -746,8 +775,10 @@ export class TrackerService {
     try {
       if (destinationPath === path) {
         const entries = source.entries.with(position, updated);
-        const result = await this.putMonthly(source, entries, `time: edit ${this.user} ${source.month}`);
-        const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: result.sha });
+        const { blobShas } = await this.updateCompletedRecords([
+          { path: source.path, sha: source.sha, text: serializeMonthlyRecords(entries) },
+        ], `time: edit ${this.user} ${source.month}`, { remove: [source.entries[position]], add: [updated] });
+        const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: blobShas[path] });
         const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved) });
         return saved[position];
       }
@@ -757,7 +788,9 @@ export class TrackerService {
         { path: source.path, sha: source.sha, text: serializeMonthlyRecords(sourceEntries) || null },
         { path: destination.path, sha: destination.sha, text: serializeMonthlyRecords(destinationEntries) },
       ];
-      const result = await this.github.updateTextsAtomic(changes, `time: move edited entry ${this.user}`);
+      const result = await this.updateCompletedRecords(changes, `time: move edited entry ${this.user}`, {
+        remove: [source.entries[position]], add: [updated],
+      });
       const savedSource = parseMonthlyRecords(serializeMonthlyRecords(sourceEntries), { user: this.user, month: source.month, path: source.path, sha: result.blobShas[source.path] ?? null });
       const savedDestination = parseMonthlyRecords(serializeMonthlyRecords(destinationEntries), { user: this.user, month: destination.month, path: destination.path, sha: result.blobShas[destination.path] });
       const replacements = [...savedSource, ...savedDestination];
@@ -800,14 +833,10 @@ export class TrackerService {
     for (const file of touched) file.entries.sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
     const resultLocations = updated.map((entry, index) => ({ path: targetPaths[index], index: files.get(targetPaths[index]).entries.indexOf(entry) }));
     try {
-      let blobShas = {};
-      if (touched.length === 1) {
-        const file = touched[0], result = await this.putMonthly(file, file.entries, `time: edit linked entries ${this.user} ${file.month}`);
-        blobShas[file.path] = result.sha;
-      } else {
-        const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
-        ({ blobShas } = await this.github.updateTextsAtomic(changes, `time: edit linked entries ${this.user}`));
-      }
+      const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
+      const { blobShas } = await this.updateCompletedRecords(changes, `time: edit linked entries ${this.user}`, {
+        remove: requests.map(request => request.originalEntry), add: updated,
+      });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null,
       })]));
@@ -874,7 +903,9 @@ export class TrackerService {
       const changes = staged.map(({ file, text }) => ({ path: file.path, sha: file.sha, text }));
       const guards = [...files.values()].filter(file => !touchedPaths.has(file.path)).map(file => ({ path: file.path, sha: file.sha }));
       guards.push({ path: activeRecordPath(this.user), sha: activeTimer?._sha ?? null });
-      const { blobShas } = await this.github.updateTextsAtomic(changes, `time: bulk add ${added.length} entries ${this.user}`, { guards, expectedHeadSha: snapshot.headSha || null });
+      const { blobShas } = await this.updateCompletedRecords(changes, `time: bulk add ${added.length} entries ${this.user}`, {
+        add: added, guards, expectedHeadSha: snapshot.headSha || null,
+      });
       const saved = staged.flatMap(({ file, entries }) => entries.map(entry => ({ ...entry, _sha: blobShas[file.path] })));
       const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, touched.map(file => file.path)) });
       return { added: added.length };
@@ -891,8 +922,10 @@ export class TrackerService {
     if (located < 0) throw new TrackerConflictError('This time entry changed after the panel loaded. Reload before deleting.');
     const entries = file.entries.filter((_, position) => position !== located);
     try {
-      const result = await this.putMonthly(file, entries, `time: delete ${this.user} ${file.month}`);
-      const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: file.month, path, sha: result.sha });
+      const { blobShas } = await this.updateCompletedRecords([
+        { path: file.path, sha: file.sha, text: serializeMonthlyRecords(entries) || null },
+      ], `time: delete ${this.user} ${file.month}`, { remove: [file.entries[located]] });
+      const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: file.month, path, sha: blobShas[path] ?? null });
       const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
       return { deleted: true, entries: saved };
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('This monthly time file changed while deleting. Reload.'); throw error; }
@@ -929,14 +962,10 @@ export class TrackerService {
     const touched = [...new Set([...requests.map(request => request.path), ...targetPaths])].map(path => files.get(path));
     const resultLocations = updated.map((entry, index) => ({ path: targetPaths[index], index: files.get(targetPaths[index]).entries.indexOf(entry) }));
     try {
-      let blobShas = {};
-      if (touched.length === 1) {
-        const file = touched[0], result = await this.putMonthly(file, file.entries, `time: move boundary ${this.user}`);
-        blobShas[file.path] = result.sha;
-      } else {
-        const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
-        ({ blobShas } = await this.github.updateTextsAtomic(changes, `time: move boundary ${this.user}`));
-      }
+      const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
+      const { blobShas } = await this.updateCompletedRecords(changes, `time: move boundary ${this.user}`, {
+        remove: originals, add: updated,
+      });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), { user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null })]));
       const replacements = [...savedByPath.values()].flat();
       const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touched.map(file => file.path)) });

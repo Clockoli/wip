@@ -5,7 +5,7 @@ import {
   GITHUB_AUTHORIZATIONS_URL, GITHUB_NEW_REPOSITORY_URL,
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
-import { aggregateTrackedTasks } from '../domain/tasks.js';
+import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
@@ -74,7 +74,11 @@ const onboarding = new OnboardingCoordinator({
 });
 
 function serializeError(error) {
-  return { message: error?.message || 'Unexpected error', code: error?.code || 'error', status: error?.status || 0 };
+  return {
+    message: error?.message || 'Unexpected error',
+    code: error?.name === 'AbortError' ? 'aborted' : error?.code || 'error',
+    status: error?.status || 0,
+  };
 }
 
 function authSummary(auth) {
@@ -224,6 +228,55 @@ async function loadReport(message) {
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
+async function loadTaskParticipants(message, sender, extensionOrigin) {
+  const loadEpoch = await loadCoordinator.beginLoad();
+  await store.ensureDataVersion(4); loadCoordinator.assertCurrent(loadEpoch);
+  const { config, auth, generation } = await configuredSnapshot(); loadCoordinator.assertCurrent(loadEpoch);
+  const taskUrl = taskUrlForStart(message.taskUrl, sender, extensionOrigin);
+  if (!config || !auth) return { configured: false, taskUrl, complete: false, participants: [] };
+  const branch = config.branch || 'main', repositoryKey = `${config.owner}/${config.repo}@${branch}`;
+  const requestOwner = sender?.documentId ?? sender?.tab?.id ?? sender?.url ?? 'content';
+  const loadKey = `${repositoryKey}:participants:${requestOwner}`;
+  const previous = reportLoads.get(loadKey);
+  if (previous) {
+    previous.controller.abort();
+    await previous.promise.catch(() => {});
+    loadCoordinator.assertCurrent(loadEpoch);
+  }
+  const controller = new AbortController(), github = githubForConfig(config);
+  const reports = new ReportService({ github, cache: store });
+  const loadGuard = { signal: controller.signal, assertCurrent: () => loadCoordinator.assertCurrent(loadEpoch) };
+  const promise = (async () => {
+    let { user } = await store.getState();
+    user = config.storageLogin || user || auth.githubLogin;
+    if (!user) {
+      user = await github.getAuthenticatedUser(); controller.signal.throwIfAborted();
+      if (!await store.patchStateIfGeneration({ user }, generation)) {
+        throw new DOMException('Participant load was superseded by a configuration change.', 'AbortError');
+      }
+    }
+    const tracker = new TrackerService({
+      github, store, user,
+      actorId: Number.isSafeInteger(auth.githubUserId) ? `github:${auth.githubUserId}` : `clockoli:${config.repoId}:${user}`,
+      actorName: user, recentDays: config.recentDays || 7,
+    });
+    await refreshTaskState(executor, store, tracker, generation, loadGuard);
+    const records = await reports.loadRepositoryTask(taskUrl, {
+      defaultBranch: config.defaultBranch || branch, signal: controller.signal,
+    });
+    const timerState = await finalizeTaskLoad(executor, store, tracker, generation, loadGuard);
+    return {
+      configured: true, taskUrl, complete: true,
+      participants: aggregateTaskParticipants(records, {
+        taskUrl, currentUser: user, active: timerState.active, pendingWrites: timerState.pendingWrites,
+      }),
+    };
+  })();
+  reportLoads.set(loadKey, { controller, promise });
+  try { return await promise; }
+  finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
+}
+
 async function loadTimes(message, sender) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(4); loadCoordinator.assertCurrent(loadEpoch);
@@ -350,7 +403,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC',
+  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC',
   'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
@@ -446,6 +499,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'LOAD_TASK_PARTICIPANTS') return loadTaskParticipants(message, sender, extensionOrigin);
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
@@ -517,7 +571,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const reportReadOnly = ['LOAD_REPORT', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
+  const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
   const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);

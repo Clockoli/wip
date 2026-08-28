@@ -36,6 +36,11 @@ class FakeNode {
     const index = this.parentElement.children.indexOf(this);
     return this.parentElement.children[index + 1] ?? null;
   }
+  get previousElementSibling() {
+    if (!this.parentElement) return null;
+    const index = this.parentElement.children.indexOf(this);
+    return index > 0 ? this.parentElement.children[index - 1] : null;
+  }
   append(...nodes) {
     for (const node of nodes) {
       if (node && typeof node === 'object') {
@@ -68,8 +73,14 @@ class FakeNode {
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   removeAttribute(name) { this.attributes.delete(name); }
   querySelector(selector) {
+    if (selector === 'relative-time, time-ago') return this.walk().find(node => ['relative-time', 'time-ago'].includes(node.tag)) ?? null;
+    if (selector === '.clockoli-timeline-range-start') return this.walk().find(node => node.classList?.contains('clockoli-timeline-range-start')) ?? null;
+    if (selector === '.TimelineItem-badge') return this.walk().find(node => node.classList?.contains('TimelineItem-badge')) ?? null;
+    if (selector === '[data-clockoli-time-summary]') return this.walk().find(node => node.getAttribute?.('data-clockoli-time-summary') !== null) ?? null;
     if (selector === 'img.avatar') return this.walk().find(node => node.tag === 'img' && node.className.split(/\s+/).includes('avatar')) ?? null;
     if (selector === 'img[data-testid="github-avatar"]') return this.walk().find(node => node.tag === 'img' && node.getAttribute('data-testid') === 'github-avatar') ?? null;
+    if (selector === '.clockoli-participant-time') return this.walk().find(node => node.classList?.contains('clockoli-participant-time')) ?? null;
+    if (selector === '.participation-avatars') return this.walk().find(node => node.classList?.contains('participation-avatars')) ?? null;
     return null;
   }
   walk() { return [this, ...this.children.flatMap(child => typeof child.walk === 'function' ? child.walk() : [])]; }
@@ -98,11 +109,410 @@ function makeModernHeader() {
   return { right, topBarActions, avatarSlot };
 }
 
+class TimelineNode extends FakeNode {
+  matches(selector) {
+    if (selector === 'a[href*="/commit/"]') return this.tag === 'a' && String(this.href || '').includes('/commit/');
+    if (selector === '.TimelineItem') return this.classList.contains('TimelineItem');
+    if (selector === '.TimelineItem-body') return this.classList.contains('TimelineItem-body');
+    if (selector === '.TimelineItem-badge') return this.classList.contains('TimelineItem-badge');
+    if (selector === '[data-testid="timeline-item"]') return this.getAttribute('data-testid') === 'timeline-item';
+    if (selector === '[data-clockoli-time-summary]') return this.getAttribute('data-clockoli-time-summary') !== null;
+    if (selector === '.js-timeline-item') return this.classList.contains('js-timeline-item');
+    if (selector === '.participant-avatar') return this.classList.contains('participant-avatar');
+    if (selector === '.clockoli-participant-time') return this.classList.contains('clockoli-participant-time');
+    return false;
+  }
+  closest(selector) {
+    const selectors = selector.split(',').map(value => value.trim());
+    let node = this;
+    while (node) {
+      if (selectors.some(value => node.matches?.(value))) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+  querySelectorAll(selector) { return this.walk().filter(node => node !== this && node.matches?.(selector)); }
+}
+
 
 const documentNodes = new Map();
 
+test('Clockoli commit cross-references render with seconds and merge adjacent records using the first and latest timestamps', async () => {
+  const exposedSource = source.replace(
+    'function watchClockoliTimeline() {',
+    'globalThis.__beautifyClockoliTimeline = beautifyClockoliTimeline;\n\n  function watchClockoliTimeline() {',
+  );
+  assert.notEqual(exposedSource, source, 'timeline beautifier is exposed only inside this renderer contract test');
+  const location = {
+    protocol: 'https:', hostname: 'github.com', pathname: '/manticoresoftware/manticoresearch/pull/4862',
+    href: 'https://github.com/manticoresoftware/manticoresearch/pull/4862',
+  };
+  const { actions } = makeHeader();
+  const timeline = new TimelineNode('div');
+  const progressiveItem = new TimelineNode('div'); progressiveItem.className = 'js-timeline-item';
+  const firstItem = new TimelineNode('div'); firstItem.className = 'TimelineItem';
+  const firstBadge = new TimelineNode('span'); firstBadge.className = 'TimelineItem-badge';
+  const firstCrossReference = new TimelineNode('svg'); firstCrossReference.className = 'octicon octicon-cross-reference';
+  firstBadge.append(firstCrossReference);
+  const body = new TimelineNode('div'); body.className = 'TimelineItem-body';
+  const commit = new TimelineNode('a');
+  commit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/fe64c7167890abcdef';
+  commit.title = 'time: sanikolaev tracked 45s on manticoresoftware/manticoresearch#4862';
+  commit.textContent = 'time: sanikolaev tracked 45s on';
+  const firstTime = new TimelineNode('relative-time'); firstTime.textContent = '34 minutes ago';
+  body.append(commit, firstTime); firstItem.append(firstBadge, body);
+
+  const latestItem = new TimelineNode('div'); latestItem.className = 'TimelineItem';
+  const latestBadge = new TimelineNode('span'); latestBadge.className = 'TimelineItem-badge';
+  const latestCrossReference = new TimelineNode('svg'); latestCrossReference.className = 'octicon octicon-cross-reference';
+  latestBadge.append(latestCrossReference);
+  const latestBody = new TimelineNode('div'); latestBody.className = 'TimelineItem-body';
+  const latestCommit = new TimelineNode('a');
+  latestCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/1234567890abcdef';
+  latestCommit.title = 'time: sanikolaev tracked 1m 32s on manticoresoftware/manticoresearch#4862';
+  latestCommit.textContent = 'time: sanikolaev tracked 1m 32s on';
+  const latestTime = new TimelineNode('relative-time'); latestTime.textContent = '33 minutes ago';
+  latestBody.append(latestCommit, latestTime); latestItem.append(latestBadge, latestBody);
+  const unrelatedBody = new TimelineNode('div'); unrelatedBody.className = 'TimelineItem-body';
+  const unrelatedCommit = new TimelineNode('a');
+  unrelatedCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/abcdef1234567890';
+  unrelatedCommit.textContent = 'time: sanikolaev tracked 7m on manticoresoftware/manticoresearch#9999 abcdef1';
+  unrelatedBody.append(unrelatedCommit); progressiveItem.append(firstItem, latestItem); timeline.append(progressiveItem, unrelatedBody);
+  let observer = null;
+  const document = {
+    documentElement: new FakeNode('html'), body: timeline, activeElement: null,
+    createElement: tag => new TimelineNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null,
+    querySelectorAll: selector => timeline.querySelectorAll(selector), addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, URL,
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; observer = this; }
+      observe(root, options) { this.root = root; this.options = options; }
+    },
+    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(exposedSource, { filename: 'src/content/github.js' }).runInContext(context);
+
+  assert.equal(observer.root, timeline);
+  assert.equal(observer.options.childList, true);
+  assert.equal(observer.options.subtree, true);
+  context.__beautifyClockoliTimeline(timeline);
+  assert.equal(body.getAttribute('data-clockoli-time-actor'), 'sanikolaev');
+  assert.equal(body.getAttribute('data-clockoli-time-seconds'), '45');
+  assert.equal(latestBody.getAttribute('data-clockoli-time-seconds'), '137');
+  assert.equal(progressiveItem.children.includes(firstItem), false, 'the older adjacent Clockoli timeline item is merged away');
+  assert.equal(latestBody.getAttribute('data-clockoli-time-summary'), 'true');
+  const summary = latestBody.children[0];
+  assert.equal(summary.className, 'clockoli-timeline-summary');
+  assert.equal(latestBadge.children[0].tag, 'img', 'Clockoli replaces the cross-reference icon in the timeline badge');
+  assert.equal(latestBadge.children[0].src, 'chrome-extension://clockoli/src/assets/clockoli-16.png');
+  assert.equal(summary.children[0].className, 'd-inline-block');
+  assert.equal(summary.children[0].children[0].className, 'avatar avatar-user');
+  assert.equal(summary.children[0].children[0].width, 20);
+  assert.equal(summary.children[0].children[0].height, 20);
+  assert.equal(summary.children[0].children[0].alt, '@sanikolaev');
+  assert.equal(summary.children[1].className, 'author Link--primary text-bold');
+  assert.equal(summary.children[1].textContent, 'sanikolaev');
+  assert.equal(summary.children[1].href, 'https://github.com/sanikolaev');
+  assert.equal(summary.children[3].textContent, '2m 17s');
+  assert.equal(summary.children[3].tag, 'span', 'tracked duration is not a commit link');
+  assert.equal(summary.children[4].textContent, ' from ');
+  assert.equal(summary.children[5], firstTime);
+  assert.equal(firstTime.textContent, '34 minutes ago');
+  assert.equal(summary.children[6].textContent, ' to ');
+  assert.equal(summary.children[7], latestTime);
+  assert.equal(latestTime.textContent, '33 minutes ago');
+  assert.equal(latestBody.walk().some(node => node.textContent?.includes('clockoli-data-synth')), false);
+  assert.equal(latestBody.walk().some(node => node.textContent?.includes('fe64c71')), false);
+  assert.equal(unrelatedBody.getAttribute('data-clockoli-time-summary'), null);
+  assert.equal(unrelatedBody.children[0], unrelatedCommit);
+
+  const thirdItem = new TimelineNode('div'); thirdItem.className = 'TimelineItem';
+  const thirdBadge = new TimelineNode('span'); thirdBadge.className = 'TimelineItem-badge';
+  const thirdBody = new TimelineNode('div'); thirdBody.className = 'TimelineItem-body';
+  const thirdCommit = new TimelineNode('a');
+  thirdCommit.href = 'https://github.com/sanikolaev/clockoli-data-synth/commit/234567890abcdef1';
+  thirdCommit.title = 'time: sanikolaev tracked 23s on manticoresoftware/manticoresearch#4862';
+  const thirdTime = new TimelineNode('relative-time'); thirdTime.textContent = '2 minutes ago';
+  thirdBody.append(thirdCommit, thirdTime); thirdItem.append(thirdBadge, thirdBody); progressiveItem.append(thirdItem);
+  observer.callback([{ target: thirdBody }]);
+  assert.equal(progressiveItem.children.includes(latestItem), false, 'an already aggregated adjacent item is merged away');
+  const thirdSummary = thirdBody.children[0];
+  assert.equal(thirdSummary.children[3].textContent, '2m 40s');
+  assert.equal(thirdSummary.children[5], firstTime, 'the earliest timestamp survives repeated observer merges');
+  assert.equal(thirdSummary.children[7], thirdTime);
+
+  const lazyBody = new TimelineNode('div'); lazyBody.className = 'TimelineItem-body';
+  const lazyCommit = new TimelineNode('a');
+  lazyCommit.href = 'https://github.com/alice/time-data/commit/1234567890abcdef';
+  lazyCommit.title = 'time: alice tracked 1h 5m 7s on manticoresoftware/manticoresearch#4862';
+  lazyCommit.textContent = 'time: alice tracked 1h 5m 7s on';
+  lazyBody.append(lazyCommit); timeline.append(lazyBody);
+  observer.callback([{ target: lazyBody }]);
+  assert.equal(lazyBody.getAttribute('data-clockoli-time-summary'), 'true');
+  assert.equal(lazyBody.children[0].children[1].textContent, 'alice');
+  assert.equal(lazyBody.children[0].children[3].textContent, '1h 5m 7s');
+  await new Promise(resolve => setTimeout(resolve, 0));
+});
+
+test('participant tracked totals render during idle time and refresh after lazy timeline mutations', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const location = {
+    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7',
+  };
+  const { actions } = makeHeader();
+  const page = new TimelineNode('div');
+  const exactAliceA = new TimelineNode('div');
+  exactAliceA.setAttribute('data-clockoli-time-summary', 'true');
+  exactAliceA.setAttribute('data-clockoli-time-actor', 'Alice');
+  exactAliceA.setAttribute('data-clockoli-time-seconds', '75');
+  const exactAliceB = new TimelineNode('div');
+  exactAliceB.setAttribute('data-clockoli-time-summary', 'true');
+  exactAliceB.setAttribute('data-clockoli-time-actor', 'alice');
+  exactAliceB.setAttribute('data-clockoli-time-seconds', '45');
+  const legacyAlice = new TimelineNode('div');
+  legacyAlice.setAttribute('data-clockoli-time-summary', 'true');
+  legacyAlice.setAttribute('data-clockoli-time-actor', 'ALICE');
+  const legacyBob = new TimelineNode('div');
+  legacyBob.setAttribute('data-clockoli-time-summary', 'true');
+  legacyBob.setAttribute('data-clockoli-time-actor', 'bob');
+  const participants = new TimelineNode('div'); participants.id = 'partial-users-participants';
+  const avatars = new TimelineNode('div'); avatars.className = 'participation-avatars d-flex flex-wrap';
+  const participant = login => {
+    const link = new TimelineNode('a'); link.className = 'participant-avatar';
+    link.setAttribute('data-hovercard-url', `/users/${login}/hovercard`); link.href = `/${login}`;
+    const image = new TimelineNode('img'); image.className = 'avatar avatar-user'; image.alt = `@${login}`;
+    link.append(image); return link;
+  };
+  const alice = participant('alice'), bob = participant('bob'), carol = participant('carol');
+  avatars.append(alice, bob, carol); participants.append(avatars);
+  let currentParticipants = participants;
+  let sidebarAssignees = null, sidebarLabels = null;
+  page.append(exactAliceA, exactAliceB, legacyAlice, legacyBob, participants);
+  let observer = null;
+  const idleCallbacks = [], participantRetryCallbacks = [], participantWarnings = [];
+  let participantFailure = false, participantSeconds = 120;
+  const document = {
+    documentElement: new FakeNode('html'), body: page, activeElement: null,
+    createElement: tag => new TimelineNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector(selector) {
+      if (selector === '.AppHeader-actions') return actions;
+      if (selector === '#partial-users-participants') return currentParticipants;
+      if (selector === '[data-testid="sidebar-assignees-section"]') return sidebarAssignees;
+      if (selector === '[data-testid="sidebar-labels-section"]') return sidebarLabels;
+      if (selector === '[data-clockoli-participants-section="true"]') {
+        return page.walk().find(node => node.getAttribute?.('data-clockoli-participants-section') === 'true') ?? null;
+      }
+      return null;
+    },
+    querySelectorAll: selector => page.querySelectorAll(selector), addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, URL,
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; observer = this; }
+      observe(root, options) { this.root = root; this.options = options; }
+    },
+    requestIdleCallback(callback) { idleCallbacks.push(callback); return idleCallbacks.length; },
+    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      if (participantFailure === 'channel_closed' && message.type === 'LOAD_TASK_PARTICIPANTS') {
+        this.lastError = { message: 'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received' };
+        callback();
+        this.lastError = null;
+        return;
+      }
+      const data = message.type === 'GET_PAGE_STATE'
+        ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] }
+        : message.type === 'LOAD_TASK_PARTICIPANTS'
+          ? participantFailure ? null : {
+              configured: true, complete: true, taskUrl: location.href,
+              participants: [{ login: 'Alice', totalSeconds: participantSeconds }, { login: 'dave', totalSeconds: 7 }],
+            }
+          : {};
+      callback(participantFailure && message.type === 'LOAD_TASK_PARTICIPANTS'
+        ? { ok: false, error: participantFailure === 'abort'
+            ? { code: 'aborted', message: 'The operation was aborted' }
+            : { code: 'rate_limit', message: 'GitHub rate limit exceeded' } }
+        : { ok: true, data });
+    } } },
+    setInterval() { return 1; }, clearInterval() {},
+    setTimeout(callback, delay) {
+      if (delay === 60_000) { participantRetryCallbacks.push(callback); return participantRetryCallbacks.length; }
+      return setTimeout(callback, delay);
+    },
+    clearTimeout() {}, Promise, Date, console: { ...console, warn(...args) { participantWarnings.push(args); } },
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  const exposedSource = source.replace('  function scheduleClockoliParticipantAugmentation() {',
+    '  globalThis.__refreshClockoliParticipants = refreshClockoliParticipants;\n\n  function scheduleClockoliParticipantAugmentation() {');
+  new vm.Script(exposedSource, { filename: 'src/content/github.js' }).runInContext(context);
+
+  assert.equal(alice.querySelector('.clockoli-participant-time'), null, 'participant labels never block initial page rendering');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(idleCallbacks.length, 1, 'initial participant augmentation is deferred to idle time');
+  idleCallbacks.shift()();
+  const aliceTotal = alice.querySelector('.clockoli-participant-time');
+  assert.equal(aliceTotal?.textContent, '2m');
+  assert.equal(aliceTotal?.title, 'Alice tracked 2m');
+  assert.equal(alice.style.display, 'inline-flex');
+  assert.equal(bob.querySelector('.clockoli-participant-time'), null, 'timeline-only actors are not presented as complete totals');
+  assert.equal(carol.querySelector('.clockoli-participant-time'), null, 'participants without tracked time remain unchanged');
+  const dave = avatars.children.find(node => node.getAttribute?.('data-clockoli-created-participant') === 'true');
+  assert.equal(dave?.getAttribute('data-hovercard-url'), '/users/dave/hovercard', 'Clockoli actors missing from GitHub Participants are added');
+  assert.equal(dave?.querySelector('.clockoli-participant-time')?.textContent, '7s');
+
+  const exactBob = new TimelineNode('div');
+  exactBob.setAttribute('data-clockoli-time-summary', 'true');
+  exactBob.setAttribute('data-clockoli-time-actor', 'Bob');
+  exactBob.setAttribute('data-clockoli-time-seconds', '7');
+  page.append(exactBob);
+  observer.callback([{ target: exactBob }]);
+  assert.equal(bob.querySelector('.clockoli-participant-time'), null, 'lazy timeline mutations remain non-blocking');
+  assert.equal(idleCallbacks.length, 1, 'lazy updates are coalesced into another idle pass');
+  idleCallbacks.shift()();
+  assert.equal(bob.querySelector('.clockoli-participant-time'), null, 'lazy timeline records cannot override canonical participant totals');
+  assert.equal(alice.querySelectorAll('.clockoli-participant-time').length, 1, 'refreshes update participant labels without duplicating them');
+
+  exactBob.remove(); observer.callback([{ target: page }]); idleCallbacks.shift()();
+  assert.equal(bob.querySelector('.clockoli-participant-time'), null, 'stale participant totals are removed after timeline refresh');
+  assert.equal(bob.style.display, undefined, 'timeline-only actors keep the original GitHub participant layout untouched');
+
+  const replacement = new TimelineNode('div'); replacement.id = 'partial-users-participants';
+  const replacementAvatars = new TimelineNode('div'); replacementAvatars.className = 'participation-avatars d-flex flex-wrap';
+  const replacementAlice = participant('alice'); replacementAvatars.append(replacementAlice); replacement.append(replacementAvatars);
+  participants.remove(); currentParticipants = replacement; page.append(replacement);
+  observer.callback([{ target: replacement }]);
+  assert.equal(replacementAlice.querySelector('.clockoli-participant-time'), null, 'socket-rendered participant sidebars stay non-blocking');
+  idleCallbacks.shift()();
+  assert.equal(replacementAlice.querySelector('.clockoli-participant-time')?.textContent, '2m', 'a replaced GitHub participant sidebar is augmented on the next idle pass');
+
+  replacement.remove(); currentParticipants = null;
+  const metadata = new TimelineNode('div');
+  sidebarAssignees = new TimelineNode('div'); sidebarAssignees.setAttribute('data-testid', 'sidebar-assignees-section'); sidebarAssignees.className = 'native-section';
+  sidebarAssignees.append(new TimelineNode('div'), new TimelineNode('div'));
+  sidebarLabels = new TimelineNode('div'); sidebarLabels.setAttribute('data-testid', 'sidebar-labels-section'); sidebarLabels.className = 'native-section';
+  sidebarLabels.append(new TimelineNode('div'), new TimelineNode('div'));
+  metadata.append(sidebarAssignees, sidebarLabels); page.append(metadata);
+  observer.callback([{ target: metadata }]); idleCallbacks.shift()();
+  const syntheticSection = document.querySelector('[data-clockoli-participants-section="true"]');
+  assert.equal(syntheticSection?.children[0]?.children[0]?.textContent, 'Participants', 'a missing native Participants block is created beside native sidebar sections');
+  assert.deepEqual(syntheticSection.querySelectorAll('.participant-avatar').map(node => node.getAttribute('data-hovercard-url')),
+    ['/users/Alice/hovercard', '/users/dave/hovercard']);
+  const syntheticAlice = syntheticSection.querySelectorAll('.participant-avatar')
+    .find(node => node.getAttribute('data-hovercard-url') === '/users/Alice/hovercard');
+
+  participantFailure = 'abort';
+  await context.__refreshClockoliParticipants();
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+    'a cancelled same-route refresh preserves the last exact successful total');
+  assert.equal(participantRetryCallbacks.length, 0, 'cancellation does not schedule a retry');
+
+  participantFailure = 'channel_closed';
+  await context.__refreshClockoliParticipants();
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+    'an extension reload channel interruption preserves the last exact successful total');
+  assert.equal(participantRetryCallbacks.length, 0, 'an invalidated extension context does not schedule an unusable retry');
+  assert.equal(participantWarnings.length, 0, 'an expected extension reload interruption is not reported as an extension error');
+
+  participantFailure = true;
+  await context.__refreshClockoliParticipants();
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '2m',
+    'a transient participant refresh failure preserves the last exact successful total');
+  assert.equal(participantRetryCallbacks.length, 1, 'a transient failure schedules one bounded retry');
+
+  participantFailure = false; participantSeconds = 180;
+  participantRetryCallbacks.shift()();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(syntheticAlice.querySelector('.clockoli-participant-time')?.textContent, '3m',
+    'the retry replaces the preserved value after a successful canonical reload');
+  await new Promise(resolve => setTimeout(resolve, 0));
+});
+
+test('stale participant responses cannot cross SPA routes and active time stays live', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const location = {
+    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1',
+  };
+  const { actions } = makeHeader();
+  const page = new TimelineNode('div');
+  const participants = new TimelineNode('div'); participants.id = 'partial-users-participants';
+  const avatars = new TimelineNode('div'); avatars.className = 'participation-avatars d-flex flex-wrap';
+  const participant = login => {
+    const link = new TimelineNode('a'); link.className = 'participant-avatar';
+    link.setAttribute('data-hovercard-url', `/users/${login}/hovercard`);
+    const image = new TimelineNode('img'); image.className = 'avatar avatar-user'; link.append(image); return link;
+  };
+  const alice = participant('alice'), bob = participant('bob');
+  avatars.append(alice, bob); participants.append(avatars); page.append(participants);
+  const intervals = [], idleCallbacks = [], participantCallbacks = new Map();
+  const document = {
+    documentElement: new FakeNode('html'), body: page, activeElement: null,
+    createElement: tag => new TimelineNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector(selector) {
+      if (selector === '.AppHeader-actions') return actions;
+      if (selector === '#partial-users-participants') return participants;
+      return null;
+    },
+    querySelectorAll: selector => page.querySelectorAll(selector), addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, URL,
+    MutationObserver: class { constructor(callback) { this.callback = callback; } observe() {} },
+    requestIdleCallback(callback) { idleCallbacks.push(callback); return idleCallbacks.length; },
+    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      if (message.type === 'LOAD_TASK_PARTICIPANTS') {
+        participantCallbacks.set(message.taskUrl, callback); return;
+      }
+      callback({ ok: true, data: message.type === 'GET_PAGE_STATE'
+        ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
+    } } },
+    setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console,
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const firstUrl = 'https://github.com/acme/app/issues/1';
+  assert.ok(participantCallbacks.has(firstUrl));
+
+  location.pathname = '/acme/app/issues/2'; location.href = 'https://github.com/acme/app/issues/2';
+  intervals.at(-1)(); await new Promise(resolve => setTimeout(resolve, 0));
+  const secondUrl = location.href;
+  assert.ok(participantCallbacks.has(secondUrl));
+  const activeStartedAt = new Date(Date.now() - 60_000).toISOString();
+  participantCallbacks.get(secondUrl)({ ok: true, data: {
+    configured: true, complete: true, taskUrl: secondUrl,
+    participants: [{ login: 'bob', totalSeconds: 120, activeStartedAt }],
+  } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(bob.querySelector('.clockoli-participant-time')?.textContent, '3m');
+  assert.match(bob.querySelector('.clockoli-participant-time')?.title || '', /including the active timer/);
+
+  participantCallbacks.get(firstUrl)({ ok: true, data: {
+    configured: true, complete: true, taskUrl: firstUrl,
+    participants: [{ login: 'alice', totalSeconds: 999 }],
+  } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  while (idleCallbacks.length) idleCallbacks.shift()();
+  assert.equal(alice.querySelector('.clockoli-participant-time'), null, 'the delayed old-route result is ignored');
+  assert.equal(bob.querySelector('.clockoli-participant-time')?.textContent, '3m');
+});
+
 test('GitHub SPA route changes reset saved panel scroll before the next reopen', () => {
-  assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0; navigationOpen = false/);
+  assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0; navigationOpen = false/);
 });
 
 test('tracking-panel rerenders preserve the current user scroll position', () => {
@@ -193,6 +603,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   const navigationCheck = intervals.at(-1);
   assert.deepEqual(messages, [
     { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'LOAD_TASK_PARTICIPANTS', taskUrl: 'https://github.com/acme/app/issues/1' },
     { type: 'SET_ACTION_ICON_FRAME', frame: null },
     { type: 'GET_PAGE_STATE', refresh: true },
   ]);
@@ -202,20 +613,21 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
     navigationCheck();
   }
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 3);
+  assert.equal(messages.length, 4);
 
   location.pathname = '/acme/app/issues/2';
   location.href = 'https://github.com/acme/app/issues/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 4);
-  assert.equal(messages[3].refresh, false);
+  assert.equal(messages.length, 6);
+  assert.equal(messages[4].refresh, false);
+  assert.deepEqual(messages[5], { type: 'LOAD_TASK_PARTICIPANTS', taskUrl: 'https://github.com/acme/app/issues/2' });
 
   location.pathname = '/acme/app/pull/2';
   location.href = 'https://github.com/acme/app/pull/2';
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.length, 5);
+  assert.equal(messages.length, 8);
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
@@ -252,6 +664,13 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
     issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
     startedAt, description: '',
   };
+  const stopped = {
+    _path: 'times/2026-08/alice.jsonl', _sha: 'saved-sha', _index: 0, id: '01K3P9VPJ2X4R6T8W0Y2Z4A6BC',
+    issue: active.issue, taskUrl: active.issue.url, taskTitle: 'Current task', description: 'done', entryDate: '2026-08-27',
+    startedAt, endedAt: '2026-08-27T00:05:00Z', durationSeconds: 300, timezone: 'UTC',
+  };
+  const pendingStopped = { ...stopped, _sha: null, _index: -1, _pending: true };
+  const pendingTimers = [], nativeSetTimeout = setTimeout;
   let pageRequests = 0, stopAccepted = false;
   const context = vm.createContext({
     location, document,
@@ -259,12 +678,22 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
-        callback({ ok: true, data: { configured: true, active: pageRequests <= 2 ? active : null, pendingCount: 0 } });
-      } else if (message.type === 'STOP') { stopAccepted = true; callback({ ok: true, data: { pending: true } }); }
+        const syncingStop = stopAccepted && pageRequests === 3;
+        callback({ ok: true, data: {
+          configured: true, active: pageRequests <= 2 ? active : null, pendingCount: syncingStop ? 1 : 0,
+          pendingWrites: syncingStop ? [{ id: 'pending-1', status: 'pending' }] : [],
+          recent: stopAccepted ? [syncingStop ? pendingStopped : stopped] : [],
+        } });
+      } else if (message.type === 'STOP') { stopAccepted = true; callback({ ok: true, data: { entry: stopped, pending: true } }); }
       else if (message.type === 'LOAD_RECENT' && stopAccepted) return;
       else callback({ ok: true, data: {} });
     } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    setInterval() { return 1; }, clearInterval() {},
+    setTimeout(callback, delay, ...args) {
+      if (delay === 500) { const timer = { unref() {} }; pendingTimers.push(() => callback(...args)); return timer; }
+      return nativeSetTimeout(callback, delay, ...args);
+    },
+    Promise, Date, console,
     prompt: () => 'done', confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
@@ -283,9 +712,88 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   const completed = await Promise.race([stop.onclick({ isTrusted: true }).then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))]);
   assert.equal(completed, true, 'accepted Stop renders without waiting for a remote recent-entry load');
   await new Promise(resolve => setTimeout(resolve, 0));
-  const pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 3, 'Stop reconciles from the local page-state snapshot');
+  let pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
+  assert.equal(pageStateMessages.length, 3, 'Stop first reconciles from the accepted local pending snapshot');
+  assert.equal(pendingTimers.length, 1, 'pending Stop schedules local state reconciliation');
+  await pendingTimers.shift()();
+  await new Promise(resolve => nativeSetTimeout(resolve, 0));
+  pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
+  assert.equal(pageStateMessages.length, 4, 'background sync completion is observed from local page state');
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, recentBeforeStop, 'Stop does not start a remote recent-entry load');
+  const stoppedTimeFields = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
+  assert.equal(stoppedTimeFields.length, 4, 'the stopped entry is immediately rendered with inline time fields');
+  assert.equal(stoppedTimeFields.every(node => !node.disabled), true, 'the successfully saved entry is immediately editable');
+});
+
+
+test('a delayed Stop response cannot unlock recent entries after GitHub SPA navigation', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = [], intervals = [];
+  const location = {
+    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1',
+  };
+  const { actions } = makeHeader();
+  const document = {
+    documentElement: new FakeNode('html'),
+    createElement: tag => new FakeNode(tag),
+    createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }),
+    getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null,
+    addEventListener() {},
+  };
+  const startedAt = '2026-08-27T00:00:00Z';
+  const active = {
+    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
+    startedAt, description: '',
+  };
+  const stopped = {
+    _path: 'times/2026-08/alice.jsonl', _sha: 'saved-sha', _index: 0, id: '01K3P9VPJ2X4R6T8W0Y2Z4A6BC',
+    issue: active.issue, taskUrl: active.issue.url, taskTitle: 'Previous task', description: 'done', entryDate: '2026-08-27',
+    startedAt, endedAt: '2026-08-27T00:05:00Z', durationSeconds: 300, timezone: 'UTC',
+  };
+  let pageRequests = 0, stopCallback;
+  const context = vm.createContext({
+    location, document,
+    chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') {
+        pageRequests += 1;
+        callback({ ok: true, data: {
+          configured: true, active: pageRequests <= 2 ? active : null, pendingCount: 0, pendingWrites: [],
+          recent: pageRequests <= 2 ? [] : [stopped],
+        } });
+      } else if (message.type === 'STOP') stopCallback = callback;
+      else if (message.type === 'LOAD_RECENT' && pageRequests <= 2) callback({ ok: true, data: { entries: [], recent: [] } });
+      else if (message.type !== 'LOAD_RECENT') callback({ ok: true, data: {} });
+    } } },
+    setInterval(callback, delay) { intervals.push({ callback, delay }); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const stop = createdNodes.find(node => node.tag === 'button' && node.textContent === 'Stop and save');
+  const stopping = stop.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(typeof stopCallback, 'function', 'Stop remains pending while navigation starts');
+
+  location.pathname = '/acme/app/issues/2'; location.href = 'https://github.com/acme/app/issues/2';
+  intervals.find(item => item.delay === 750).callback();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  stopCallback({ ok: true, data: { entry: stopped, pending: true } });
+  await stopping;
+
+  const fieldsBeforeOpen = createdNodes.length;
+  const nextTrigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  void nextTrigger.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const newRouteTimeFields = createdNodes.slice(fieldsBeforeOpen).filter(node => node.className.includes('inline-time-value'));
+  assert.equal(newRouteTimeFields.length > 0, true, 'the new route renders its local recent snapshot while remote refresh is pending');
+  assert.equal(newRouteTimeFields.every(node => node.disabled), true, 'the delayed Stop response never marks the new route recent snapshot fresh');
 });
 
 
@@ -320,7 +828,9 @@ test('header control mounts when GitHub renders the authenticated header after t
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.getElementById('clockoli-root'), null);
-  assert.equal(messages.length, 0);
+  assert.deepEqual(messages, [
+    { type: 'LOAD_TASK_PARTICIPANTS', taskUrl: 'https://github.com/acme/app/issues/7' },
+  ]);
 
   headerReady = true;
   intervals.at(-1)();
@@ -328,6 +838,7 @@ test('header control mounts when GitHub renders the authenticated header after t
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [
+    { type: 'LOAD_TASK_PARTICIPANTS', taskUrl: 'https://github.com/acme/app/issues/7' },
     { type: 'GET_PAGE_STATE', refresh: false },
     { type: 'SET_ACTION_ICON_FRAME', frame: null },
   ]);
@@ -450,6 +961,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   assert.equal(right.children.at(-1), avatarSlot);
   assert.deepEqual(messages, [
     { type: 'GET_PAGE_STATE', refresh: false },
+    { type: 'LOAD_TASK_PARTICIPANTS', taskUrl: 'https://github.com/acme/app/issues/4822' },
     { type: 'SET_ACTION_ICON_FRAME', frame: null },
     { type: 'GET_PAGE_STATE', refresh: true },
   ]);

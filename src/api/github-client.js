@@ -276,6 +276,47 @@ export class GitHubClient {
     }
   }
 
+  async ensureBranchWithTexts(branch, sourceBranch, changes, message) {
+    const target = validateBranch(String(branch));
+    const source = validateBranch(String(sourceBranch));
+    if (!Array.isArray(changes) || !changes.length || typeof message !== 'string' || !message) throw new Error('Initial branch files and commit message are required');
+    const unique = new Set();
+    for (const change of changes) {
+      encodePath(change.path);
+      if (unique.has(change.path) || change.sha !== null || typeof change.text !== 'string') throw new Error('Invalid initial branch file');
+      unique.add(change.path);
+    }
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const refPath = name => `${base}/git/ref/heads/${encodeURIComponent(name)}`;
+    await this.assertStableDestinationForWrite();
+    try { await this.request(refPath(target)); return { branch: target, created: false }; }
+    catch (error) { if (error?.status !== 404) throw error; }
+    const sourceRef = await this.request(refPath(source));
+    const parentSha = sourceRef?.object?.sha;
+    if (typeof parentSha !== 'string' || !/^[0-9a-f]{40}$/i.test(parentSha)) throw new GitHubApiError('GitHub returned an invalid source branch reference.', 502, 'invalid_github_response');
+    const commit = await this.request(`${base}/git/commits/${encodeURIComponent(parentSha)}`), treeSha = commit.tree?.sha;
+    if (typeof treeSha !== 'string' || !/^[0-9a-f]{40}$/i.test(treeSha)) throw new GitHubApiError('GitHub returned an invalid source tree reference.', 502, 'invalid_github_response');
+    const blobShas = {}, tree = [];
+    for (const change of changes) {
+      const blob = await this.request(`${base}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: change.text, encoding: 'utf-8' }) });
+      if (typeof blob?.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(blob.sha)) throw new GitHubApiError('GitHub returned an invalid blob reference.', 502, 'invalid_github_response');
+      blobShas[change.path] = blob.sha;
+      tree.push({ path: change.path, mode: '100644', type: 'blob', sha: blob.sha });
+    }
+    const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
+    if (typeof nextTree?.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(nextTree.sha)) throw new GitHubApiError('GitHub returned an invalid tree reference.', 502, 'invalid_github_response');
+    const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });
+    if (typeof nextCommit?.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(nextCommit.sha)) throw new GitHubApiError('GitHub returned an invalid commit reference.', 502, 'invalid_github_response');
+    try {
+      await this.request(`${base}/git/refs`, { method: 'POST', body: JSON.stringify({ ref: `refs/heads/${target}`, sha: nextCommit.sha }) });
+      return { branch: target, created: true, commitSha: nextCommit.sha, blobShas };
+    } catch (error) {
+      if (error?.status !== 422 && error?.code !== 'validation') throw error;
+      try { await this.request(refPath(target)); return { branch: target, created: false }; }
+      catch { throw error; }
+    }
+  }
+
   async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
     const normalized = String(prefix || '');
     validateBranch(`${normalized}probe`);

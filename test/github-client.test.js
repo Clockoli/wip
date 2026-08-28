@@ -642,6 +642,60 @@ test('GitHub client validates stable repository identity before adopting an exis
   assert.equal(calls[0].url.endsWith('/repos/acme/time-data'), true);
 });
 
+test('GitHub client creates an initialized commit before publishing a user branch ref', async () => {
+  const parentSha = 'a'.repeat(40), treeSha = 'b'.repeat(40), nextTreeSha = 'c'.repeat(40), nextCommitSha = 'd'.repeat(40);
+  const blobShas = ['e'.repeat(40), 'f'.repeat(40)], calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/repos/acme/time-data')) return response(200, { id: 77, full_name: 'acme/time-data', private: true, archived: false, disabled: false, permissions: { push: true } });
+    if (url.endsWith('/branches/main')) return response(200, { name: 'main' });
+    if (url.endsWith('/git/ref/heads/clockoli%2Fusers%2F123')) return response(404, { message: 'missing' });
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: parentSha } });
+    if (url.endsWith(`/git/commits/${parentSha}`) && !options.method) return response(200, { tree: { sha: treeSha } });
+    if (url.endsWith('/git/blobs') && options.method === 'POST') return response(201, { sha: blobShas.shift() });
+    if (url.endsWith('/git/trees') && options.method === 'POST') return response(201, { sha: nextTreeSha });
+    if (url.endsWith('/git/commits') && options.method === 'POST') return response(201, { sha: nextCommitSha });
+    if (url.endsWith('/git/refs') && options.method === 'POST') return response(201, { ref: 'refs/heads/clockoli/users/123' });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'custom', expectedRepositoryId: 77, fetchImpl });
+  const changes = [
+    { path: '.clockoli/user.json', sha: null, text: '{}\n' },
+    { path: '.clockoli/tasks.json', sha: null, text: '{"version":1}\n' },
+  ];
+  const result = await client.ensureBranchWithTexts('clockoli/users/123', 'main', changes, 'Initialize Clockoli user storage branch');
+  assert.equal(result.created, true);
+  const refCall = calls.find(call => call.url.endsWith('/git/refs') && call.options.method === 'POST');
+  assert.deepEqual(JSON.parse(refCall.options.body), { ref: 'refs/heads/clockoli/users/123', sha: nextCommitSha });
+  assert.equal(calls.findIndex(call => call === refCall) > calls.findIndex(call => call.url.endsWith('/git/commits') && call.options.method === 'POST'), true);
+});
+
+test('initialized branch creation rejects malformed Git object SHAs before publishing a ref', async t => {
+  for (const malformed of ['blob', 'tree', 'commit']) {
+    await t.test(malformed, async () => {
+      const parentSha = 'a'.repeat(40), sourceTreeSha = 'b'.repeat(40), calls = [];
+      const fetchImpl = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url.endsWith('/repos/acme/time-data')) return response(200, { id: 77, full_name: 'acme/time-data', private: true, archived: false, disabled: false, permissions: { push: true } });
+        if (url.endsWith('/branches/main')) return response(200, { name: 'main' });
+        if (url.endsWith('/git/ref/heads/clockoli%2Fusers%2F123')) return response(404, { message: 'missing' });
+        if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: parentSha } });
+        if (url.endsWith(`/git/commits/${parentSha}`) && !options.method) return response(200, { tree: { sha: sourceTreeSha } });
+        if (url.endsWith('/git/blobs') && options.method === 'POST') return response(201, { sha: malformed === 'blob' ? 'invalid' : 'c'.repeat(40) });
+        if (url.endsWith('/git/trees') && options.method === 'POST') return response(201, { sha: malformed === 'tree' ? 'invalid' : 'd'.repeat(40) });
+        if (url.endsWith('/git/commits') && options.method === 'POST') return response(201, { sha: malformed === 'commit' ? 'invalid' : 'e'.repeat(40) });
+        throw new Error(`Unexpected ${url}`);
+      };
+      const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'custom', expectedRepositoryId: 77, fetchImpl });
+      await assert.rejects(
+        client.ensureBranchWithTexts('clockoli/users/123', 'main', [{ path: '.clockoli/user.json', sha: null, text: '{}\n' }], 'Initialize'),
+        /invalid .* reference/i,
+      );
+      assert.equal(calls.some(call => call.url.endsWith('/git/refs') && call.options.method === 'POST'), false);
+    });
+  }
+});
+
 test('GitHub client creates a user branch from a source ref and discovers bounded matching refs', async () => {
   const sha = 'f'.repeat(40), calls = [];
   const fetchImpl = async (url, options = {}) => {
