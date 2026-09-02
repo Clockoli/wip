@@ -33,10 +33,13 @@ Clockoli currently runs as a trusted unpacked extension. This checkout and its l
    ```
 
 2. Open `chrome://extensions` in Chrome or another Chromium browser.
-3. Enable **Developer mode**.
-4. Select **Load unpacked** and choose the repository root, the directory that contains `manifest.json`.
-5. Pin Clockoli to the browser toolbar.
-6. Open **Settings** and complete the four GitHub connection steps.
+3. Turn on **Developer mode** with the toggle in the top-right corner of that page.
+4. Select **Load unpacked** (top-left), open the `clockoli` directory you just cloned, and confirm. It is the directory that contains `manifest.json`.
+5. Clockoli Settings opens automatically. Complete the three GitHub connection steps:
+   1. **Connect GitHub.** Select **Copy code to clipboard and connect GitHub**. GitHub opens in a new tab: paste the copied one-time code, select **Continue**, and approve. Switch back to the Settings tab; Clockoli detects the authorization automatically.
+   2. **Choose private data storage.** Select **Create private repository** and submit GitHub's prefilled form for `clockoli-data` (or choose **Use existing repository**). Creating the repository does not give Clockoli access to it, so return to Settings, select **Grant repository access**, choose **Only select repositories** on GitHub, and add `clockoli-data`.
+   3. **Validate.** When Settings shows **Private repository access found**, select **Validate and connect**. Clockoli verifies a repository write and shows **Connected**.
+6. Pin Clockoli so it is visible on non-GitHub pages: select the puzzle-piece **Extensions** button to the right of the address bar, then the pin icon next to **Clockoli**.
 
 If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
 
