@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertMessageAllowed, issueForStart, taskUrlForStart } from '../src/background/message-policy.js';
+import { assertMessageAllowed, issueForStart, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
@@ -11,7 +11,7 @@ test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_TASK_PARTICIPANTS', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SET_ACTION_ICON_FRAME', content, origin));
-  assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('EDIT_ACTIVE_START', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
@@ -19,7 +19,7 @@ test('content scripts receive only page-safe state and timer actions', () => {
 
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
   for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
@@ -42,6 +42,14 @@ test('content-script START accepts a matching canonical pull request page', () =
 test('content task switches remain bound to the current page URL', () => {
   assert.equal(taskUrlForStart(issue.url, content, origin), issue.url);
   assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
+});
+
+test('timeline task switching may select a previously tracked task from another GitHub page', () => {
+  assert.equal(
+    taskUrlForTimelineSwitch('https://github.com/manticoresoftware/site/issues/231', content, origin),
+    'https://github.com/manticoresoftware/site/issues/231',
+  );
+  assert.throws(() => taskUrlForTimelineSwitch('javascript:alert(1)', content, origin), /task URL/i);
 });
 
 test('trusted extension pages can perform popup-only operations', () => {
@@ -71,7 +79,7 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', sender, origin), /not allowed/);
 });

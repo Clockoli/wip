@@ -69,3 +69,8 @@ test('reports use requested defaults, monotonic progress and task identity label
   assert.match(js, /Task URL \/ title/);
   assert.doesNotMatch(js, /Repositories:/);
 });
+
+test('recoverable queued entry-edit conflicts keep the background retry alarm alive', () => {
+  assert.match(worker, /function hasRunnablePending\(queue\) \{[\s\S]*?\['editEntry', 'editEntries'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
+  assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+});

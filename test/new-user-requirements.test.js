@@ -108,7 +108,7 @@ test('opening the tracker renders cached entries and refreshes them without a se
   assert.match(serviceWorker, /configured: true, active, recent: state\.recent/);
   assert.match(content, /if \(!recentLoaded && Array\.isArray\(data\?\.recent\) && data\.recent\.length\) applyMenuData\(data\.recent, false\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
-  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
+  assert.match(content, /loadingRecent \|\| !recentFresh/);
   assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
   assert.doesNotMatch(content, /Open the menu again to load entries/);
 });
@@ -122,6 +122,6 @@ test('direct time input preserves editing without wheel or plus/minus controls',
 
 test('main-panel time drafts link crossed neighboring boundaries before save', () => {
   assert.match(content, /linkCrossedTimeBoundaries/);
-  assert.match(content, /EDIT_ENTRIES/);
+  assert.match(content, /QUEUE_ENTRIES_EDIT/);
   assert.doesNotMatch(content, /Stop time must not be before Start time\./);
 });

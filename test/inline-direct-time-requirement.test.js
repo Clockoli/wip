@@ -25,11 +25,20 @@ test('inline range, duration, and contextual actions share the left-aligned row'
   assert.match(source, /actions\.append\(inline\.cancel, inline\.save, remove\)/);
 });
 
-test('grouped inline save is exposed only through the needed message route', () => {
-  assert.equal(assertMessageAllowed('EDIT_ENTRIES', contentSender, origin), 'content');
-  assert.equal(assertMessageAllowed('EDIT_ENTRIES', extensionSender, origin), 'extension');
+test('grouped inline save uses the durable queue route', () => {
+  assert.equal(assertMessageAllowed('QUEUE_ENTRIES_EDIT', contentSender, origin), 'content');
+  assert.equal(assertMessageAllowed('QUEUE_ENTRIES_EDIT', extensionSender, origin), 'extension');
+  assert.match(source, /type: 'QUEUE_ENTRIES_EDIT'/);
+  assert.doesNotMatch(source, /type: 'EDIT_ENTRIES'/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', contentSender, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', extensionSender, origin), /not allowed/i);
-  assert.match(serviceWorker, /case 'EDIT_ENTRIES': return tracker\.editEntries\(message\.payload\)/);
+  assert.match(serviceWorker, /case 'QUEUE_ENTRIES_EDIT': \{[\s\S]*tracker\.queueEntriesEdit\(message\.payload\)[\s\S]*requestPendingSync\(\)/);
   assert.doesNotMatch(serviceWorker, /case 'MOVE_BOUNDARY'/);
+});
+
+test('legacy queued-edit conflicts remain recoverable when the page projection has only a stage', () => {
+  assert.match(source, /\['editEntry', 'editEntries'\]\.includes\(item\.operation \?\? item\.stage\)/);
+  assert.match(source, /Saved edit needs review/);
+  assert.match(source, /Retry saved edit/);
+  assert.match(source, /Discard queued edit/);
 });

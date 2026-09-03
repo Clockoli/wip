@@ -107,11 +107,15 @@ test('background timer sync never blocks timer actions and drives a disabled spi
     'timer acceptance must not wait behind the remote synchronization executor');
   assert.match(worker, /chrome\.alarms\.create\('sync-pending-now'/,
     'accepted mutations schedule a durable one-shot alarm that wakes the MV3 worker');
+  assert.match(worker, /function requestPendingSync\(\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 250 \}\);\s*\}/,
+    'accepted mutations wait for the debounce alarm so superseding queue edits can coalesce');
+  assert.doesNotMatch(worker, /function requestPendingSync\(\) \{[^}]*syncPendingNow\(\)/);
   assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
-  assert.match(worker, /function hasRunnablePending\(queue\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+  assert.match(worker, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
+  assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\)[\s\S]*sync-pending-now/,
-    'MV3 retry alarms must stop when a conflict blocks the FIFO head');
-  assert.match(js, /function hasRunnablePending\(queue = state\.pendingWrites\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+    'MV3 retry alarms must continue for safely rebased entry edits and stop only for a missing record or an unsafe conflict');
+  assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
   assert.match(js, /const syncing = hasRunnablePending\(\)/);
   assert.match(js, /hadPending[\s\S]*!hasRunnablePending\(\)[\s\S]*await load\(\)/,
     'pending completion or transition to a blocking conflict must reload task aggregates');
@@ -142,5 +146,6 @@ test('tracking panel gives Top tasks and Reports matching header icons', () => {
 
 test('background reconciliation preserves an already-fresh editable Recent snapshot', () => {
   assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
+  assert.match(content, /const disabled = Boolean\(loadingRecent \|\| !recentFresh\)/);
+  assert.doesNotMatch(content, /inlineMutation/);
 });

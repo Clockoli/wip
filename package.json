@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Clockoli private GitHub-backed task time tracking Chrome extension",
   "scripts": {
-    "test": "node --test",
-    "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
+    "test": "node --test && node scripts/run-elastic-timeline-suite.mjs",
+    "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/elastic-timeline-editor.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
     "package": "python3 scripts/build-release.py"
   },
   "engines": {

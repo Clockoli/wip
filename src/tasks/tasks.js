@@ -111,7 +111,15 @@ function makeTimerButton(task) {
   return button;
 }
 
-function hasRunnablePending(queue = state.pendingWrites) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
+function hasRunnablePending(queue = state.pendingWrites) {
+  const first = queue?.[0];
+  if (!first) return false;
+  if (first.status !== 'conflict') return true;
+  const operation = first.operation ?? first.stage;
+  const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
+  return retryableConflict && ['editEntry', 'editEntries'].includes(operation)
+    && first.conflictReason !== 'queued_entry_missing';
+}
 
 function render() {
   clearInterval(tick); tick = null;

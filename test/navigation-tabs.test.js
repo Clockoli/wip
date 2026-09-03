@@ -48,7 +48,7 @@ test('shared navigation styles distinguish the brand from page tabs and remain r
 test('Activity does not duplicate standalone navigation inside its renderer', () => {
   const content = read('src/content/github.js');
   const start = content.indexOf('function renderTimesPage()');
-  const end = content.indexOf('function renderMenu()', start);
+  const end = content.indexOf('const POPUP_WINDOW_MS', start);
   const renderer = content.slice(start, end);
   assert.doesNotMatch(renderer, /Clockoli|el\('h1'|button\('(Top tasks|Reports|Settings)'/);
 });

@@ -5,7 +5,8 @@
   "description": "Track time on any task URL and store records in a private GitHub repository.",
   "permissions": [
     "alarms",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "https://api.github.com/*",
@@ -21,7 +22,6 @@
   },
   "action": {
     "default_title": "Clockoli",
-    "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "src/assets/clockoli-16.png",
       "32": "src/assets/clockoli-32.png",
@@ -37,6 +37,7 @@
       ],
       "js": [
         "src/domain/recovery-actions.js",
+        "src/content/elastic-timeline-editor.js",
         "src/content/github.js"
       ],
       "run_at": "document_idle"
@@ -44,9 +45,10 @@
   ],
   "web_accessible_resources": [
     {
-      "matches": ["https://github.com/*"],
+      "matches": ["<all_urls>"],
       "resources": [
         "src/assets/clockoli-16.png", "src/assets/clockoli-32.png",
+        "src/content/elastic-timeline-editor.css",
         "src/assets/action-spin/clockoli-16-0.png", "src/assets/action-spin/clockoli-32-0.png",
         "src/assets/action-spin/clockoli-16-1.png", "src/assets/action-spin/clockoli-32-1.png",
         "src/assets/action-spin/clockoli-16-2.png", "src/assets/action-spin/clockoli-32-2.png",

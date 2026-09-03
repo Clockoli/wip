@@ -15,7 +15,7 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
-import { assertMessageAllowed, taskUrlForStart } from './message-policy.js';
+import { assertMessageAllowed, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
@@ -404,7 +404,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC',
-  'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -428,6 +428,13 @@ async function withCurrentRepositoryRecovery(message, operation) {
       return recovered;
     },
   });
+}
+
+function diagnosticError(value) {
+  return String(value || '')
+    .replace(/(token|secret|authorization|password|credential)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/gh[pousr]_[A-Za-z0-9_]+/g, '[redacted]')
+    .slice(0, 300);
 }
 
 async function handle(message, sender) {
@@ -512,7 +519,7 @@ async function handle(message, sender) {
     const state = await tracker.getState({ refresh: Boolean(message.refresh) });
     if (message.type === 'GET_PAGE_STATE') {
       const active = state.active ? {
-        taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
+        id: state.active.id, taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
         entryDate: state.active.entryDate, timezone: state.active.timezone,
         description: state.active.description || '', issueTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
@@ -521,7 +528,10 @@ async function handle(message, sender) {
       return {
         configured: true, active, recent: state.recent,
         pendingCount: state.pendingWrites.length,
-        pendingWrites: state.pendingWrites.map(({ id, status, stage, conflictReason }) => ({ id, status, stage, ...(conflictReason ? { conflictReason } : {}) })),
+        pendingWrites: state.pendingWrites.map(({ id, operation, status, stage, conflictReason, queuedAt, retryCount, lastError }) => ({
+          id, status, stage, operation, queuedAt, retryCount: Math.max(0, Number(retryCount) || 0),
+          ...(conflictReason ? { conflictReason } : {}), ...(lastError ? { lastError: diagnosticError(lastError) } : {}),
+        })),
       };
     }
     return { configured: true, ...state };
@@ -534,7 +544,10 @@ async function handle(message, sender) {
       return result;
     }
     case 'SWITCH_TASK': {
-      const result = await tracker.switchTask(taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin), message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
+      const taskUrl = message.timelineTask
+        ? taskUrlForTimelineSwitch(message.taskUrl ?? message.issue, sender, extensionOrigin)
+        : taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
+      const result = await tracker.switchTask(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
       if (result.pending) requestPendingSync();
       return result;
     }
@@ -555,6 +568,22 @@ async function handle(message, sender) {
       return tracker.loadMenuData(50, { knownTitles });
     }
     case 'EDIT_ENTRIES': return tracker.editEntries(message.payload);
+    case 'EDIT_ACTIVE_START': return tracker.editActiveStart(message.payload);
+    case 'QUEUE_ENTRY_EDIT': {
+      const result = await tracker.queueEntryEdit(message.payload);
+      requestPendingSync();
+      return result;
+    }
+    case 'QUEUE_ENTRIES_EDIT': {
+      const result = await tracker.queueEntriesEdit(message.payload);
+      requestPendingSync();
+      return result;
+    }
+    case 'QUEUE_ACTIVE_START_EDIT': {
+      const result = await tracker.queueActiveStartEdit(message.payload);
+      requestPendingSync();
+      return result;
+    }
     case 'BULK_ADD_TIMES': {
       const text = String(message.text || '');
       if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
@@ -594,7 +623,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
-function hasRunnablePending(queue) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
+function hasRunnablePending(queue) {
+  const first = queue?.[0];
+  if (!first) return false;
+  if (first.status !== 'conflict') return true;
+  const operation = first.operation ?? first.stage;
+  const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
+  return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
+    || (['editEntry', 'editEntries'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+}
 function syncPendingNow() {
   if (pendingSync) return pendingSync;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
@@ -618,7 +655,6 @@ function syncPendingNow() {
 
 function requestPendingSync() {
   chrome.alarms.create('sync-pending-now', { when: Date.now() + 250 });
-  void syncPendingNow().catch(() => {});
 }
 
 function scheduleSync() {
@@ -627,11 +663,33 @@ function scheduleSync() {
   void syncPendingNow().catch(() => {});
 }
 
+async function toggleActionSurface(tab) {
+  if (!Number.isInteger(tab?.id)) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
+    return;
+  } catch {
+    const url = new URL(tab.url || '');
+    if (!['http:', 'https:'].includes(url.protocol)) return;
+  }
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ['src/domain/recovery-actions.js', 'src/content/elastic-timeline-editor.js', 'src/content/github.js'],
+  });
+}
+
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();
 });
-chrome.runtime.onStartup.addListener(scheduleSync);
+chrome.action.onClicked.addListener(tab => {
+  void toggleActionSurface(tab).catch(() => {});
+});
+chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
 });

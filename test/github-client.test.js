@@ -189,7 +189,9 @@ test('setup rejects public repositories and 422 is validation, not a concurrency
   const publicRepo = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(200, { private: false, permissions: { push: true } }) });
   await assert.rejects(() => publicRepo.validateRepository(), /private/i);
   const invalid = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(422, { message: 'Invalid request' }) });
-  await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), GitHubValidationError);
+  await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), error => (
+    error instanceof GitHubValidationError && error.message === 'Invalid request'
+  ));
   await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), error => !(error instanceof GitHubConflictError));
 });
 

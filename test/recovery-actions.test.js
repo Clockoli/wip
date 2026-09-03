@@ -35,7 +35,11 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
     '../src/reports/reports.html', '../src/reports/reports.js',
   ].map(path => readFile(new URL(path, import.meta.url), 'utf8')));
   const [manifest, optionsHtml, options, content, tasksHtml, tasks, reportsHtml, reports] = files;
-  assert.deepEqual(JSON.parse(manifest).content_scripts[0].js, ['src/domain/recovery-actions.js', 'src/content/github.js']);
+  assert.deepEqual(JSON.parse(manifest).content_scripts[0].js, [
+    'src/domain/recovery-actions.js',
+    'src/content/elastic-timeline-editor.js',
+    'src/content/github.js',
+  ]);
   for (const html of [optionsHtml, tasksHtml, reportsHtml]) assert.match(html, /\.\.\/domain\/recovery-actions\.js/);
   for (const runtime of [options, content, tasks, reports]) {
     assert.match(runtime, /ClockoliRecovery\.actionFor/);

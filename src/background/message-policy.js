@@ -1,12 +1,12 @@
 import { normalizeIssue, normalizeTaskUrl, parseIssueUrl } from '../domain/values.js';
 
 const CONTENT_MESSAGES = new Set([
-  'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES',
+  'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS',
   'SET_ACTION_ICON_FRAME',
 ]);
 const EXTENSION_MESSAGES = new Set([
-  'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES',
+  'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'GET_LOCAL_PREFERENCES',
   'SAVE_BILLING_SETTINGS', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
   'LOAD_TASKS', 'LOAD_TIMES', 'BULK_ADD_TIMES', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
@@ -20,7 +20,7 @@ function senderContext(sender, extensionOrigin) {
   if (value.startsWith(extensionOrigin)) return { kind: 'extension', taskUrl: null };
   try {
     const parsed = new URL(value);
-    if (sender?.tab && parsed.protocol === 'https:' && parsed.hostname === 'github.com') {
+    if (sender?.tab && ['http:', 'https:'].includes(parsed.protocol)) {
       return { kind: 'content', taskUrl: normalizeTaskUrl(value) };
     }
   } catch { /* invalid sender URL */ }
@@ -42,6 +42,11 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
     if (pageTaskUrl !== requested) throw new Error('Requested task URL must match the current page');
   }
   return requested;
+}
+
+export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin) {
+  assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin);
+  return normalizeTaskUrl(payloadTaskUrl);
 }
 
 // Backward-compatible input adapter for cached callers while task URL remains the canonical identity.

@@ -4,6 +4,7 @@
   const TIMES_ROOT_ID = 'clockoli-times-root';
   const timesMode = location.protocol === 'chrome-extension:' && location.pathname.endsWith('/src/times/times.html');
   const popupMode = location.protocol === 'chrome-extension:' && !timesMode;
+  const actionSurfaceMode = globalThis.__CLOCKOLI_ACTION_SURFACE__ === true;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
   const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
@@ -24,8 +25,31 @@
   let participantRetryTimer = null;
   const PARTICIPANT_RETRY_MS = 60_000;
   let pendingRefreshTimer = null;
+  let navigationTimer = null;
+  let extensionContextActive = true;
   let root = null;
   let shadow = null;
+  let fullWidthPopupRoot = null;
+  let fullWidthPopupShadow = null;
+  let fullWidthPopupOpen = false;
+  let timelineWindowTimer = null;
+  let timelineView = null;
+  let timelineInstance = null;
+  let timelineWindow = null;
+  let timelineEntriesById = new Map();
+  let timelineQueueIndicator = null;
+  let timelineSaving = false;
+  let timelineOptimisticEdits = new Map();
+  const timelineQueuedOperationIds = new Map();
+  const timelineQueueAcceptances = new Set();
+  let timelineQueueAcceptanceSequence = 0;
+  let timelineAcceptedActive = null;
+  const timelineOptimisticCompletions = new Map();
+  let timelineStartInFlight = false;
+  let timelineScrollToRightPending = false;
+  const inlineQueuedOperationIds = new Set();
+  const queueDiagnostics = [];
+
   let menuOpen = false, menuScrollTop = 0;
   let navigationOpen = false;
   let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
@@ -34,6 +58,7 @@
   let recentFresh = false;
   let recentFreshAfterPendingId = null;
   let loadingRecent = false;
+  let suppressRecentRender = false;
   let recentLoad = null;
   let recentLoadId = 0;
   let timesLoadId = 0;
@@ -47,7 +72,6 @@
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
   const inlineBoundaryLinks = new Map();
-  let inlineMutation = null;
   let errorText = '';
   let errorCode = '';
   let todayReportDate = '';
@@ -181,8 +205,10 @@
         display: 'inline-flex', alignItems: 'center', gap: '4px', minHeight: '24px',
         color: 'var(--fgColor-muted,#59636e)',
       });
+      const markUrl = extensionResourceUrl('src/assets/clockoli-32.png');
+      if (!markUrl) return;
       const mark = el('img', undefined, 'clockoli-timeline-mark');
-      mark.src = chrome.runtime.getURL('src/assets/clockoli-32.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
+      mark.src = markUrl; mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
       Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
       const legacyBadge = item.querySelector?.('.TimelineItem-badge');
       const reactBadgeWrapper = item.querySelector?.('[class*="TimelineBadgeWrapper"]');
@@ -320,6 +346,32 @@
       || message.includes('message channel closed before a response was received');
   }
 
+  function isExtensionContextInvalidated(error) {
+    return String(error?.message || '') === 'Extension context invalidated.';
+  }
+
+  function extensionResourceUrl(path) {
+    if (!extensionContextActive) return null;
+    try { return globalThis.chrome?.runtime?.getURL?.(path) || null; }
+    catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+      return null;
+    }
+  }
+
+  function deactivateExtensionContext() {
+    if (!extensionContextActive) return;
+    extensionContextActive = false;
+    clearInterval(tick); tick = null;
+    clearInterval(actionAnimationTimer); actionAnimationTimer = null;
+    clearInterval(navigationTimer); navigationTimer = null;
+    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
+    if (typeof clearTimeout === 'function') clearTimeout(pendingRefreshTimer); pendingRefreshTimer = null;
+    clearClockoliParticipantRetry();
+    timelineObserver?.disconnect?.(); timelineObserver = null;
+  }
+
   function scheduleClockoliParticipantRetry(taskUrl, error) {
     clearClockoliParticipantRetry();
     if (error?.name === 'AbortError' || error?.code === 'aborted'
@@ -388,15 +440,28 @@
   }
 
   function send(message) {
-    return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
-      if (chrome.runtime.lastError) {
-        const error = new Error(chrome.runtime.lastError.message);
-        if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
-        return reject(error);
+    return new Promise((resolve, reject) => {
+      if (!extensionContextActive) {
+        const error = new Error('Extension context invalidated.'); error.code = 'extension_context_interrupted'; reject(error); return;
       }
-      if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
-      resolve(response.data);
-    }));
+      try {
+        chrome.runtime.sendMessage(message, response => {
+          if (chrome.runtime.lastError) {
+            const error = new Error(chrome.runtime.lastError.message);
+            if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+            if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+            return reject(error);
+          }
+          if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
+          resolve(response.data);
+        });
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+        if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+        reject(error);
+      }
+    });
   }
 
   function updateTaskAnimation() {
@@ -500,6 +565,13 @@
     return seconds;
   }
 
+  function reconcileQueuedInlineOperations(pendingIds) {
+    let completed = false;
+    for (const id of inlineQueuedOperationIds) if (!pendingIds.has(id)) { inlineQueuedOperationIds.delete(id); completed = true; }
+    if (completed) void refreshRecent(true).catch(setError);
+  }
+
+
   function applyMenuData(data, fresh = true) {
     recent = Array.isArray(data) ? data : data?.recent ?? [];
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
@@ -509,17 +581,44 @@
     summaryFrames = Array.isArray(data?.summaries) && data.summaries.length ? data.summaries : [
       { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
     ];
-    if (!Array.isArray(data)) pageState = {
-      ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
-      pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
-    };
+    if (!Array.isArray(data)) {
+      pageState = {
+        ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
+        pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
+      };
+      const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
+      reconcileQueuedInlineOperations(pendingIds);
+      for (const [entryId] of timelineOptimisticCompletions) {
+        if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
+      }
+      for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
+        timelineQueuedOperationIds.delete(id);
+        timelineOptimisticEdits.delete(entryId);
+      }
+    }
+    refreshTimelineQueueIndicator();
     recentLoaded = true;
     recentFresh = fresh;
   }
 
   function applyPageState(data) {
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
-    pageState = data;
+    recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
+    const accepted = timelineAcceptedActive;
+    const incoming = data?.active ?? null;
+    const incomingConfirmsAccepted = accepted && incoming
+      && taskUrlOf(incoming) === taskUrlOf(accepted)
+      && new Date(incoming.startedAt).getTime() >= new Date(accepted.startedAt).getTime();
+    if (incomingConfirmsAccepted) timelineAcceptedActive = null;
+    pageState = accepted && !incomingConfirmsAccepted
+      ? { ...data, active: accepted }
+      : data;
+    const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
+    reconcileQueuedInlineOperations(pendingIds);
+    for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
+      timelineQueuedOperationIds.delete(id);
+      timelineOptimisticEdits.delete(entryId);
+    }
     if (!recentLoaded && Array.isArray(data?.recent) && data.recent.length) applyMenuData(data.recent, false);
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
@@ -527,21 +626,106 @@
       recentFreshAfterPendingId = null;
     }
     schedulePendingRefresh();
+    refreshTimelineQueueIndicator();
     const nextParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     if (!popupMode && previousParticipantState !== nextParticipantState) void refreshClockoliParticipants();
   }
 
-  function hasRunnablePending(queue = pageState.pendingWrites) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
+  function safeQueueDetail(value) {
+    return String(value || '').slice(0, 300);
+  }
+
+  function queueOperationLabel(item) {
+    const operation = item.operation ?? item.stage;
+    return ({ editEntry: 'Edit time entry', editEntries: 'Edit linked time entries', editActiveStart: 'Adjust timer start',
+      completeTimer: 'Save stopped timer', completeTimerAndStart: 'Save and switch task', startTimer: 'Start timer',
+    })[operation] || operation || 'Queued operation';
+  }
+
+  function queueOperationSignature(item) {
+    return [item.operation, item.stage, item.status, item.retryCount, item.conflictReason, item.lastError].join('\u0001');
+  }
+
+  function recordQueueDiagnostics(previous, next) {
+    const before = new Map((previous ?? []).map(item => [item.id, item]));
+    const after = new Map((next ?? []).map(item => [item.id, item]));
+    const append = message => queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    for (const item of next ?? []) {
+      const prior = before.get(item.id), label = queueOperationLabel(item);
+      if (!prior) append(`${label}: queued${item.queuedAt ? ` at ${item.queuedAt}` : ''}.`);
+      else if (queueOperationSignature(prior) !== queueOperationSignature(item)) {
+        const attempt = Number(item.retryCount) ? ` Attempt ${item.retryCount}.` : '';
+        const detail = item.lastError ? ` ${safeQueueDetail(item.lastError)}` : '';
+        append(`${label}: ${item.status || 'pending'} at ${item.stage || item.operation || 'queued'}.${attempt}${detail}`);
+      }
+    }
+    for (const item of previous ?? []) if (!after.has(item.id)) append(`${queueOperationLabel(item)}: synced.`);
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function recordTimelineQueueDiagnostic(message) {
+    queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function recordTimelineGestureDiagnostic(event) {
+    const detail = event && typeof event === 'object' ? event : {};
+    const kind = String(detail.kind || 'gesture').slice(0, 32);
+    const phase = String(detail.phase || 'event').slice(0, 32);
+    const id = String(detail.id || 'unknown').slice(0, 120);
+    const stamp = value => Number.isFinite(value) ? new Date(value).toISOString() : 'none';
+    const bounds = detail.bounds || {};
+    const proposed = detail.edit || {};
+    const message = [
+      `Timeline ${phase}: ${kind} ${id}.`,
+      `previous=${stamp(bounds.previousEnd)} next=${stamp(bounds.nextStart)} gap=${Number(detail.snapMs) || 0}ms.`,
+      `raw=${stamp(detail.rawTimestamp)} proposed=${stamp(detail.proposedTimestamp)}.`,
+      `result=${stamp(proposed.startedAt)}→${stamp(proposed.endedAt)}${detail.committed === false ? ' (no-op).' : '.'}`,
+    ].join(' ');
+    queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function hasRunnablePending(queue = pageState.pendingWrites) {
+    const first = queue?.[0];
+    if (!first) return false;
+    if (first.status !== 'conflict') return true;
+    const operation = first.operation ?? first.stage;
+    const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
+    return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
+      || (['editEntry', 'editEntries'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+  }
+
+  function visiblePanelStateKey(state = pageState) {
+    const active = state?.active;
+    const pending = (state?.pendingWrites ?? []).map(item => [
+      item.id, item.status, item.stage, item.operation, item.conflictReason,
+    ]);
+    return JSON.stringify({
+      configured: state?.configured !== false,
+      active: active ? [active.id, active.taskUrl, active.taskTitle, active.startedAt, active.description] : null,
+      pendingCount: state?.pendingCount ?? 0,
+      pending,
+    });
+  }
+
+  function visibleRecentKey() {
+    return recent.map(entry => [
+      entry.id, entry._path, entry._sha, entry._index, entry.startedAt, entry.endedAt, entry._pending,
+    ]).join('\n');
+  }
 
   function schedulePendingRefresh() {
     globalThis.clearTimeout?.(pendingRefreshTimer); pendingRefreshTimer = null;
     if (!hasRunnablePending()) return;
     pendingRefreshTimer = setTimeout(async () => {
       try {
+        const before = visiblePanelStateKey();
+        const beforeRecent = visibleRecentKey();
         const data = await send({ type: 'GET_PAGE_STATE' });
         applyPageState(data);
         if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
-        renderUi();
+        if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
       } catch { schedulePendingRefresh(); }
     }, 500);
     pendingRefreshTimer?.unref?.();
@@ -686,7 +870,7 @@
     return node;
   }
 
-  function setError(error = '') { errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
+  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
 
@@ -787,18 +971,23 @@
   function refreshRecent(force = false) {
     if (recentLoad && !force) return recentLoad;
     const loadId = ++recentLoadId, request = recentRequest();
-    recentFresh = false; loadingRecent = true; renderUi();
+    recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
     let load;
     load = send(request).then(data => {
       if (loadId === recentLoadId) applyMenuData(data, true);
       return data;
     }).finally(() => {
       if (loadId === recentLoadId && recentLoad === load) {
-        recentLoad = null; loadingRecent = false; renderUi();
+        recentLoad = null; loadingRecent = false; if (!suppressRecentRender) renderUi();
       }
     });
     recentLoad = load;
     return load;
+  }
+
+  async function refreshMountedTimelineState() {
+    applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
+    if (!refreshMountedTimeline()) renderUi();
   }
 
   async function refreshState(refresh = false, loadEntries = false) {
@@ -999,6 +1188,20 @@ The previous version remains in Git history.`)) return;
     return `${start.hour}:${start.minute} - ${stopDay}${stop.hour}:${stop.minute}`;
   }
 
+  function applyQueuedInlineEntries(entries) {
+    const changes = new Map(entries.map(request => [`${request.path}\u0000${request.original.id}`, request.edits]));
+    recent = recent.map(entry => {
+      const edits = changes.get(`${entry._path}\u0000${entry.id}`);
+      if (!edits) return entry;
+      const startedAt = edits.startedAt ?? entry.startedAt, endedAt = edits.endedAt ?? entry.endedAt;
+      return {
+        ...entry, ...edits, startedAt, endedAt,
+        entryDate: timestampParts(startedAt, entry.timezone).date,
+        durationSeconds: Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)),
+      };
+    });
+  }
+
   function inlineTimeEditor(entry) {
     const key = entryKey(entry), draft = inlineDrafts.get(key);
     const range = el('div', undefined, 'inline-time-range entry-meta');
@@ -1045,11 +1248,13 @@ The previous version remains in Git history.`)) return;
         if (!entries.length) {
           clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
-        inlineMutation = group; renderUi();
-        await send({ type: 'EDIT_ENTRIES', payload: { entries } });
+        const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { entries } });
+        if (queued?.operationId) inlineQueuedOperationIds.add(queued.operationId);
+        applyQueuedInlineEntries(entries);
         clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
-        activeInlineKey = null; inlineMutation = null; recentLoaded = false; await refreshState(false, true);
-      } catch (error) { inlineMutation = null; setError(error); }
+        activeInlineKey = null; renderUi();
+        void refreshState(false, false).catch(setError);
+      } catch (error) { setError(error); }
     };
     const cancelGroup = async () => { clearInlineGroup(key); activeInlineKey = null; renderUi(); };
     save = button('Save time', 'link-button inline-save', saveGroup);
@@ -1102,7 +1307,7 @@ The previous version remains in Git history.`)) return;
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
+      const disabled = Boolean(loadingRecent || !recentFresh);
       for (const control of [inline.save, inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
       if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
@@ -1164,19 +1369,36 @@ The previous version remains in Git history.`)) return;
     for (const item of conflicts) {
       const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
       const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
+      // Queues persisted before operation was projected to the page expose only
+      // their stage. Keep their recovery actionable after an extension upgrade.
+      const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
+      const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
+      const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
-      const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved' : 'Entry path conflict';
+      const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
+        : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
+          : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
       const detail = item.conflictReason === 'active_missing_no_completion'
         ? 'The active timer is gone and no matching completion exists. Discarding removes this unsaved completion.'
         : item.conflictReason === 'active_changed_no_completion'
           ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
           : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
-            : 'Repair or remove the conflicting entry in GitHub, then retry.';
-      const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer' : 'Retry entry sync';
+            : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
+              : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
+                : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
+                  : 'Repair or remove the conflicting entry in GitHub, then retry.';
+      const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
+        : rejectedWrite ? 'Retry queued write' : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
       box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
         await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
+        recentLoaded = false;
+        await refreshState(true, true);
+      }));
+      if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
+        if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
+        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_edit' });
         recentLoaded = false;
         await refreshState(true, true);
       }));
@@ -1248,7 +1470,316 @@ The previous version remains in Git history.`)) return;
     page.append(body); return page;
   }
 
-  function renderMenu() {
+  const POPUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const POPUP_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function mergeTimelineCompletedEntries(completed, optimisticCompletions) {
+    const byId = new Map();
+    const anonymous = [];
+    for (const entry of completed) {
+      if (entry?.id) byId.set(entry.id, entry);
+      else anonymous.push(entry);
+    }
+    for (const entry of optimisticCompletions) {
+      if (entry?.id) byId.set(entry.id, entry);
+      else anonymous.push(entry);
+    }
+    return [...byId.values(), ...anonymous];
+  }
+
+  function popupTimelineEntries(windowStart, now) {
+    const completed = recent.filter(entry => entry._path && (entry._sha || entry._pending)
+      && Number.isFinite(new Date(entry.startedAt).getTime()) && Number.isFinite(new Date(entry.endedAt).getTime())
+      && new Date(entry.startedAt).getTime() < now && new Date(entry.endedAt).getTime() > windowStart)
+      .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+    const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
+    if (pageState.active && new Date(pageState.active.startedAt).getTime() < now) {
+      entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
+    }
+    return entries.map(entry => {
+      const optimistic = timelineOptimisticEdits.get(entry.id);
+      return { ...entry, isPending: Boolean(entry._pending || optimistic), ...(optimistic || {}) };
+    })
+      .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+  }
+
+  function popupTimelineItems(historyStart, now) {
+    const byId = new Map();
+    const items = popupTimelineEntries(historyStart, now).map((entry) => {
+      const stableId = entry.id || `${entry._path}:${entry._index}`;
+      const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
+      byId.set(id, entry);
+      return {
+        id,
+        rowId: 'tracked',
+        url: taskUrlOf(entry),
+        title: taskTitleOf(entry) || taskUrlOf(entry) || 'Untitled task',
+        startedAt: Math.max(historyStart, new Date(entry.startedAt).getTime()),
+        endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
+        isRunning: Boolean(entry._active),
+        isEditable: !entry._active,
+        isPending: Boolean(entry._pending),
+        isStartDisabled: timelineStartInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
+        isStopDisabled: Boolean(entry._active && pageState.pendingWrites?.some(item => item.status === 'conflict')),
+      };
+    });
+    return { items, byId };
+  }
+
+  function refreshMountedTimeline() {
+    if (!timelineInstance || !timelineWindow) return false;
+    const { items, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
+    timelineEntriesById = byId;
+    timelineInstance.update({ items });
+    return true;
+  }
+
+  function refreshMountedTimelineAtRightEdge(startedAt) {
+    const startedAtMs = new Date(startedAt).getTime();
+    if (!Number.isFinite(startedAtMs)) return false;
+    timelineScrollToRightPending = true;
+    if (!timelineInstance || !timelineWindow || !timelineView) return false;
+    const now = Math.max(Date.now(), startedAtMs + 1);
+    const span = Math.max(1, timelineView.end - timelineView.start);
+    timelineWindow = { ...timelineWindow, now };
+    timelineView = { start: now - span, end: now, focusedAt: now };
+    const { items, byId } = popupTimelineItems(timelineWindow.historyStart, now);
+    timelineEntriesById = byId;
+    timelineInstance.update({ items, now, view: timelineView });
+    timelineInstance.scrollToEnd();
+    timelineScrollToRightPending = false;
+    return true;
+  }
+
+  function beginTimelineQueueAcceptance() {
+    const id = `local:${++timelineQueueAcceptanceSequence}`;
+    timelineQueueAcceptances.add(id);
+    return id;
+  }
+
+  function finishTimelineQueueAcceptance(id) { timelineQueueAcceptances.delete(id); }
+
+  function timelineQueueSize() { return Math.max(Number(pageState.pendingCount) || 0, timelineQueuedOperationIds.size + timelineQueueAcceptances.size); }
+
+  function refreshTimelineQueueIndicator() {
+    if (!timelineQueueIndicator) return;
+    const count = timelineQueueSize();
+    timelineQueueIndicator.hidden = count === 0;
+    timelineQueueIndicator.setAttribute('aria-label', count > 0 ? `${count} timeline changes queued for GitHub` : '');
+    const label = timelineQueueIndicator.querySelector('.timeline-queue-count');
+    if (label) label.textContent = count > 0 ? String(count) : '';
+  }
+
+  function applyTimelineOptimisticEntry(entry, edits) {
+    recent = recent.map(item => {
+      if (item.id !== entry.id || item._path !== entry._path) return item;
+      const startedAt = edits.startedAt ?? item.startedAt, endedAt = edits.endedAt ?? item.endedAt;
+      return {
+        ...item, ...edits, startedAt, endedAt,
+        entryDate: timestampParts(startedAt, item.timezone).date,
+        durationSeconds: Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)),
+      };
+    });
+  }
+
+  async function queueCalendarEntry(entry, edits) {
+    timelineOptimisticEdits.set(entry.id, edits);
+    applyTimelineOptimisticEntry(entry, edits);
+    refreshMountedTimeline();
+    const acceptanceId = beginTimelineQueueAcceptance();
+    refreshTimelineQueueIndicator();
+    recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
+    if (!timelineInstance) renderUi();
+    try {
+      const result = await send({ type: 'QUEUE_ENTRY_EDIT', payload: {
+        path: entry._path, originalSha: entry._sha, index: entry._index,
+        original: originalRecord(entry), edits,
+      } });
+      if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+    } catch (error) {
+      recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
+  function renderPopupTimeline() {
+    const section = el('section', undefined, 'popup-timeline-section');
+    const createTimeline = globalThis.ElasticTimelineEditor?.createElasticTimeline;
+    if (!createTimeline) {
+      section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
+      return section;
+    }
+    if (!recentLoaded) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
+    const now = Date.now(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
+    timelineWindow = { historyStart, now };
+    timelineView ||= { start: defaultStart, end: now, focusedAt: now };
+    const { items, byId } = popupTimelineItems(historyStart, now);
+    timelineEntriesById = byId;
+    if (!items.length) { section.append(el('div', 'No tracked time in the last 24 hours.', 'muted')); return section; }
+    const timelineShell = el('div', undefined, `timeline-shell${timelineSaving ? ' is-saving' : ''}`);
+    timelineShell.setAttribute('aria-busy', String(timelineSaving));
+    timelineShell.inert = timelineSaving;
+    const host = el('div', undefined, 'elastic-timeline-host'); timelineShell.append(host);
+    const spinner = el('div', undefined, 'timeline-queue-spinner');
+    spinner.setAttribute('role', 'status');
+    spinner.append(el('span', undefined, 'timeline-queue-wheel'), el('span', '', 'timeline-queue-count'));
+    timelineQueueIndicator = spinner;
+    section.append(spinner);
+    refreshTimelineQueueIndicator();
+    if (timelineSaving) {
+      const spinner = el('div', undefined, 'timeline-saving-spinner');
+      spinner.setAttribute('role', 'status'); spinner.setAttribute('aria-label', 'Saving timeline changes');
+      spinner.append(el('span', undefined, 'timeline-saving-wheel'));
+      timelineShell.append(spinner);
+    }
+    section.append(timelineShell);
+    globalThis.requestAnimationFrame(() => {
+      if (!host.isConnected) return;
+      timelineInstance = createTimeline(host, {
+        items,
+        now,
+        // Clockoli records timestamps to the second. A one-second snap also
+        // defines the exact gap retained when neighbouring blocks touch.
+        snapMs: 1_000,
+        view: timelineView,
+        onViewChange: view => { timelineView = view; },
+        onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
+        onStop: async item => {
+          const activeEntry = timelineEntriesById.get(item.id);
+          try {
+            const result = await send({ type: 'STOP', description: activeEntry?.description || '' });
+            if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
+            timelineOptimisticCompletions.set(result.entry.id, {
+              ...result.entry,
+              _pending: Boolean(result.pending),
+              _optimisticCompletion: true,
+            });
+            pageState = { ...pageState, active: null };
+            refreshMountedTimeline();
+            await refreshState(false, false);
+          } catch (error) { setError(error); throw error; }
+        },
+        onStart: async item => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry || entry._active || timelineStartInFlight) return;
+          timelineStartInFlight = true;
+          refreshMountedTimeline();
+          try {
+          const startedAt = new Date().toISOString();
+          const previousActive = pageState.active;
+          const acceptanceId = beginTimelineQueueAcceptance();
+          if (previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
+            timelineOptimisticCompletions.set(previousActive.id, {
+              ...previousActive, endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+            });
+          }
+          const acceptedActive = {
+            id: `timeline-local:${entry.id}:${acceptanceId}`,
+            taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '',
+            startedAt, _pending: true,
+          };
+          timelineAcceptedActive = acceptedActive;
+          pageState = { ...pageState, active: acceptedActive };
+          refreshTimelineQueueIndicator();
+          if (!refreshMountedTimelineAtRightEdge(startedAt)) renderUi();
+          try {
+            const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '' });
+            if (result?.active) {
+              timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
+              pageState = { ...pageState, active: timelineAcceptedActive };
+            }
+          } catch (error) {
+            timelineAcceptedActive = null;
+            if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
+            pageState = { ...pageState, active: previousActive };
+            if (!refreshMountedTimeline()) renderUi();
+            setError(error); throw error;
+          } finally {
+            finishTimelineQueueAcceptance(acceptanceId);
+            refreshTimelineQueueIndicator();
+            if (!refreshMountedTimeline()) renderUi();
+          }
+          void refreshMountedTimelineState().catch(setError);
+          } finally {
+            timelineStartInFlight = false;
+            refreshMountedTimeline();
+          }
+        },
+        onEditCommit: async edit => {
+          const entry = timelineEntriesById.get(edit.id);
+          if (!entry) return;
+          if (entry._active) {
+            if (edit.kind !== 'resize-left') return;
+            try {
+              timelineOptimisticEdits.set(entry.id, { startedAt: new Date(edit.startedAt).toISOString() });
+              refreshMountedTimeline();
+              const acceptanceId = beginTimelineQueueAcceptance();
+              refreshTimelineQueueIndicator();
+              recordTimelineQueueDiagnostic('Adjust timer start: accepted locally and queued for GitHub.');
+              if (!timelineInstance) renderUi();
+              try {
+                const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+                  original: { id: entry.id, startedAt: entry.startedAt },
+                  startedAt: new Date(edit.startedAt).toISOString(),
+                } });
+                if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+              } catch (error) {
+                recordTimelineQueueDiagnostic('Adjust timer start: local queue rejected the change.');
+                throw error;
+              } finally {
+                finishTimelineQueueAcceptance(acceptanceId);
+                refreshTimelineQueueIndicator();
+                if (!refreshMountedTimeline()) renderUi();
+              }
+              void refreshMountedTimelineState().catch(setError);
+            } catch (error) { setError(error); throw error; }
+            return;
+          }
+          const edits = edit.kind === 'move'
+            ? { startedAt: new Date(edit.startedAt).toISOString(), endedAt: new Date(edit.endedAt).toISOString() }
+            : edit.kind === 'resize-left'
+              ? { startedAt: new Date(edit.startedAt).toISOString() }
+              : { endedAt: new Date(edit.endedAt).toISOString() };
+          try { await queueCalendarEntry(entry, edits); }
+          catch (error) {
+            timelineOptimisticEdits.delete(entry.id);
+            applyTimelineOptimisticEntry(entry, { startedAt: entry.startedAt, endedAt: entry.endedAt });
+            renderUi(); setError(error); throw error;
+          }
+        },
+      });
+      if (timelineScrollToRightPending) {
+        timelineInstance.scrollToEnd();
+        timelineScrollToRightPending = false;
+      }
+    });
+    return section;
+  }
+
+  function renderQueueDiagnostics() {
+    if (!queueDiagnostics.length && !pageState.pendingWrites?.length) return null;
+    const diagnostics = el('details', undefined, 'queue-diagnostics');
+    diagnostics.open = Boolean(pageState.pendingWrites?.length);
+    diagnostics.setAttribute('data-testid', 'queue-diagnostics');
+    diagnostics.append(el('summary', `Queue diagnostics${pageState.pendingCount ? ` (${pageState.pendingCount})` : ''}`));
+    const explanation = el('div', 'Local diagnostic log. Safe operation details only.', 'muted');
+    const entries = el('ol', undefined, 'queue-diagnostics-list');
+    for (const event of queueDiagnostics.slice(-40).reverse()) {
+      const row = el('li', undefined, 'queue-diagnostic-event');
+      row.append(el('time', new Date(event.at).toLocaleTimeString(), 'queue-diagnostic-time'), document.createTextNode(event.message));
+      entries.append(row);
+    }
+    if (!queueDiagnostics.length) entries.append(el('li', 'Waiting for the first queue update.', 'queue-diagnostic-event'));
+    diagnostics.append(explanation, entries);
+    return diagnostics;
+  }
+
+  function renderMenu({ compact = popupMode, onClose = null } = {}) {
     let elapsedValue = null;
     const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
     const updateScrollState = event => {
@@ -1259,17 +1790,31 @@ The previous version remains in Git history.`)) return;
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
+    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliMark(22), el('strong', 'Clockoli'));
     const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks'; tasks.prepend(icon('checklist', TASKS_PATH));
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
+    const activity = button('Activity', 'reports-button', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); }); activity.title = 'Open activity'; activity.prepend(icon('history', ACTIVITY_PATH));
     const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
-    headerActions.append(tasks, reports, settings); header.append(headerActions); menu.append(header);
+    headerActions.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    if (compact) {
+      if (onClose) {
+        const close = button('×', 'icon-button popup-timeline-close', onClose);
+        close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
+        header.append(brand, headerActions, close);
+      } else header.append(brand, headerActions);
+      menu.append(header);
+    } else {
+      header.append(headerActions); menu.append(header);
+    }
     const body = el('div', undefined, 'menu-body');
     if (!pageState.configured) {
       body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
       body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
+      if (compact) body.append(renderPopupTimeline());
       const current = taskFromLocation();
       if (pageState.active) {
+        if (!compact) {
         const active = pageState.active, same = current && sameTask(active, current);
         const tracking = el('div', undefined, `eyebrow tracking-status${same ? '' : ' tracking-another'}`);
         tracking.append(document.createTextNode('Tracking '), el('strong', same ? 'this' : 'another'), document.createTextNode(' task'));
@@ -1297,8 +1842,8 @@ The previous version remains in Git history.`)) return;
           } catch (error) { node.disabled = false; setError(error); }
         });
         stop.disabled = pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
+        }
       } else {
-        body.append(el('div', 'No timer running', 'eyebrow'));
         const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
           node.disabled = true;
           try {
@@ -1313,6 +1858,7 @@ The previous version remains in Git history.`)) return;
         if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
       renderPendingConflicts(body);
+      if (!compact) {
       const today = el('div', undefined, 'today-total');
       summaryIndex = 0; summaryElapsedMs = 0;
       const currentSummary = () => summaryFrames[summaryIndex] ?? { label: 'Today', seconds: 0, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 };
@@ -1324,6 +1870,7 @@ The previous version remains in Git history.`)) return;
       today.append(summaryLabel = el('span'), summaryTotalValue = el('strong', undefined, 'today-total-value'));
       updateSummary(); body.append(today);
       clearInterval(tick); tick = setInterval(() => {
+        if (!extensionContextActive) return;
         const todayDate = localDateValue();
         if (elapsedValue && pageState.active) elapsedValue.textContent = formatElapsed(pageState.active.startedAt);
         if (todayReportDate && todayReportDate !== todayDate) {
@@ -1338,7 +1885,10 @@ The previous version remains in Git history.`)) return;
       }, 1000);
       renderRecent(body);
       const more = el('div', undefined, 'more-times'); more.append(button('View activity', 'secondary', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); })); body.append(more);
+      }
     }
+    const diagnostics = renderQueueDiagnostics();
+    if (diagnostics) body.append(diagnostics);
     if (errorText) {
       const error = el('div', errorText, 'error'), recovery = globalThis.ClockoliRecovery.actionFor(errorCode), label = recovery?.label || '';
       if (label) error.append(button(label, 'secondary wide', async () => {
@@ -1373,12 +1923,67 @@ The previous version remains in Git history.`)) return;
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
+  function timelineEditorStylesheet() {
+    const href = extensionResourceUrl('src/content/elastic-timeline-editor.css');
+    if (!href) return null;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    return link;
+  }
+
+  function mountFullWidthPopup() {
+    if (fullWidthPopupRoot?.isConnected) return;
+    fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
+    fullWidthPopupRoot.className = 'full-width-popup-surface';
+    fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
+    (document.body || document.documentElement).append(fullWidthPopupRoot);
+  }
+
+  function closeFullWidthPopup() {
+    fullWidthPopupOpen = false;
+    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
+    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
+    timelineView = null;
+    fullWidthPopupRoot?.remove(); fullWidthPopupRoot = null; fullWidthPopupShadow = null;
+    renderUi();
+  }
+
+  function renderFullWidthPopup(style) {
+    if (!fullWidthPopupOpen || !fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected) return;
+    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
+    const surface = el('section', undefined, 'full-width-popup');
+    const timelineStylesheet = timelineEditorStylesheet();
+    if (!timelineStylesheet) return;
+    surface.append(renderMenu({ compact: true, onClose: () => closeFullWidthPopup() }));
+    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), timelineStylesheet, surface);
+  }
+
+  async function toggleFullWidthPopup() {
+    fullWidthPopupOpen = !fullWidthPopupOpen;
+    if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
+    mountFullWidthPopup(); renderUi();
+    clearInterval(timelineWindowTimer);
+    timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
+    timelineWindowTimer?.unref?.();
+    try {
+      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
+      if (pageState.configured) await refreshRecent(true);
+      else renderUi();
+    } catch (error) { setError(error); }
+    return true;
+  }
+
   function renderUi() {
-    if (!shadow || !root?.isConnected) return;
+    if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
+    const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && timelineInstance && timelineWindow);
     clearInterval(tick); tick = null; summaryLabel = null; summaryTotalValue = null;
-    shadow.replaceChildren();
+    if (!preserveFullWidthTimeline) {
+      timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
+    }
+    if (shadow && root?.isConnected) shadow.replaceChildren();
     const style = el('style', `
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
@@ -1392,10 +1997,44 @@ The previous version remains in Git history.`)) return;
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
       .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff0); color:var(--fgColor-muted,#59636e); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,#818b981a); color:var(--fgColor-default,#1f2328) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:7px; background:var(--bgColor-muted,#f6f8fa) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,#1f2328); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,#59636e); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
+    if (popupMode || fullWidthPopupOpen) style.textContent += `
+      :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
+      :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,#d1d9e0b3); border-bottom:0 }
+      :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
+      :host(.popup-surface) .reports-button svg { width:14px; height:14px }
+      :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
+      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:calc(100vh - 8px); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,#d1d9e0); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:0 12px 30px #1f23284d }
+      :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
+      :host(.full-width-popup-surface) .menu-body { padding:0 }
+      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto 1fr auto; align-items:center; min-height:48px; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) }
+      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; gap:8px; color:var(--fgColor-default,#1f2328); font-size:14px }
+      :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
+      :host(.full-width-popup-surface) .popup-timeline-close { justify-self:end; width:30px; height:30px; padding:0; border:0; border-radius:0; background:transparent; font-size:24px; font-weight:400; line-height:1 }
+      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px; border:0; border-radius:0; background:transparent }
+      :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
+      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
+      :host(.full-width-popup-surface) .popup-timeline-section > .timeline-queue-spinner { position:absolute; top:8px; right:16px; z-index:7; display:grid; place-items:center; width:30px; height:30px; pointer-events:none }
+      :host(.full-width-popup-surface) .timeline-queue-spinner[hidden] { display:none !important }
+      :host(.full-width-popup-surface) .timeline-queue-wheel { position:absolute; inset:0; border:2px solid var(--borderColor-default,#d1d9e0); border-top-color:var(--fgColor-accent,#0969da); border-radius:50%; animation:clockoli-timeline-spin .75s linear infinite }
+      :host(.full-width-popup-surface) .timeline-queue-count { position:relative; z-index:1; color:var(--fgColor-default,#1f2328); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums }
+      :host(.full-width-popup-surface) .timeline-shell.is-saving .elastic-timeline-host { opacity:.56 }
+      :host(.full-width-popup-surface) .timeline-saving-spinner { position:absolute; inset:0; z-index:2; display:grid; place-items:center; pointer-events:auto; background:color-mix(in srgb,var(--bgColor-default,#fff) 24%,transparent) }
+      :host(.full-width-popup-surface) .timeline-saving-wheel { width:28px; height:28px; border:3px solid var(--borderColor-default,#d1d9e0); border-top-color:var(--fgColor-accent,#0969da); border-radius:50%; animation:clockoli-timeline-spin .75s linear infinite }
+      @keyframes clockoli-timeline-spin { to { transform:rotate(360deg) } }
+      @media(prefers-reduced-motion:reduce) { :host(.full-width-popup-surface) .timeline-saving-wheel { animation:none } }
+      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
+    `;
+    if (fullWidthPopupOpen) {
+      if (preserveFullWidthTimeline) refreshMountedTimeline();
+      else renderFullWidthPopup(style);
+    }
+    if (!shadow || !root?.isConnected) return;
     if (timesMode) { shadow.append(style, renderTimesPage()); return; }
-    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
+    if (popupMode) { shadow.append(style, timelineEditorStylesheet(), renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
@@ -1476,14 +2115,32 @@ The previous version remains in Git history.`)) return;
       catch (error) { setError(error); return; }
       renderUi();
     }).catch(setError);
+  } else if (actionSurfaceMode) {
+    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
+      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
+      return true;
+    });
+    document.addEventListener('keydown', event => {
+      if (fullWidthPopupOpen && event.key === 'Escape') closeFullWidthPopup();
+    });
+    void toggleFullWidthPopup();
   } else {
+    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
+      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
+      return true;
+    });
     document.addEventListener('click', event => {
       if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
     });
-    document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
+    document.addEventListener('keydown', event => {
+      if (fullWidthPopupOpen && event.key === 'Escape') { closeFullWidthPopup(); return; }
+      if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu();
+    });
     document.addEventListener('visibilitychange', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();
-    setInterval(navigationCheck, 750);
+    navigationTimer = setInterval(() => { if (extensionContextActive) navigationCheck(); }, 750);
   }
 })();

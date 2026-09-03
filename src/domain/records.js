@@ -172,6 +172,19 @@ export function validateEntry(entry) {
   return entry;
 }
 
+export function applyActiveStartEdit(active, startedAt, now = new Date()) {
+  validateActiveTimer(active);
+  const nextStart = toIso(startedAt), updatedAt = toIso(now);
+  if (new Date(nextStart).getTime() > new Date(updatedAt).getTime()) throw new Error('Active timer start must not be in the future');
+  return validateActiveTimer({
+    ...active,
+    entryDate: localDateInTimezone(nextStart, active.timezone),
+    startedAt: nextStart,
+    createdAt: nextStart,
+    updatedAt,
+  });
+}
+
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
   const currentUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);

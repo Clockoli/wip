@@ -10,7 +10,7 @@ export class GitHubConflictError extends GitHubApiError {
   constructor(message = 'GitHub resource changed concurrently') { super(message, 409, 'conflict'); }
 }
 export class GitHubValidationError extends GitHubApiError {
-  constructor(message = 'GitHub rejected the request') { super(message, 422, 'validation'); }
+  constructor(message = 'GitHub rejected the request') { super(String(message).replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, 300) || 'GitHub rejected the request', 422, 'validation'); }
 }
 export class GitHubAuthenticationError extends GitHubApiError {
   constructor(message = 'GitHub authentication failed. Check your token in Settings.') { super(message, 401, 'authentication'); }
@@ -207,7 +207,7 @@ export class GitHubClient {
         if (options.method && isBranchPolicyRejection(body)) {
           throw new GitHubApiError('GitHub branch or repository rules rejected this write.', 422, 'branch_policy_rejected');
         }
-        throw new GitHubValidationError();
+        throw new GitHubValidationError(String(body?.message || 'GitHub rejected the request'));
       }
       throw new GitHubApiError(`GitHub request failed (${response.status})`, response.status);
     }

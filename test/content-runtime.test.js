@@ -6,6 +6,15 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 
+test('extension-context interruption stops stale content timers without rendering an error', () => {
+  assert.match(source, /function deactivateExtensionContext\(\) \{[\s\S]*?clearInterval\(tick\)/);
+  assert.match(source, /function setError\(error = ''\) \{ if \(isExtensionContextInvalidated\(error\)\) \{ deactivateExtensionContext\(\); return; \}/);
+  assert.match(source, /function send\(message\) \{[\s\S]*?catch \(cause\) \{[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
+  assert.match(source, /function extensionResourceUrl\(path\) \{[\s\S]*?globalThis\.chrome\?\.runtime\?\.getURL\?\.\(path\)[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
+  assert.match(source, /const href = extensionResourceUrl\('src\/content\/elastic-timeline-editor\.css'\)/);
+  assert.match(source, /const markUrl = extensionResourceUrl\('src\/assets\/clockoli-32\.png'\)/);
+});
+
 const createdNodes = [];
 
 class FakeNode {
@@ -575,6 +584,12 @@ test('tracking-panel rerenders preserve the current user scroll position', () =>
   assert.match(source, /restoreMenuScroll\(preservedMenuScrollTop\)/);
 });
 
+test('pending queue polling does not rebuild the panel when its visible state is unchanged', () => {
+  assert.match(source, /function visiblePanelStateKey\(state = pageState\)/);
+  assert.match(source, /const before = visiblePanelStateKey\(\);/);
+  assert.match(source, /if \(before !== visiblePanelStateKey\(\) \|\| beforeRecent !== visibleRecentKey\(\)\) renderUi\(\);/);
+});
+
 test('task result rendering clamps maximum untitled URLs and titles without losing their full values', async () => {
   const exposedSource = source.replace("function taskResult(value, className = '') {", "globalThis.__taskResult = function taskResult(value, className = '') {");
   assert.notEqual(exposedSource, source, 'taskResult is exposed only inside this renderer contract test');
@@ -1048,7 +1063,7 @@ test('recent rows show durable titles and unified offset-preserving inline editi
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
-      else if (message.type === 'EDIT_ENTRIES') {
+      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
         editAttempts += 1;
         assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true);
         assert.equal(createdNodes.filter(node => ['inline-task-url', 'inline-task-title', 'inline-description'].some(name => node.className.includes(name))).slice(-3).every(node => node.disabled), true);
@@ -1081,7 +1096,7 @@ test('recent rows show durable titles and unified offset-preserving inline editi
   assert.equal(createdNodes.findLast(node => node.className.includes('inline-description')).value, 'Preserve this draft');
   await createdNodes.findLast(node => node.className.includes('inline-description')).onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const editMessage = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  const editMessage = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.equal(editMessage.payload.entries.length, 1);
   assert.equal(editMessage.payload.entries[0].edits.taskTitle, 'Edited deterministic ranking');
   assert.equal(editMessage.payload.entries[0].edits.description, 'Preserve this draft');
@@ -1246,10 +1261,14 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'EDIT_ENTRIES') {
-        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), true,
-          'the complete current and sibling inline editors are locked while Save time is in flight');
-        callback({ ok: true, data: {} });
+      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
+        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), false,
+          'inline editors stay usable after a durable queue accepts the edit');
+        for (const request of message.payload.entries) {
+          const position = entries.findIndex(entry => entry.id === request.original.id);
+          entries[position] = { ...entries[position], ...request.edits };
+        }
+        callback({ ok: true, data: { operationId: `queued-${messages.length}` } });
       }
       else callback({ ok: true, data: {} });
     } } },
@@ -1274,7 +1293,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
   firstStopMinute.value = ''; firstStopMinute.oninput({});
   let save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'EDIT_ENTRIES'), false, 'an incomplete direct-input draft is never sent');
+  assert.equal(messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false, 'an incomplete direct-input draft is never sent');
   assert.ok(createdNodes.findLast(node => node.className.includes('error') && node.textContent.includes('valid date and time')));
   const preservedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
   assert.equal(preservedValues[7].value, '', 'validation rerender preserves the incomplete direct-input draft');
@@ -1282,7 +1301,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
   save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
   assert.equal(save.hidden, false, 'typing a main-panel value reveals an explicit Save action');
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  const edit = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.equal(edit.payload.entries.length, 2, 'the crossed neighboring Start is saved in the same atomic group');
   assert.equal(edit.payload.entries[0].originalSha, 'same');
   assert.equal(edit.payload.entries[0].edits.endedAt, '2026-08-21T15:01:00+00:00');
@@ -1295,10 +1314,9 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
   const mirroredSave = createdNodes.filter(node => node.className.includes('inline-save')).slice(-4)[0];
   assert.equal(mirroredSave.hidden, false, 'crossing Start reveals Save on the edited record');
   await mirroredSave.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const mirroredEdit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
-  assert.equal(mirroredEdit.payload.entries.length, 2, 'the crossed previous Stop is saved in the same atomic group');
-  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T14:29:00+00:00');
-  assert.equal(mirroredEdit.payload.entries[1].edits.endedAt, '2026-08-21T14:29:00+00:00');
+  const mirroredEdit = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
+  assert.equal(mirroredEdit.payload.entries.length, 1, 'the new delta is merged with its earlier durable queued group');
+  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T15:29:00+00:00');
 });
 
 test('directly typed newer Start and previous Stop save as touching intervals without an overlap warning', async () => {
@@ -1329,7 +1347,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'EDIT_ENTRIES') {
+      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
         for (const request of message.payload.entries) {
           const position = entries.findIndex(entry => entry._index === request.index);
           entries[position] = { ...entries[position], ...request.edits,
@@ -1365,7 +1383,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
     'backing out of the crossing restores the older Stop baseline');
   let save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  let request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  let request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.equal(request.payload.entries.length, 1, 'a restored no-op neighbor is excluded from the grouped mutation');
   assert.equal(request.payload.entries[0].edits.startedAt, '2026-08-21T15:01:06.768+00:00');
   assert.equal(entries[0].endedAt, '2026-08-21T15:00:43.324+00:00', 'the older Stop remains exact after the non-crossing save');
@@ -1377,7 +1395,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   assert.deepEqual([refreshedValues[6].value, refreshedValues[7].value], ['14', '59']);
   save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
     ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
     ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
@@ -1393,7 +1411,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
     'continuing past an existing link discovers and updates every newly crossed boundary');
   save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-3)[0];
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  request = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
     ['2026-08-21T13:30:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
     ['2026-08-21T13:30:06.768+00:00', '2026-08-21T13:30:06.768+00:00'],
@@ -1933,7 +1951,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: entries } });
-      else if (message.type === 'EDIT_ENTRIES') callback({ ok: true, data: [] });
+      else if (message.type === 'QUEUE_ENTRIES_EDIT') callback({ ok: true, data: [] });
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
@@ -1951,7 +1969,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
   assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
   const save = createdNodes.filter(node => node.className.includes('inline-save')).at(-1);
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const edit = messages.findLast(message => message.type === 'EDIT_ENTRIES');
+  const edit = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.equal(edit.payload.entries.length, 2);
   assert.deepEqual(edit.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
     ['2026-08-21T10:00:00+00:00', '2026-08-21T11:15:00+00:00'],
@@ -1986,9 +2004,9 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.match(source, /function schedulePendingRefresh\(\)/);
   assert.match(source, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
   assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\)[^\n]*queue\[0\]\.status !== 'conflict'/);
+  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\) \{[\s\S]*?const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)[\s\S]*?\['editEntry', 'editEntries'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(source, /if \(!hasRunnablePending\(\)\) return/,
-    'a conflict-blocked FIFO head must stop the 500 ms UI polling loop');
+    'the 500 ms UI polling loop stops only for a missing record or an unsafe conflict, not a safely rebased edit');
   assert.doesNotMatch(source, /Task switch is syncing with GitHub\./);
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });
