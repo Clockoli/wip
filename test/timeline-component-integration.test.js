@@ -437,6 +437,8 @@ test('timeline exposes Delete and current-page tracking through durable handlers
   assert.match(content, /onDelete: async item =>/);
   assert.match(content, /type: 'DISCARD_ACTIVE'/);
   assert.match(content, /await queueTimelineEntryDelete\(entry\)/);
+  assert.match(content, /popupMode && task \? \{ taskUrl: task\.taskUrl, taskTitle: task\.taskTitle \} : \{\}/,
+    'content-panel timeline refreshes must not submit a page-bound task URL after editing another task');
   assert.match(content, /recent = recent\.filter[\s\S]*?beginTimelineQueueAcceptance\(\)[\s\S]*?type: 'QUEUE_ENTRY_DELETE'/,
     'completed time disappears before durable deletion is sent to the worker');
   assert.match(content, /if \(result\?\.operationId\) timelineQueuedOperationIds\.set\(result\.operationId, entry\.id\)/);

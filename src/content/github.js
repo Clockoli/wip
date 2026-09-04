@@ -838,7 +838,7 @@
   function recentRequest() {
     if (timesMode) return { type: 'LOAD_TIMES', payload: timesRange() };
     const task = taskFromLocation();
-    return { type: 'LOAD_RECENT', menuData: true, ...(task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
+    return { type: 'LOAD_RECENT', menuData: true, ...(popupMode && task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
   }
 
   function directChild(node, ancestor) {
