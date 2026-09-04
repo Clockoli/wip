@@ -2004,7 +2004,7 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.match(source, /function schedulePendingRefresh\(\)/);
   assert.match(source, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
   assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\) \{[\s\S]*?const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)[\s\S]*?\['editEntry', 'editEntries'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
+  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\) \{[\s\S]*?const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(source, /if \(!hasRunnablePending\(\)\) return/,
     'the 500 ms UI polling loop stops only for a missing record or an unsafe conflict, not a safely rebased edit');
   assert.doesNotMatch(source, /Task switch is syncing with GitHub\./);

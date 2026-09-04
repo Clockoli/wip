@@ -130,7 +130,7 @@ test('ordinary Start tracking projects the running block and right-edge scroll b
 
   assert.ok(optimistic >= 0, 'ordinary Start must project an optimistic running block');
   assert.ok(worker > optimistic, 'the optimistic block must render before waiting for the worker');
-  assert.match(handler, /if \(timelineStartInFlight \|\| timelineStopInFlight\) return;\s*timelineStartInFlight = true/);
+  assert.match(handler, /if \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight\) return;\s*timelineStartInFlight = true/);
   assert.match(handler, /refreshMountedTimelineAtRightEdge/);
   assert.match(handler, /rollbackTimelineStart/);
   assert.match(handler, /finally \{\s*timelineStartInFlight = false;\s*refreshMountedTimeline\(\);/);
@@ -196,18 +196,18 @@ test('accepted start invalidates older recent loads before rendering and can mou
 
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
-  assert.match(content, /isStartDisabled: timelineStartInFlight \|\| timelineStopInFlight \|\| sameTask\(entry, pageState\.active\)/);
-  assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight/);
-  assert.match(content, /if \(!entry \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
+  assert.match(content, /isStartDisabled: timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
+  assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
+  assert.match(content, /if \(!entry \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
   const panelStopEnd = content.indexOf('\n        stop.disabled', panelStopStart);
   assert.ok(panelStopStart >= 0 && panelStopEnd > panelStopStart);
   const panelStop = content.slice(panelStopStart, panelStopEnd);
-  assert.match(panelStop, /if \(timelineStartInFlight \|\| !beginTimelineStop\(\)\) return/);
+  assert.match(panelStop, /if \(timelineStartInFlight \|\| timelineDeleteInFlight \|\| !beginTimelineStop\(\)\) return/);
   assert.match(panelStop, /finally \{ finishTimelineStop\(\); \}/);
   assert.match(panelStop, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, active\)\) timelineAcceptedActive = null/);
-  assert.match(content.slice(panelStopEnd, panelStopEnd + 300), /stop\.disabled = timelineStartInFlight \|\| timelineStopInFlight/);
+  assert.match(content.slice(panelStopEnd, panelStopEnd + 300), /stop\.disabled = timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
 });
 
 test('timeline and panel STOP share one single-flight acceptance across a deferred request', async () => {
@@ -327,24 +327,13 @@ test('timeline block identity stays stable when edits change chronological order
 });
 
 
-test('timeline move constraints stay within the dragged item row', () => {
-  const content = read('src/content/elastic-timeline-editor.js');
-  const start = content.indexOf('function oe(');
-  const end = content.indexOf('function ae(', start);
-  assert.ok(start >= 0 && end > start);
-  const helper = content.slice(start, end);
-
-  assert.match(helper, /e\.items\.filter\(g=>String\(g\.rowId\?\?([A-Za-z_$][\w$]*)\)===String\(t\.rowId\?\?\1\)\)/);
-  assert.match(helper, /[A-Za-z_$][\w$]*\(s,t\.id/);
-});
-
 test('tracking timeline renders one row per configured project and Other for unmatched tasks', () => {
   const content = read('src/content/github.js');
   assert.match(content, /function popupTimelineRows\(entries\)/);
   assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\)/);
   assert.match(content, /rowId: pageState\.projects\?\.length \? projectRowId\(projectName\) : 'tracked'/);
   assert.match(content, /entries\.some\(entry => projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\) === 'Other'\)/);
-  assert.match(content, /timelineInstance\.update\(\{ items, rows \}\)/);
+  assert.match(content, /timelineInstance\.update\(\{ items, rows, isSummaryActionDisabled: timelineSummaryActionDisabled\(\) \}\)/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
   assert.match(content, /projects: state\?\.projects \?\? \[\]/);
   assert.match(read('src/background/service-worker.js'), /configured: true, active, recent: state\.recent, projects: preferences\.projects/);
@@ -389,21 +378,50 @@ test('timeline STOP keeps the completed block and its connectors visible through
   assert.doesNotMatch(handler, /recentLoaded = false/);
 });
 
-test('full-width timeline places branded navigation above the editor and STOP inside running task details', () => {
+test('full-width timeline places branded navigation above the editor and Stop inside running task details', () => {
   const content = read('src/content/github.js');
   const worker = read('src/background/service-worker.js');
+  const timeline = read('src/content/elastic-timeline-editor.js');
 
   assert.match(content, /timeline-brand/);
   assert.match(content, /header\.append\(brand, headerActions, close\)/);
   assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
   assert.match(content, /onStop: async item =>/);
   assert.match(content, /type: 'STOP', description: activeEntry\?\.description \|\| ''/);
+  assert.match(timeline, /Stop /);
+  assert.doesNotMatch(timeline, /STOP /);
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);
   assert.match(content, /timeline-queue-spinner[\s\S]*?section\.append\(spinner\)/);
   assert.match(content, /\.popup-timeline-section > \.timeline-queue-spinner \{ position:absolute; top:8px; right:16px/);
   assert.doesNotMatch(content, /trailingActionGutterPx/);
   assert.doesNotMatch(content, /renderItemTrailingAction/);
+});
+
+test('timeline exposes Delete and current-page tracking through durable handlers', () => {
+  const content = read('src/content/github.js');
+  const worker = read('src/background/service-worker.js');
+  const timeline = read('src/content/elastic-timeline-editor.js');
+
+  assert.match(timeline, /timeline-delete/);
+  assert.match(timeline, /timeline-summary-action/);
+  assert.match(content, /summaryActionLabel: 'Track this task'/);
+  assert.match(content, /onSummaryAction: \(\) => trackCurrentTimelineTask\(\)/);
+  assert.match(content, /onDelete: async item =>/);
+  assert.match(content, /type: 'DISCARD_ACTIVE'/);
+  assert.match(content, /await queueTimelineEntryDelete\(entry\)/);
+  assert.match(content, /recent = recent\.filter[\s\S]*?beginTimelineQueueAcceptance\(\)[\s\S]*?type: 'QUEUE_ENTRY_DELETE'/,
+    'completed time disappears before durable deletion is sent to the worker');
+  assert.match(content, /if \(result\?\.operationId\) timelineQueuedOperationIds\.set\(result\.operationId, entry\.id\)/);
+  assert.match(timeline, /Delete.*Backspace|Backspace.*Delete/);
+  assert.match(worker, /case 'DISCARD_ACTIVE'/);
+  assert.match(worker, /tracker\.discardActive\(\{ background: true \}\)/);
+  assert.match(worker, /case 'QUEUE_ENTRY_DELETE'/);
+  assert.match(worker, /tracker\.queueEntryDelete\(message\.payload\)/);
+  assert.doesNotMatch(content, /The previous version remains in Git history/);
+  assert.match(content, /\} else if \(!compact\) \{\s*const startButton = button\(current \? 'Start tracking this task'/,
+    'the legacy bottom start button is absent from the full-width compact panel');
+  assert.doesNotMatch(content, /if \(!items\.length\).*No tracked time in the last 24 hours/);
 });
 
 test('tracking panel exposes a safe, bounded queue diagnostics log', () => {

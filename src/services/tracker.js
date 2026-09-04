@@ -441,6 +441,31 @@ export class TrackerService {
     return { entry, pending: true };
   }
 
+  async discardActive({ background = false } = {}) {
+    const discarded = await this.queueDiscardActive();
+    if (!background) await this.syncPending();
+    const pending = (await this.store.getState()).pendingWrites.some(operation => operation.id === discarded.operationId);
+    return { id: discarded.id, operationId: discarded.operationId, pending };
+  }
+
+  async queueDiscardActive() {
+    const queuedAt = this.clock();
+    return this.mutateState(state => {
+      const active = state.activeCache;
+      if (!active) throw new Error('No timer is running');
+      validateActiveTimer(active);
+      const operation = {
+        operation: 'discardActive', id: createUlid(queuedAt.getTime() + (state.pendingWrites ?? []).length),
+        status: 'pending', retryCount: 0, stage: 'discardActive', activeSnapshot: stripInternal(active),
+        activeSha: active._sha, queuedAt: queuedAt.toISOString(), lastError: '',
+      };
+      return { pendingWrites: [...(state.pendingWrites ?? []), operation], activeCache: null };
+    }).then(state => {
+      const operation = state.pendingWrites.at(-1);
+      return { id: operation.activeSnapshot.id, operationId: operation.id, pending: true };
+    });
+  }
+
   async stopInternal(description = '') {
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).some(operation => operation.nextActive)) {
@@ -674,7 +699,7 @@ export class TrackerService {
 
   async rebaseQueuedEntryEdit(operation) {
     const operationType = operation.operation ?? operation.stage;
-    const requests = operationType === 'editEntry' ? [operation.request] : operation.request?.entries;
+    const requests = ['editEntry', 'deleteEntry'].includes(operationType) ? [operation.request] : operation.request?.entries;
     if (!Array.isArray(requests) || !requests.length) throw new Error('The saved edit is incomplete and cannot be retried.');
     const sources = new Map();
     for (const request of requests) {
@@ -685,7 +710,7 @@ export class TrackerService {
       if (position < 0) throw new TrackerConflictError('The edited entry no longer exists in the latest Activity data. Reload Activity and review it before editing again.', 'queued_entry_missing');
       return { ...request, originalSha: source.sha, index: position, original: stripInternal(source.entries[position]) };
     });
-    operation.request = operationType === 'editEntry' ? rebased[0] : { ...operation.request, entries: rebased };
+    operation.request = ['editEntry', 'deleteEntry'].includes(operationType) ? rebased[0] : { ...operation.request, entries: rebased };
   }
 
   async compactPendingQueue() {
@@ -707,7 +732,7 @@ export class TrackerService {
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
             await this.persistQueueOperation(operation);
           } else {
-            if (!['editEntry', 'editEntries'].includes(operationType)) break;
+            if (!['editEntry', 'editEntries', 'deleteEntry'].includes(operationType)) break;
             operation.operation ??= operationType;
             await this.rebaseQueuedEntryEdit(operation);
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
@@ -752,6 +777,30 @@ export class TrackerService {
               return persisted && !hasLaterEntryEdit(latest.pendingWrites, operation.id, entry.id) ? persisted : entry;
             }) };
           } });
+          continue;
+        }
+        if (operation.operation === 'deleteEntry') {
+          let result;
+          try { result = await this.deleteEntry(operation.request, { updateCache: false }); }
+          catch (error) {
+            if (!(error instanceof TrackerConflictError)) throw error;
+            await this.rebaseQueuedEntryEdit(operation);
+            result = await this.deleteEntry(operation.request, { updateCache: false });
+          }
+          const index = queue.findIndex(item => item.id === operation.id);
+          if (index >= 0) queue.splice(index, 1);
+          await this.persistQueueOperation(operation, { remove: true, savedEntries: result.entries, patch: latest => ({
+            recentCache: replaceCachedFiles(latest.recentCache, result.entries, [operation.request.path]),
+          }) });
+          continue;
+        }
+        if (operation.operation === 'discardActive') {
+          await this.clearMatchingActive(operation);
+          const index = queue.findIndex(item => item.id === operation.id);
+          if (index >= 0) queue.splice(index, 1);
+          await this.persistQueueOperation(operation, { remove: true, patch: latest => ({
+            activeCache: sameTimer(latest.activeCache, operation.activeSnapshot) ? null : latest.activeCache,
+          }) });
           continue;
         }
         if (operation.operation === 'editActiveStart') {
@@ -824,7 +873,7 @@ export class TrackerService {
         operation.lastError = error.message || 'GitHub is temporarily unreachable';
         operation.status = error instanceof TrackerConflictError ? 'conflict' : 'pending';
         operation.conflictReason = error instanceof TrackerConflictError
-          ? (error.reason || (['editEntry', 'editEntries'].includes(operation.operation) ? 'queued_entry_edit_conflict' : '')) : '';
+          ? (error.reason || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation.operation) ? 'queued_entry_edit_conflict' : '')) : '';
         const remoteConflict = error instanceof TrackerConflictError && operation.stage === 'startNext' ? error.remoteActive : null;
         const keepPendingTarget = operation.nextActive && (!remoteConflict && (!(error instanceof TrackerConflictError) || operation.stage === 'startNext'));
         await this.persistQueueOperation(operation, { patch:
@@ -843,7 +892,7 @@ export class TrackerService {
     const state = await this.store.getState();
     const operation = (state.pendingWrites ?? []).find(item => item.id === id);
     if (!operation || operation.status !== 'conflict') throw new Error('Only a pending conflict can be resolved');
-    if (['editEntry', 'editEntries'].includes(operation.operation)) {
+    if (['editEntry', 'editEntries', 'deleteEntry'].includes(operation.operation)) {
       if (action === 'discard_queued_edit') {
         await this.mutateState(latest => {
           const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
@@ -1019,8 +1068,11 @@ export class TrackerService {
       }
     }));
     files = await this.backfillIssueTitles(files, knownTitles);
-    const persisted = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
+    const remoteEntries = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
     const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [];
+    const queuedDeletions = new Set(pendingWrites.filter(operation => operation.operation === 'deleteEntry')
+      .map(operation => `${operation.request?.path}\u0000${operation.request?.original?.id}`));
+    const persisted = remoteEntries.filter(entry => !queuedDeletions.has(`${entry._path}\u0000${entry.id}`));
     const activeCache = await this.backfillActiveIssueTitle(state.activeCache, knownTitles);
     const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation.operation) && operation.entry
       && startDate(operation.entry) >= earliest && startDate(operation.entry) <= today && !persisted.some(entry => sameTimer(entry, operation.entry)))
@@ -1069,6 +1121,26 @@ export class TrackerService {
         && operation.request?.path === path && operation.request?.original?.id === original.id)?.id,
       pending: true,
     }));
+  }
+
+  async queueEntryDelete({ path, originalSha, index, original }) {
+    const queuedAt = this.clock();
+    return this.mutateState(state => {
+      const cached = (state.recentCache ?? []).find(entry => entry.id === original?.id && entry._path === path);
+      if (!cached) throw new TrackerConflictError('This time entry is no longer available locally. Reload before deleting.');
+      const pendingWrites = [...(state.pendingWrites ?? [])];
+      const operation = {
+        operation: 'deleteEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
+        stage: 'deleteEntry', request: { path, originalSha, index, original: stripInternal(cached) },
+        queuedAt: queuedAt.toISOString(), lastError: '',
+      };
+      pendingWrites.push(operation);
+      const recentCache = (state.recentCache ?? []).filter(entry => !(entry.id === cached.id && entry._path === path));
+      return { pendingWrites, recentCache };
+    }).then(state => {
+      const operation = state.pendingWrites.at(-1);
+      return { operationId: operation?.operation === 'deleteEntry' ? operation.id : null, pending: true };
+    });
   }
 
   async queueEntriesEdit({ entries }) {
@@ -1311,7 +1383,7 @@ export class TrackerService {
     }
   }
 
-  async deleteEntry({ path, originalSha, index, original }) {
+  async deleteEntry({ path, originalSha, index, original }, { updateCache = true } = {}) {
     const file = await this.readMonthly(path);
     if (file.sha !== originalSha) throw new TrackerConflictError('This monthly time file changed after the panel loaded. Reload before deleting.');
     const located = locateEntry(file.entries, index, original);
@@ -1322,7 +1394,10 @@ export class TrackerService {
         { path: file.path, sha: file.sha, text: serializeMonthlyRecords(entries) || null },
       ], `time: delete ${this.user} ${file.month}`, { remove: [file.entries[located]] });
       const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: file.month, path, sha: blobShas[path] ?? null });
-      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
+      if (updateCache) {
+        const state = await this.store.getState();
+        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
+      }
       return { deleted: true, entries: saved };
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('This monthly time file changed while deleting. Reload.'); throw error; }
   }

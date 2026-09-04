@@ -411,7 +411,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'SYNC',
+  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
   'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
@@ -569,6 +569,11 @@ async function handle(message, sender) {
       if (result.pending) requestPendingSync();
       return result;
     }
+    case 'DISCARD_ACTIVE': {
+      const result = await tracker.discardActive({ background: true });
+      if (result.pending) requestPendingSync();
+      return result;
+    }
     case 'SYNC': return tracker.syncPending();
     case 'LOAD_RECENT': {
       if (!message.menuData) return tracker.loadRecent(50);
@@ -584,6 +589,11 @@ async function handle(message, sender) {
     case 'EDIT_ACTIVE_START': return tracker.editActiveStart(message.payload);
     case 'QUEUE_ENTRY_EDIT': {
       const result = await tracker.queueEntryEdit(message.payload);
+      requestPendingSync();
+      return result;
+    }
+    case 'QUEUE_ENTRY_DELETE': {
+      const result = await tracker.queueEntryDelete(message.payload);
       requestPendingSync();
       return result;
     }
@@ -626,7 +636,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type);
-    const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK'].includes(message?.type);
+    const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE'].includes(message?.type);
     const attempt = () => direct ? handle(message, sender)
       : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))
         : executor.run(() => handle(message, sender));
@@ -644,7 +654,7 @@ function hasRunnablePending(queue) {
   const operation = first.operation ?? first.stage;
   const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
   return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
-    || (['editEntry', 'editEntries'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+    || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
 }
 function syncPendingNow() {
   if (pendingSync) return pendingSync;

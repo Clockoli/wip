@@ -112,7 +112,7 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.doesNotMatch(worker, /function requestPendingSync\(\) \{[^}]*syncPendingNow\(\)/);
   assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
   assert.match(worker, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
-  assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
+  assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\)[\s\S]*sync-pending-now/,
     'MV3 retry alarms must continue for safely rebased entry edits and stop only for a missing record or an unsafe conflict');
   assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);

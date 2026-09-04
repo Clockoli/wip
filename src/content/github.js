@@ -47,6 +47,7 @@
   const timelineOptimisticCompletions = new Map();
   let timelineStartInFlight = false;
   let timelineStopInFlight = false;
+  let timelineDeleteInFlight = false;
   let timelineScrollToRightPending = false;
   const inlineQueuedOperationIds = new Set();
   const queueDiagnostics = [];
@@ -706,7 +707,7 @@
     const operation = first.operation ?? first.stage;
     const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
     return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
-      || (['editEntry', 'editEntries'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+      || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
   }
 
   function visiblePanelStateKey(state = pageState) {
@@ -1031,10 +1032,8 @@
   }
 
   async function deleteRecentEntry(entry, node) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?
-
-The previous version remains in Git history.`)) return;
-    const controls = Array.from(node.parentElement?.children ?? [node]);
+    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
+    const controls = node ? Array.from(node.parentElement?.children ?? [node]) : [];
     for (const control of controls) control.disabled = true;
     try {
       const result = await send({ type: 'DELETE_ENTRY', payload: { path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
@@ -1536,10 +1535,13 @@ The previous version remains in Git history.`)) return;
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
         isPending: Boolean(entry._pending),
-        isStartDisabled: timelineStartInFlight || timelineStopInFlight || sameTask(entry, pageState.active)
+        isStartDisabled: timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
+        isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
+          || Boolean(!entry._active && entry._pending)
+          || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
       };
     });
     return { items, rows, byId };
@@ -1554,11 +1556,17 @@ The previous version remains in Git history.`)) return;
     return rows;
   }
 
+  function timelineSummaryActionDisabled() {
+    const current = taskFromLocation();
+    return !current || sameTask(current, pageState.active) || timelineStartInFlight || timelineStopInFlight
+      || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+  }
+
   function refreshMountedTimeline() {
     if (!timelineInstance || !timelineWindow) return false;
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows });
+    timelineInstance.update({ items, rows, isSummaryActionDisabled: timelineSummaryActionDisabled() });
     return true;
   }
 
@@ -1630,6 +1638,39 @@ The previous version remains in Git history.`)) return;
     if (!refreshMountedTimeline()) renderUi();
   }
 
+  async function trackCurrentTimelineTask() {
+    if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
+    timelineStartInFlight = true;
+    refreshMountedTimeline();
+    let startContext = null;
+    try {
+      const task = popupMode ? await refreshPopupTask() : taskFromLocation();
+      if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
+      if (sameTask(task, pageState.active)) return;
+      const switching = Boolean(pageState.active);
+      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task' });
+      const result = await send(switching
+        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' }
+        : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
+      const active = switching ? result?.active : result;
+      if (active?.id) {
+        timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
+        pageState = { ...pageState, active: timelineAcceptedActive };
+        refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+      }
+      void refreshMountedTimelineState().catch(setError);
+    } catch (error) {
+      if (startContext) rollbackTimelineStart(startContext);
+      setError(error);
+      throw error;
+    } finally {
+      if (startContext) finishTimelineQueueAcceptance(startContext.acceptanceId);
+      refreshTimelineQueueIndicator();
+      timelineStartInFlight = false;
+      refreshMountedTimeline();
+    }
+  }
+
   function beginTimelineQueueAcceptance() {
     const id = `local:${++timelineQueueAcceptanceSequence}`;
     timelineQueueAcceptances.add(id);
@@ -1686,6 +1727,37 @@ The previous version remains in Git history.`)) return;
     void refreshMountedTimelineState().catch(setError);
   }
 
+  async function queueTimelineEntryDelete(entry) {
+    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
+    const previousRecent = recent;
+    const previousSummaries = summaryFrames;
+    const entryDate = entry.entryDate || entry.startedAt.slice(0, 10);
+    recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path));
+    timelineOptimisticCompletions.delete(entry.id);
+    summaryFrames = summaryFrames.map(frame => entryDate >= frame.startDate && entryDate <= frame.endDate
+      ? { ...frame, seconds: Math.max(0, frame.seconds - entry.durationSeconds) } : frame);
+    const acceptanceId = beginTimelineQueueAcceptance();
+    refreshTimelineQueueIndicator();
+    refreshMountedTimeline();
+    recordTimelineQueueDiagnostic('Delete time entry: accepted locally and queued for GitHub.');
+    try {
+      const result = await send({ type: 'QUEUE_ENTRY_DELETE', payload: {
+        path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry),
+      } });
+      if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+    } catch (error) {
+      recent = previousRecent;
+      summaryFrames = previousSummaries;
+      recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
   function renderPopupTimeline() {
     const section = el('section', undefined, 'popup-timeline-section');
     const createTimeline = globalThis.ElasticTimelineEditor?.createElasticTimeline;
@@ -1699,7 +1771,6 @@ The previous version remains in Git history.`)) return;
     timelineView ||= { start: defaultStart, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
-    if (!items.length) { section.append(el('div', 'No tracked time in the last 24 hours.', 'muted')); return section; }
     const timelineShell = el('div', undefined, `timeline-shell${timelineSaving ? ' is-saving' : ''}`);
     timelineShell.setAttribute('aria-busy', String(timelineSaving));
     timelineShell.inert = timelineSaving;
@@ -1729,9 +1800,12 @@ The previous version remains in Git history.`)) return;
         view: timelineView,
         onViewChange: view => { timelineView = view; },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
+        summaryActionLabel: 'Track this task',
+        isSummaryActionDisabled: timelineSummaryActionDisabled(),
+        onSummaryAction: () => trackCurrentTimelineTask(),
         onStop: async item => {
           const activeEntry = timelineEntriesById.get(item.id);
-          if (!activeEntry || !beginTimelineStop()) return;
+          if (!activeEntry || timelineDeleteInFlight || !beginTimelineStop()) return;
           try {
             const result = await send({ type: 'STOP', description: activeEntry?.description || '' });
             if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
@@ -1747,9 +1821,37 @@ The previous version remains in Git history.`)) return;
           } catch (error) { setError(error); throw error; }
           finally { finishTimelineStop(); }
         },
+        onDelete: async item => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return;
+          if (!entry._active) {
+            if (entry._pending) return;
+            await queueTimelineEntryDelete(entry);
+            return;
+          }
+          if (!confirm('Delete this running timer without saving its tracked time?')) return;
+          timelineDeleteInFlight = true;
+          const acceptanceId = beginTimelineQueueAcceptance();
+          refreshTimelineQueueIndicator();
+          refreshMountedTimeline();
+          try {
+            const result = await send({ type: 'DISCARD_ACTIVE' });
+            if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, entry)) timelineAcceptedActive = null;
+            pageState = { ...pageState, active: null };
+            refreshMountedTimeline();
+            void refreshMountedTimelineState().catch(setError);
+          } catch (error) { setError(error); throw error; }
+          finally {
+            finishTimelineQueueAcceptance(acceptanceId);
+            refreshTimelineQueueIndicator();
+            timelineDeleteInFlight = false;
+            refreshMountedTimeline();
+          }
+        },
         onStart: async item => {
           const entry = timelineEntriesById.get(item.id);
-          if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || sameTask(entry, pageState.active)) return;
+          if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return;
           timelineStartInFlight = true;
           refreshMountedTimeline();
           try {
@@ -1889,7 +1991,7 @@ The previous version remains in Git history.`)) return;
         const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
         const switchToCurrent = Boolean(!same && current);
         const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save', switchToCurrent ? 'primary wide' : 'danger wide', async (event, node) => {
-          if (timelineStartInFlight || !beginTimelineStop()) return;
+          if (timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return;
           try {
             const hours = (Date.now() - new Date(active.startedAt).getTime()) / 3600000;
             if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
@@ -1909,12 +2011,12 @@ The previous version remains in Git history.`)) return;
           } catch (error) { node.disabled = false; setError(error); }
           finally { finishTimelineStop(); }
         });
-        stop.disabled = timelineStartInFlight || timelineStopInFlight
+        stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
         }
-      } else {
+      } else if (!compact) {
         const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
-          if (timelineStartInFlight || timelineStopInFlight) return;
+          if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
           timelineStartInFlight = true;
           node.disabled = true;
           refreshMountedTimeline();
@@ -1944,7 +2046,7 @@ The previous version remains in Git history.`)) return;
             refreshMountedTimeline();
           }
         });
-        startButton.disabled = !current || timelineStopInFlight
+        startButton.disabled = !current || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict');
         body.append(startButton);
         if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));

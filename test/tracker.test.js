@@ -193,6 +193,34 @@ test('queued completed-entry edit updates local cache immediately and saves late
   assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].endedAt, '2026-08-18T10:00:00.000Z');
 })
 
+test('queued completed-entry deletion disappears locally immediately and syncs later', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntryDelete({
+    path, originalSha: 'monthly-sha', index: 0, original,
+  });
+
+  assert.equal(accepted.pending, true);
+  assert.ok(accepted.operationId);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].operation, 'deleteEntry');
+  assert.deepEqual(store.value.recentCache, []);
+  const menuWhilePending = await tracker.loadMenuData();
+  assert.deepEqual(menuWhilePending.recent, [], 'a remote refresh must not resurrect a locally deleted queued entry');
+  assert.equal(menuWhilePending.pendingCount, 1);
+
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
+})
+
 test('sync compacts superseded queued edits for the same completed entry into one remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
@@ -1622,6 +1650,42 @@ test('background Start durably queues locally before any GitHub request', async 
   await tracker.syncPending();
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(store.value.activeCache._pending, undefined);
+});
+
+test('discarding a queued active timer removes it without creating a completed entry', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const started = await tracker.start('https://example.com/discard-me', 'Discard me', '', { background: true });
+
+  const discarded = await tracker.discardActive({ background: true });
+
+  assert.equal(discarded.id, started.id);
+  assert.equal(discarded.pending, true);
+  assert.equal(store.value.activeCache, null, 'discard is accepted locally before GitHub synchronization');
+  assert.deepEqual(store.value.pendingWrites.map(operation => operation.operation), ['startTimer', 'discardActive']);
+  assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0);
+
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal([...github.files.keys()].some(path => path.startsWith('times/')), false);
+});
+
+test('discarding a persisted active timer deletes only its active file and saves no time', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.json', serializeActiveRecord(active()), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, {
+    user: 'alice', path: 'active/alice.json', sha: 'active-sha',
+  });
+  const tracker = service({ github, store });
+
+  await tracker.discardActive({ background: true });
+  assert.equal(store.value.activeCache, null);
+  assert.equal(github.files.has('active/alice.json'), true, 'remote deletion waits for queued synchronization');
+
+  await tracker.syncPending();
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.deletes.length, 1);
+  assert.equal([...github.files.keys()].some(path => path.startsWith('times/')), false);
 });
 
 test('queued background Start adopts an already-created matching timer after any GitHub create rejection', async () => {
