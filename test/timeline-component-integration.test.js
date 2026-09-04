@@ -5,6 +5,28 @@ import fs from 'node:fs';
 const root = new URL('../', import.meta.url);
 const read = relative => fs.readFileSync(new URL(relative, root), 'utf8');
 
+test('Elastic Timeline source and complete test harness live inside Clockoli', () => {
+  const clockoliPackage = JSON.parse(read('package.json'));
+  const timelinePackage = JSON.parse(read('packages/elastic-timeline-editor/package.json'));
+
+  assert.equal(timelinePackage.name, 'elastic-timeline-editor');
+  assert.equal(clockoliPackage.engines.node, '>=20.19.0');
+  assert.equal(timelinePackage.engines.node, '>=20.19.0');
+  assert.deepEqual(clockoliPackage.workspaces, ['packages/*']);
+  assert.equal(clockoliPackage.scripts['test:clockoli'], 'node --test test/*.test.js');
+  assert.equal(clockoliPackage.scripts['test:timeline'], 'npm run test:all --workspace elastic-timeline-editor && npm run build:timeline && git diff --exit-code -- src/content/elastic-timeline-editor.css src/content/elastic-timeline-editor.js');
+  assert.doesNotMatch(clockoliPackage.scripts.test, /run-elastic-timeline-suite|\.\.\/timeline/);
+  assert.equal(timelinePackage.scripts['test:all'], 'npm test && npm run test:e2e && npm run test:package');
+  for (const relative of [
+    'packages/elastic-timeline-editor/src/timeline/editor.js',
+    'packages/elastic-timeline-editor/tests/constraints.test.js',
+    'packages/elastic-timeline-editor/e2e/editor.spec.js',
+    'packages/elastic-timeline-editor/scripts/package-smoke.mjs',
+  ]) {
+    assert.equal(fs.existsSync(new URL(relative, root)), true, `${relative} must be part of Clockoli`);
+  }
+});
+
 test('GitHub panel uses the standalone Elastic Timeline Editor and has no legacy timeline experiment', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const content = read('src/content/github.js');

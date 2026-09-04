@@ -1,11 +1,11 @@
 # Contributing to Clockoli
 
-Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The project has no runtime or development package dependencies. Node.js is used for tests and validation, and Python is used only to build deterministic release archives.
+Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The extension has no runtime package dependencies. The framework-neutral timeline component, its build tooling, and its complete test harness live in this repository as an npm workspace. Node.js is used for tests and validation, and Python is used only to build deterministic release archives.
 
 ## Prerequisites
 
 - Git
-- Node.js 22 (the version used by CI)
+- Node.js 20.19 or newer; CI uses Node.js 22
 - npm
 - Python 3 for release packaging
 - Chrome or another Chromium browser, version 102 or newer, for manual browser verification
@@ -15,11 +15,12 @@ Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native Ja
 ```bash
 git clone https://github.com/Clockoli/clockoli.git
 cd clockoli
+npm ci
 npm test
 npm run check
 ```
 
-There is no build or transpilation step. Chrome loads the files in the checkout directly.
+Chrome loads checked-in extension files directly. When changing the timeline source under `packages/elastic-timeline-editor/`, regenerate its content-script IIFE and CSS with `npm run build:timeline` before testing or loading the extension.
 
 To load the extension:
 
@@ -45,6 +46,7 @@ Use a private test repository and test credentials. Never commit tokens, reposit
 | `src/services/` | Tracking, onboarding, reports, metadata, recovery, and exchange-rate workflows |
 | `src/storage/chrome-store.js` | Extension-origin IndexedDB state and migrations |
 | `src/popup/`, `src/options/`, `src/reports/`, `src/tasks/`, `src/times/` | Extension pages and their presentation logic |
+| `packages/elastic-timeline-editor/` | Timeline source, public types, demo, unit tests, Chromium E2E tests, package smoke test, and content-script build |
 | `test/` | Node test suite, behavioral contracts, security checks, and release checks |
 | `scripts/` | Extension validation and deterministic release packaging |
 | `docs/` | User documentation and normative data-format documentation |
@@ -106,7 +108,7 @@ npm run check
 git diff --check
 ```
 
-`npm run check` runs extension validation and release-inventory validation. Do not replace it with only a syntax check.
+`npm test` runs both Clockoli's Node suite and the complete internal timeline suite, including Chromium E2E and package-consumer smoke coverage. `npm run check` runs extension validation and release-inventory validation. Do not replace either command with a narrower check.
 
 ## Browser verification
 

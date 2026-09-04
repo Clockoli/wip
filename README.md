@@ -134,12 +134,15 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 
 ## Development
 
-Requires Node.js 20+. There are no runtime or test dependencies.
+Requires Node.js 20.19+ (CI uses Node.js 22). The extension has no runtime package dependencies. Its timeline source and test tooling are included in the repository as an npm workspace.
 
 ```bash
+npm ci
 npm test
 npm run check
 ```
+
+Timeline changes belong in `packages/elastic-timeline-editor/`. Run `npm run build:timeline` to regenerate the checked-in content-script IIFE and CSS under `src/content/`.
 
 `npm run check` validates the Manifest V3 package inventory, referenced files, security invariants, and JavaScript syntax.
 
@@ -157,5 +160,6 @@ src/reports/      analytics and export page
 src/services/     tracking, sync, repository, and reporting services
 src/storage/      extension-origin IndexedDB adapter
 src/tasks/        recently tracked work page
-test/             dependency-free Node tests
+packages/elastic-timeline-editor/  timeline source, build, unit, E2E, and package tests
+test/             Clockoli Node tests
 ```
