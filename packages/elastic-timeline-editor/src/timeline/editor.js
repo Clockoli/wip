@@ -507,7 +507,7 @@ export function createElasticTimeline(container, initialProps) {
       cellElement.style.width = `${cell.width}px`
       const label = createElement('span', 'elastic-timeline__cell-label')
       label.textContent = cell.kind === 'hour'
-        ? (cell.empty && cell.end > cell.start
+        ? (cell.empty && cell.end - cell.start > HOUR_MS
             ? `${hourFormatter.format(new Date(cell.start))} - ${hourFormatter.format(new Date(cell.end))}`
             : hourFormatter.format(new Date(cell.start)))
         : dayFormatter.format(new Date(cell.start))

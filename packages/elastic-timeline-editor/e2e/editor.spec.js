@@ -204,6 +204,56 @@ test('day-scale cells never render hour labels', async ({ page }) => {
   expect(labels.some(label => /^\d{2}:\d{2}$/.test(label))).toBe(false)
 })
 
+test('empty hour labels use ranges only for gaps longer than one hour', async ({ page }) => {
+  const now = await page.evaluate(() => window.__DEMO_NOW__)
+  const start = await page.evaluate((timestamp) => {
+    const value = new Date(timestamp)
+    value.setHours(10, 0, 0, 0)
+    return value.getTime()
+  }, now)
+  const labelsFor = async (items) => {
+    await page.evaluate(({ start, hour, items }) => window.__TIMELINE__.update({
+      items,
+      now: start + 3 * hour,
+      view: { start, end: start + 3 * hour, focusedAt: start + 3 * hour },
+    }), { start, hour: HOUR, items })
+    return page.locator('[data-cell-kind="hour"] .elastic-timeline__cell-label:visible').allTextContents()
+  }
+
+  expect(await labelsFor([{
+    id: 'tracked-at-twelve',
+    title: 'Tracked at twelve',
+    startedAt: start + 2 * HOUR,
+    endedAt: start + 3 * HOUR,
+    isEditable: false,
+  }])).toEqual(['10:00 - 12:00', '12:00'])
+
+  expect(await labelsFor([
+    {
+      id: 'tracked-at-ten',
+      title: 'Tracked at ten',
+      startedAt: start,
+      endedAt: start + HOUR,
+      isEditable: false,
+    },
+    {
+      id: 'tracked-at-twelve-again',
+      title: 'Tracked at twelve again',
+      startedAt: start + 2 * HOUR,
+      endedAt: start + 3 * HOUR,
+      isEditable: false,
+    },
+  ])).toEqual(['10:00', '11:00', '12:00'])
+
+  await page.evaluate(({ start, hour }) => window.__TIMELINE__.update({
+    items: [],
+    now: start + 1.5 * hour,
+    view: { start: start + 0.5 * hour, end: start + 1.5 * hour, focusedAt: start + hour },
+  }), { start, hour: HOUR })
+  expect(await page.locator('[data-cell-kind="hour"] .elastic-timeline__cell-label:visible').allTextContents())
+    .toEqual(['10:30'])
+})
+
 test('hour-scale header covers time contiguously and groups empty gaps', async ({ page }) => {
   const now = await page.evaluate(() => window.__DEMO_NOW__)
   await page.evaluate(({ now, hour }) => window.__TIMELINE__.update({
@@ -732,7 +782,7 @@ test('running task details show a live primary Stop duration action in the top-r
   const running = page.locator('[data-item-id="running"]')
   const details = page.locator('[data-testid="timeline-details"]')
   await running.hover()
-  const stop = details.getByRole('button', { name: /^Stop \d{2}:\d{2}:\d{2}$/ })
+  const stop = details.getByRole('button', { name: /^Stop \d{2,}:\d{2}:\d{2}$/ })
   await expect(stop).toBeVisible()
   await expect(stop).toHaveClass(/elastic-timeline__details-stop/)
   const detailsBox = await details.boundingBox()
@@ -1130,7 +1180,7 @@ test('Delete is immediately left of Start tracking and Stop and invokes the sele
 
   await page.locator('[data-item-id="running"]').hover()
   const deleteRunning = details.getByRole('button', { name: 'Delete' })
-  const stop = details.getByRole('button', { name: /^Stop \d{2}:\d{2}:\d{2}$/ })
+  const stop = details.getByRole('button', { name: /^Stop \d{2,}:\d{2}:\d{2}$/ })
   ;[deleteBox, primaryBox] = await Promise.all([deleteRunning.boundingBox(), stop.boundingBox()])
   expect(deleteBox.x + deleteBox.width).toBeLessThan(primaryBox.x)
   await deleteRunning.click()
