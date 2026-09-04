@@ -71,7 +71,8 @@ function cellStats(cell, items, viewStart, viewEnd) {
   const count = chains.reduce((maximum, chain) => Math.max(maximum, chain.count), 0)
   const occupiedDuration = chains.reduce((maximum, chain) => Math.max(maximum, chain.occupiedDuration), 0)
   const footprint = count > 0
-    ? count * MINIMUM_ITEM_WIDTH + Math.max(0, count - 1) * (MINIMUM_ITEM_GAP + MINIMUM_ITEM_MOBILITY_GAP)
+    ? count * (MINIMUM_ITEM_WIDTH + MINIMUM_ITEM_GAP)
+      + Math.max(0, count - 1) * MINIMUM_ITEM_MOBILITY_GAP
     : EMPTY_CELL_MIN_WIDTH
   return { count, occupiedDuration, footprint }
 }

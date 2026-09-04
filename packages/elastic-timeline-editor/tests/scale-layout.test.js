@@ -141,7 +141,7 @@ test('canvas reserves enough dense-row space for minimum widths and pointer move
 
   const medium = createElasticScale({ viewStart, viewEnd, items, viewportWidth: 500 })
   const narrow = createElasticScale({ viewStart, viewEnd, items, viewportWidth: 320 })
-  const required = 12 * MINIMUM_ITEM_WIDTH + 11 * (MINIMUM_ITEM_GAP + MINIMUM_ITEM_MOBILITY_GAP)
+  const required = 12 * (MINIMUM_ITEM_WIDTH + MINIMUM_ITEM_GAP) + 11 * MINIMUM_ITEM_MOBILITY_GAP
 
   assert.equal(medium.width, required)
   assert.equal(narrow.width, required)
@@ -162,6 +162,27 @@ test('sortTimelineItems uses startedAt, endedAt, then stable id without mutating
   assert.deepEqual(sorted.map(({ id }) => id), ['c', 'a', 'b', 'running', 'z'])
   assert.deepEqual(input, snapshot)
   assert.notEqual(sorted, input)
+})
+
+test('short blocks stay inside their actual hour while retaining minimum hit width', () => {
+  const viewStart = new Date(2026, 0, 2, 12, 0).getTime()
+  const viewEnd = viewStart + 3 * HOUR
+  const emptyScale = createElasticScale({ viewStart, viewEnd, items: [], viewportWidth: 320 })
+  const items = [
+    item('first', emptyScale.cells[1].start + 5_000, emptyScale.cells[1].start + 6_000),
+    item('second', emptyScale.cells[2].start + 5_000, emptyScale.cells[2].start + 6_000),
+  ]
+  const scale = createElasticScale({ viewStart, viewEnd, items, viewportWidth: 320 })
+  const blocks = layoutTimelineItems({ items, scale, now: viewEnd })
+  const byId = new Map(blocks.map(block => [block.id, block]))
+
+  for (const itemValue of items) {
+    const block = byId.get(itemValue.id)
+    const cell = scale.cells.find(candidate => itemValue.startedAt >= candidate.start && itemValue.startedAt < candidate.end)
+    assert.ok(block.width >= MINIMUM_ITEM_WIDTH)
+    assert.ok(block.x >= cell.x - 1e-9, `${itemValue.id} starts before its hour`)
+    assert.ok(block.endX <= cell.endX + 1e-9, `${itemValue.id} ends after its hour`)
+  }
 })
 
 test('layout keeps twelve short sequential items in one row with minimum width and gap', () => {

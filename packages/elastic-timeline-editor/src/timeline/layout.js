@@ -142,6 +142,8 @@ function createBlocks({ items, rows, scale, now, minimumWidth }) {
     const clampedStart = Math.max(scale.viewStart, Math.min(scale.viewEnd, item.startedAt))
     const clampedEnd = Math.max(clampedStart, Math.min(scale.viewEnd, visualEndedAt))
     const desiredX = scale.toX(clampedStart)
+    const cell = scale.cells.find((candidate) => clampedStart >= candidate.start && clampedStart < candidate.end)
+      ?? scale.cells.at(-1)
     const width = Math.max(minimumWidth, scale.toX(clampedEnd) - desiredX)
     const rowId = String(itemRowId(item))
     return {
@@ -149,6 +151,8 @@ function createBlocks({ items, rows, scale, now, minimumWidth }) {
       row: rowIndexes.get(rowId) ?? 0,
       rowId,
       desiredX,
+      cellStartX: cell.x,
+      cellEndX: cell.endX,
       x: desiredX,
       width,
       endX: desiredX + width,
