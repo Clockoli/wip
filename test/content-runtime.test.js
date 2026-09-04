@@ -6,6 +6,12 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 
+test('GitHub content-script messaging fails closed after an extension-context reload', () => {
+  assert.match(source, /const runtime = globalThis\.chrome\?\.runtime;/);
+  assert.match(source, /if \(typeof runtime\?\.sendMessage !== 'function'\)/);
+  assert.match(source, /error\.code = 'extension_context_interrupted'/);
+});
+
 const createdNodes = [];
 
 class FakeNode {

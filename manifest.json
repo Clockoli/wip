@@ -5,12 +5,16 @@
   "description": "Track time on any task URL and store records in a private GitHub repository.",
   "permissions": [
     "alarms",
-    "activeTab"
+    "activeTab",
+    "storage"
   ],
   "host_permissions": [
     "https://api.github.com/*",
     "https://github.com/login/*",
     "https://api.frankfurter.dev/*"
+  ],
+  "optional_host_permissions": [
+    "https://app.clockify.me/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
@@ -40,6 +44,25 @@
         "src/content/github.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://app.clockify.me/reports/detailed*"
+      ],
+      "js": [
+        "src/addons/clockify/detailed-report-button.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://app.clockify.me/reports/detailed*"
+      ],
+      "js": [
+        "src/addons/clockify/detailed-report-capture.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [
@@ -55,6 +78,12 @@
         "src/assets/action-spin/clockoli-16-5.png", "src/assets/action-spin/clockoli-32-5.png",
         "src/assets/action-spin/clockoli-16-6.png", "src/assets/action-spin/clockoli-32-6.png",
         "src/assets/action-spin/clockoli-16-7.png", "src/assets/action-spin/clockoli-32-7.png"
+      ]
+    },
+    {
+      "matches": ["https://app.clockify.me/*"],
+      "resources": [
+        "src/assets/clockoli-32.png"
       ]
     }
   ],

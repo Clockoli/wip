@@ -388,15 +388,37 @@
   }
 
   function send(message) {
-    return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
-      if (chrome.runtime.lastError) {
-        const error = new Error(chrome.runtime.lastError.message);
+    const runtime = globalThis.chrome?.runtime;
+    if (typeof runtime?.sendMessage !== 'function') {
+      const error = new Error('Extension context invalidated.');
+      error.code = 'extension_context_interrupted';
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        runtime.sendMessage(message, response => {
+          try {
+            if (runtime.lastError) {
+              const error = new Error(runtime.lastError.message);
+              if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+              reject(error);
+              return;
+            }
+            if (!response?.ok) {
+              reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
+              return;
+            }
+            resolve(response.data);
+          } catch (error) {
+            if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+            reject(error);
+          }
+        });
+      } catch (error) {
         if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
-        return reject(error);
+        reject(error);
       }
-      if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
-      resolve(response.data);
-    }));
+    });
   }
 
   function updateTaskAnimation() {

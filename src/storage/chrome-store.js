@@ -1,4 +1,5 @@
 import { normalizeBillingSettings, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
+import { listAddons } from '../addons/registry.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
@@ -12,8 +13,10 @@ const EXCHANGE_RATE_CACHE = 'exchangeRateCache';
 const LOCAL_RECENT_DAYS = 'localRecentDays';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
+const ADDON_ENABLED = 'addonEnabled';
+const KNOWN_ADDON_IDS = new Set(listAddons().map(addon => addon.id));
 const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
-const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
+const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
 
 function generationValue(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
@@ -133,6 +136,26 @@ export class ChromeStore {
   }
 
   async patchState(patch) { await this.backend.setMany(patch); }
+
+  async getAddonSettings() {
+    const values = await this.backend.getMany([ADDON_ENABLED]);
+    const saved = values[ADDON_ENABLED];
+    const settings = {};
+    for (const id of KNOWN_ADDON_IDS) settings[id] = saved?.[id] === true;
+    return settings;
+  }
+
+  async setAddonEnabled(id, enabled) {
+    if (!KNOWN_ADDON_IDS.has(id)) throw new Error('Unknown known add-on');
+    if (typeof enabled !== 'boolean') throw new Error('Add-on enabled state must be Boolean');
+    return this.backend.mutateMany([ADDON_ENABLED], values => {
+      const current = values[ADDON_ENABLED] && typeof values[ADDON_ENABLED] === 'object' ? values[ADDON_ENABLED] : {};
+      const settings = Object.fromEntries([...KNOWN_ADDON_IDS].map(knownId => [knownId, current[knownId] === true]));
+      settings[id] = enabled;
+      return { set: { [ADDON_ENABLED]: settings }, result: enabled };
+    });
+  }
+
 
   async mutateState(mutate) {
     return this.backend.mutateMany(Object.keys(DEFAULT_STATE), values => {

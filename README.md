@@ -118,6 +118,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - [Feature guide](docs/features.md)
 - [Why Clockoli](docs/why-clockoli.md)
 - [Data, privacy, and security](docs/data-and-privacy.md)
+- [Add-ons](docs/add-ons.md): first-party packaged add-on architecture and provider boundaries.
 - [Time-data repository setup](docs/time-data-repository.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

@@ -22,3 +22,6 @@
 
 .status-detail{display:block;margin-top:3px;color:var(--fgColor-muted);font:var(--text-body-shorthand-small)}.setup-footer .link-button{color:var(--fgColor-muted);font-weight:400}
 @media(max-width:700px){.rate-row .remove-rate{grid-column:1;grid-row:auto;width:100%}}
+
+.addon-card{margin-top:18px;padding:16px;border:1px solid var(--borderColor-default);border-radius:8px;background:var(--bgColor-muted)}.addon-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.addon-heading h3{margin:0;font:var(--text-title-shorthand-small)}.addon-heading p{margin:4px 0 0;color:var(--fgColor-muted)}
+#message{position:static;z-index:auto;margin:0 0 16px}#message:empty{display:none}#message.error{padding:12px 14px;border:1px solid var(--borderColor-danger-emphasis);border-radius:8px;background:var(--bgColor-danger-muted);color:var(--fgColor-danger)}#message.success{padding:12px 14px;border:1px solid var(--borderColor-success-emphasis);border-radius:8px;background:var(--bgColor-success-muted);color:var(--fgColor-success)}

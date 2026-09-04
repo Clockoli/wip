@@ -266,6 +266,48 @@ test('task metadata rejects a GraphQL node whose URL or type does not match the 
   assert.deepEqual(await client.getTaskMetadata([issue]), new Map());
 });
 
+test('GitHub client resolves an explicitly supplied GitHub login to its immutable numeric identity', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { id: 123, login: 'octo-cat' });
+    },
+  });
+
+  assert.deepEqual(await client.getUserIdentity('octo-cat'), { id: 123, login: 'octo-cat' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.github.com/users/octo-cat');
+  assert.equal(calls[0].options.method, undefined);
+});
+
+test('GitHub identity lookup validates the requested login before fetching', async () => {
+  let calls = 0;
+  const client = new GitHubClient({ token: 'secret', fetchImpl: async () => { calls += 1; return response(200); } });
+
+  await assert.rejects(() => client.getUserIdentity('invalid/login'), /Invalid user/i);
+  assert.equal(calls, 0);
+});
+
+test('GitHub identity lookup preserves not-found errors and fails closed on malformed or mismatched responses', async () => {
+  const missing = new GitHubClient({ token: 'secret', fetchImpl: async () => response(404, { message: 'Not Found' }) });
+  await assert.rejects(() => missing.getUserIdentity('missing-user'), GitHubNotFoundError);
+
+  const rawPayload = { id: '123', login: 'not/a-login', privateData: 'do-not-expose' };
+  const malformed = new GitHubClient({ token: 'secret', fetchImpl: async () => response(200, rawPayload) });
+  await assert.rejects(() => malformed.getUserIdentity('octocat'), error => (
+    error.code === 'invalid_github_response'
+      && error.status === 502
+      && !error.message.includes(rawPayload.privateData)
+  ));
+
+  const mismatched = new GitHubClient({ token: 'secret', fetchImpl: async () => response(200, { id: 456, login: 'different-user' }) });
+  await assert.rejects(() => mismatched.getUserIdentity('octocat'), error => (
+    error.code === 'invalid_github_response' && error.status === 502
+  ));
+});
+
 test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global receiver', async () => {
   const workerFetch = async function () {
     if (this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'WorkerGlobalScope': Illegal invocation");

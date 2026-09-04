@@ -2,7 +2,8 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const MANIFEST = 'manifest.json';
-const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
+const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html', 'src/clockify-migration/preview.html'];
+const PACKAGED_ADDON_ENTRIES = ['src/addons/registry.js'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
 const SECRET_PATTERNS = [
   { label: 'GitHub token', pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b/ },
@@ -20,7 +21,7 @@ function localReferences(file, text) {
   const references = [];
   const extension = path.extname(file);
   if (extension === '.js') {
-    for (const match of text.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/g)) references.push(match[1]);
+    for (const match of text.matchAll(/^\s*import\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gm)) references.push(match[1]);
   } else if (extension === '.html') {
     for (const match of text.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.css') {
@@ -55,7 +56,7 @@ function assertRuntimePath(file) {
 
 export async function releaseInventory(root) {
   const manifest = JSON.parse(await readFile(path.join(root, MANIFEST), 'utf8'));
-  const pending = [...manifestEntries(manifest)];
+  const pending = [...manifestEntries(manifest), ...PACKAGED_ADDON_ENTRIES];
   const files = new Set([MANIFEST]);
   while (pending.length) {
     const file = pending.shift();

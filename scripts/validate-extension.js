@@ -13,9 +13,12 @@ if (manifest.version !== packageJson.version) fail('Manifest and package version
 if (manifest.manifest_version !== 3) fail('Manifest V3 is required');
 if (Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
 if (manifest.background?.type !== 'module') fail('Background worker must be an ES module');
-if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*', 'https://github.com/login/*', 'https://api.frankfurter.dev/*'])) fail('Host permissions must be limited to the GitHub API, OAuth login, and Frankfurter exchange-rate endpoints');
-for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab'].includes(permission)) fail(`Unexpected permission: ${permission}`);
-if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
+const permanentHostPermissions = ['https://api.github.com/*', 'https://github.com/login/*', 'https://api.frankfurter.dev/*'];
+const clockifyOptionalHostPermission = ['https://app.clockify.me/*'];
+if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(permanentHostPermissions)) fail('Permanent host permissions must be limited to the GitHub API, OAuth login, and Frankfurter exchange-rate endpoints');
+if (JSON.stringify(manifest.optional_host_permissions) !== JSON.stringify(clockifyOptionalHostPermission)) fail('Optional host permissions must contain only the exact Clockify app origin');
+for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab', 'storage'].includes(permission)) fail(`Unexpected permission: ${permission}`);
+if (!(manifest.permissions || []).includes('storage')) fail('chrome.storage permission is required for the session-only migration preview handoff');
 
 const referenced = [manifest.background.service_worker, manifest.action.default_popup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 for (const script of manifest.content_scripts || []) referenced.push(...script.js);
@@ -46,7 +49,10 @@ for (const file of jsFiles) {
   if (/\.(innerHTML|outerHTML)\s*=/.test(code)) fail(`Unsafe HTML assignment in ${file}`);
   if (/\beval\s*\(|new\s+Function\s*\(/.test(code)) fail(`Dynamic code execution in ${file}`);
 }
-const content = read('src/content/github.js');
-if (/Authorization|Bearer|\btoken\b/i.test(content)) fail('Content script must not contain credential handling');
+for (const file of (manifest.content_scripts || []).flatMap(item => item.js || [])) {
+  const content = read(file);
+  if (/Authorization|Bearer|\btoken\b/i.test(content)) fail(`Content script must not contain credential handling: ${file}`);
+  if (/\bchrome\.storage\b/.test(content)) fail(`Content script must not access extension storage: ${file}`);
+}
 
 console.log(`Validated Manifest V3 extension: ${referenced.length} manifest files, ${jsFiles.length} JavaScript files.`);

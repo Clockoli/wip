@@ -1,5 +1,6 @@
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { parseRateFields } from '../domain/local-settings.js';
+import { getAddon } from '../addons/registry.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -522,6 +523,28 @@ function downloadText(text, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function renderAddonSettings(settings, hasClockifyAccess = false) {
+  const descriptor = getAddon('clockify-migration');
+  $('clockify-addon-title').textContent = descriptor.title;
+  $('clockify-addon-description').textContent = descriptor.description;
+  $('clockify-addon-origin').textContent = descriptor.requestedOrigins.join(', ');
+  $('clockify-addon-capability').textContent = descriptor.capabilities.includes('import_completed_records') ? 'Capability: import completed records only.' : '';
+  const enabled = settings[descriptor.id] === true;
+  $('clockify-detailed-report-link').hidden = !(enabled && hasClockifyAccess);
+  $('clockify-addon-enabled').dataset.enabled = String(enabled);
+  $('clockify-addon-status').textContent = enabled ? 'Enabled' : 'Disabled';
+  $('clockify-addon-status').className = `badge${enabled ? ' ready' : ''}`;
+  $('clockify-addon-enabled').textContent = enabled ? 'Disable Clockify migration' : 'Enable Clockify migration';
+}
+
+async function refreshAddonSettings() {
+  const [settings, hasClockifyAccess] = await Promise.all([
+    send({ type: 'GET_ADDON_SETTINGS' }),
+    chrome.permissions.contains({ origins: ['https://app.clockify.me/*'] }),
+  ]);
+  renderAddonSettings(settings, hasClockifyAccess);
+}
+
 async function refreshState() {
   const [nextState, resumedAttempt] = await Promise.all([
     send({ type: 'GET_ONBOARDING_STATE' }), send({ type: 'RESUME_DEVICE_FLOW' }),
@@ -802,4 +825,18 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).catch(error => message(error.message, 'error'));
+$('clockify-addon-enabled').addEventListener('click', async () => {
+  $('clockify-addon-enabled').disabled = true;
+  try {
+    const enabled = $('clockify-addon-enabled').dataset.enabled !== 'true';
+    if (enabled && !await chrome.permissions.request({ origins: ['https://app.clockify.me/*'] })) {
+      throw new Error('Clockify access was not granted.');
+    }
+    await send({ type: 'SET_ADDON_ENABLED', payload: { id: 'clockify-migration', enabled } });
+    await refreshAddonSettings();
+    message(`Clockify migration ${enabled ? 'enabled' : 'disabled'}.`, 'success');
+  } catch (error) { message(error.message || 'Could not update Clockify migration.', 'error'); }
+  finally { $('clockify-addon-enabled').disabled = false; }
+});
+
+Promise.all([refreshState(), refreshLocalPreferences(), refreshAddonSettings()]).catch(error => message(error.message, 'error'));

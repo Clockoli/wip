@@ -7,6 +7,7 @@ import {
 import { activeRecordPath } from '../domain/work-records.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
+import { setAddonEnabled } from '../addons/service.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { ReportService } from '../services/reports.js';
@@ -15,6 +16,11 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
+import { normalizeClockifyDetailedReport } from '../addons/clockify/report-normalizer.js';
+import { createClockifyMigrationSessionService } from '../services/clockify-migration-session.js';
+import { createClockifyCaptureArmService } from '../services/clockify-capture-arm.js';
+import { importClockifyOrganization } from '../services/clockify-organization-import.js';
+import { removeClockifyImportedTestRecords } from '../services/clockify-import-cleanup.js';
 import { assertMessageAllowed, taskUrlForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
@@ -37,6 +43,22 @@ const pendingCredentialStore = {
   rotateGitHubAppAuth: (...args) => store.rotatePendingGitHubAppAuth(...args),
 };
 const pendingCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store: pendingCredentialStore });
+const CLOCKIFY_MIGRATION_PROGRESS_PORT = 'CLOCKIFY_MIGRATION_PROGRESS_V1';
+const clockifyMigrationProgressPorts = new Map();
+const clockifyMigrationSession = createClockifyMigrationSessionService({
+  storageSession: {
+    async get(key) { return (await chrome.storage.session.get(key))[key]; },
+    async set(key, value) { await chrome.storage.session.set({ [key]: value }); },
+    async remove(key) { await chrome.storage.session.remove(key); },
+  },
+});
+const clockifyCaptureArm = createClockifyCaptureArmService({
+  storageSession: {
+    async get(key) { return (await chrome.storage.session.get(key))[key]; },
+    async set(key, value) { await chrome.storage.session.set({ [key]: value }); },
+    async remove(key) { await chrome.storage.session.remove(key); },
+  },
+});
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 
@@ -183,6 +205,36 @@ function emitReportProgress(requestId, progress) {
   if (!requestId) return;
   try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
 }
+
+function isClockifyProgressRequestId(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function emitClockifyMigrationProgress(requestId, progress) {
+  const stages = new Set(['resolving_identities', 'preparing_storage', 'writing_records', 'completed']);
+  const port = clockifyMigrationProgressPorts.get(requestId);
+  if (!port || !stages.has(progress?.stage)
+      || !Number.isSafeInteger(progress.completed) || !Number.isSafeInteger(progress.total)
+      || progress.completed < 0 || progress.total < progress.completed) return;
+  try { port.postMessage({ type: 'CLOCKIFY_MIGRATION_PROGRESS', phase: progress.stage, completedUsers: progress.completed, totalUsers: progress.total }); } catch {}
+}
+
+chrome.runtime.onConnect.addListener(port => {
+  const previewUrl = chrome.runtime.getURL('src/clockify-migration/preview.html');
+  if (port.name !== CLOCKIFY_MIGRATION_PROGRESS_PORT || port.sender?.id !== chrome.runtime.id || port.sender?.url !== previewUrl) {
+    port.disconnect(); return;
+  }
+  let requestId = null;
+  port.onMessage.addListener(message => {
+    if (requestId || !message || typeof message !== 'object' || Array.isArray(message)
+        || Object.keys(message).length !== 2 || message.type !== 'SUBSCRIBE_CLOCKIFY_MIGRATION_PROGRESS'
+        || !isClockifyProgressRequestId(message.requestId)) { port.disconnect(); return; }
+    requestId = message.requestId;
+    clockifyMigrationProgressPorts.set(requestId, port);
+    port.postMessage({ type: 'CLOCKIFY_MIGRATION_PROGRESS_SUBSCRIBED' });
+  });
+  port.onDisconnect.addListener(() => { if (requestId && clockifyMigrationProgressPorts.get(requestId) === port) clockifyMigrationProgressPorts.delete(requestId); });
+});
 
 async function loadExchangeRates(message) {
   const payload = message.payload || {};
@@ -446,11 +498,92 @@ async function handle(message, sender) {
     return { updated: true };
   }
   if (message.type === 'OPEN_OPTIONS') { await chrome.runtime.openOptionsPage(); return { ok: true }; }
+
   if (message.type === 'OPEN_REPORTS') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/reports.html') }); return { ok: true };
   }
   if (message.type === 'OPEN_TASKS') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
+  }
+  if (message.type === 'CLOCKIFY_ARM_CAPTURE') {
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture arming requires a browser tab');
+    await clockifyCaptureArm.arm(sender.tab.id);
+    return { armed: true };
+  }
+  if (message.type === 'CLOCKIFY_IS_CAPTURE_ARMED') {
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture lookup requires a browser tab');
+    return { armed: await clockifyCaptureArm.isArmed(sender.tab.id) };
+  }
+  if (message.type === 'CLOCKIFY_DISARM_CAPTURE') {
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture disarming requires a browser tab');
+    await clockifyCaptureArm.disarm(sender.tab.id);
+    return { disarmed: true };
+  }
+  if (message.type === 'CLOCKIFY_CAPTURED_REPORT') {
+    if (typeof message.text !== 'string') throw new Error('Invalid Clockify report capture');
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture requires a browser tab');
+    await clockifyCaptureArm.disarm(sender.tab.id);
+    let stage = 'normalizing';
+    try {
+      console.info('[Clockoli Clockify capture background]', stage);
+      const normalized = normalizeClockifyDetailedReport(message.text);
+      stage = 'creating_preview_session';
+      console.info('[Clockoli Clockify capture background]', stage);
+      await clockifyMigrationSession.create(normalized);
+      stage = 'opening_preview';
+      console.info('[Clockoli Clockify capture background]', stage);
+      await chrome.tabs.create({ url: chrome.runtime.getURL('src/clockify-migration/preview.html') });
+      console.info('[Clockoli Clockify capture background]', 'preview_opened');
+      return { captured: true };
+    } catch {
+      console.info('[Clockoli Clockify capture background]', `failed:${stage}`);
+      return { captured: false, stage };
+    }
+  }
+  if (message.type === 'GET_CLOCKIFY_MIGRATION_PREVIEW') {
+    const preview = await clockifyMigrationSession.peek();
+    if (!preview) throw new Error('The Clockify migration preview is unavailable or expired. Return to the Clockify report and capture it again.');
+    return { id: preview.id, users: preview.data.users, entries: preview.data.entries.length };
+  }
+  if (message.type === 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS') {
+    const { config, auth } = await configuredSnapshot();
+    if (!config || !auth) return { logins: [] };
+    try { return { logins: await githubForConfig(config).listRepositoryCollaboratorLogins() }; }
+    catch { return { logins: [] }; }
+  }
+  if (message.type === 'CONFIRM_CLOCKIFY_MIGRATION') {
+    const payload = message.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== 3 || typeof payload.id !== 'string' || !Array.isArray(payload.mappings)
+        || !isClockifyProgressRequestId(payload.requestId) || !clockifyMigrationProgressPorts.has(payload.requestId)) {
+      throw new Error('Invalid Clockify migration confirmation');
+    }
+    const data = await clockifyMigrationSession.consume(payload.id);
+    if (!data) throw new Error('The Clockify migration confirmation expired. Return to the report and capture it again.');
+    const { config, auth } = await configuredSnapshot();
+    if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before importing.');
+    try {
+      const outcomes = await importClockifyOrganization({
+        sourceUsers: data.users, entries: data.entries, mappings: payload.mappings,
+        github: githubForConfig(config), sourceBranch: config.branch || 'main',
+        onProgress: progress => emitClockifyMigrationProgress(payload.requestId, progress),
+      });
+      return { outcomes: outcomes.map(({ sourceUserId, status, added, alreadyPresent, failureReason, error }) => ({
+        sourceUserId, status,
+        ...(Number.isSafeInteger(added) ? { added } : {}),
+        ...(Number.isSafeInteger(alreadyPresent) ? { alreadyPresent } : {}),
+        ...(typeof failureReason === 'string' ? { failureReason } : {}),
+        ...(!failureReason && typeof error?.reason === 'string' ? { failureReason: error.reason } : {}),
+      })) };
+    } finally { clockifyMigrationProgressPorts.delete(payload.requestId); }
+  }
+  if (message.type === 'CLEANUP_CLOCKIFY_TEST_IMPORTS') {
+    if (!message.payload || Object.keys(message.payload).length !== 1 || message.payload.confirmation !== 'DELETE_CLOCKIFY_TEST_IMPORTS') {
+      throw new Error('Invalid Clockify test-import cleanup confirmation');
+    }
+    const { config, auth } = await configuredSnapshot();
+    if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before cleaning imported records.');
+    return removeClockifyImportedTestRecords({ github: githubForConfig(config) });
   }
   if (message.type === 'OPEN_TIMES') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') }); return { ok: true };
@@ -489,6 +622,14 @@ async function handle(message, sender) {
     return { config, generation, preferences: await store.getLocalPreferences() };
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
+  if (message.type === 'GET_ADDON_SETTINGS') return store.getAddonSettings();
+  if (message.type === 'SET_ADDON_ENABLED') {
+    if (!message.payload || typeof message.payload !== 'object' || Array.isArray(message.payload)
+        || Object.keys(message.payload).length !== 2 || typeof message.payload.id !== 'string'
+        || typeof message.payload.enabled !== 'boolean') throw new Error('Invalid add-on enablement request');
+    return setAddonEnabled({ store, permissions: chrome.permissions }, message.payload.id, message.payload.enabled);
+  }
+
   if (message.type === 'SAVE_BILLING_SETTINGS') return store.saveBillingSettings(message.payload || {});
   if (message.type === 'EXPORT_SETTINGS') return store.exportSettings();
   if (message.type === 'MARK_SETTINGS_EXPORTED') return { marked: await store.markSettingsExported(message.revision) };
@@ -573,8 +714,8 @@ async function handle(message, sender) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SET_ADDON_ENABLED'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {
@@ -582,7 +723,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       operation = acceptanceExecutor.run(() => loadCoordinator.save(() => cancelReports(), () => handle(message, sender)));
     } catch (error) { operation = Promise.reject(error); }
   } else {
-    const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type);
+    const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type)
+      || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE'].includes(message?.type);
     const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK'].includes(message?.type);
     const attempt = () => direct ? handle(message, sender)
       : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))

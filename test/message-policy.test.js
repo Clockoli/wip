@@ -107,3 +107,30 @@ test('GitHub issue query and fragment churn cannot create a second task identity
   const sender = { url: 'https://github.com/acme/app/issues/7?notification_referrer_id=1#issuecomment-3', tab: { id: 10 } };
   assert.equal(taskUrlForStart('https://github.com/acme/app/issues/7', sender, origin), 'https://github.com/acme/app/issues/7');
 });
+
+test('add-on enablement remains extension-page only', () => {
+  const clockify = { url: 'https://app.clockify.me/tracker', tab: { id: 11 } };
+  const settingsMessages = ['GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED'];
+  for (const type of settingsMessages) {
+    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+    assert.throws(() => assertMessageAllowed(type, clockify, origin), /not allowed/i);
+  }
+  assert.throws(() => assertMessageAllowed('IMPORT_CLOCKIFY_REPORT', clockify, origin), /not allowed/i);
+});
+
+test('extension-origin senders without a URL retain extension-page permissions', () => {
+  const sender = { origin: origin.slice(0, -1) };
+  assert.equal(assertMessageAllowed('GET_ADDON_SETTINGS', sender, origin), 'extension');
+});
+
+test('only the Clockify Detailed Report page can submit a sanitized capture', () => {
+  const detailedReport = { url: 'https://app.clockify.me/reports/detailed?period=this-week', tab: { id: 12 } };
+  const otherClockifyPage = { url: 'https://app.clockify.me/tracker', tab: { id: 13 } };
+  for (const type of ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_CAPTURED_REPORT']) {
+    assert.equal(assertMessageAllowed(type, detailedReport, origin), 'clockify');
+    assert.throws(() => assertMessageAllowed(type, otherClockifyPage, origin), /not allowed/i);
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+    assert.throws(() => assertMessageAllowed(type, extension, origin), /not allowed/i);
+  }
+});
