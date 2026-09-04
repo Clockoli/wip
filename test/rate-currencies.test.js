@@ -80,7 +80,7 @@ test('mixed-currency totals remain separate and billable analytics selects one c
   }), /load RUB to USD exchange rates/i);
 });
 
-test('timesheet exports each record rate currency and settings v2 has no global currency', () => {
+test('timesheet exports each record rate currency and settings v3 has no global currency', () => {
   const rates = {
     alice: [{ ...parseRateFields('20.15', '$'), startDate: '', endDate: '' }],
     bob: [{ ...parseRateFields('750', 'RUB'), startDate: '', endDate: '' }],
@@ -96,7 +96,7 @@ test('timesheet exports each record rate currency and settings v2 has no global 
 
   const text = settingsExportText({ billing: { rates }, config: { recentDays: 7 }, exportedAt: '2026-08-23T12:00:00.000Z' });
   const saved = JSON.parse(text);
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   assert.deepEqual(Object.keys(saved.billing), ['rates']);
   assert.deepEqual(parseSettingsImport(text).billing, { rates });
 });

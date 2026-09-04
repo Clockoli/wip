@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertMessageAllowed, issueForStart, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
+import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
@@ -114,4 +114,19 @@ test('trusted popup accepts arbitrary HTTP(S) task URLs and rejects unsafe schem
 test('GitHub issue query and fragment churn cannot create a second task identity', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7?notification_referrer_id=1#issuecomment-3', tab: { id: 10 } };
   assert.equal(taskUrlForStart('https://github.com/acme/app/issues/7', sender, origin), 'https://github.com/acme/app/issues/7');
+});
+
+test('participant totals follow the current GitHub SPA tab URL instead of the original document URL', () => {
+  const sender = {
+    url: 'https://github.com/manticoresoftware/manticoresearch/issues/4883',
+    tab: { id: 10, url: 'https://github.com/manticoresoftware/manticoresearch/issues/4884' },
+  };
+  assert.equal(
+    taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4884', sender, origin),
+    'https://github.com/manticoresoftware/manticoresearch/issues/4884',
+  );
+  assert.throws(
+    () => taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4885', sender, origin),
+    /current page/i,
+  );
 });

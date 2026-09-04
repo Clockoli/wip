@@ -8,7 +8,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
 const state = {
   records: [], range: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
-  people: new Set(), repositories: new Set(), peopleSearch: '', repositoriesSearch: '',
+  people: new Set(), projects: new Set(), repositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
 };
 
@@ -89,7 +89,7 @@ function setDownloadsAvailable(available) {
 }
 
 function selectedFilters() {
-  return { people: [...state.people], repositories: [...state.repositories], emptyMeansNone: true };
+  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, emptyMeansNone: true };
 }
 
 const DATA_COLOR_TOKENS = [
@@ -238,7 +238,7 @@ function renderPrintTable(id, columns, rows) {
 function renderPrintableTimesheet(filtered) {
   const printable = buildPrintableTimesheet(filtered);
   $('print-period').textContent = `${state.range.startDate} — ${state.range.endDate}`;
-  $('print-filters').textContent = `People: ${[...state.people].sort().join(', ')}`;
+  $('print-filters').textContent = `People: ${[...state.people].sort().join(', ')} · Projects: ${[...state.projects].sort().join(', ')}`;
   renderPrintTable('print-detail-table', [
     ['Date', row => row.date], ['Person', row => row.person], ['Task URL', row => row.taskUrl],
     ['Task title', row => row.taskTitle], ['Time', row => formatClockDuration(row.seconds)],
@@ -277,10 +277,13 @@ function render() {
   if (!state.range) return;
   const facets = buildFacets(state.records, selectedFilters());
   renderFacet($('people-facet'), facets.people, state.people, state.peopleSearch, render);
+  renderFacet($('projects-facet'), facets.projects, state.projects, state.projectsSearch, render);
   renderFacet($('repositories-facet'), facets.repositories, state.repositories, state.repositoriesSearch, render);
   const allPeople = [...new Set(state.records.map(record => record.user))];
+  const allProjects = facets.projects.map(project => project.value);
   const allRepositories = [...new Set(state.records.map(record => taskSource(record)))];
   $('people-all').textContent = allPeople.length && allPeople.every(value => state.people.has(value)) ? 'Unselect all' : 'Select all';
+  $('projects-all').textContent = allProjects.length && allProjects.every(value => state.projects.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   const filtered = filterReportRecords(state.records, selectedFilters());
   const billableTotals = renderCurrencySelector(filtered);
@@ -312,7 +315,9 @@ async function loadRange(range) {
     showProgress('Preparing report…', 80);
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {} };
+    state.projectDefinitions = result.billing?.projects || [];
     state.people = new Set(result.currentUser ? [result.currentUser] : []);
+    state.projects = new Set(buildFacets(result.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value));
     state.repositories = new Set(result.records.map(record => taskSource(record)));
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
@@ -341,10 +346,15 @@ $('apply-period').addEventListener('click', () => void applyPeriod());
 for (const id of ['metric', 'billable-currency', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
+$('projects-search').addEventListener('input', event => { state.projectsSearch = event.target.value; render(); });
 $('repositories-search').addEventListener('input', event => { state.repositoriesSearch = event.target.value; render(); });
 $('people-all').addEventListener('click', () => {
   const values = [...new Set(state.records.map(record => record.user))];
   state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); render();
+});
+$('projects-all').addEventListener('click', () => {
+  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
+  state.projects = values.length && values.every(value => state.projects.has(value)) ? new Set() : new Set(values); render();
 });
 $('repositories-all').addEventListener('click', () => {
   const values = [...new Set(state.records.map(record => taskSource(record)))];
@@ -377,7 +387,23 @@ $('download-pdf').addEventListener('click', event => {
   window.print();
 });
 
+async function refreshProjectDefinitions() {
+  const previousValues = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
+  const hadAllSelected = previousValues.length > 0 && previousValues.every(value => state.projects.has(value));
+  const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+  state.projectDefinitions = preferences.projects || [];
+  const available = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
+  state.projects = hadAllSelected
+    ? new Set(available)
+    : new Set([...state.projects].filter(value => available.includes(value)));
+  render();
+}
+
 chrome.runtime.onMessage.addListener(message => {
+  if (message?.type === 'LOCAL_PREFERENCES_CHANGED') {
+    void refreshProjectDefinitions().catch(setError);
+    return;
+  }
   if (message?.type !== 'REPORT_PROGRESS' || message.requestId !== state.progressRequestId) return;
   showProgress(message.label || 'Working…', message.value ?? null);
 });

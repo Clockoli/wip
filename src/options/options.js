@@ -1,5 +1,5 @@
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
-import { parseRateFields } from '../domain/local-settings.js';
+import { normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -482,8 +482,47 @@ function addRateRow(login = '', period = null) {
   row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
+function addProjectRow(project = { name: '', substrings: [] }) {
+  const row = document.createElement('div'); row.className = 'project-row';
+  const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
+  const name = document.createElement('input'); name.className = 'project-name'; name.required = true; name.maxLength = 80; name.autocomplete = 'off'; name.placeholder = 'work'; name.value = project.name || ''; nameLabel.append(name);
+  const substringsLabel = document.createElement('label'); substringsLabel.textContent = 'URL substrings';
+  const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = 3; substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
+  const actions = document.createElement('div'); actions.className = 'project-actions';
+  const up = document.createElement('button'); up.type = 'button'; up.className = 'secondary move-project-up'; up.textContent = '↑'; up.setAttribute('aria-label', `Move project ${project.name || 'row'} up`); up.addEventListener('click', () => moveProjectRow(row, -1));
+  const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
+  remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
+  actions.append(up, down, remove); row.append(nameLabel, substringsLabel, actions); $('projects-list').append(row); refreshProjectOrderControls();
+}
+
+function refreshProjectOrderControls() {
+  const rows = [...$('projects-list').querySelectorAll('.project-row')];
+  rows.forEach((row, index) => {
+    row.querySelector('.move-project-up').disabled = index === 0;
+    row.querySelector('.move-project-down').disabled = index === rows.length - 1;
+  });
+}
+
+function moveProjectRow(row, direction) {
+  const sibling = direction < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!sibling) return;
+  if (direction < 0) sibling.before(row); else sibling.after(row);
+  refreshProjectOrderControls();
+  row.querySelector(direction < 0 ? '.move-project-up' : '.move-project-down').focus();
+}
+
+function projectsPayload() {
+  return normalizeProjects([...$('projects-list').querySelectorAll('.project-row')].map(row => ({
+    name: row.querySelector('.project-name').value,
+    substrings: row.querySelector('.project-substrings').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+  })));
+}
+
 function renderLocalPreferences(preferences) {
   localPreferences = preferences;
+  $('projects-list').replaceChildren();
+  for (const project of preferences.projects || []) addProjectRow(project);
   $('rates-list').replaceChildren();
   for (const [login, periods] of Object.entries(preferences.rates || {})) {
     for (const period of (Array.isArray(periods) ? periods : [{ amountMinorPerHour: periods, startDate: '', endDate: '' }])) {
@@ -743,6 +782,7 @@ $('display-form').addEventListener('submit', async event => {
   try {
     const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
       recentDays: Number($('recent-days').value),
+      projects: projectsPayload(),
     } });
     state.config = result.config;
     $('recent-days').value = result.config.recentDays;
@@ -752,6 +792,7 @@ $('display-form').addEventListener('submit', async event => {
   finally { $('save-display').disabled = !state?.config; }
 });
 
+$('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); $('save-billing').disabled = true; message('Saving billable rates…');

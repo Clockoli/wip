@@ -159,6 +159,12 @@
       <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
       <p class="help">This changes only the recent entries shown in the main panel. It does not limit tracking or reports.</p>
       <p class="help">Track any HTTP(S) task URL. A task title is optional.</p>
+      <fieldset class="projects-fieldset">
+        <legend>Projects</legend>
+        <p class="help">Each project gets its own tracking timeline row and Reports filter. URLs are matched top to bottom, ignoring case. Enter one substring per line; unmatched tasks appear under Other.</p>
+        <div id="projects-list" class="projects-list"></div>
+        <button id="add-project" type="button" class="secondary">Add project</button>
+      </fieldset>
       <button id="save-display" type="submit" disabled>Save display settings</button>
     </form>
   </section>

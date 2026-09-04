@@ -15,7 +15,7 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
-import { assertMessageAllowed, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
+import { assertMessageAllowed, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
@@ -184,6 +184,14 @@ function emitReportProgress(requestId, progress) {
   try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
 }
 
+function broadcastLocalPreferencesChanged(revision) {
+  try { chrome.runtime.sendMessage({ type: 'LOCAL_PREFERENCES_CHANGED', revision }, () => void chrome.runtime.lastError); }
+  catch { /* no open extension surface */ }
+  void chrome.tabs.query({}).then(tabs => Promise.allSettled(tabs
+    .filter(tab => Number.isInteger(tab.id))
+    .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'LOCAL_PREFERENCES_CHANGED', revision })))).catch(() => {});
+}
+
 async function loadExchangeRates(message) {
   const payload = message.payload || {};
   emitReportProgress(payload.requestId, { label: 'Loading exchange rates from Frankfurter…', value: 85 });
@@ -232,7 +240,7 @@ async function loadTaskParticipants(message, sender, extensionOrigin) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(4); loadCoordinator.assertCurrent(loadEpoch);
   const { config, auth, generation } = await configuredSnapshot(); loadCoordinator.assertCurrent(loadEpoch);
-  const taskUrl = taskUrlForStart(message.taskUrl, sender, extensionOrigin);
+  const taskUrl = taskUrlForParticipantLoad(message.taskUrl, sender, extensionOrigin);
   if (!config || !auth) return { configured: false, taskUrl, complete: false, participants: [] };
   const branch = config.branch || 'main', repositoryKey = `${config.owner}/${config.repo}@${branch}`;
   const requestOwner = sender?.documentId ?? sender?.tab?.id ?? sender?.url ?? 'content';
@@ -493,7 +501,9 @@ async function handle(message, sender) {
   if (message.type === 'UPDATE_DISPLAY_PREFERENCES') {
     const generation = await store.updateDisplayPreferences(message.payload || {});
     const { config } = await store.getConfigurationSnapshot();
-    return { config, generation, preferences: await store.getLocalPreferences() };
+    const preferences = await store.getLocalPreferences();
+    broadcastLocalPreferencesChanged(preferences.revision);
+    return { config, generation, preferences };
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'SAVE_BILLING_SETTINGS') return store.saveBillingSettings(message.payload || {});
@@ -502,7 +512,9 @@ async function handle(message, sender) {
   if (message.type === 'IMPORT_SETTINGS') {
     const text = String(message.text || '');
     if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Settings file is too large.');
-    return store.importSettings(text);
+    const imported = await store.importSettings(text);
+    broadcastLocalPreferencesChanged(imported.revision);
+    return imported;
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
@@ -518,6 +530,7 @@ async function handle(message, sender) {
     const { tracker } = await context();
     const state = await tracker.getState({ refresh: Boolean(message.refresh) });
     if (message.type === 'GET_PAGE_STATE') {
+      const preferences = await store.getLocalPreferences();
       const active = state.active ? {
         id: state.active.id, taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
@@ -526,7 +539,7 @@ async function handle(message, sender) {
         _pending: Boolean(state.active._pending),
       } : null;
       return {
-        configured: true, active, recent: state.recent,
+        configured: true, active, recent: state.recent, projects: preferences.projects,
         pendingCount: state.pendingWrites.length,
         pendingWrites: state.pendingWrites.map(({ id, operation, status, stage, conflictReason, queuedAt, retryCount, lastError }) => ({
           id, status, stage, operation, queuedAt, retryCount: Math.max(0, Number(retryCount) || 0),
@@ -600,6 +613,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
   const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES'].includes(message?.type);

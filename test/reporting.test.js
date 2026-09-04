@@ -58,6 +58,26 @@ test('person and repository facets cross-filter and expose duration counts', () 
   ]);
 });
 
+test('project facets classify URL substrings, cross-filter, and retain unmatched work as Other', () => {
+  const projects = [
+    { name: 'work', substrings: ['github.com/acme/'] },
+    { name: 'personal', substrings: ['example.com/personal/'] },
+  ];
+  const projectRecords = [...records, {
+    user: 'alice', taskUrl: 'https://example.com/personal/1', taskTitle: 'Personal',
+    startedAt: '2026-08-18T13:00:00Z', endedAt: '2026-08-18T13:30:00Z', entryDate: '2026-08-18', durationSeconds: 1800,
+  }, {
+    user: 'bob', taskUrl: 'https://elsewhere.test/task', taskTitle: 'Other',
+    startedAt: '2026-08-18T14:00:00Z', endedAt: '2026-08-18T14:15:00Z', entryDate: '2026-08-18', durationSeconds: 900,
+  }];
+  assert.deepEqual(filterReportRecords(projectRecords, { projects: ['work'], projectDefinitions: projects }).map(item => item.durationSeconds), [3600, 7200, 10800]);
+  assert.equal(filterReportRecords(projectRecords, { projects: ['Other'], projectDefinitions: projects }).length, 1);
+  assert.deepEqual(buildFacets(projectRecords, { people: ['alice'], projectDefinitions: projects }).projects, [
+    { value: 'personal', count: 1, seconds: 1800 },
+    { value: 'work', count: 2, seconds: 14400 },
+  ]);
+});
+
 test('analytics independently selects total-time horizontal and stack dimensions', () => {
   const analytics = buildAnalytics(records, { metric: 'total-time', horizontalAxis: 'day', stackBy: 'person' });
   assert.equal(analytics.metric, 'total-time');

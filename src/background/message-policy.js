@@ -49,6 +49,15 @@ export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin
   return normalizeTaskUrl(payloadTaskUrl);
 }
 
+export function taskUrlForParticipantLoad(payloadTaskUrl, sender, extensionOrigin) {
+  const kind = assertMessageAllowed('LOAD_TASK_PARTICIPANTS', sender, extensionOrigin);
+  const requested = normalizeTaskUrl(payloadTaskUrl);
+  if (kind !== 'content' || !parseIssueUrl(requested)) throw new Error('Participant totals require the current GitHub issue or pull request page');
+  const current = normalizeTaskUrl(sender?.tab?.url || sender?.url || '');
+  if (current !== requested) throw new Error('Requested task URL must match the current page');
+  return requested;
+}
+
 // Backward-compatible input adapter for cached callers while task URL remains the canonical identity.
 export function issueForStart(payloadIssue, sender, extensionOrigin) {
   const requested = normalizeIssue(payloadIssue);

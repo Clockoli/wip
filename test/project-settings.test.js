@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('Settings edits ordered Projects with one URL substring per line', () => {
+  const html = read('src/options/options.html');
+  const script = read('src/options/options.js');
+  const css = read('src/options/options.css');
+  assert.match(html, /<legend>Projects<\/legend>/);
+  assert.match(html, /id="projects-list"/);
+  assert.match(html, /id="add-project"/);
+  assert.match(html, /unmatched tasks appear under Other/);
+  assert.match(script, /function addProjectRow\(/);
+  assert.match(script, /function projectsPayload\(\)/);
+  assert.match(script, /function moveProjectRow\(row, direction\)/);
+  assert.match(script, /Move project .* up/);
+  assert.match(script, /Move project .* down/);
+  assert.match(script, /projects: projectsPayload\(\)/);
+  assert.match(script, /name\.placeholder = 'work'/);
+  assert.match(script, /linear\.app\/my-team\/\\ngithub\.com\/my-company\//);
+  assert.match(css, /\.project-row/);
+  assert.match(css, /\.project-row textarea/);
+  assert.match(css, /\.project-row input::placeholder,.project-row textarea::placeholder\{[^}]*opacity:\.55/);
+  assert.match(css, /\.project-row\{[^}]*align-items:start/);
+  assert.match(css, /\.project-actions\{[^}]*margin-top:27px/);
+});
+
+test('saving or importing Projects refreshes already-open tracking and Reports surfaces', () => {
+  const worker = read('src/background/service-worker.js');
+  const content = read('src/content/github.js');
+  const reports = read('src/reports/reports.js');
+  assert.match(worker, /function broadcastLocalPreferencesChanged\(revision\)/);
+  assert.match(worker, /chrome\.runtime\.sendMessage\(\{ type: 'LOCAL_PREFERENCES_CHANGED'/);
+  assert.match(worker, /chrome\.tabs\.query\(\{\}\)[\s\S]*chrome\.tabs\.sendMessage\(tab\.id, \{ type: 'LOCAL_PREFERENCES_CHANGED'/);
+  assert.match(worker, /UPDATE_DISPLAY_PREFERENCES[\s\S]*broadcastLocalPreferencesChanged/);
+  assert.match(worker, /IMPORT_SETTINGS[\s\S]*broadcastLocalPreferencesChanged/);
+  assert.match(content, /function handleLocalPreferencesChanged[\s\S]*LOCAL_PREFERENCES_CHANGED[\s\S]*GET_PAGE_STATE/);
+  assert.match(reports, /message\?\.type === 'LOCAL_PREFERENCES_CHANGED'[\s\S]*refreshProjectDefinitions/);
+});

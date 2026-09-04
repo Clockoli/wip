@@ -3,9 +3,50 @@ const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CURRENCY_CODE_RE = /^[A-Za-z]{2,12}$/;
 const CURRENCY_SYMBOL_RE = /^\p{Sc}$/u;
 const MAX_RATE_MINOR = 100_000_000;
+const MAX_PROJECTS = 50;
+const MAX_PROJECT_NAME = 80;
+const MAX_PROJECT_SUBSTRINGS = 100;
+const MAX_PROJECT_SUBSTRING = 500;
+const MAX_TOTAL_PROJECT_SUBSTRINGS = 200;
+const MAX_TOTAL_PROJECT_SUBSTRING_LENGTH = 100_000;
+const MAX_PROJECTS_UTF8_BYTES = 120_000;
+export const OTHER_PROJECT = 'Other';
 
 function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeProjects(value = []) {
+  if (!Array.isArray(value)) throw new Error('Projects must be a list');
+  if (value.length > MAX_PROJECTS) throw new Error(`Projects cannot contain more than ${MAX_PROJECTS} entries`);
+  const names = new Set();
+  let totalSubstrings = 0, totalSubstringLength = 0;
+  const projects = value.map((raw, index) => {
+    if (!plainObject(raw) || Object.keys(raw).sort().join(',') !== 'name,substrings') throw new Error(`Project ${index + 1} has unexpected fields`);
+    const name = String(raw.name ?? '').trim();
+    if (!name || name.length > MAX_PROJECT_NAME || /[\u0000-\u001f\u007f]/.test(name)) throw new Error(`Project ${index + 1} must have a valid name`);
+    if (name.toLowerCase() === OTHER_PROJECT.toLowerCase()) throw new Error(`${OTHER_PROJECT} is a reserved project name`);
+    const foldedName = name.toLowerCase();
+    if (names.has(foldedName)) throw new Error(`Duplicate project name: ${name}`);
+    names.add(foldedName);
+    if (!Array.isArray(raw.substrings) || !raw.substrings.length || raw.substrings.length > MAX_PROJECT_SUBSTRINGS) throw new Error(`Project ${name} must have at least one substring`);
+    const substrings = [...new Set(raw.substrings.map(item => String(item ?? '').trim().toLowerCase()))];
+    if (substrings.some(item => !item || item.length > MAX_PROJECT_SUBSTRING || /[\u0000-\u001f\u007f]/.test(item))) throw new Error(`Project ${name} has an invalid substring`);
+    totalSubstrings += substrings.length;
+    totalSubstringLength += substrings.reduce((total, substring) => total + substring.length, 0);
+    return { name, substrings };
+  });
+  if (totalSubstrings > MAX_TOTAL_PROJECT_SUBSTRINGS || totalSubstringLength > MAX_TOTAL_PROJECT_SUBSTRING_LENGTH) throw new Error('Project substring list is too large');
+  if (new TextEncoder().encode(JSON.stringify(projects)).byteLength > MAX_PROJECTS_UTF8_BYTES) throw new Error('Project substring list is too large');
+  return projects;
+}
+
+export function projectNameForUrl(url, projects = []) {
+  const candidate = String(url ?? '').toLowerCase();
+  for (const project of projects ?? []) {
+    if ((project.substrings ?? []).some(substring => candidate.includes(String(substring).toLowerCase()))) return project.name;
+  }
+  return OTHER_PROJECT;
 }
 
 function validDate(value, label) {
@@ -169,8 +210,9 @@ export function billableMinorTotal(records, rates = {}) {
   return totals[0]?.amountMinor ?? 0;
 }
 
-export function settingsExportText({ config = null, billing = {}, exportedAt = new Date().toISOString() } = {}) {
+export function settingsExportText({ config = null, billing = {}, projects = [], exportedAt = new Date().toISOString() } = {}) {
   const normalized = normalizeBillingSettings(billing);
+  const normalizedProjects = normalizeProjects(projects);
   const repository = config?.owner && config?.repo && config?.branch ? {
     owner: String(config.owner), repo: String(config.repo), branch: String(config.branch),
     ...(Number.isSafeInteger(config.repoId) && config.repoId > 0 ? { repoId: config.repoId } : {}),
@@ -178,8 +220,8 @@ export function settingsExportText({ config = null, billing = {}, exportedAt = n
   const recentDays = Number(config?.recentDays ?? 7);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
   return `${JSON.stringify({
-    format: 'clockoli-settings', version: 2, exportedAt,
-    display: { recentDays }, billing: normalized, repository,
+    format: 'clockoli-settings', version: 3, exportedAt,
+    display: { recentDays }, projects: normalizedProjects, billing: normalized, repository,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
 }
@@ -187,12 +229,14 @@ export function settingsExportText({ config = null, billing = {}, exportedAt = n
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
-  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
-  const expectedKeys = ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
+  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
+  const expectedKeys = value.version === 3
+    ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
+    : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   if (!plainObject(value.display) || Object.keys(value.display).join(',') !== 'recentDays') throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  if ((value.version === 1 && billingKeys !== 'currency,rates') || (value.version === 2 && billingKeys !== 'rates')) throw new Error('Settings file has unexpected billing fields');
+  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3].includes(value.version) && billingKeys !== 'rates')) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
       || Number.isNaN(Date.parse(value.exportedAt))) throw new Error('Settings file has an invalid export timestamp');
@@ -205,5 +249,5 @@ export function parseSettingsImport(text) {
   }
   const recentDays = Number(value.display.recentDays);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent entries must be between 1 and 31 days');
-  return { recentDays, billing: normalizeBillingSettings(value.billing) };
+  return { recentDays, projects: value.version === 3 ? normalizeProjects(value.projects) : [], billing: normalizeBillingSettings(value.billing) };
 }

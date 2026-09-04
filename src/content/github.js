@@ -46,13 +46,14 @@
   let timelineAcceptedActive = null;
   const timelineOptimisticCompletions = new Map();
   let timelineStartInFlight = false;
+  let timelineStopInFlight = false;
   let timelineScrollToRightPending = false;
   const inlineQueuedOperationIds = new Set();
   const queueDiagnostics = [];
 
   let menuOpen = false, menuScrollTop = 0;
   let navigationOpen = false;
-  let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
+  let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
   let recent = [];
   let recentLoaded = false;
   let recentFresh = false;
@@ -121,6 +122,14 @@
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
   function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+  function projectNameForUrl(url, projects = []) {
+    const candidate = String(url || '').toLowerCase();
+    for (const project of projects || []) {
+      if ((project.substrings || []).some(substring => candidate.includes(String(substring).toLowerCase()))) return project.name;
+    }
+    return 'Other';
+  }
+  function projectRowId(name) { return `project:${String(name).toLowerCase()}`; }
 
   function trackedDurationSeconds(value) {
     const match = String(value || '').match(/^(?:(\d+)h )?(?:(\d+)m )?(\d+)s$/);
@@ -572,6 +581,18 @@
   }
 
 
+  function reconcileTimelineAcceptedActive(incomingState) {
+    const accepted = timelineAcceptedActive;
+    const incoming = incomingState?.active ?? null;
+    const incomingConfirmsAccepted = accepted && incoming
+      && taskUrlOf(incoming) === taskUrlOf(accepted)
+      && new Date(incoming.startedAt).getTime() >= new Date(accepted.startedAt).getTime();
+    if (incomingConfirmsAccepted) timelineAcceptedActive = null;
+    return accepted && !incomingConfirmsAccepted
+      ? { ...incomingState, active: accepted }
+      : incomingState;
+  }
+
   function applyMenuData(data, fresh = true) {
     recent = Array.isArray(data) ? data : data?.recent ?? [];
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
@@ -582,10 +603,10 @@
       { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
     ];
     if (!Array.isArray(data)) {
-      pageState = {
+      pageState = reconcileTimelineAcceptedActive({
         ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
         pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
-      };
+      });
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
       for (const [entryId] of timelineOptimisticCompletions) {
@@ -604,15 +625,7 @@
   function applyPageState(data) {
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
-    const accepted = timelineAcceptedActive;
-    const incoming = data?.active ?? null;
-    const incomingConfirmsAccepted = accepted && incoming
-      && taskUrlOf(incoming) === taskUrlOf(accepted)
-      && new Date(incoming.startedAt).getTime() >= new Date(accepted.startedAt).getTime();
-    if (incomingConfirmsAccepted) timelineAcceptedActive = null;
-    pageState = accepted && !incomingConfirmsAccepted
-      ? { ...data, active: accepted }
-      : data;
+    pageState = reconcileTimelineAcceptedActive(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
     for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
@@ -706,6 +719,7 @@
       active: active ? [active.id, active.taskUrl, active.taskTitle, active.startedAt, active.description] : null,
       pendingCount: state?.pendingCount ?? 0,
       pending,
+      projects: state?.projects ?? [],
     });
   }
 
@@ -1505,13 +1519,16 @@ The previous version remains in Git history.`)) return;
 
   function popupTimelineItems(historyStart, now) {
     const byId = new Map();
-    const items = popupTimelineEntries(historyStart, now).map((entry) => {
+    const entries = popupTimelineEntries(historyStart, now);
+    const rows = popupTimelineRows(entries);
+    const items = entries.map((entry) => {
       const stableId = entry.id || `${entry._path}:${entry._index}`;
       const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
+      const projectName = pageState.projects?.length ? projectNameForUrl(taskUrlOf(entry), pageState.projects) : '';
       byId.set(id, entry);
       return {
         id,
-        rowId: 'tracked',
+        rowId: pageState.projects?.length ? projectRowId(projectName) : 'tracked',
         url: taskUrlOf(entry),
         title: taskTitleOf(entry) || taskUrlOf(entry) || 'Untitled task',
         startedAt: Math.max(historyStart, new Date(entry.startedAt).getTime()),
@@ -1519,19 +1536,42 @@ The previous version remains in Git history.`)) return;
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
         isPending: Boolean(entry._pending),
-        isStartDisabled: timelineStartInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean(entry._active && pageState.pendingWrites?.some(item => item.status === 'conflict')),
+        isStartDisabled: timelineStartInFlight || timelineStopInFlight || sameTask(entry, pageState.active)
+          || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
       };
     });
-    return { items, byId };
+    return { items, rows, byId };
+  }
+
+  function popupTimelineRows(entries) {
+    if (!pageState.projects?.length) return [{ id: 'tracked', title: '' }];
+    const rows = pageState.projects.map(project => ({ id: projectRowId(project.name), title: project.name }));
+    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects) === 'Other')) {
+      rows.push({ id: projectRowId('Other'), title: 'Other' });
+    }
+    return rows;
   }
 
   function refreshMountedTimeline() {
     if (!timelineInstance || !timelineWindow) return false;
-    const { items, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
+    const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items });
+    timelineInstance.update({ items, rows });
     return true;
+  }
+
+  function beginTimelineStop() {
+    if (timelineStopInFlight) return false;
+    timelineStopInFlight = true;
+    refreshMountedTimeline();
+    return true;
+  }
+
+  function finishTimelineStop() {
+    timelineStopInFlight = false;
+    refreshMountedTimeline();
   }
 
   function refreshMountedTimelineAtRightEdge(startedAt) {
@@ -1543,12 +1583,51 @@ The previous version remains in Git history.`)) return;
     const span = Math.max(1, timelineView.end - timelineView.start);
     timelineWindow = { ...timelineWindow, now };
     timelineView = { start: now - span, end: now, focusedAt: now };
-    const { items, byId } = popupTimelineItems(timelineWindow.historyStart, now);
+    const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, now, view: timelineView });
+    timelineInstance.update({ items, rows, now, view: timelineView });
     timelineInstance.scrollToEnd();
     timelineScrollToRightPending = false;
     return true;
+  }
+
+  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '' } = {}) {
+    const startedAt = new Date().toISOString();
+    const previousActive = pageState.active;
+    const acceptanceId = beginTimelineQueueAcceptance();
+    const context = { acceptanceId, acceptedActive: null, previousActive, startedAt };
+    try {
+      if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
+        timelineOptimisticCompletions.set(previousActive.id, {
+          ...previousActive, endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+        });
+      }
+      const acceptedActive = {
+        id: `timeline-local:${identity || taskUrlOf(task)}:${acceptanceId}`,
+        taskUrl: taskUrlOf(task), taskTitle: taskTitleOf(task) || '',
+        startedAt, _pending: true,
+      };
+      context.acceptedActive = acceptedActive;
+      timelineAcceptedActive = acceptedActive;
+      pageState = { ...pageState, active: acceptedActive };
+      recentLoadId += 1; recentLoad = null; loadingRecent = false;
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimelineAtRightEdge(startedAt)) renderUi();
+      return context;
+    } catch (error) {
+      timelineAcceptedActive = null;
+      if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
+      pageState = { ...pageState, active: previousActive };
+      finishTimelineQueueAcceptance(acceptanceId);
+      throw error;
+    }
+  }
+
+  function rollbackTimelineStart(context) {
+    timelineAcceptedActive = null;
+    if (context.previousActive?.id) timelineOptimisticCompletions.delete(context.previousActive.id);
+    pageState = { ...pageState, active: context.previousActive };
+    if (!refreshMountedTimeline()) renderUi();
   }
 
   function beginTimelineQueueAcceptance() {
@@ -1614,11 +1693,11 @@ The previous version remains in Git history.`)) return;
       section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
       return section;
     }
-    if (!recentLoaded) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
+    if (!recentLoaded && !timelineAcceptedActive) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
     const now = Date.now(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
     timelineWindow = { historyStart, now };
     timelineView ||= { start: defaultStart, end: now, focusedAt: now };
-    const { items, byId } = popupTimelineItems(historyStart, now);
+    const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     if (!items.length) { section.append(el('div', 'No tracked time in the last 24 hours.', 'muted')); return section; }
     const timelineShell = el('div', undefined, `timeline-shell${timelineSaving ? ' is-saving' : ''}`);
@@ -1642,6 +1721,7 @@ The previous version remains in Git history.`)) return;
       if (!host.isConnected) return;
       timelineInstance = createTimeline(host, {
         items,
+        rows,
         now,
         // Clockoli records timestamps to the second. A one-second snap also
         // defines the exact gap retained when neighbouring blocks touch.
@@ -1651,9 +1731,11 @@ The previous version remains in Git history.`)) return;
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
         onStop: async item => {
           const activeEntry = timelineEntriesById.get(item.id);
+          if (!activeEntry || !beginTimelineStop()) return;
           try {
             const result = await send({ type: 'STOP', description: activeEntry?.description || '' });
             if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
+            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
             timelineOptimisticCompletions.set(result.entry.id, {
               ...result.entry,
               _pending: Boolean(result.pending),
@@ -1663,44 +1745,27 @@ The previous version remains in Git history.`)) return;
             refreshMountedTimeline();
             await refreshState(false, false);
           } catch (error) { setError(error); throw error; }
+          finally { finishTimelineStop(); }
         },
         onStart: async item => {
           const entry = timelineEntriesById.get(item.id);
-          if (!entry || entry._active || timelineStartInFlight) return;
+          if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || sameTask(entry, pageState.active)) return;
           timelineStartInFlight = true;
           refreshMountedTimeline();
           try {
-          const startedAt = new Date().toISOString();
-          const previousActive = pageState.active;
-          const acceptanceId = beginTimelineQueueAcceptance();
-          if (previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
-            timelineOptimisticCompletions.set(previousActive.id, {
-              ...previousActive, endedAt: startedAt, _pending: true, _optimisticCompletion: true,
-            });
-          }
-          const acceptedActive = {
-            id: `timeline-local:${entry.id}:${acceptanceId}`,
-            taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '',
-            startedAt, _pending: true,
-          };
-          timelineAcceptedActive = acceptedActive;
-          pageState = { ...pageState, active: acceptedActive };
-          refreshTimelineQueueIndicator();
-          if (!refreshMountedTimelineAtRightEdge(startedAt)) renderUi();
+          const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id });
           try {
             const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '' });
             if (result?.active) {
               timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
               pageState = { ...pageState, active: timelineAcceptedActive };
+              refreshMountedTimelineAtRightEdge(result.active.startedAt || startContext.startedAt);
             }
           } catch (error) {
-            timelineAcceptedActive = null;
-            if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
-            pageState = { ...pageState, active: previousActive };
-            if (!refreshMountedTimeline()) renderUi();
+            rollbackTimelineStart(startContext);
             setError(error); throw error;
           } finally {
-            finishTimelineQueueAcceptance(acceptanceId);
+            finishTimelineQueueAcceptance(startContext.acceptanceId);
             refreshTimelineQueueIndicator();
             if (!refreshMountedTimeline()) renderUi();
           }
@@ -1824,15 +1889,17 @@ The previous version remains in Git history.`)) return;
         const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
         const switchToCurrent = Boolean(!same && current);
         const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save', switchToCurrent ? 'primary wide' : 'danger wide', async (event, node) => {
-          const hours = (Date.now() - new Date(active.startedAt).getTime()) / 3600000;
-          if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
-          node.disabled = true;
+          if (timelineStartInFlight || !beginTimelineStop()) return;
           try {
+            const hours = (Date.now() - new Date(active.startedAt).getTime()) / 3600000;
+            if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
+            node.disabled = true;
             const actionRoute = popupMode ? null : `${location.protocol}//${location.hostname}${location.pathname}`;
             const recentWasFresh = !switchToCurrent && recentFresh;
             const result = await send(switchToCurrent
               ? { type: 'SWITCH_TASK', taskUrl: current.taskUrl, taskTitle: current.taskTitle || '', description: description.value }
               : { type: 'STOP', description: description.value });
+            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, active)) timelineAcceptedActive = null;
             if (actionRoute && actionRoute !== `${location.protocol}//${location.hostname}${location.pathname}`) return;
             if (!switchToCurrent) {
               if (recentWasFresh && result?.entry?.id) recentFreshAfterPendingId = result.entry.id;
@@ -1840,20 +1907,45 @@ The previous version remains in Git history.`)) return;
             }
             recentLoaded = false; await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
+          finally { finishTimelineStop(); }
         });
-        stop.disabled = pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
+        stop.disabled = timelineStartInFlight || timelineStopInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
         }
       } else {
         const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
+          if (timelineStartInFlight || timelineStopInFlight) return;
+          timelineStartInFlight = true;
           node.disabled = true;
+          refreshMountedTimeline();
           try {
             const activatedTask = popupMode ? await refreshPopupTask() : taskFromLocation();
             if (!activatedTask) throw new Error('Open an HTTP(S) page to start tracking.');
-            await send({ type: 'START', taskUrl: activatedTask.taskUrl, taskTitle: activatedTask.taskTitle || '' });
+            const startContext = acceptTimelineStartImmediately(activatedTask, { identity: 'current-task' });
+            let active;
+            try {
+              active = await send({ type: 'START', taskUrl: activatedTask.taskUrl, taskTitle: activatedTask.taskTitle || '' });
+            } catch (error) {
+              rollbackTimelineStart(startContext);
+              throw error;
+            } finally {
+              finishTimelineQueueAcceptance(startContext.acceptanceId);
+              refreshTimelineQueueIndicator();
+            }
+            if (active?.id) {
+              timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
+              pageState = { ...pageState, active: timelineAcceptedActive };
+              refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+            }
             await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
+          finally {
+            timelineStartInFlight = false;
+            refreshMountedTimeline();
+          }
         });
-        startButton.disabled = !current || pageState.pendingWrites?.some(item => item.status === 'conflict');
+        startButton.disabled = !current || timelineStopInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict');
         body.append(startButton);
         if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
@@ -2097,6 +2189,16 @@ The previous version remains in Git history.`)) return;
     }
   }
 
+  function handleLocalPreferencesChanged(message) {
+    if (message?.type !== 'LOCAL_PREFERENCES_CHANGED') return false;
+    void send({ type: 'GET_PAGE_STATE', refresh: false }).then(data => {
+      applyPageState(data);
+      if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+      renderUi();
+    }).catch(setError);
+    return true;
+  }
+
   if (timesMode) {
     mountInHeader(); renderUi();
     void loadSelectedTimes();
@@ -2117,6 +2219,7 @@ The previous version remains in Git history.`)) return;
     }).catch(setError);
   } else if (actionSurfaceMode) {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (handleLocalPreferencesChanged(message)) return undefined;
       if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -2127,6 +2230,7 @@ The previous version remains in Git history.`)) return;
     void toggleFullWidthPopup();
   } else {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (handleLocalPreferencesChanged(message)) return undefined;
       if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
