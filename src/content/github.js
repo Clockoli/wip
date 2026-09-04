@@ -1556,7 +1556,7 @@
     return rows;
   }
 
-  function timelineSummaryActionDisabled() {
+  function timelineTrackActionDisabled() {
     const current = taskFromLocation();
     return !current || sameTask(current, pageState.active) || timelineStartInFlight || timelineStopInFlight
       || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
@@ -1566,7 +1566,7 @@
     if (!timelineInstance || !timelineWindow) return false;
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows, isSummaryActionDisabled: timelineSummaryActionDisabled() });
+    timelineInstance.update({ items, rows });
     return true;
   }
 
@@ -1800,9 +1800,6 @@
         view: timelineView,
         onViewChange: view => { timelineView = view; },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
-        summaryActionLabel: 'Track this task',
-        isSummaryActionDisabled: timelineSummaryActionDisabled(),
-        onSummaryAction: () => trackCurrentTimelineTask(),
         onStop: async item => {
           const activeEntry = timelineEntriesById.get(item.id);
           if (!activeEntry || timelineDeleteInFlight || !beginTimelineStop()) return;
@@ -1967,7 +1964,21 @@
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
         close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
-        header.append(brand, headerActions, close);
+        const timelineToolbarEnd = el('div', undefined, 'timeline-toolbar-end');
+        if (pageState.configured) {
+          const track = button('Track this task', 'primary popup-timeline-track', async (event, node) => {
+            if (timelineTrackActionDisabled()) return;
+            node.disabled = true;
+            try { await trackCurrentTimelineTask(); } catch {}
+          });
+          track.title = 'Start tracking this task';
+          track.setAttribute('aria-label', 'Track this task');
+          track.setAttribute('data-testid', 'popup-timeline-track');
+          track.disabled = timelineTrackActionDisabled();
+          timelineToolbarEnd.append(track);
+        }
+        timelineToolbarEnd.append(close);
+        header.append(brand, headerActions, timelineToolbarEnd);
       } else header.append(brand, headerActions);
       menu.append(header);
     } else {
@@ -2204,10 +2215,18 @@
       :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:calc(100vh - 8px); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,#d1d9e0); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:0 12px 30px #1f23284d }
       :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
       :host(.full-width-popup-surface) .menu-body { padding:0 }
-      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto 1fr auto; align-items:center; min-height:48px; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) }
+      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) }
       :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; gap:8px; color:var(--fgColor-default,#1f2328); font-size:14px }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
-      :host(.full-width-popup-surface) .popup-timeline-close { justify-self:end; width:30px; height:30px; padding:0; border:0; border-radius:0; background:transparent; font-size:24px; font-weight:400; line-height:1 }
+      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
+      :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
+      :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:transparent; font-size:24px; font-weight:400; line-height:1 }
+      @media(max-width:520px) {
+        :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
+        :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
+        :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
+        :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:start; flex-wrap:wrap }
+      }
       :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px; border:0; border-radius:0; background:transparent }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
       :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }

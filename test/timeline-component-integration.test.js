@@ -355,7 +355,7 @@ test('tracking timeline renders one row per configured project and Other for unm
   assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\)/);
   assert.match(content, /rowId: pageState\.projects\?\.length \? projectRowId\(projectName\) : 'tracked'/);
   assert.match(content, /entries\.some\(entry => projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\) === 'Other'\)/);
-  assert.match(content, /timelineInstance\.update\(\{ items, rows, isSummaryActionDisabled: timelineSummaryActionDisabled\(\) \}\)/);
+  assert.match(content, /timelineInstance\.update\(\{ items, rows \}\)/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
   assert.match(content, /projects: state\?\.projects \?\? \[\]/);
   assert.match(read('src/background/service-worker.js'), /configured: true, active, recent: state\.recent, projects: preferences\.projects/);
@@ -406,7 +406,12 @@ test('full-width timeline places branded navigation above the editor and Stop in
   const timeline = read('src/content/elastic-timeline-editor.js');
 
   assert.match(content, /timeline-brand/);
-  assert.match(content, /header\.append\(brand, headerActions, close\)/);
+  assert.match(content, /popup-timeline-track/);
+  assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
+  assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
+  assert.match(content, /timelineToolbarEnd\.append\(track\)[\s\S]*?timelineToolbarEnd\.append\(close\)/);
+  assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
+  assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
   assert.match(content, /onStop: async item =>/);
   assert.match(content, /type: 'STOP', description: activeEntry\?\.description \|\| ''/);
@@ -426,9 +431,9 @@ test('timeline exposes Delete and current-page tracking through durable handlers
   const timeline = read('src/content/elastic-timeline-editor.js');
 
   assert.match(timeline, /timeline-delete/);
-  assert.match(timeline, /timeline-summary-action/);
-  assert.match(content, /summaryActionLabel: 'Track this task'/);
-  assert.match(content, /onSummaryAction: \(\) => trackCurrentTimelineTask\(\)/);
+  assert.match(content, /popup-timeline-track/);
+  assert.match(content, /await trackCurrentTimelineTask\(\)/);
+  assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(content, /onDelete: async item =>/);
   assert.match(content, /type: 'DISCARD_ACTIVE'/);
   assert.match(content, /await queueTimelineEntryDelete\(entry\)/);
