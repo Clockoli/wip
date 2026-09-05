@@ -19,6 +19,7 @@ import {
   calculateTrackedDuration,
   createColorResolver,
   findAdjacentItemConnections,
+  findItemOverlaps,
   itemRowId,
   layoutTimelineItems,
   resolveTimelineRows,
@@ -216,13 +217,17 @@ export function createElasticTimeline(container, initialProps) {
       : item)
   }
 
+  function itemWithOverlaps(item, items = effectiveItems()) {
+    return { ...item, overlaps: findItemOverlaps(items, props.now).get(item.id) ?? [] }
+  }
+
   async function requestStart(item) {
     const current = props.items.find((candidate) => candidate.id === item.id) ?? item
     if (typeof props.onStart !== 'function' || current.isStartDisabled === true || pendingStartIds.has(item.id)) return
     pendingStartIds.add(item.id)
     renderDetails()
     try {
-      await props.onStart(current)
+      await props.onStart(itemWithOverlaps(current))
     } finally {
       pendingStartIds.delete(item.id)
       if (!destroyed) renderDetails()
@@ -235,7 +240,7 @@ export function createElasticTimeline(container, initialProps) {
     pendingStopIds.add(item.id)
     renderDetails()
     try {
-      await props.onStop(current)
+      await props.onStop(itemWithOverlaps(current))
     } finally {
       pendingStopIds.delete(item.id)
       if (!destroyed) renderDetails()
@@ -248,7 +253,7 @@ export function createElasticTimeline(container, initialProps) {
     pendingDeleteIds.add(item.id)
     renderDetails()
     try {
-      await props.onDelete(current)
+      await props.onDelete(itemWithOverlaps(current))
     } finally {
       pendingDeleteIds.delete(item.id)
       if (!destroyed) renderDetails()
@@ -344,12 +349,14 @@ export function createElasticTimeline(container, initialProps) {
   }
 
   function hoveredItem() {
-    return effectiveItems().find((item) => item.id === hoveredId) ?? null
+    const items = effectiveItems()
+    const item = items.find((item) => item.id === hoveredId)
+    return item ? itemWithOverlaps(item, items) : null
   }
 
   function select(item) {
     selectedId = item.id
-    props.onSelect?.(item)
+    props.onSelect?.(itemWithOverlaps(item))
     for (const element of track.querySelectorAll('[data-testid="timeline-item"]')) {
       element.dataset.selected = String(element.dataset.itemId === selectedId)
     }
@@ -357,6 +364,10 @@ export function createElasticTimeline(container, initialProps) {
 
   function renderDetails() {
     const item = hoveredItem()
+    const overlaps = findItemOverlaps(effectiveItems(), props.now)
+    for (const element of track.querySelectorAll('[data-testid="timeline-item"]')) {
+      element.dataset.overlap = String((overlaps.get(element.dataset.itemId)?.length ?? 0) > 0)
+    }
     details.replaceChildren()
     if (!item) {
       details.hidden = true
@@ -898,7 +909,7 @@ export function createElasticTimeline(container, initialProps) {
     renderConnectors()
     renderDetails()
     renderDetailsPointer()
-    if (notify) props.onEditCancel?.(item)
+    if (notify) props.onEditCancel?.(itemWithOverlaps(item))
   }
 
   function authoritativeAccepts(edit, items) {
@@ -932,7 +943,7 @@ export function createElasticTimeline(container, initialProps) {
       committedPreview = null
       geometryCache = null
       render()
-      props.onEditCancel?.(item)
+      props.onEditCancel?.(itemWithOverlaps(item))
       throw error
     }
     if (result && typeof result.then === 'function') {
@@ -941,12 +952,15 @@ export function createElasticTimeline(container, initialProps) {
         committedPreview = null
         geometryCache = null
         render()
-        props.onEditCancel?.(item)
+        props.onEditCancel?.(itemWithOverlaps(item))
       })
     }
   }
 
   function renderTrack(items, rows, blocks) {
+    const activeElement = root.getRootNode().activeElement
+    const focusedItem = activeElement?.closest('[data-testid="timeline-item"]')
+    const focusedId = focusedItem && track.contains(focusedItem) ? focusedItem.dataset.itemId : null
     track.replaceChildren()
 
     rows.forEach((row, index) => {
@@ -1059,7 +1073,9 @@ export function createElasticTimeline(container, initialProps) {
     }
 
     renderConnectors(items)
-
+    if (focusedId !== null) {
+      track.querySelector(`[data-item-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true })
+    }
   }
 
   function render() {
@@ -1116,15 +1132,6 @@ export function createElasticTimeline(container, initialProps) {
     if (event.key === 'Enter') {
       event.preventDefault()
       select(item)
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      if (gesture) clearGesture({ notify: true })
-      else {
-        selectedId = null
-        render()
-      }
       return
     }
     if (!event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
@@ -1275,9 +1282,19 @@ export function createElasticTimeline(container, initialProps) {
 
   viewport.addEventListener('pointercancel', () => clearGesture({ notify: true }), { signal })
   root.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && gesture) {
-      event.preventDefault()
-      clearGesture({ notify: true })
+    if (event.key !== 'Escape' || (!gesture && selectedId === null)) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (gesture) clearGesture({ notify: true })
+    else {
+      const selectedElement = track.querySelector(`[data-item-id="${CSS.escape(selectedId)}"]`)
+      selectedId = null
+      for (const element of track.querySelectorAll('[data-testid="timeline-item"]')) {
+        element.dataset.selected = 'false'
+      }
+      renderDetails()
+      renderDetailsPointer()
+      selectedElement?.focus({ preventScroll: true })
     }
   }, { signal })
 

@@ -6,6 +6,7 @@
   <title>Reports · Clockoli</title>
   <link rel="stylesheet" href="reports.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
+  <link rel="stylesheet" href="../styles/running-status.css">
 </head>
 <body>
   <div class="page-tabs-shell">
@@ -17,11 +18,12 @@
       <a class="page-tab" href="../options/options.html">Settings</a>
     </nav>
   </div>
+  <div id="running-status"></div>
   <main>
-    <section class="card period-card" aria-labelledby="period-heading">
+    <section id="period-card" class="card period-card" hidden aria-labelledby="period-heading">
       <div>
         <h2 id="period-heading">Reporting period</h2>
-        <p class="muted">Entries are included by their Start date.</p>
+        <p class="muted">Entries are included by their start date.</p>
       </div>
       <div class="period-controls">
         <label>Period
@@ -43,6 +45,20 @@
           <button id="apply-period" class="button secondary" type="button">Apply</button>
         </div>
       </div>
+      <div class="export-controls" aria-label="Timesheet downloads">
+        <a id="download-csv" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download CSV timesheet">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h4.69c.46 0 .9.18 1.23.51l2.82 2.82c.33.33.51.77.51 1.23v9.69A1.75 1.75 0 0 1 12.25 16h-7.5A1.75 1.75 0 0 1 3 14.25V1.75Zm1.5 0v12.5c0 .14.11.25.25.25h7.5c.14 0 .25-.11.25-.25V5H9.75A1.75 1.75 0 0 1 8 3.25V1.5H4.75a.25.25 0 0 0-.25.25ZM9.5 1.56v1.69c0 .14.11.25.25.25h1.69L9.5 1.56Z"/></svg>
+          <span>CSV</span>
+        </a>
+        <a id="download-json" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download JSON timesheet">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 1.5A2.25 2.25 0 0 0 3 3.75v2c0 .83-.67 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c.83 0 1.5.67 1.5 1.5v2a2.25 2.25 0 0 0 2.25 2.25H6a.75.75 0 0 0 0-1.5h-.75a.75.75 0 0 1-.75-.75v-2A3 3 0 0 0 3.63 8 3 3 0 0 0 4.5 5.75v-2A.75.75 0 0 1 5.25 3H6a.75.75 0 0 0 0-1.5h-.75Zm5.5 0A2.25 2.25 0 0 1 13 3.75v2c0 .83.67 1.5 1.5 1.5a.75.75 0 0 1 0 1.5c-.83 0-1.5.67-1.5 1.5v2a2.25 2.25 0 0 1-2.25 2.25H10a.75.75 0 0 1 0-1.5h.75a.75.75 0 0 0 .75-.75v-2A3 3 0 0 1 12.37 8a3 3 0 0 1-.87-2.25v-2a.75.75 0 0 0-.75-.75H10a.75.75 0 0 1 0-1.5h.75Z"/></svg>
+          <span>JSON</span>
+        </a>
+        <a id="download-pdf" class="export-link disabled" aria-disabled="true" href="#" aria-label="Print report or save as PDF">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0A1.75 1.75 0 0 0 3 1.75V5h1.5V1.75a.25.25 0 0 1 .25-.25h6.5a.25.25 0 0 1 .25.25V5H13V1.75A1.75 1.75 0 0 0 11.25 0h-6.5ZM3 10.5v3.75C3 15.216 3.784 16 4.75 16h6.5A1.75 1.75 0 0 0 13 14.25V10.5h-1.5v3.75a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25V10.5H3ZM1.75 5A1.75 1.75 0 0 0 0 6.75v3.5C0 11.216.784 12 1.75 12H3v-1.5H1.75a.25.25 0 0 1-.25-.25v-3.5a.25.25 0 0 1 .25-.25h12.5a.25.25 0 0 1 .25.25v3.5a.25.25 0 0 1-.25.25H13V12h1.25A1.75 1.75 0 0 0 16 10.25v-3.5A1.75 1.75 0 0 0 14.25 5H1.75Z"/></svg>
+          <span>Print</span>
+        </a>
+      </div>
     </section>
 
     <div id="error" class="notice error" role="alert" hidden></div>
@@ -56,12 +72,18 @@
     </div>
 
     <section id="report-content" hidden>
-      <div class="summary-grid" aria-label="Report summary">
-        <article class="summary-card"><span>Tracked</span><strong id="summary-time">0m</strong></article>
-        <article class="summary-card"><span>Billable</span><strong id="summary-money">Unrated</strong></article>
-        <article class="summary-card"><span>Entries</span><strong id="summary-entries">0</strong></article>
-        <article class="summary-card"><span>People</span><strong id="summary-people">0</strong></article>
-        <article class="summary-card"><span>Sources</span><strong id="summary-repositories">0</strong></article>
+      <div class="report-summary" aria-label="Report summary">
+        <p id="report-range" class="muted" role="status" aria-live="polite"></p>
+        <div class="summary-totals">
+          <div><span class="muted">Tracked time</span><strong id="summary-time">0m</strong></div>
+          <p id="summary-billable" class="muted" hidden>Billable <span id="summary-money">Unrated</span></p>
+        </div>
+        <p id="summary-counts" class="muted"></p>
+      </div>
+      <div id="report-empty" class="notice" role="status" hidden>
+        <p id="empty-message"></p>
+        <a id="add-time" href="../times/times.html" hidden>Add time</a>
+        <button id="reset-filters" class="text-button" type="button" hidden>Reset filters</button>
       </div>
 
       <section id="print-timesheet" class="print-timesheet" aria-label="Printable timesheet">
@@ -70,7 +92,7 @@
         <section aria-labelledby="print-task-heading"><h3 id="print-task-heading">Total time by task</h3><table id="print-task-table"></table></section>
       </section>
 
-      <div class="reports-layout">
+      <div id="reports-layout" class="reports-layout">
         <aside class="filters card" aria-label="Report filters">
           <section>
             <div class="section-heading"><h2>People</h2><button id="people-all" class="text-button" type="button">Select all</button></div>
@@ -90,42 +112,45 @@
         </aside>
 
         <div class="report-main">
-          <section class="card analytics-card" aria-labelledby="analytics-heading">
+          <section id="analytics-card" class="card analytics-card" aria-labelledby="analytics-heading">
             <div class="section-heading analytics-heading">
-              <div><h2 id="analytics-heading">Analytics</h2><p id="filtered-summary" class="muted"></p></div>
-              <div class="dimension-controls" aria-label="Chart configuration">
-                <label>Vertical axis
-                  <select id="metric">
-                    <option value="total-time" selected>Total time</option>
-                    <option value="avg-time">Avg time</option>
-                    <option value="billable-amount">Billable amount</option>
-                    <option value="task-count">Task count</option>
-                  </select>
-                </label>
-                <label id="billable-currency-control" hidden>Currency
-                  <select id="billable-currency" aria-label="Billable currency"></select>
-                </label>
-                <label>Horizontal axis
-                  <select id="horizontal-axis">
-                    <option value="day" selected>Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                    <option value="person">Person</option>
-                    <option value="repository">Source</option>
-                    <option value="task">Task URL / title</option>
-                  </select>
-                </label>
-                <label>Stack by
-                  <select id="stack-by">
-                    <option value="day">Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                    <option value="person" selected>Person</option>
-                    <option value="repository">Source</option>
-                    <option value="task">Task URL / title</option>
-                  </select>
-                </label>
-              </div>
+              <h2 id="analytics-heading">Analytics</h2>
+              <details id="chart-options" class="chart-options">
+                <summary>Chart options</summary>
+                <div class="dimension-controls" aria-label="Chart configuration">
+                  <label>Vertical axis
+                    <select id="metric">
+                      <option value="total-time" selected>Total time</option>
+                      <option value="avg-time">Avg time</option>
+                      <option value="billable-amount">Billable amount</option>
+                      <option value="task-count">Task count</option>
+                    </select>
+                  </label>
+                  <label id="billable-currency-control" hidden>Currency
+                    <select id="billable-currency" aria-label="Billable currency"></select>
+                  </label>
+                  <label>Horizontal axis
+                    <select id="horizontal-axis">
+                      <option value="day" selected>Day</option>
+                      <option value="week">Week</option>
+                      <option value="month">Month</option>
+                      <option value="person">Person</option>
+                      <option value="repository">Source</option>
+                      <option value="task">Task URL / title</option>
+                    </select>
+                  </label>
+                  <label>Stack by
+                    <select id="stack-by">
+                      <option value="day">Day</option>
+                      <option value="week">Week</option>
+                      <option value="month">Month</option>
+                      <option value="person" selected>Person</option>
+                      <option value="repository">Source</option>
+                      <option value="task">Task URL / title</option>
+                    </select>
+                  </label>
+                </div>
+              </details>
             </div>
             <div id="analytics-chart" class="chart" aria-live="polite"></div>
             <div id="chart-legend" class="legend" aria-label="Chart legend"></div>
@@ -133,27 +158,6 @@
               <summary>View analytics data table</summary>
               <div class="table-scroll"><table id="analytics-table"></table></div>
             </details>
-          </section>
-
-          <section class="card export-card" aria-labelledby="export-heading">
-            <div>
-              <h2 id="export-heading">Timesheet</h2>
-              <p class="muted">Download the current period and facet selection.</p>
-            </div>
-            <div class="export-controls" aria-label="Timesheet downloads">
-              <a id="download-csv" class="export-link" href="#" aria-label="Download CSV timesheet">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h4.69c.46 0 .9.18 1.23.51l2.82 2.82c.33.33.51.77.51 1.23v9.69A1.75 1.75 0 0 1 12.25 16h-7.5A1.75 1.75 0 0 1 3 14.25V1.75Zm1.5 0v12.5c0 .14.11.25.25.25h7.5c.14 0 .25-.11.25-.25V5H9.75A1.75 1.75 0 0 1 8 3.25V1.5H4.75a.25.25 0 0 0-.25.25ZM9.5 1.56v1.69c0 .14.11.25.25.25h1.69L9.5 1.56Z"/></svg>
-                <span>CSV</span>
-              </a>
-              <a id="download-json" class="export-link" href="#" aria-label="Download JSON timesheet">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 1.5A2.25 2.25 0 0 0 3 3.75v2c0 .83-.67 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c.83 0 1.5.67 1.5 1.5v2a2.25 2.25 0 0 0 2.25 2.25H6a.75.75 0 0 0 0-1.5h-.75a.75.75 0 0 1-.75-.75v-2A3 3 0 0 0 3.63 8 3 3 0 0 0 4.5 5.75v-2A.75.75 0 0 1 5.25 3H6a.75.75 0 0 0 0-1.5h-.75Zm5.5 0A2.25 2.25 0 0 1 13 3.75v2c0 .83.67 1.5 1.5 1.5a.75.75 0 0 1 0 1.5c-.83 0-1.5.67-1.5 1.5v2a2.25 2.25 0 0 1-2.25 2.25H10a.75.75 0 0 1 0-1.5h.75a.75.75 0 0 0 .75-.75v-2A3 3 0 0 1 12.37 8a3 3 0 0 1-.87-2.25v-2a.75.75 0 0 0-.75-.75H10a.75.75 0 0 1 0-1.5h.75Z"/></svg>
-                <span>JSON</span>
-              </a>
-              <a id="download-pdf" class="export-link" href="#" aria-label="Print report or save as PDF">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0A1.75 1.75 0 0 0 3 1.75V5h1.5V1.75a.25.25 0 0 1 .25-.25h6.5a.25.25 0 0 1 .25.25V5H13V1.75A1.75 1.75 0 0 0 11.25 0h-6.5ZM3 10.5v3.75C3 15.216 3.784 16 4.75 16h6.5A1.75 1.75 0 0 0 13 14.25V10.5h-1.5v3.75a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25V10.5H3ZM1.75 5A1.75 1.75 0 0 0 0 6.75v3.5C0 11.216.784 12 1.75 12H3v-1.5H1.75a.25.25 0 0 1-.25-.25v-3.5a.25.25 0 0 1 .25-.25h12.5a.25.25 0 0 1 .25.25v3.5a.25.25 0 0 1-.25.25H13V12h1.25A1.75 1.75 0 0 0 16 10.25v-3.5A1.75 1.75 0 0 0 14.25 5H1.75Z"/></svg>
-                <span>PDF</span>
-              </a>
-            </div>
           </section>
         </div>
       </div>

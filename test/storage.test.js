@@ -34,13 +34,27 @@ test('extension store persists config, token, caches, and queue through an isola
   await store.saveConfig({ owner: 'acme', repo: 'time-data' }, 'secret-token');
   await store.patchState({ user: 'alice', pendingWrites: [{ id: 'one' }] });
   assert.deepEqual(await store.getConfig(), { config: { owner: 'acme', repo: 'time-data' }, token: 'secret-token' });
-  assert.deepEqual(await store.getState(), { activeCache: null, recentCache: [], pendingWrites: [{ id: 'one' }], user: 'alice', dataVersion: 0 });
+  assert.deepEqual(await store.getState(), { activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [{ id: 'one' }], user: 'alice', dataVersion: 0 });
   await store.saveConfiguration({ owner: 'next', repo: 'time-data' }, 'next-token', { user: 'bob', activeCache: null, recentCache: [] });
   assert.deepEqual(await store.getConfig(), { config: { owner: 'next', repo: 'time-data' }, token: 'next-token' });
   assert.equal((await store.getState()).user, 'bob');
   await store.clearConfig();
   assert.deepEqual(await store.getConfig(), { config: null, token: '' });
-  assert.deepEqual(await store.getState(), { activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
+  assert.deepEqual(await store.getState(), { activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
+});
+
+test('summary cache survives store restart and is cleared with configuration or data resets', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const summaryCache = { reportDate: '2026-09-01', completedTodayMs: 1000, completedWeekMs: 2000, computedAt: 1, remoteWriteConfirmed: true };
+  await store.patchState({ summaryCache });
+  assert.deepEqual((await new ChromeStore(backend).getState()).summaryCache, summaryCache);
+  await store.saveConfiguration({ owner: 'next', repo: 'time-data' }, '', { activeCache: null, recentCache: [] });
+  assert.equal((await store.getState()).summaryCache, null);
+  await store.patchState({ summaryCache });
+  assert.equal((await store.ensureDataVersion(4)).summaryCache, null);
+  await store.patchState({ summaryCache });
+  await store.clearConfig();
+  assert.equal(backend.values.has('summaryCache'), false);
 });
 
 

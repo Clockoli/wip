@@ -106,7 +106,7 @@ test('tracker copy and navigation use URL tasks without item terminology', () =>
 
 test('opening the tracker renders cached entries and refreshes them without a second open', () => {
   assert.match(serviceWorker, /configured: true, active, recent: state\.recent/);
-  assert.match(content, /if \(!recentLoaded && Array\.isArray\(data\?\.recent\) && data\.recent\.length\) applyMenuData\(data\.recent, false\)/);
+  assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
   assert.match(content, /loadingRecent \|\| !recentFresh/);
   assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);

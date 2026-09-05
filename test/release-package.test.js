@@ -68,11 +68,13 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/storage/chrome-store.js',
   'src/styles/github-primer.css',
   'src/styles/page-tabs.css',
+  'src/styles/running-status.css',
   'src/tasks/tasks.css',
   'src/tasks/tasks.html',
   'src/tasks/tasks.js',
   'src/times/times.css',
   'src/times/times.html',
+  'src/ui/running-status.js',
 ];
 
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {

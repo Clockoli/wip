@@ -717,3 +717,13 @@ test('GitHub client creates a user branch from a source ref and discovers bounde
   assert.deepEqual(await client.listBranches('clockoli/users/'), ['clockoli/users/123', 'clockoli/users/456']);
   assert.equal(client.forBranch('clockoli/users/123').repositoryKey, 'acme/time-data@clockoli/users/123');
 });
+
+test('rate-limit errors expose an absolute retry time for status projections', async () => {
+  for (const [headers, expected] of [
+    [{ 'retry-after': '60' }, '2026-09-05T10:01:00.000Z'],
+    [{ 'x-ratelimit-reset': String(Date.parse('2026-09-05T10:42:00Z') / 1000) }, '2026-09-05T10:42:00.000Z'],
+  ]) {
+    const client = new GitHubClient({ token: 'test', now: () => new Date('2026-09-05T10:00:00Z'), fetchImpl: async () => response(429, {}, headers) });
+    await assert.rejects(() => client.request('/user'), error => error.code === 'rate_limit' && error.retryAt === expected);
+  }
+});

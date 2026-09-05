@@ -73,11 +73,13 @@ const onboarding = new OnboardingCoordinator({
   activeProbe: remoteActiveProbe,
 });
 
-function serializeError(error) {
+function serializeError(error, message) {
   return {
     message: error?.message || 'Unexpected error',
     code: error?.name === 'AbortError' ? 'aborted' : error?.code || 'error',
     status: error?.status || 0,
+    ...(error?.retryAt ? { retryAt: error.retryAt } : {}),
+    recovery: READ_RETRY_MESSAGES.has(message?.type) ? 'read-retry' : 'mutation-recovery',
   };
 }
 
@@ -104,10 +106,12 @@ function safeAttempt(attempt) {
   };
 }
 
-async function configuredSnapshot() {
+async function configuredSnapshot({ localOnly = false } = {}) {
   await store.migrateLegacyPatAuth();
-  await configuration.ensureRepositoryIdentity();
-  await configuration.ensurePersonalStorageBranch();
+  if (!localOnly) {
+    await configuration.ensureRepositoryIdentity();
+    await configuration.ensurePersonalStorageBranch();
+  }
   const [configurationSnapshot, authSnapshot] = await Promise.all([
     store.getConfigurationSnapshot(), store.getAuthSnapshot(),
   ]);
@@ -161,15 +165,16 @@ async function checkCurrentRepositoryAccess() {
   };
 }
 
-async function context() {
-  const snapshot = await configuredSnapshot();
+async function context({ localOnly = false } = {}) {
+  const snapshot = await configuredSnapshot({ localOnly });
   const { config, auth } = snapshot;
   if (!config || !auth) throw new Error('Connect GitHub and choose a private time-data repository in Settings.');
   const github = githubForConfig(config);
   const localState = await store.ensureDataVersion(4);
   let user = config.storageLogin || localState.user;
   if (!user) {
-    user = auth.githubLogin || await github.getAuthenticatedUser();
+    user = auth.githubLogin || (localOnly ? null : await github.getAuthenticatedUser());
+    if (!user) throw new Error('Refresh the GitHub connection to load your tracking identity.');
     await store.patchState({ user });
   }
   return {
@@ -313,7 +318,10 @@ async function loadTimes(message, sender) {
       maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
     });
     controller.signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
-    return { configured: true, recent: recent.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)) };
+    const tracker = new TrackerService({ github, store, user });
+    const recovery = await tracker.getRecoveryState();
+    controller.signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+    return { configured: true, recent: recent.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)), ...recovery };
   })();
   reportLoads.set(loadKey, { controller, promise });
   try { return await promise; }
@@ -410,6 +418,12 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP',
 ]);
 
+const READ_RETRY_MESSAGES = new Set([
+  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
+  'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES',
+]);
+
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
   'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
@@ -468,7 +482,7 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
   if (message.type === 'OPEN_TIMES') {
-    await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') }); return { ok: true };
+    await openTimesPage(); return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
@@ -523,14 +537,29 @@ async function handle(message, sender) {
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
-    const { config, auth } = await configuredSnapshot();
+    const localOnly = message.type === 'GET_PAGE_STATE' && !message.refresh;
+    const { config, auth } = await configuredSnapshot({ localOnly });
     if (!config || !auth) return message.type === 'GET_PAGE_STATE'
       ? { configured: false, active: null, pendingCount: 0, recent: [] }
       : { configured: false, active: null, recent: [], pendingWrites: [] };
-    const { tracker } = await context();
-    const state = await tracker.getState({ refresh: Boolean(message.refresh) });
+    const { tracker } = await context({ localOnly });
+    let state = await tracker.getState({ refresh: Boolean(message.refresh) });
     if (message.type === 'GET_PAGE_STATE') {
+      let summaryError;
+      if (message.refresh) {
+        try {
+          await tracker.loadMenuData();
+        } catch (error) {
+          // Summary reads must not hide durably accepted work when GitHub is unavailable.
+          summaryError = serializeError(error, message);
+        }
+      }
       const preferences = await store.getLocalPreferences();
+      state = await tracker.getState({ includeSummary: true });
+      const { todayTrackedMs, weekTrackedMs, remoteWriteConfirmed } = state;
+      const summary = summaryError
+        ? { todayTrackedMs: null, weekTrackedMs: null, remoteWriteConfirmed: false, summaryError }
+        : { todayTrackedMs, weekTrackedMs, remoteWriteConfirmed };
       const active = state.active ? {
         id: state.active.id, taskUrl: state.active.taskUrl || state.active.issue?.url, taskTitle: state.active.taskTitle ?? state.active.issueTitle ?? '',
         ...(state.active.issue ? { issue: state.active.issue } : {}), startedAt: state.active.startedAt,
@@ -540,6 +569,7 @@ async function handle(message, sender) {
       } : null;
       return {
         configured: true, active, recent: state.recent, projects: preferences.projects,
+        ...summary,
         pendingCount: state.pendingWrites.length,
         pendingWrites: state.pendingWrites.map(({ id, operation, status, stage, conflictReason, queuedAt, retryCount, lastError }) => ({
           id, status, stage, operation, queuedAt, retryCount: Math.max(0, Number(retryCount) || 0),
@@ -642,7 +672,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         : executor.run(() => handle(message, sender));
     operation = withCurrentRepositoryRecovery(message, attempt);
   }
-  operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error) }));
+  operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error, message) }));
   return true;
 });
 
@@ -687,23 +717,31 @@ function scheduleSync() {
   void syncPendingNow().catch(() => {});
 }
 
+async function openTimesPage() {
+  await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') });
+}
+
 async function toggleActionSurface(tab) {
-  if (!Number.isInteger(tab?.id)) return;
+  if (!Number.isInteger(tab?.id)) return openTimesPage();
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
-    return;
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
+      return;
+    } catch {
+      const url = new URL(tab.url || '');
+      if (!['http:', 'https:'].includes(url.protocol)) return openTimesPage();
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['src/domain/recovery-actions.js', 'src/content/elastic-timeline-editor.js', 'src/content/github.js'],
+    });
   } catch {
-    const url = new URL(tab.url || '');
-    if (!['http:', 'https:'].includes(url.protocol)) return;
+    return openTimesPage();
   }
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
-  });
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['src/domain/recovery-actions.js', 'src/content/elastic-timeline-editor.js', 'src/content/github.js'],
-  });
 }
 
 chrome.runtime.onInstalled.addListener(details => {

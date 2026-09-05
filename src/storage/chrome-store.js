@@ -1,5 +1,5 @@
 import { normalizeBillingSettings, normalizeProjects, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
-const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], pendingWrites: [], user: null, dataVersion: 0 });
+const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
 const AUTH_GENERATION = 'authGeneration';
@@ -154,7 +154,7 @@ export class ChromeStore {
       if (state.dataVersion > version) {
         throw storageFormatError(`Clockoli local data version ${state.dataVersion} is newer than supported version ${version}.`);
       }
-      const reset = { activeCache: null, recentCache: [], pendingWrites: [], dataVersion: version };
+      const reset = { activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], dataVersion: version };
       return { set: reset, result: { ...state, ...reset } };
     });
   }
@@ -276,7 +276,7 @@ export class ChromeStore {
 
   async promoteToUserStorageBranch(expectedGeneration, expected, patch) {
     return this.backend.mutateMany(
-      ['config', CONFIGURATION_GENERATION, 'activeCache', 'pendingWrites', 'recentCache', 'reportCache', 'taskMetadataCache'],
+      ['config', CONFIGURATION_GENERATION, 'activeCache', 'pendingWrites', 'recentCache', 'summaryCache', 'reportCache', 'taskMetadataCache'],
       values => {
         const config = values.config, generation = generationValue(values[CONFIGURATION_GENERATION]);
         if (generation !== expectedGeneration || !config
@@ -286,7 +286,7 @@ export class ChromeStore {
           set: {
             config: { ...config, ...structuredClone(patch) },
             [CONFIGURATION_GENERATION]: generation + 1,
-            recentCache: [], reportCache: null, taskMetadataCache: null,
+            recentCache: [], summaryCache: null, reportCache: null, taskMetadataCache: null,
           },
           result: generation + 1,
         };
@@ -294,7 +294,7 @@ export class ChromeStore {
     );
   }
 
-  async saveConfig(config, token) { await this.backend.setMany({ config, token }); }
+  async saveConfig(config, token) { await this.backend.setMany({ config, token, summaryCache: null }); }
 
   async getReportCache(repositoryKey) {
     const { reportCache = null } = await this.backend.getMany(['reportCache']);
@@ -322,7 +322,7 @@ export class ChromeStore {
   }
 
   async saveConfiguration(config, token, statePatch) {
-    return this.backend.setManyAndIncrement({ config, token, ...statePatch }, CONFIGURATION_GENERATION);
+    return this.backend.setManyAndIncrement({ config, token, ...statePatch, summaryCache: null }, CONFIGURATION_GENERATION);
   }
 
   async getExchangeRateCache() {
@@ -446,7 +446,7 @@ export class ChromeStore {
             generation: authGeneration,
           }, [AUTH_GENERATION]: authGeneration,
           [PENDING_AUTH_GENERATION]: pendingAuthGeneration,
-          config: { ...config, authMode: 'pat' }, ...statePatch, [CONFIGURATION_GENERATION]: configurationGeneration,
+          config: { ...config, authMode: 'pat' }, ...statePatch, summaryCache: null, [CONFIGURATION_GENERATION]: configurationGeneration,
         },
         delete: ['token', PENDING_AUTH, DEVICE_ATTEMPT, ...ONBOARDING_KEYS], result: configurationGeneration,
       };
@@ -458,7 +458,7 @@ export class ChromeStore {
       const authGeneration = Number.isSafeInteger(values[AUTH_GENERATION]) && values[AUTH_GENERATION] >= 0 ? values[AUTH_GENERATION] : 0;
       if (authGeneration !== expectedAuthGeneration || values[AUTH]?.mode !== 'github_app') return { result: false };
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
-      return { set: { config, ...statePatch, [CONFIGURATION_GENERATION]: generation }, result: generation };
+      return { set: { config, ...statePatch, summaryCache: null, [CONFIGURATION_GENERATION]: generation }, result: generation };
     });
   }
 
@@ -473,7 +473,7 @@ export class ChromeStore {
         set: {
           [AUTH]: { ...values[PENDING_AUTH], generation: authGeneration }, [AUTH_GENERATION]: authGeneration,
           [PENDING_AUTH_GENERATION]: consumedPendingGeneration,
-          config, ...statePatch, [CONFIGURATION_GENERATION]: configurationGeneration,
+          config, ...statePatch, summaryCache: null, [CONFIGURATION_GENERATION]: configurationGeneration,
         },
         delete: [PENDING_AUTH, 'token'],
         result: configurationGeneration,

@@ -23,7 +23,7 @@ test('settings no longer exposes the repository data convention', () => {
 
 test('normal settings route is GitHub App onboarding with resumable authorization and repository selection', () => {
   assert.match(source, /Step <span id="current-step">1<\/span> of 3/i);
-  assert.match(source, /id="authorize"[^>]*>Copy code to clipboard and connect GitHub<\/button>/);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/);
   for (const id of ['device-code', 'install-app', 'repository-list', 'connect-repository']) assert.match(source, new RegExp(`id="${id}"`));
   for (const type of ['START_DEVICE_FLOW', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY']) assert.match(script, new RegExp(type));
   for (const code of ['auth_denied', 'device_code_expired', 'device_flow_superseded']) assert.match(script, new RegExp(code));
@@ -37,8 +37,8 @@ test('onboarding names and explains Device activation without hiding GitHub safe
 });
 
 test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
-  assert.match(source, /id="authorize"[^>]*>Copy code to clipboard and connect GitHub<\/button>/i);
-  assert.match(source, /copies it before opening GitHub/i);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
+  assert.match(source, /copies the one-time code before opening GitHub so you can paste it/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
   assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
@@ -62,14 +62,14 @@ test('Step 2 creates a template-backed data repository or skips to existing-repo
   assert.match(script, /startRepositoryMonitoring\('clockoli-data'\)/);
 });
 
-test('Step 3 grants App access to the new or an existing repository', () => {
+test('Step 2 grants App access to the new or an existing repository', () => {
   assert.match(source, /id="repository-step"[\s\S]*Choose and validate the data repository/i);
   assert.match(source, /id="repository-access-instruction"/i);
   assert.match(source, /id="install-app"[\s\S]*Grant repository access/i);
   assert.match(source, /id="connect-repository"[^>]*>Validate and connect/i);
 });
 
-test('detected repository access advances to Step 4 for selection and validation', () => {
+test('detected repository access advances to Step 3 for selection and validation', () => {
   assert.match(source, /of 3/);
   assert.match(source, /id="repository-access-complete"[\s\S]*Private repository access found/i);
   assert.match(script, /\[3, 'repository-step'\]/);
@@ -81,7 +81,7 @@ test('onboarding renders one active step, keeps cancel below it, and names repos
   for (const id of ['device-step', 'repository-setup-step', 'repository-step']) assert.match(source, new RegExp(`id="${id}"`));
   assert.doesNotMatch(source, /id="repository-access-step"/);
   assert.match(script, /element\.hidden = number !== step/);
-  for (const id of ['device-step-title', 'repository-setup-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
+  for (const id of ['connection-title', 'repository-setup-step-title', 'repository-step-title']) assert.match(source, new RegExp(`id=\"${id}\" tabindex=\"-1\"`));
   assert.match(script, /previousStep !== null && previousStep !== step[\s\S]*focus\(\)/);
   assert.equal((source.match(/id="install-app"/g) || []).length, 1);
   assert.ok(source.indexOf('id="cancel-app-setup"') > source.indexOf('id="repository-step"'));
@@ -237,4 +237,48 @@ test('repository choice copy is plain language and errors stay visible at the cu
   assert.match(source, /created from the Clockoli template/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
   assert.match(styles, /#message\.error\{[^}]*z-index:/);
+});
+
+
+test('options mounts the shared running status directly below the tabs', () => {
+  assert.match(source, /<\/nav>\s*<\/div>\s*<div id="running-status"/);
+  assert.match(source, /href="\.\.\/styles\/running-status\.css"/);
+  assert.match(script, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);
+  assert.match(script, /mountRunningStatus\(\$\('running-status'\), \{ send \}\)/);
+});
+
+
+test('first run groups secondary cards and import under one closed More settings disclosure', () => {
+  assert.match(source, /<details id="more-settings"[^>]*>\s*<summary[^>]*>More settings<\/summary>/);
+  assert.doesNotMatch(source.match(/<details id="more-settings"[^>]*>/)?.[0] || '', /\bopen\b/);
+  const secondary = source.slice(source.indexOf('<details id="more-settings"'), source.indexOf('</main>'));
+  for (const id of ['display-settings', 'billing-settings', 'settings-backup', 'import-settings-file', 'advanced-settings']) {
+    assert.match(secondary, new RegExp(`id="${id}"`));
+  }
+  assert.equal((source.match(/<h[1-6][^>]*>Connect GitHub<\/h[1-6]>/g) || []).length, 1);
+  assert.match(source, /id="device-step"[^>]*aria-labelledby="connection-title"/);
+});
+
+test('setup completion gives the next action before optional repository verification details', () => {
+  assert.match(source, /id="setup-complete"[^>]*>Setup complete\. Open a task page, then click the Clockoli icon to start tracking\.<\/p>/);
+  assert.match(source, /id="setup-complete"[\s\S]*<details id="repository-verification"[\s\S]*<summary>Repository verification details<\/summary>[\s\S]*id="connected-storage"/);
+});
+
+test('each preferences form has its own live feedback beside its Save button', () => {
+  for (const form of ['billing', 'display']) {
+    assert.match(source, new RegExp(`id="save-${form}"[^>]*>[^<]+</button>\\s*<p id="${form}-feedback"[^>]*role="status"[^>]*aria-live="polite"`));
+  }
+});
+
+test('setup docs describe the shipped three-step flow and current settings actions', async () => {
+  const gettingStarted = await readFile(new URL('../docs/getting-started.md', import.meta.url), 'utf8');
+  const troubleshooting = await readFile(new URL('../docs/troubleshooting.md', import.meta.url), 'utf8');
+  assert.match(gettingStarted, /three guided steps/);
+  assert.doesNotMatch(gettingStarted, /Step 4|four guided steps/);
+  for (const label of ['Connect GitHub', 'Create private repository', 'Use existing repository', 'Grant repository access', 'Validate and connect', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
+    assert.ok(gettingStarted.includes(`**${label}**`), label);
+  }
+  assert.match(gettingStarted, /automatically validates and connects/i);
+  assert.match(gettingStarted, /Setup complete\. Open a task page, then click the Clockoli icon to start tracking\./);
+  assert.doesNotMatch(troubleshooting, /Choose repository access on GitHub|Disconnect this browser/);
 });

@@ -50,5 +50,15 @@ test('Activity does not duplicate standalone navigation inside its renderer', ()
   const start = content.indexOf('function renderTimesPage()');
   const end = content.indexOf('const POPUP_WINDOW_MS', start);
   const renderer = content.slice(start, end);
-  assert.doesNotMatch(renderer, /Clockoli|el\('h1'|button\('(Top tasks|Reports|Settings)'/);
+  assert.doesNotMatch(renderer, /el\('h1'|el\('[^']+', 'Clockoli'|button\('(Top tasks|Reports|Settings)'/);
+});
+
+test('Activity mounts one shared running status outside its content renderer', () => {
+  const html = read('src/times/times.html');
+  assert.match(html, /<\/nav>\s*<\/div>\s*<div id="activity-running-status"><\/div>/);
+  assert.equal((html.match(/src="\.\.\/ui\/running-status\.js"/g) || []).length, 1);
+  assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
+  const content = read('src/content/github.js');
+  const renderer = content.slice(content.indexOf('function renderTimesPage()'), content.indexOf('const POPUP_WINDOW_MS'));
+  assert.doesNotMatch(renderer, /active-task-strip|refreshCompactSurface/);
 });

@@ -45,22 +45,22 @@ An unpacked extension does not update automatically:
 
 Clockoli Settings opens after the first installation. You can reopen it from the gear button in the Clockoli panel or from the extension details page.
 
-Normal setup has four guided steps.
+Normal setup has three guided steps. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
 
 ### Step 1: activate the device
 
-1. Select **Copy code and open GitHub**.
+1. Select **Connect GitHub**. Clockoli copies the one-time code before opening GitHub so you can paste it.
 2. On GitHub, verify that you reached **github.com** for the Clockoli authorization you initiated in Settings.
 3. Paste the one-time code and approve the request.
 4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.
 
 Device activation signs this browser in without asking you to create or paste a personal access token. GitHub authorization and GitHub App repository access are separate steps.
 
-### Step 2: create or choose a data repository
+### Step 2: choose private data storage
 
-For a new setup, use **Create clockoli-data on GitHub**. GitHub opens a prefilled private-repository form based on Clockoli's template.
+For a new setup, use **Create private repository**. GitHub opens a prefilled private-repository form for **clockoli-data** based on Clockoli's template.
 
-If you already have a suitable repository, select **I already have a repository**.
+If you already have a suitable repository, select **Use existing repository**.
 
 A suitable repository must be:
 
@@ -70,21 +70,21 @@ A suitable repository must be:
 - granted to the Clockoli GitHub App with **Contents: Read and write**;
 - compatible with direct writes under its branch rules.
 
-### Step 3: grant repository access
-
-Select **Choose repository access on GitHub**. Use **Only select repositories** and grant access only to the data repository.
+Select **Grant repository access**. Use **Only select repositories** and grant access only to the data repository.
 
 Creating a repository does not grant the GitHub App access to it. Clockoli monitors access when you return from GitHub.
 
-### Step 4: validate the repository
+### Step 3: choose and validate the data repository
 
-Select the repository and choose **Validate and use selected repository**. Clockoli checks privacy, permissions, repository identity, branch routing, and storage compatibility before enabling tracking.
+When there is only one eligible repository, Clockoli automatically validates and connects it. If several are available, select the repository and choose **Validate and connect**. Clockoli checks privacy, permissions, repository identity, branch routing, and storage compatibility before enabling tracking.
 
 Clockoli creates or verifies its repository marker and provisions a personal branch named from your stable GitHub user ID. Routine timer writes go to that personal branch.
 
+The connection card confirms: “Setup complete. Open a task page, then click the Clockoli icon to start tracking.” Open **Repository verification details** below it to review the account, repository, branch and verification status, **Check access**, or **Change repository**.
+
 ## Advanced PAT setup
 
-Open **Don't want to install the GitHub App?** in Settings if your environment cannot install the App or already uses the compatibility flow.
+Open **More settings**, then **Advanced** → **Use a personal access token** in Settings if your environment cannot install the App or already uses the compatibility flow. After connecting, **Advanced** is available directly on the page.
 
 Create a fine-grained personal access token restricted to the one private data repository with **Contents: Read and write**, then enter:
 
@@ -93,7 +93,7 @@ Create a fine-grained personal access token restricted to the one private data r
 - branch;
 - token.
 
-Clockoli validates the GitHub identity, private repository, branch, and write route before saving the configuration. A stored token is never displayed again.
+Select **Validate and use PAT**. Clockoli validates the GitHub identity, private repository, branch, and write route before saving the configuration. A stored token is never displayed again.
 
 ## 3. Track your first task
 
@@ -149,6 +149,8 @@ Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
 - **Reports** reads the selected period across the data repository and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF.
 
 ## 6. Optional settings
+
+**Save display settings** and **Save billable rates** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
 
 ### Recent entries
 

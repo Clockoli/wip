@@ -46,3 +46,54 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
     assert.doesNotMatch(runtime, /function recoveryLabel/);
   }
 });
+
+const describeSave = state => JSON.parse(JSON.stringify(context.ClockoliRecovery.describeSaveStatus(state)));
+const describeError = error => JSON.parse(JSON.stringify(context.ClockoliRecovery.describeConnectionError(error)));
+
+test('save status requires remote evidence and gives pending work, errors, and conflicts precedence', () => {
+  assert.deepEqual(describeSave({ saving: true }), { label: 'Saving on this device' });
+  assert.deepEqual(describeSave({ pendingCount: 2, remoteWriteConfirmed: true }), { label: 'Saved on this device · waiting for GitHub', pending: 2 });
+  assert.deepEqual(describeSave({ remoteWriteConfirmed: true }), { label: 'Saved to GitHub' });
+  assert.notEqual(describeSave({ pendingCount: 0 }).label, 'Saved to GitHub');
+  assert.notEqual(describeSave({}).label, 'Saved to GitHub');
+  const conflict = describeSave({ remoteWriteConfirmed: true, pendingWrites: [{ id: 'blocked', status: 'conflict' }] });
+  assert.equal(conflict.conflict, true);
+  assert.equal(conflict.recovery, 'mutation-recovery');
+  const error = describeSave({ remoteWriteConfirmed: true, error: { code: 'authentication', message: 'Access expired' } });
+  assert.equal(error.label, 'GitHub access was revoked');
+  assert.equal(error.detail, 'Access expired');
+  assert.equal(error.action, 'connect');
+  assert.equal(error.recovery, 'mutation-recovery');
+});
+
+test('connection errors retain detail and separate read retry from mutation recovery', () => {
+  for (const [code, headline, action] of [
+    ['network', "Couldn't reach GitHub", 'retry'],
+    ['authentication', 'GitHub access was revoked', 'connect'],
+    ['permission', 'GitHub access was revoked', 'grant'],
+    ['not_found', 'Repository not found or not private', 'choose'],
+    ['private_required', 'Repository not found or not private', 'choose'],
+    ['rate_limit', 'GitHub rate limit reached', 'retry'],
+  ]) {
+    assert.deepEqual(describeError({ code, message: 'Original detail' }), { headline, detail: 'Original detail', action, recovery: 'read-retry' });
+    assert.equal(describeError({ code, message: 'Original detail', recovery: 'mutation-recovery' }).recovery, 'mutation-recovery');
+  }
+  const retryAt = '2026-09-05T10:42:00.000Z';
+  const time = new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  assert.equal(describeError({ code: 'rate_limit', retryAt, message: 'Throttled' }).headline, `GitHub rate limit reached — retry after ${time}`);
+  assert.equal(describeError({ code: 'rate_limit', retryAt: 'invalid' }).headline, 'GitHub rate limit reached');
+});
+
+test('connection descriptions accept the GitHub client error classes and fetch failures directly', async () => {
+  const { GitHubAuthenticationError, GitHubPermissionError, GitHubNotFoundError, GitHubRateLimitError } = await import('../src/api/github-client.js');
+  for (const [error, action] of [
+    [new GitHubAuthenticationError(), 'connect'], [new GitHubPermissionError(), 'grant'],
+    [new GitHubNotFoundError(), 'choose'], [new GitHubRateLimitError(), 'retry'],
+    [new TypeError('Failed to fetch'), 'retry'],
+  ]) {
+    const description = describeError(error);
+    assert.equal(description.detail, error.message);
+    assert.equal(description.action, action);
+    assert.equal(description.recovery, 'read-retry');
+  }
+});

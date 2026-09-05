@@ -50,7 +50,7 @@ test('GitHub panel uses the standalone Elastic Timeline Editor and has no legacy
   assert.match(content, /type: 'QUEUE_ENTRY_EDIT'/);
   assert.match(content, /type: 'QUEUE_ACTIVE_START_EDIT'/);
   assert.match(content, /timeline-queue-spinner/);
-  assert.match(content, /timeline-queue-count/);
+  assert.match(content, /describeSaveStatus/);
   assert.match(content, /edit\.kind !== 'resize-left'/);
   assert.match(content, /type: 'QUEUE_ACTIVE_START_EDIT'/);
   assert.match(content, /original: \{ id: entry\.id, startedAt: entry\.startedAt \}/);
@@ -63,8 +63,8 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.match(content, /timelineOptimisticEdits\.set\(entry\.id, edits\);\s*applyTimelineOptimisticEntry\(entry, edits\);\s*refreshMountedTimeline\(\);\s*const acceptanceId = beginTimelineQueueAcceptance\(\);/);
   assert.match(content, /isPending: Boolean\(entry\._pending \|\| optimistic\)/);
   assert.match(content, /isEditable: !entry\._active/);
-  assert.match(content, /function refreshTimelineQueueIndicator\(\) \{[\s\S]*?timelineQueueIndicator\.hidden = count === 0[\s\S]*?label\.textContent = count > 0 \? String\(count\) : ''/);
-  assert.match(content, /\.timeline-queue-spinner\[hidden\] \{ display:none !important \}/);
+  assert.match(content, /timelineQueueIndicator\.textContent = status.label/);
+  assert.doesNotMatch(content, /timeline-queue-count/);
   assert.match(content, /recordTimelineQueueDiagnostic\('Edit time entry: accepted locally and queued for GitHub\.'/);
   assert.match(content, /recent\.filter\(entry => entry\._path && \(entry\._sha \|\| entry\._pending\)/);
   assert.match(content, /applyTimelineOptimisticEntry\(entry, \{ startedAt: entry\.startedAt, endedAt: entry\.endedAt \}\)/);
@@ -73,7 +73,7 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.match(content, /type: 'QUEUE_ENTRY_EDIT'/);
   assert.match(content, /timelineQueuedOperationIds\.set/);
   assert.match(content, /timeline-queue-spinner/);
-  assert.match(content, /timeline-queue-count/);
+  assert.match(content, /describeSaveStatus/);
   assert.doesNotMatch(content, /async function saveCalendarEntry/);
   assert.doesNotMatch(content, /timelineSaving = true; suppressRecentRender = true/);
 });
@@ -107,7 +107,7 @@ test('timeline task switching is optimistic and keeps the queued completion visi
 
 test('timeline switch advances the right edge to the worker start timestamp before refreshing', () => {
   const content = read('src/content/github.js');
-  const start = content.indexOf('        onStart: async item =>');
+  const start = content.indexOf('  async function restartTimelineEntry(entry)');
   const end = content.indexOf('\n        onEditCommit:', start);
   assert.ok(start >= 0 && end > start);
   const handler = content.slice(start, end);
@@ -185,6 +185,8 @@ test('optimistic start helper updates the mounted timeline and scrolls before an
     const beginTimelineQueueAcceptance = () => 'local:1';
     const finishTimelineQueueAcceptance = () => {};
     const refreshTimelineQueueIndicator = () => {};
+    const refreshCompactSurface = () => {};
+    const localDateValue = date => date.toISOString().slice(0, 10);
     const refreshMountedTimeline = () => true;
     const renderUi = () => { throw new Error('mounted timeline must not be remounted'); };
     ${content.slice(start, end)}
@@ -238,8 +240,8 @@ test('timeline and panel STOP share one single-flight acceptance across a deferr
   const helperEnd = content.indexOf('\n\n  function refreshMountedTimelineAtRightEdge', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
   const helpers = content.slice(helperStart, helperEnd);
-  const timelineHandlerStart = content.indexOf('        onStop: async item =>');
-  const timelineHandlerEnd = content.indexOf('\n        onStart:', timelineHandlerStart);
+  const timelineHandlerStart = content.indexOf('  async function stopTimelineEntry(activeEntry)');
+  const timelineHandlerEnd = content.indexOf('\n  async function restartTimelineEntry', timelineHandlerStart);
   const timelineHandler = content.slice(timelineHandlerStart, timelineHandlerEnd);
   assert.match(timelineHandler, /!beginTimelineStop\(\)/);
   assert.match(timelineHandler, /finally \{ finishTimelineStop\(\); \}/);
@@ -303,6 +305,8 @@ test('optimistic start acceptance rolls back internal state if rendering throws'
     const beginTimelineQueueAcceptance = () => 'local:1';
     const finishTimelineQueueAcceptance = () => { finished += 1; };
     const refreshTimelineQueueIndicator = () => {};
+    const refreshCompactSurface = () => {};
+    const localDateValue = date => date.toISOString().slice(0, 10);
     const renderUi = () => {};
     ${content.slice(start, end)}
     try { acceptTimelineStartImmediately({ taskUrl: 'https://example.com/new' }, { completePrevious: true }); }
@@ -355,7 +359,7 @@ test('tracking timeline renders one row per configured project and Other for unm
   assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\)/);
   assert.match(content, /rowId: pageState\.projects\?\.length \? projectRowId\(projectName\) : 'tracked'/);
   assert.match(content, /entries\.some\(entry => projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\) === 'Other'\)/);
-  assert.match(content, /timelineInstance\.update\(\{ items, rows \}\)/);
+  assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now \}\)/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
   assert.match(content, /projects: state\?\.projects \?\? \[\]/);
   assert.match(read('src/background/service-worker.js'), /configured: true, active, recent: state\.recent, projects: preferences\.projects/);
@@ -380,7 +384,7 @@ test('optimistic completion replaces the same completed timer instead of adding 
 test('routine full-width UI updates never destroy the mounted timeline', () => {
   const content = read('src/content/github.js');
 
-  assert.match(content, /const preserveFullWidthTimeline = Boolean\(fullWidthPopupOpen && timelineInstance && timelineWindow\)/);
+  assert.match(content, /const preserveFullWidthTimeline = Boolean\(fullWidthPopupOpen && pageState\.configured && timelineInstance && timelineWindow\)/);
   assert.match(content, /if \(!preserveFullWidthTimeline\) \{\s*timelineInstance\?\.destroy\(\)/);
   assert.match(content, /if \(fullWidthPopupOpen\) \{\s*if \(preserveFullWidthTimeline\) refreshMountedTimeline\(\);\s*else renderFullWidthPopup\(style\);/);
   assert.doesNotMatch(content, /if \(fullWidthPopupOpen\) renderFullWidthPopup\(style\)/);
@@ -388,8 +392,8 @@ test('routine full-width UI updates never destroy the mounted timeline', () => {
 
 test('timeline STOP keeps the completed block and its connectors visible through queue sync', () => {
   const content = read('src/content/github.js');
-  const start = content.indexOf('onStop: async item =>');
-  const end = content.indexOf('\n        onStart:', start);
+  const start = content.indexOf('async function stopTimelineEntry(activeEntry)');
+  const end = content.indexOf('\n  async function restartTimelineEntry', start);
   assert.ok(start >= 0 && end > start);
   const handler = content.slice(start, end);
 
@@ -409,7 +413,7 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /popup-timeline-track/);
   assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
   assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
-  assert.match(content, /timelineToolbarEnd\.append\(track\)[\s\S]*?timelineToolbarEnd\.append\(close\)/);
+  assert.match(content, /strip\.append\(track\)/);
   assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
@@ -420,7 +424,7 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);
   assert.match(content, /timeline-queue-spinner[\s\S]*?section\.append\(spinner\)/);
-  assert.match(content, /\.popup-timeline-section > \.timeline-queue-spinner \{ position:absolute; top:8px; right:16px/);
+  assert.match(content, /\.timeline-queue-spinner \{ padding:4px 0 8px/);
   assert.doesNotMatch(content, /trailingActionGutterPx/);
   assert.doesNotMatch(content, /renderItemTrailingAction/);
 });
@@ -466,4 +470,20 @@ test('tracking panel exposes a safe, bounded queue diagnostics log', () => {
   assert.match(content, /Queued start needs attention/);
   assert.match(content, /Retry queued write/);
   assert.match(worker, /queuedAt, retryCount, lastError/);
+});
+
+test('daily panel consumes the bundle palette and overlap flags without remounting on refresh', () => {
+  const content = read('src/content/github.js');
+  assert.match(content, /ElasticTimelineEditor\?\.createColorResolver/);
+  assert.match(content, /data-overlap="true"/);
+  assert.match(content, /Fix in Activity/);
+  const start = content.indexOf('  function refreshMountedTimeline()');
+  const end = content.indexOf('\n\n  function beginTimelineStop', start);
+  const refresh = content.slice(start, end);
+  assert.match(refresh, /now/);
+  assert.match(refresh, /refreshCompactSurface/);
+  assert.doesNotMatch(refresh, /destroy|createTimeline/);
+  assert.match(content, /describeSaveStatus/);
+  assert.match(content, /describeConnectionError/);
+  assert.match(content, /diagnostics\.open = false/);
 });

@@ -1,6 +1,9 @@
+import { mountRunningStatus } from '../ui/running-status.js';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../domain/tasks.js';
+import { formatClockDuration } from '../domain/reporting.js';
 
 const PERIOD_KEY = 'clockoli.tasks.period';
+const SECOND_MS = 1_000;
 const PERIODS = new Set(['two-weeks', 'one-month', 'three-months', 'six-months', 'one-year']);
 const ISSUE_OPEN_PATH = 'M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z';
 const PULL_OPEN_PATH = 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z';
@@ -8,6 +11,8 @@ const $ = id => document.getElementById(id);
 const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', range: null };
 let tick = null;
 let pendingRefresh = null;
+let pendingRender = false;
+let filterFocused = false;
 
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
@@ -79,6 +84,10 @@ function makeTimerButton(task) {
   button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
+    task = state.tasks.find(item => item.taskUrl === task.taskUrl);
+    if (!task) return;
+    const active = sameTask(state.active, task);
+    const restoreFocus = document.activeElement === button;
     const activeBeforeAction = state.active;
     state.busyUrl = task.taskUrl; setError(); render();
     try {
@@ -106,7 +115,13 @@ function makeTimerButton(task) {
     } catch (error) {
       await reconcileTaskState(activeBeforeAction).catch(() => {});
       setError(error);
-    } finally { state.busyUrl = ''; render(); }
+    } finally {
+      state.busyUrl = '';
+      if (restoreFocus && document.activeElement === document.body) {
+        button.disabled = false; button.focus({ preventScroll: true });
+      }
+      render();
+    }
   });
   return button;
 }
@@ -121,40 +136,87 @@ function hasRunnablePending(queue = state.pendingWrites) {
     && first.conflictReason !== 'queued_entry_missing';
 }
 
-function render() {
+function isInteracting() {
+  return Boolean(state.busyUrl) || [...$('task-list').children].some(row => row.matches(':hover') || row.contains(document.activeElement));
+}
+
+function reconcileList() {
+  // Focus and pointer events may be moving between two controls in the list.
+  queueMicrotask(() => { if (pendingRender && !isInteracting()) render(); });
+}
+
+function updateRows() {
+  for (const row of $('task-list').children) {
+    const task = state.tasks.find(item => item.taskUrl === row.dataset.taskUrl);
+    const button = row.querySelector('.timer-button'), active = sameTask(state.active, task);
+    row.classList.toggle('running', active);
+    button.classList.toggle('stop', active);
+    button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
+    button.disabled = Boolean(!task || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
+    if (task) row.querySelector('.tracked-time').textContent = formatClockDuration(taskTotalSeconds(task));
+  }
+}
+
+function render({ force = false } = {}) {
   clearInterval(tick); tick = null;
-  const tasks = visibleTasks(), list = $('task-list'); list.replaceChildren();
-  $('result-count').textContent = `${tasks.length} ${tasks.length === 1 ? 'result' : 'results'}`;
-  $('empty').hidden = tasks.length > 0;
+  const tasks = visibleTasks(), list = $('task-list');
+  $('task-controls').hidden = !state.configured;
+  $('tasks-content').hidden = !state.configured; $('setup').hidden = state.configured;
   const syncing = hasRunnablePending();
   const refresh = $('refresh-tasks'); refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
+  if (!force && isInteracting()) {
+    pendingRender = true;
+  } else {
+    pendingRender = false;
+    rebuildList(tasks);
+  }
+  updateRows();
+  if (state.active) tick = setInterval(() => {
+    const expectedOrder = visibleTasks().map(task => task.taskUrl);
+    const renderedOrder = [...list.children].map(row => row.dataset.taskUrl);
+    if (expectedOrder.length !== renderedOrder.length || expectedOrder.some((url, index) => renderedOrder[index] !== url)) { render(); return; }
+    updateRows();
+  }, SECOND_MS);
+  schedulePendingRefresh();
+}
+
+function rebuildList(tasks) {
+  const list = $('task-list'), focused = document.activeElement;
+  const focusedRow = focused?.closest('.task-row');
+  const focusUrl = focusedRow?.dataset.taskUrl;
+  const focusSelector = focused?.classList.contains('timer-button') ? '.timer-button'
+    : focused?.classList.contains('task-title') ? '.task-title' : '.task-url';
+  const scroller = document.scrollingElement;
+  const scrollTop = scroller.scrollTop, scrollLeft = scroller.scrollLeft;
+  const listTop = list.scrollTop, listLeft = list.scrollLeft;
+  list.replaceChildren();
+  $('result-count').textContent = `${tasks.length} ${tasks.length === 1 ? 'result' : 'results'}`;
+  $('empty').hidden = tasks.length > 0;
+  const filtered = Boolean($('task-filter').value.trim());
+  $('empty-message').textContent = filtered ? 'No tasks match.' : 'Nothing tracked yet. Open a task page and click Clockoli to start.';
+  $('clear-filter').hidden = !filtered;
   for (const task of tasks) {
     const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
+    row.addEventListener('pointerleave', reconcileList);
     const main = document.createElement('div'); main.className = 'task-main'; main.append(taskIcon(task));
     const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
     const url = document.createElement(task.title ? 'div' : 'a'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
     if (!task.title) { url.href = task.taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
-    copy.append(url);
     if (task.title) {
       const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; copy.append(title);
     }
+    copy.append(url);
     main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
-    const total = document.createElement('span'); total.className = 'tracked-time'; total.textContent = `${formatDuration(taskTotalSeconds(task))} tracked`;
+    const total = document.createElement('span'); total.className = 'tracked-time'; total.setAttribute('aria-label', 'Accumulated time');
     actions.append(total, makeTimerButton(task)); row.append(main, actions); list.append(row);
   }
-  if (state.active) tick = setInterval(() => {
-    const expectedOrder = visibleTasks().map(task => task.taskUrl);
-    const renderedOrder = [...list.children].map(row => row.dataset.taskUrl);
-    if (expectedOrder.some((url, index) => renderedOrder[index] !== url)) { render(); return; }
-    const activeButton = document.querySelector('.timer-button.stop');
-    if (activeButton) activeButton.textContent = `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}`;
-    const activeRow = [...list.children].find(row => row.dataset.taskUrl === taskUrlOf(state.active));
-    const activeTask = state.tasks.find(task => sameTask(task, state.active));
-    const total = activeRow?.querySelector('.tracked-time');
-    if (total && activeTask) total.textContent = `${formatDuration(taskTotalSeconds(activeTask))} tracked`;
-  }, 1000);
-  schedulePendingRefresh();
+  if (focusUrl) {
+    const replacement = [...list.children].find(row => row.dataset.taskUrl === focusUrl)?.querySelector(focusSelector);
+    (replacement || $('task-filter')).focus({ preventScroll: true });
+  }
+  scroller.scrollTop = scrollTop; scroller.scrollLeft = scrollLeft;
+  list.scrollTop = listTop; list.scrollLeft = listLeft;
 }
 
 function schedulePendingRefresh() {
@@ -190,9 +252,16 @@ async function load() {
     const result = await send({ type: 'LOAD_TASKS', payload: range });
     if (requestId !== state.requestId) return;
     state.configured = Boolean(result.configured);
-    if (!state.configured) { $('tasks-content').hidden = true; $('setup').hidden = false; return; }
+    if (!state.configured) {
+      state.tasks = []; state.active = null; state.pendingWrites = [];
+      render({ force: true }); return;
+    }
     state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
     $('tasks-content').hidden = false; render();
+    if (!filterFocused) {
+      filterFocused = true;
+      if (document.activeElement === document.body) $('task-filter').focus({ preventScroll: true });
+    }
   } catch (error) { if (requestId === state.requestId) setError(error); }
   finally { if (requestId === state.requestId) $('loading').hidden = true; }
 }
@@ -203,7 +272,22 @@ $('refresh-tasks').addEventListener('click', async () => {
   catch (error) { setError(error); }
   finally { button.disabled = hasRunnablePending(); }
 });
-$('task-filter').addEventListener('input', render);
+$('task-list').addEventListener('focusout', reconcileList);
+$('task-filter').addEventListener('input', () => render({ force: true }));
+function clearFilter() {
+  $('task-filter').value = ''; $('task-filter').focus({ preventScroll: true }); render({ force: true });
+}
+$('clear-filter').addEventListener('click', clearFilter);
+$('task-filter').addEventListener('keydown', event => {
+  if (!state.configured || event.isComposing) return;
+  if (event.key === 'Escape') { event.preventDefault(); clearFilter(); }
+  if (event.key !== 'Enter' || event.repeat) return;
+  const tasks = visibleTasks();
+  const rows = [...$('task-list').children];
+  if (tasks.length !== 1 || rows.length !== 1 || rows[0].dataset.taskUrl !== tasks[0].taskUrl || sameTask(state.active, tasks[0])) return;
+  event.preventDefault();
+  $('task-list').querySelector('.timer-button')?.click();
+});
 $('period').addEventListener('change', () => {
   try { localStorage.setItem(PERIOD_KEY, $('period').value); } catch { /* unavailable storage falls back to this tab */ }
   void load();
@@ -216,3 +300,5 @@ try {
 } catch { /* use default */ }
 $('period').value = PERIODS.has(savedPeriod) ? savedPeriod : 'two-weeks';
 void load();
+
+mountRunningStatus($('running-status'), { send, onChange: load });

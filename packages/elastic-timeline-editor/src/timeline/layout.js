@@ -23,6 +23,22 @@ export function itemRowId(item) {
   return item.rowId ?? DEFAULT_ROW_ID
 }
 
+export function findItemOverlaps(items, now) {
+  const overlaps = new Map(items.map((item) => [item.id, []]))
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    const end = item.endedAt ?? now
+    for (let otherIndex = index + 1; otherIndex < items.length; otherIndex += 1) {
+      const other = items[otherIndex]
+      if (String(itemRowId(item)) !== String(itemRowId(other))) continue
+      if (Math.max(item.startedAt, other.startedAt) >= Math.min(end, other.endedAt ?? now)) continue
+      overlaps.get(item.id).push(other.id)
+      overlaps.get(other.id).push(item.id)
+    }
+  }
+  return overlaps
+}
+
 export function resolveTimelineRows(items, rows = []) {
   const resolved = []
   const seen = new Set()

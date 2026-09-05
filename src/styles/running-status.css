@@ -1,0 +1,16 @@
+@import './github-primer.css';
+.running-status{box-sizing:border-box;border-bottom:1px solid var(--borderColor-muted);background:var(--bgColor-default);color:var(--fgColor-default);font:400 14px/1.5 var(--fontStack-sansSerif)}
+.running-status-row,.running-status-error{box-sizing:border-box;width:min(1440px,100%);margin:0 auto;padding:10px 24px}
+.running-status-row{display:flex;align-items:center;gap:12px;min-height:52px}
+.running-status [hidden]{display:none!important}
+.running-status-idle,.running-status-today{color:var(--fgColor-muted)}
+.running-status-task{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fgColor-accent);font-weight:600;text-decoration:none}
+.running-status-task:hover{text-decoration:underline}
+.running-status-elapsed,.running-status-today{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.running-status .running-status-stop{flex:none;margin:0;padding:5px 12px;border:1px solid var(--button-danger-borderColor-rest);border-radius:6px;background:var(--button-danger-bgColor-rest);color:var(--button-danger-fgColor-rest);font:600 14px/1.5 var(--fontStack-sansSerif);white-space:nowrap;cursor:pointer}
+.running-status .running-status-stop:hover{border-color:var(--button-danger-borderColor-hover);background:var(--button-danger-bgColor-hover);color:var(--button-danger-fgColor-hover)}
+.running-status .running-status-stop:disabled{border-color:var(--button-danger-borderColor-rest);background:var(--button-danger-bgColor-disabled);color:var(--button-danger-fgColor-disabled);cursor:default}
+.running-status-task:focus-visible,.running-status-stop:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
+.running-status-error{padding-top:0;color:var(--fgColor-danger);overflow-wrap:anywhere}
+@media(max-width:640px){.running-status-row,.running-status-error{padding-inline:12px}.running-status-row{flex-wrap:wrap;gap:8px 12px}.running-status-task{flex-basis:100%}}
+@media print{.running-status{display:none}}

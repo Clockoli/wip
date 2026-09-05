@@ -6,6 +6,7 @@
   <title>Clockoli Settings</title>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
+  <link rel="stylesheet" href="../styles/running-status.css">
 </head>
 <body>
 <div class="page-tabs-shell">
@@ -17,17 +18,18 @@
     <a class="page-tab" href="../options/options.html" aria-current="page">Settings</a>
   </nav>
 </div>
+<div id="running-status"></div>
 <main>
   <div id="message" role="status" aria-live="polite"></div>
 
   <section class="card connection-card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title">Connect GitHub</h2><p>Store your Clockoli data in one private GitHub repository that you control.</p></div>
+      <div><h2 id="connection-title" tabindex="-1">Connect GitHub</h2><p>Store your Clockoli data in one private GitHub repository that you control.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
     <div id="build-warning" class="notice error-notice" hidden>
-      This development build does not include the public Clockoli GitHub App client ID. Open Advanced to use a personal access token instead.
+      This development build does not include the public Clockoli GitHub App client ID. Open More settings, then Advanced to use a personal access token instead.
     </div>
     <div id="recovery-actions" class="notice recovery-notice" hidden>
       <strong id="recovery-title">Clockoli needs your attention</strong>
@@ -36,6 +38,9 @@
     </div>
 
     <div id="connected" hidden>
+      <p id="setup-complete" role="status" aria-live="polite">Setup complete. Open a task page, then click the Clockoli icon to start tracking.</p>
+      <details id="repository-verification" class="inline-details">
+        <summary>Repository verification details</summary>
       <div class="connection-dashboard">
         <div class="connection-identity">
           <span class="status-dot" aria-hidden="true"></span>
@@ -53,6 +58,7 @@
         <a id="manage-access" class="button-link secondary-link" target="_blank" rel="noreferrer">Manage GitHub access</a>
       </div>
       <p id="change-connection-help" class="help">Changing repository validates a new private destination without deleting data from the current one.</p>
+      </details>
     </div>
 
     <div id="onboarding">
@@ -66,8 +72,7 @@
           <p id="repository-access-complete" hidden><span aria-hidden="true">✓</span> Private repository access found</p>
         </div>
 
-        <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="device-step-title">
-          <h3 id="device-step-title" tabindex="-1">Connect GitHub</h3>
+        <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
           <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
           <ul class="trust-list">
             <li>Clockoli requests only the repository access needed to read and write your data.</li>
@@ -75,8 +80,8 @@
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
           <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Copy code to clipboard and connect GitHub</button>
-            <p class="help">GitHub will show a one-time code. Clockoli copies it before opening GitHub so you can paste it immediately.</p>
+            <button id="authorize" type="button">Connect GitHub</button>
+            <p class="help">Clockoli copies the one-time code before opening GitHub so you can paste it.</p>
           </div>
           <details id="connection-details" class="inline-details">
             <summary>How it works</summary>
@@ -151,6 +156,9 @@
     </div>
   </section>
 
+  <details id="more-settings" class="more-settings">
+    <summary id="more-settings-toggle">More settings</summary>
+
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
     <div class="card-heading">
       <div><h2 id="display-title">Activity</h2><p>Choose how much recent activity appears in the main tracking panel.</p></div>
@@ -165,7 +173,10 @@
         <div id="projects-list" class="projects-list"></div>
         <button id="add-project" type="button" class="secondary">Add project</button>
       </fieldset>
-      <button id="save-display" type="submit" disabled>Save display settings</button>
+      <div class="actions">
+        <button id="save-display" type="submit" disabled>Save display settings</button>
+        <p id="display-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+      </div>
     </form>
   </section>
 
@@ -178,7 +189,10 @@
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
       <div class="actions billing-actions">
         <button id="add-rate" type="button" class="secondary">Add rate period</button>
-        <button id="save-billing" type="submit">Save billable rates</button>
+        <div class="actions">
+          <button id="save-billing" type="submit">Save billable rates</button>
+          <p id="billing-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+        </div>
       </div>
     </form>
   </section>
@@ -240,6 +254,7 @@
         </div>
       </div>
     </section>
+  </details>
   </details>
 </main>
 <script src="../domain/recovery-actions.js"></script>

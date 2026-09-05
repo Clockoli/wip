@@ -15,6 +15,8 @@ export interface TimelineItem {
   isStartDisabled?: boolean
   isStopDisabled?: boolean
   isDeleteDisabled?: boolean
+  /** Derived same-row overlap IDs on callback items; input values are ignored. */
+  overlaps?: string[]
 }
 
 export interface TimelineRow {

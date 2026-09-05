@@ -61,6 +61,7 @@ interface TimelineItem {
   isPending?: boolean
   isStartDisabled?: boolean
   isStopDisabled?: boolean
+  overlaps?: string[]
 }
 ```
 
@@ -119,11 +120,15 @@ const timeline = createElasticTimeline(container, {
 
 Use `isPending: true` to show that an item still has locally accepted work waiting for synchronization. Set `isEditable: false` separately only when editing must be blocked.
 
+Item callbacks (`onSelect`, `onStart`, `onStop`, `onDelete`, `onEditCancel`) receive a copy with `overlaps: string[]`: the IDs of other same-row items with a positive actual-time intersection, or `[]`. Hover/focus details use the same derived metadata, including their action callbacks; there is no separate hover callback. Both overlapping blocks have `data-overlap="true"`; metadata and flags follow the effective preview/current items and `now`, with running ends evaluated at `now`, touching boundaries excluded, and input items left unchanged. Layout and cross-row edit constraints are unchanged.
+
 ## Instance methods
 
 ### `update(partialProps)`
 
 Updates any prop without remounting. Use it for authoritative items, advancing `now`, row changes, or controlled view changes.
+
+Renders preserve focus on the same item ID while its block remains rendered, including inside a shadow root, without scrolling it into view or taking focus from outside the component. Escape calls `preventDefault()` and `stopPropagation()` only when cancelling a drag/resize or clearing selection; otherwise it bubbles to the host unchanged. Clearing selection with Escape returns focus to the selected block without scrolling, including when focus was on a detail action.
 
 ```js
 timeline.update({ items: nextItems, now: Date.now() })
@@ -221,7 +226,7 @@ Import the packaged stylesheet. Component classes use the `elastic-timeline__` p
 }
 ```
 
-Dark mode and reduced motion are handled by media queries in the packaged CSS.
+Theme tokens read the host's Primer variables before using the light/dark standalone fallbacks: `--borderColor-default`, `--control-borderColor-emphasis`, `--bgColor-default`, `--bgColor-muted`, `--fgColor-default`, `--fgColor-muted`, and `--focus-outlineColor`. Detail links use `--fgColor-accent` before their light/dark fallbacks. The font reads `--fontStack-system` with the original Inter/system stack as fallback. `--et-summary-layout-ready` is an internal stylesheet-readiness marker, not a theme token. Without host variables, `prefers-color-scheme` selects the existing dark defaults; `prefers-reduced-motion: reduce` disables component animations while running blocks retain their dashed border.
 
 ## Pure helpers
 

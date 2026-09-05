@@ -10,3 +10,5 @@
 .page-brand:focus-visible,.page-tab:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:-4px}
 @media(max-width:640px){.page-tabs{padding:0 4px}.page-brand{margin-right:4px}.page-brand img{width:auto;height:20px}.page-tab{padding-inline:4px;font-size:12px}}
 @media print{.page-tabs-shell{display:none}}
+/* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
+@media(prefers-color-scheme:dark){.page-brand img{filter:saturate(1.4) brightness(2.1)}}

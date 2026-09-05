@@ -1,3 +1,4 @@
+import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 
@@ -25,10 +26,17 @@ let renderedOnboardingStep = null;
 let repositoryChoiceSummary = 'Repository setup option chosen';
 let localPreferences = null;
 let recoveryAction = null;
+let settingsConnected = null;
+let backupReminderShown = false;
 
 function message(text, kind = '') {
   $('message').textContent = text;
   $('message').className = kind;
+}
+
+function formFeedback(id, text, kind = '') {
+  $(id).textContent = text;
+  $(id).className = `form-feedback ${kind}`.trim();
 }
 
 function send(request) {
@@ -136,7 +144,7 @@ function renderOnboardingProgress() {
   }
   $('skip-repository-creation').setAttribute('aria-pressed', String(repositoryChoiceMode === 'existing'));
   if (previousStep !== null && previousStep !== step) {
-    queueMicrotask(() => $({ 1: 'device-step-title', 2: 'repository-setup-step-title', 3: 'repository-step-title' }[step]).focus());
+    queueMicrotask(() => $({ 1: 'connection-title', 2: 'repository-setup-step-title', 3: 'repository-step-title' }[step]).focus());
   }
 }
 
@@ -145,6 +153,11 @@ function renderState() {
   $('connected').hidden = !connected;
   $('onboarding').hidden = connected;
   $('display-settings').hidden = !state.config;
+  if (settingsConnected !== state.ready) {
+    $('more-settings').open = Boolean(state.ready);
+    settingsConnected = state.ready;
+  }
+  $('more-settings-toggle').hidden = Boolean(state.ready);
   $('onboarding-flow').hidden = setupCancelled;
   $('setup-cancelled').hidden = !setupCancelled;
   $('build-warning').hidden = state.appConfigured;
@@ -531,7 +544,11 @@ function renderLocalPreferences(preferences) {
   }
   if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
   if (!state?.config) $('recent-days').value = preferences.recentDays || 7;
-  $('settings-export-reminder').hidden = !preferences.exportRecommended;
+  if (!preferences.exportRecommended) $('settings-export-reminder').hidden = true;
+  else if (!backupReminderShown) {
+    $('settings-export-reminder').hidden = false;
+    backupReminderShown = true;
+  }
 }
 
 async function refreshLocalPreferences() {
@@ -621,6 +638,7 @@ $('device-done').addEventListener('click', async () => {
 $('repository-search').addEventListener('input', renderRepositoryList);
 function beginRepositoryChange() {
   if (state?.auth?.mode === 'pat') {
+    $('more-settings').open = true;
     $('advanced-settings').open = true;
     $('advanced-pat').open = true;
     queueMicrotask(() => $('owner').focus());
@@ -673,7 +691,7 @@ $('resume-setup').addEventListener('click', () => {
 });
 
 $('disconnect').addEventListener('click', async () => {
-  if (!window.confirm('Disconnect this browser? Clockoli will preserve local tracking data and the repository configuration.')) return;
+  if (!window.confirm('Sign out on this browser? Clockoli will preserve local tracking data and the repository configuration. This does not revoke GitHub sign-in or delete repository data.')) return;
   $('disconnect').disabled = true;
   try { stopRepositoryMonitoring(); await send({ type: 'DISCONNECT_GITHUB_APP' }); setupCancelled = false; showOnboarding = true; await refreshState(); message('Disconnected locally. GitHub authorization was not revoked.', 'success'); }
   catch (error) { message(error.message, 'error'); }
@@ -681,13 +699,13 @@ $('disconnect').addEventListener('click', async () => {
 });
 
 $('clear-local').addEventListener('click', async () => {
-  if (!window.confirm('Clear local Clockoli configuration? This does not delete repository data or revoke GitHub authorization.')) return;
+  if (!window.confirm('Clear all local Clockoli data? This removes local settings, credentials and unsynced local state from this browser. This does not delete repository data or revoke GitHub sign-in.')) return;
   $('clear-local').disabled = true;
   try {
     await send({ type: 'CLEAR_LOCAL_CONFIGURATION' });
     stopRepositoryMonitoring(); repositories = []; repositoryAccessDetected = false; selectedRepository = null; repositoryChoiceMade = false; repositoryChoiceMode = ''; repositoryChoiceSummary = 'Repository setup option chosen'; discoveryStatus = 'idle'; setupCancelled = false; showOnboarding = true;
     await refreshState();
-    message('Local Clockoli configuration cleared. Repository data and GitHub authorization were not deleted.', 'success');
+    message('All local Clockoli data cleared. Repository data and GitHub authorization were not deleted.', 'success');
   } catch (error) { message(error.message, 'error'); }
   finally { $('clear-local').disabled = false; }
 });
@@ -778,7 +796,7 @@ $('display-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!state?.config) return;
   $('save-display').disabled = true;
-  message('Saving display settings…');
+  formFeedback('display-feedback', 'Saving display settings…');
   try {
     const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
       recentDays: Number($('recent-days').value),
@@ -787,20 +805,20 @@ $('display-form').addEventListener('submit', async event => {
     state.config = result.config;
     $('recent-days').value = result.config.recentDays;
     renderLocalPreferences(result.preferences);
-    message('Display settings saved. Export an updated local settings backup.', 'success');
-  } catch (error) { message(error.message || 'Could not save display settings.', 'error'); }
+    formFeedback('display-feedback', 'Display settings saved.', 'success');
+  } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); }
   finally { $('save-display').disabled = !state?.config; }
 });
 
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
 $('billing-form').addEventListener('submit', async event => {
-  event.preventDefault(); $('save-billing').disabled = true; message('Saving billable rates…');
+  event.preventDefault(); $('save-billing').disabled = true; formFeedback('billing-feedback', 'Saving billable rates…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
     await refreshLocalPreferences();
-    message('Billable rates saved locally. Export an updated settings backup.', 'success');
-  } catch (error) { message(error.message || 'Could not save billable rates.', 'error'); }
+    formFeedback('billing-feedback', 'Billable rates saved locally.', 'success');
+  } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); }
   finally { $('save-billing').disabled = false; }
 });
 $('export-settings').addEventListener('click', async () => {
@@ -844,3 +862,5 @@ $('settings-form').addEventListener('submit', async event => {
 });
 
 refreshState().then(refreshLocalPreferences).catch(error => message(error.message, 'error'));
+
+mountRunningStatus($('running-status'), { send });
