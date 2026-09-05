@@ -424,7 +424,7 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);
   assert.match(content, /timeline-queue-spinner[\s\S]*?section\.append\(spinner\)/);
-  assert.match(content, /\.timeline-queue-spinner \{ padding:4px 0 8px/);
+  assert.match(content, /\.timeline-queue-spinner \{ padding:0 0 10px/);
   assert.doesNotMatch(content, /trailingActionGutterPx/);
   assert.doesNotMatch(content, /renderItemTrailingAction/);
 });
