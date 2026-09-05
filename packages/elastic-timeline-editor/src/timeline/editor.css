@@ -8,6 +8,8 @@
   --et-muted: var(--fgColor-muted, #52606d);
   --et-focus: var(--focus-outlineColor, #0f62fe);
   --et-guide: var(--fgColor-default, #111827);
+  --et-block-mix: 34%;
+  --et-fold: color-mix(in srgb, var(--et-muted) 14%, transparent);
   --et-summary-layout-ready: 1;
   width: 100%;
   color: var(--et-text);
@@ -36,8 +38,8 @@
 .elastic-timeline__item:focus-visible,
 .elastic-timeline__handle:focus-visible,
 .elastic-timeline__link:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--et-focus) 72%, transparent);
-  outline-offset: 2px;
+  outline: 2px solid var(--et-focus);
+  outline-offset: 1px;
 }
 .elastic-timeline__button[disabled] { opacity: .42; cursor: not-allowed; }
 .elastic-timeline__summary {
@@ -124,12 +126,18 @@
   display: inline-block;
   padding-top: 3px;
   color: var(--et-muted);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: -0.8px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
   white-space: nowrap;
 }
 .elastic-timeline__cell-label[hidden] { display: none; }
+/* Untracked spans are folded away by the elastic scale; hatching says the axis skipped time here. */
+.elastic-timeline__cell[data-empty="true"] {
+  background: repeating-linear-gradient(135deg, transparent 0 5px, var(--et-fold) 5px 6px);
+}
+.elastic-timeline__cell[data-empty="true"] .elastic-timeline__cell-label { opacity: .75; font-weight: 500; }
 .elastic-timeline__current-time {
   position: absolute;
   z-index: 2;
@@ -208,11 +216,12 @@
   height: 40px;
   align-items: center;
   overflow: visible;
-  border: 1px solid #17212b;
-  border-radius: 8px;
-  background: var(--item-color, #64748b);
-  color: #081018;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, .16);
+  border: 1px solid color-mix(in srgb, var(--item-color, #64748b) 44%, transparent);
+  border-left: 3px solid var(--item-color, #64748b);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--item-color, #64748b) var(--et-block-mix), var(--et-bg));
+  color: var(--et-text);
+  container-type: inline-size;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
@@ -221,14 +230,17 @@
 .elastic-timeline__item[aria-disabled="true"] { cursor: default; }
 .elastic-timeline__item[data-selected="true"] {
   z-index: 4;
-  box-shadow: 0 0 0 3px var(--et-bg), 0 0 0 6px var(--et-focus), 0 3px 8px rgba(15, 23, 42, .22);
+  box-shadow: 0 0 0 1px var(--et-bg), 0 0 0 3px var(--et-focus);
 }
+.elastic-timeline__item[data-selected="true"]:focus-visible { outline: none; }
 .elastic-timeline__item[data-pending="true"] { opacity: .72; }
 .elastic-timeline__item[data-running="true"] {
   border-style: dashed;
   animation: elastic-timeline-pulse 1.2s ease-in-out infinite;
 }
-.elastic-timeline__item[data-dragging="true"] { z-index: 6; cursor: grabbing; }
+.elastic-timeline__item[data-dragging="true"] { z-index: 6; cursor: grabbing; box-shadow: 0 3px 8px rgba(15, 23, 42, .22); }
+/* Below this width a label is one glyph and an ellipsis; the block reads as a tick of its hue instead. */
+@container (max-width: 64px) { .elastic-timeline__item-label { display: none; } }
 .elastic-timeline__connector {
   position: absolute;
   z-index: 7;
@@ -247,7 +259,7 @@
   padding: 0 9px;
   overflow: hidden;
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 600;
   line-height: 36px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -266,6 +278,23 @@
 }
 .elastic-timeline__handle--left { left: 0; }
 .elastic-timeline__handle--right { right: 0; }
+/* The 10px hit area is unchanged; only a small grip becomes visible, and only when it is useful. */
+.elastic-timeline__handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--et-text) 55%, transparent);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.elastic-timeline__item:hover .elastic-timeline__handle::after,
+.elastic-timeline__item[data-selected="true"] .elastic-timeline__handle::after,
+.elastic-timeline__handle:focus-visible::after { opacity: 1; }
 
 .elastic-timeline__details-pointer {
   position: absolute;
@@ -334,8 +363,8 @@
   background: var(--button-primary-bgColor-active, #187733);
 }
 .elastic-timeline__details-action:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--et-focus) 72%, transparent);
-  outline-offset: 2px;
+  outline: 2px solid var(--et-focus);
+  outline-offset: 1px;
 }
 .elastic-timeline__details-action:disabled { opacity: .55; cursor: not-allowed; }
 .elastic-timeline__details-actions {
@@ -363,14 +392,8 @@
 }
 
 @keyframes elastic-timeline-pulse {
-  0%, 100% {
-    filter: brightness(1);
-    box-shadow: 0 2px 6px rgba(15, 23, 42, .16), 0 0 0 0 color-mix(in srgb, var(--item-color) 65%, transparent);
-  }
-  50% {
-    filter: brightness(1.22);
-    box-shadow: 0 3px 9px rgba(15, 23, 42, .28), 0 0 0 7px color-mix(in srgb, var(--item-color) 58%, transparent);
-  }
+  0%, 100% { border-color: color-mix(in srgb, var(--item-color) 40%, transparent); }
+  50% { border-color: var(--item-color); }
 }
 
 @media (max-width: 480px) {
@@ -411,6 +434,6 @@
     --et-focus: var(--focus-outlineColor, #73a8ff);
     --et-guide: var(--fgColor-default, #020617);
   }
-  .elastic-timeline__item { border-color: #f8fafc; color: #071018; }
+  .elastic-timeline { --et-block-mix: 38%; }
   .elastic-timeline__link { color: var(--fgColor-accent, #8ab4ff); }
 }

@@ -2578,7 +2578,7 @@
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
       .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
       .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
-      .today-record { display:flex; align-items:center; gap:12px; padding:10px 0; margin:0; border:0; border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .today-record { display:flex; align-items:center; gap:12px; margin-top:8px }
       .today-task { flex:1; min-width:0 } .today-task .task-url { display:none } .today-task.task-result-untitled .task-url { display:block }
       @media(max-width:520px) { .active-task-strip,.today-record { flex-wrap:wrap } .strip-task,.strip-idle,.today-task { flex-basis:70% } }
       :host(.full-width-popup-surface) .timeline-shell.is-saving .elastic-timeline-host { opacity:.56 }

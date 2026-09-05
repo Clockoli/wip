@@ -135,7 +135,7 @@ test('every tracked hour cell receives a readable smaller label', async ({ page 
   expect(result.observed).toBe(result.count)
   expect(result.hiddenWhileVisible).toEqual([])
   expect(result.missing).toBe(0)
-  expect(result.fontSizes).toEqual(['9px'])
+  expect(result.fontSizes).toEqual(['10px'])
   expect(result.labels.every(label => /^\d{2}:\d{2}$/.test(label))).toBe(true)
 })
 
