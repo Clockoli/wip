@@ -426,6 +426,19 @@ test('billable rates and settings export stay local, version changes, and import
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
 });
 
+test('restoring an older backup never rewinds the invoice counter', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
+  await store.saveBillingSettings({ rates: { alice: 10000 }, invoicing: { nextNumber: 5, notes: 'Backup era' } });
+  const backup = (await store.exportSettings()).text;
+  for (const sequence of [5, 6, 7]) assert.equal((await store.reserveInvoiceNumber()).sequence, sequence);
+  const restored = await store.importSettings(backup);
+  assert.equal(restored.billing.invoicing.nextNumber, 8);
+  assert.equal((await store.getLocalPreferences()).invoicing.nextNumber, 8);
+  assert.equal((await store.getLocalPreferences()).invoicing.notes, 'Backup era');
+  assert.equal((await store.reserveInvoiceNumber()).sequence, 8);
+});
+
 test('billing saves reject stale invoice counters inside the transaction without changing settings', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveBillingSettings({ rates: { alice: 10000 }, invoicing: { nextNumber: 7, notes: 'Original' } });

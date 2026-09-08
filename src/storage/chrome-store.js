@@ -407,12 +407,15 @@ export class ChromeStore {
     return this.backend.mutateMany(['config', CONFIGURATION_GENERATION, ...SETTINGS_KEYS], values => {
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
+      // Restoring a backup must never make the user reissue an invoice number, so the counter only ever moves forward.
+      const storedNextNumber = invoicingSettings(values[BILLING_SETTINGS] || {}).nextNumber;
+      const billing = { ...imported.billing, invoicing: { ...invoicingSettings(imported.billing), nextNumber: Math.max(invoicingSettings(imported.billing).nextNumber, storedNextNumber) } };
       const set = {
-        [BILLING_SETTINGS]: imported.billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects, [OTHER_PROJECT_NAME]: imported.otherProjectName, [SHOW_QUEUE_DIAGNOSTICS]: imported.showQueueDiagnostics,
+        [BILLING_SETTINGS]: billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects, [OTHER_PROJECT_NAME]: imported.otherProjectName, [SHOW_QUEUE_DIAGNOSTICS]: imported.showQueueDiagnostics,
         [SETTINGS_REVISION]: revision, [SETTINGS_EXPORTED_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
       };
       if (values.config) set.config = { ...values.config, recentDays: imported.recentDays };
-      return { set, result: { ...imported, revision, exportRecommended: false } };
+      return { set, result: { ...imported, billing, revision, exportRecommended: false } };
     });
   }
 
