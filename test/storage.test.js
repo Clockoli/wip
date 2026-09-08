@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChromeStore } from '../src/storage/chrome-store.js';
 import { CredentialBroker } from '../src/auth/github-app-auth.js';
+import { invoicingSettings } from '../src/domain/local-settings.js';
 
 class MemoryBackend {
   constructor() { this.values = new Map(); }
@@ -408,14 +409,14 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], otherProjectName: 'Other', showQueueDiagnostics: false, rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], otherProjectName: 'Other', showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);
   assert.equal((await store.getLocalPreferences()).exportRecommended, true);
   const exported = await store.exportSettings();
   assert.doesNotMatch(exported.text, /secret/);
-  assert.deepEqual(JSON.parse(exported.text).billing, { rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
+  assert.deepEqual(JSON.parse(exported.text).billing, { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(await store.markSettingsExported(exported.revision), true);
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
   const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));
@@ -423,6 +424,50 @@ test('billable rates and settings export stay local, version changes, and import
   assert.equal((await store.getConfigurationSnapshot()).config.recentDays, 12);
   assert.equal(imported.exportRecommended, false);
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
+});
+
+test('billing saves reject stale invoice counters inside the transaction without changing settings', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveBillingSettings({ rates: { alice: 10000 }, invoicing: { nextNumber: 7, notes: 'Original' } });
+  const stale = await store.getLocalPreferences();
+  assert.equal((await new ChromeStore(backend).reserveInvoiceNumber()).sequence, 7);
+  const before = structuredClone(backend.values);
+  backend.getMany = async () => assert.fail('counter validation must read inside mutateMany');
+  await assert.rejects(store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, notes: 'Edited' } }), {
+    message: 'Next invoice number cannot go below 8; invoice 7 has already been issued.',
+  });
+  assert.deepEqual(backend.values, before);
+  await store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, nextNumber: 8, notes: 'Edited' } });
+  await store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, nextNumber: 20 } });
+  assert.equal((await new ChromeStore(backend).reserveInvoiceNumber()).sequence, 20);
+  delete backend.getMany;
+  assert.equal((await new ChromeStore(backend).getLocalPreferences()).invoicing.nextNumber, 21);
+});
+
+test('invoice sequences reserve atomically across stores, persist and bump settings revision', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await backend.setMany({ billingSettings: {}, settingsRevision: 4 });
+  backend.getMany = async () => assert.fail('reservation must read inside mutateMany');
+  const results = await Promise.all([store.reserveInvoiceNumber(), new ChromeStore(backend).reserveInvoiceNumber()]);
+  assert.deepEqual(results, [
+    { sequence: 1, numberFormat: 'INV-{YYYY}-{NNNN}', revision: 5, exportRecommended: true },
+    { sequence: 2, numberFormat: 'INV-{YYYY}-{NNNN}', revision: 6, exportRecommended: true },
+  ]);
+  delete backend.getMany;
+  assert.equal((await new ChromeStore(backend).getLocalPreferences()).invoicing.nextNumber, 3);
+  assert.deepEqual([...backend.values.keys()].sort(), ['billingSettings', 'settingsRevision']);
+  const empty = new ChromeStore(new MemoryBackend());
+  assert.equal((await empty.reserveInvoiceNumber()).sequence, 1);
+  assert.equal((await empty.getLocalPreferences()).revision, 1);
+  await store.saveBillingSettings({ rates: { alice: 12345 }, invoicing: { seller: { name: 'Seller' }, numberFormat: '{MM}-{NNNN}', nextNumber: 99 } });
+  assert.equal((await store.reserveInvoiceNumber()).sequence, 99);
+  const preferences = await new ChromeStore(backend).getLocalPreferences();
+  assert.equal(preferences.invoicing.seller.name, 'Seller');
+  assert.equal(preferences.rates.alice[0].amountMinorPerHour, 12345);
+  await store.saveBillingSettings({ invoicing: { nextNumber: 1e9 } });
+  const before = structuredClone(backend.values);
+  await assert.rejects(store.reserveInvoiceNumber(), /number|sequence/i);
+  assert.deepEqual(backend.values, before);
 });
 
 

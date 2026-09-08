@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as reporting from '../src/domain/reporting.js';
 import * as billing from '../src/domain/local-settings.js';
+import * as invoicing from '../src/domain/invoicing.js';
 
 const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
@@ -14,21 +15,28 @@ const record = (user, host = 'example.com', date = oldRange.startDate) => ({
   user, taskUrl: `https://${host}/task`, taskTitle: 'Review', entryDate: date,
   startedAt: `${date}T09:00:00Z`, endedAt: `${date}T10:00:00Z`, durationSeconds: 3600,
 });
-const result = (records = [record('alice'), record('bob', 'other.com')], rates = {}) => ({
+const invoiceSettings = {
+  seller: { name: 'Acme Studio', address: '1 Main Street', email: 'hello@example.com', taxId: 'VAT-1' },
+  clients: [{ id: 'client-1', name: 'Client One', address: '2 Client Road', email: 'billing@example.com', taxId: 'VAT-2', defaultCurrency: 'EUR' }],
+  nextNumber: 7, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTerms: 'Net 30', taxPercent: 20, notes: 'Thank you.',
+};
+const result = (records = [record('alice'), record('bob', 'other.com')], rates = {}, invoicingSettings = invoiceSettings) => ({
   configured: true, currentUser: 'alice', records,
-  billing: { rates, projects: [{ name: 'Main', substrings: ['https://example.com/'] }, { name: 'Other', substrings: ['https://other.com/'] }] },
+  billing: { rates, invoicing: invoicingSettings, projects: [{ name: 'Main', substrings: ['https://example.com/'] }, { name: 'Other', substrings: ['https://other.com/'] }] },
 });
 
 function harness() {
+  const classList = owner => ({
+    toggle(name, force) { const classes = new Set(owner.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); owner.className = [...classes].join(' '); },
+    contains: name => owner.className.split(' ').includes(name),
+    add(name) { this.toggle(name, true); }, remove(name) { this.toggle(name, false); },
+  });
   const document = { activeElement: null, title: 'Reports' };
   class Node {
     constructor(tag = 'div') {
       this.tagName = tag; this.children = []; this.listeners = {}; this.attributes = {}; this.dataset = {}; this.style = {};
-      this.hidden = false; this.open = false; this.value = ''; this.textContent = ''; this.className = '';
-      this.classList = {
-        toggle: (name, force) => { const classes = new Set(this.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); this.className = [...classes].join(' '); },
-        contains: name => this.className.split(' ').includes(name),
-      };
+      this.hidden = false; this.open = false; this.disabled = false; this.value = ''; this.textContent = ''; this.className = '';
+      this.classList = classList(this);
     }
     append(...children) { this.children.push(...children); }
     replaceChildren(...children) { this.children = children; }
@@ -38,18 +46,21 @@ function harness() {
     addEventListener(type, handler) { this.listeners[type] = handler; }
     focus() { document.activeElement = this; }
     click() { downloads.push(this); }
+    showModal() { this.open = true; }
+    close() { this.open = false; this.listeners.close?.(); }
     get selectedOptions() { return this.children.filter(node => node.value === this.value); }
   }
   const nodes = new Map([...html.matchAll(/<([\w-]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([, tag, attrs, id]) => {
-    const node = new Node(tag); node.hidden = /\bhidden\b/.test(attrs); return [id, node];
+    const node = new Node(tag); node.hidden = /\bhidden\b/.test(attrs); node.className = attrs.match(/\bclass="([^"]*)"/)?.[1] || ''; return [id, node];
   }));
   for (const [id, value] of Object.entries({ period: 'last-week', metric: 'total-time', 'horizontal-axis': 'day', 'stack-by': 'person' })) nodes.get(id).value = value;
+  document.body = new Node('body');
   document.getElementById = id => nodes.get(id); document.createElement = tag => new Node(tag);
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
-  const requests = [], downloads = [], prints = [], listeners = [], blobs = [];
+  const requests = [], downloads = [], prints = [], listeners = [], blobs = [], windowListeners = {};
   const context = vm.createContext({
-    ...reporting, ...billing, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
-    setTimeout: () => 1, addEventListener() {}, window: { print: () => prints.push(document.title) },
+    ...reporting, ...billing, ...invoicing, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
+    setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { requests.push({ message, callback }); } } },
   });
@@ -57,7 +68,8 @@ function harness() {
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   const reply = async (data, request = requests.at(-1)) => { request.callback(data instanceof Error ? { ok: false, error: { message: data.message } } : { ok: true, data }); await settle(); };
   const fire = (id, type = 'click') => nodes.get(id).listeners[type]({ preventDefault() {}, target: nodes.get(id) });
-  return { nodes, context, requests, downloads, prints, listeners, blobs, reply, settle, fire,
+  const textOf = node => `${node?.textContent || ''}${(node?.children || []).map(textOf).join('')}`;
+  return { nodes, context, requests, downloads, prints, listeners, blobs, reply, settle, fire, textOf,
     select: (key, value, checked) => {
       const input = nodes.get(`${key}-facet`).children.flatMap(label => label.children).find(node => node.value === value);
       assert.ok(input, `visible ${key} checkbox ${value}`);
@@ -250,4 +262,125 @@ test('custom-period editing cancels pending work without clearing the displayed 
   assert.equal(page.nodes.get('report-range')?.textContent, 'Showing 2026-08-17 — 2026-08-23');
   await page.reply(result(), stale); await pending;
   assert.equal(page.nodes.get('print-period').textContent, '2026-08-17 — 2026-08-23');
+});
+
+test('invoice entry point explains empty and unrated filtered sets', async () => {
+  const empty = await loaded(result([]));
+  assert.equal(empty.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
+  assert.equal(empty.nodes.get('create-invoice').attributes.title, 'No entries in this period to invoice');
+  const unrated = await loaded(result([record('alice')]));
+  assert.equal(unrated.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
+  assert.equal(unrated.nodes.get('create-invoice').attributes.title, 'No hourly rate covers these entries. Add rates in Settings.');
+});
+
+test('invoice dialog renders the filtered records and reserves one number across repeated exports', async () => {
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const page = await loaded(result([record('alice')], rates));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /INV-2026-0007/);
+  const csv = page.fire('invoice-download-csv');
+  const reserve = page.requests.at(-1);
+  assert.equal(reserve.message.type, 'RESERVE_INVOICE_NUMBER');
+  await page.reply({ sequence: 7 }, reserve); await csv;
+  const before = page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length;
+  await page.fire('invoice-download-json'); await page.settle();
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, before);
+  assert.equal(page.downloads.length, 2);
+});
+
+test('changing an invoice control invalidates its reserved sequence', async () => {
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const page = await loaded(result([record('alice')], rates));
+  await page.fire('create-invoice'); await page.settle();
+  const first = page.fire('invoice-download-json'); await page.reply({ sequence: 7 }); await first;
+  page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); await page.settle();
+  const second = page.fire('invoice-download-json');
+  assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
+  await page.reply({ sequence: 8 }); await second;
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
+});
+
+test('invoice exchange failure is blocking and never leaves a partial preview', async () => {
+  const records = [record('alice'), record('bob', 'other.com')];
+  const rates = {
+    alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }],
+    bob: [{ amountMinorPerHour: 10000, currency: 'USD', startDate: '', endDate: '' }],
+  };
+  const page = await loaded(result(records, rates)); page.fire('reset-filters');
+  page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; const opening = page.fire('invoice-client', 'change'); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Loading exchange rates/);
+  assert.equal(page.requests.at(-1).message.type, 'GET_EXCHANGE_RATES');
+  await page.reply(new Error('Exchange service unavailable')); await opening;
+  assert.equal(page.nodes.get('invoice-feedback').textContent, 'Exchange service unavailable');
+  assert.equal(page.nodes.get('invoice-preview').children.length, 0);
+  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, true);
+});
+
+test('a sole invoice client defaults once and an explicit No client survives reopening', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-client').value, 'client-1');
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Bill to: Client One/);
+  page.nodes.get('invoice-client').value = ''; await page.fire('invoice-client', 'change'); await page.settle();
+  await page.fire('invoice-close'); await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-client').value, '');
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Bill to:/);
+  assert.equal(page.requests.filter(request => request.message.type === 'GET_EXCHANGE_RATES').length, 0);
+});
+
+test('a single source currency fetches exchange rates for the selected client currency', async () => {
+  const page = await loaded(result([record('alice')], { alice: 10000 }));
+  await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
+  const request = page.requests.at(-1);
+  assert.equal(request.message.type, 'GET_EXCHANGE_RATES');
+  assert.equal(request.message.payload.targetCurrency, 'EUR');
+  assert.equal(request.message.payload.sourceCurrencies.join(','), 'USD');
+  assert.equal(request.message.payload.dates.join(','), oldRange.startDate);
+  await page.reply({ rates: { [oldRange.startDate]: { USD: 0.9 } } }, request);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '');
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /90.00 EUR90.00 EUR/);
+  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
+});
+
+for (const change of ['close', 'composition']) test(`a reservation response after ${change} survives the failed export and is reused`, async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  await page.fire('invoice-download-json');
+  const reserve = page.requests.at(-1);
+  if (change === 'close') await page.fire('invoice-close');
+  else { page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); }
+  await page.reply({ sequence: 9 }, reserve);
+  assert.equal(page.downloads.length, 0);
+  assert.match(page.nodes.get('invoice-feedback').textContent, /Invoice changed/);
+  if (change === 'close') await page.fire('create-invoice');
+  await page.settle(); await page.fire('invoice-download-json'); await page.settle();
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1);
+  assert.equal(page.downloads.length, 1);
+  assert.equal(JSON.parse(await page.blobs.at(-1).text()).sequence, 9);
+  page.nodes.get('invoice-due-days').value = '14'; await page.fire('invoice-due-days', 'change'); await page.settle();
+  await page.fire('invoice-download-json'); await page.reply({ sequence: 10 });
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
+});
+
+test('invoice composition projects billing inputs without serializing record metadata on facet searches', async () => {
+  const entry = { ...record('alice'), id: 'record-1', metadata: { toJSON() { assert.fail('invoice composition must not serialize metadata'); } } };
+  const page = await loaded(result([entry], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  await page.fire('invoice-download-json'); await page.reply({ sequence: 7 });
+  page.nodes.get('people-search').value = 'ali'; await page.fire('people-search', 'input'); await page.settle();
+  await page.fire('invoice-download-json'); await page.settle();
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1);
+  const original = page.context.invoiceCompositionKey([entry]);
+  for (const patch of [{ id: 'record-2' }, { user: 'bob' }, { entryDate: '2026-08-18' }, { durationSeconds: 60 }]) {
+    assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, ...patch }]), original);
+  }
+  assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, id: null }]), page.context.invoiceCompositionKey([{ ...entry, id: null, taskUrl: 'https://other.com/task' }]));
+  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", 'state.billing.rates.alice = 13000', "state.billing.invoicing.notes = 'Changed'"]) {
+    const before = page.context.invoiceCompositionKey([entry]); vm.runInContext(update, page.context);
+    assert.notEqual(page.context.invoiceCompositionKey([entry]), before);
+  }
 });

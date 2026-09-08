@@ -265,9 +265,25 @@ test('setup completion gives the next action before optional repository verifica
 });
 
 test('each preferences form has its own live feedback beside its Save button', () => {
-  for (const form of ['billing', 'display']) {
+  for (const form of ['billing', 'invoicing', 'display']) {
     assert.match(source, new RegExp(`id="save-${form}"[^>]*>[^<]+</button>\\s*<p id="${form}-feedback"[^>]*role="status"[^>]*aria-live="polite"`));
   }
+});
+
+test('settings exposes browser-only invoicing parties, numbering and terms', () => {
+  const billingEnd = source.indexOf('</section>', source.indexOf('id="billing-settings"'));
+  const invoicingStart = source.indexOf('id="invoicing-settings"');
+  assert.ok(invoicingStart > billingEnd, 'Invoicing follows Billable rates');
+  for (const id of [
+    'invoicing-form', 'seller-name', 'seller-address', 'seller-email', 'seller-tax-id', 'clients-list',
+    'add-client', 'invoice-next-number', 'invoice-number-format', 'invoice-payment-terms',
+    'invoice-tax-percent', 'invoice-notes', 'save-invoicing', 'invoicing-feedback',
+  ]) assert.match(source, new RegExp(`id="${id}"`), id);
+  assert.match(source, /never written to the GitHub repository/i);
+  assert.match(source, /\{YYYY\}.*\{MM\}.*\{NNNN\}/);
+  assert.match(script, /function addClientRow\(/);
+  assert.match(script, /function invoicingPayload\(\)/);
+  assert.match(script, /return \{ rates, invoicing: invoicingPayload\(\) \}/);
 });
 
 test('setup docs describe the shipped three-step flow and current settings actions', async () => {

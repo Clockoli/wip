@@ -6,6 +6,7 @@ const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.
 const js = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
 const reporting = fs.readFileSync(new URL('../src/domain/reporting.js', import.meta.url), 'utf8');
 const worker = fs.readFileSync(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+const styles = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
 
 test('reports page exposes periods, independent chart axes, facets, and direct export links', () => {
   for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'custom']) assert.match(html, new RegExp(`value="${value}"`));
@@ -84,4 +85,19 @@ test('reports mounts the shared running status directly below the tabs', () => {
   assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
   assert.match(js, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);
   assert.match(js, /mountRunningStatus\(\$\('running-status'\), \{ send \}\)/);
+});
+
+test('reports exposes local invoice preview, export, numbering and print contracts', () => {
+  for (const id of [
+    'create-invoice', 'invoice-dialog', 'invoice-client', 'invoice-currency', 'invoice-group-by',
+    'invoice-issue-date', 'invoice-due-days', 'invoice-preview', 'invoice-feedback', 'invoice-print',
+    'invoice-download-csv', 'invoice-download-json', 'invoice-close', 'print-invoice',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(js, /buildInvoice\(/);
+  assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
+  assert.match(js, /function renderInvoiceDocument\(container, invoice\)/);
+  assert.match(styles, /\.print-invoice\{display:none\}/);
+  assert.match(styles, /body\.printing-invoice \.print-timesheet\{display:none!important\}/);
+  assert.match(styles, /body\.printing-invoice \.print-invoice\{display:block\}/);
+  assert.match(styles, /dialog\{display:none!important\}/);
 });

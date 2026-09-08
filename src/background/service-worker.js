@@ -521,6 +521,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'SAVE_BILLING_SETTINGS') return store.saveBillingSettings(message.payload || {});
+  if (message.type === 'RESERVE_INVOICE_NUMBER') return store.reserveInvoiceNumber();
   if (message.type === 'EXPORT_SETTINGS') return store.exportSettings();
   if (message.type === 'MARK_SETTINGS_EXPORTED') return { marked: await store.markSettingsExported(message.revision) };
   if (message.type === 'IMPORT_SETTINGS') {

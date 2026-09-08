@@ -158,6 +158,14 @@ Settings accepts non-negative hourly rates keyed by GitHub login, with a currenc
 - A teammate's browser can use different rates for the same shared repository.
 - Missing rates contribute zero and are identified in the report summary.
 
+## Invoicing
+
+Create an invoice from the current filtered report, so the selected period, people, projects, and sources define what is billed. Each invoice uses one target currency. When effective-dated rates change within the period, Clockoli keeps the corresponding invoice lines separate; when the covered records use multiple currencies, it converts each entry using the exchange rate for that entry's date.
+
+The invoice is generated locally as a preview and can be printed or saved as PDF, downloaded as CSV, or downloaded as JSON. Unrated time remains visible as not billed. Invoice numbers are reserved only on the first export of a preview and are never committed to the time-data repository.
+
+Version 1 does not support retainers, recurring invoices, reminders, payment links, per-line editing, sent or paid status, an invoice archive, or emailing invoices.
+
 ## Data repository and personal branches
 
 Clockoli validates one dedicated private GitHub repository. Each user writes routine timer data to a marked branch named:

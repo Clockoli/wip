@@ -121,9 +121,52 @@ function normalizeRatePeriods(raw, login, legacyCurrency = 'USD') {
   return periods;
 }
 
+function invoicingText(value, label, limit) {
+  if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(value) || value.trim().length > limit) throw new Error(`Invalid invoicing ${label}`);
+  return value.trim();
+}
+
+function invoicingParty(value, client = false) {
+  const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency'] : [])];
+  if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing party has unexpected fields');
+  return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200)]));
+}
+
+export function normalizeInvoicingSettings(value = {}) {
+  const allowed = ['seller', 'clients', 'nextNumber', 'numberFormat', 'paymentTerms', 'taxPercent', 'notes'];
+  if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing settings have unexpected fields');
+  const seller = invoicingParty(value.seller ?? {}), source = value.clients ?? [];
+  if (!Array.isArray(source) || source.length > 50) throw new Error('Invoicing clients must be a list of at most 50 entries');
+  const ids = new Set();
+  const clients = source.map(raw => {
+    const party = invoicingParty(raw, true), id = invoicingText(raw.id ?? '', 'client id', 64);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) throw new Error('Invalid invoicing client id');
+    if (ids.has(id)) throw new Error(`Duplicate invoicing client id: ${id}`);
+    ids.add(id);
+    const currency = invoicingText(raw.defaultCurrency ?? '', 'client currency', 200);
+    return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '' };
+  });
+  const nextNumber = value.nextNumber ?? 1, taxPercent = value.taxPercent ?? 0;
+  if (!Number.isSafeInteger(nextNumber) || nextNumber < 1 || nextNumber > 1e9) throw new Error('Invoice next number must be a positive integer no greater than 1000000000');
+  if (typeof taxPercent !== 'number' || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100 || !/^\d+(?:\.\d{1,2})?$/.test(String(taxPercent))) throw new Error('Invoice tax percent must be 0–100 with at most two decimal places');
+  const numberFormat = invoicingText(value.numberFormat ?? 'INV-{YYYY}-{NNNN}', 'number format', 64);
+  if (!numberFormat.includes('{NNNN}') || /[{}]/.test(numberFormat.replace(/\{(?:YYYY|MM|NNNN)\}/g, ''))) throw new Error('Invoice number format must contain {NNNN} and only {YYYY}, {MM}, {NNNN} tokens');
+  return { seller, clients, nextNumber, numberFormat, paymentTerms: invoicingText(value.paymentTerms ?? 'Net 30', 'payment terms', 1000), taxPercent, notes: invoicingText(value.notes ?? '', 'notes', 1000) };
+}
+
+export function invoicingSettings(billing = {}) { return normalizeInvoicingSettings(billing?.invoicing ?? {}); }
+
+export function formatInvoiceNumber(numberFormat, sequence, issueDate) {
+  const settings = normalizeInvoicingSettings({ numberFormat, nextNumber: sequence });
+  if (!issueDate) throw new Error('Invoice issue date must use YYYY-MM-DD');
+  validDate(issueDate, 'Invoice issue date');
+  const tokens = { YYYY: issueDate.slice(0, 4), MM: issueDate.slice(5, 7), NNNN: String(settings.nextNumber).padStart(4, '0') };
+  return settings.numberFormat.replace(/\{(YYYY|MM|NNNN)\}/g, (_, token) => tokens[token]);
+}
+
 export function normalizeBillingSettings(value = {}) {
   if (!plainObject(value)) throw new Error('Billing settings must be an object');
-  const allowed = new Set(['currency', 'rates']);
+  const allowed = new Set(['currency', 'rates', 'invoicing']);
   if (Object.keys(value).some(key => !allowed.has(key))) throw new Error('Billing settings have unexpected fields');
   const legacyCurrency = normalizeCurrency(value.currency ?? 'USD');
   const source = value.rates ?? {};
@@ -135,7 +178,7 @@ export function normalizeBillingSettings(value = {}) {
     if (duplicate) throw new Error(`Duplicate GitHub login in billable rates: ${login}`);
     rates[login] = normalizeRatePeriods(rawPeriods, login, legacyCurrency);
   }
-  return { rates: Object.fromEntries(Object.entries(rates).sort(([a], [b]) => a.localeCompare(b))) };
+  return { rates: Object.fromEntries(Object.entries(rates).sort(([a], [b]) => a.localeCompare(b))), ...(Object.hasOwn(value, 'invoicing') ? { invoicing: normalizeInvoicingSettings(value.invoicing) } : {}) };
 }
 
 export function rateMajorToMinor(value) {
@@ -227,8 +270,8 @@ export function settingsExportText({ config = null, billing = {}, projects = [],
   const recentDays = Number(config?.recentDays ?? 7);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
   return `${JSON.stringify({
-    format: 'clockoli-settings', version: 5, exportedAt,
-    display: { recentDays, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: normalized, repository,
+    format: 'clockoli-settings', version: 6, exportedAt,
+    display: { recentDays, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
 }
@@ -236,15 +279,15 @@ export function settingsExportText({ config = null, billing = {}, projects = [],
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
-  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
+  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5, 6].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
   const expectedKeys = value.version >= 3
     ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
     : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
-  if ((value.version === 5 && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
+  if ((value.version >= 5 && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates')) throw new Error('Settings file has unexpected billing fields');
+  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates') || (value.version === 6 && billingKeys !== 'invoicing,rates')) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
       || Number.isNaN(Date.parse(value.exportedAt))) throw new Error('Settings file has an invalid export timestamp');
@@ -266,6 +309,6 @@ export function parseSettingsImport(text) {
     projects,
     otherProjectName: resolvedOtherProjectName,
     showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
-    billing: normalizeBillingSettings(value.billing),
+    billing: { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) },
   };
 }

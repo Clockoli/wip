@@ -3,37 +3,53 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
-import { normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
+import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
-const preferences = { rates: {}, projects: [], recentDays: 7, exportRecommended: false };
+const preferences = {
+  rates: { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
+  invoicing: {
+    seller: { name: 'Seller', address: 'Street', email: 'seller@example.com', taxId: 'TAX-1' },
+    clients: [{ id: 'client-1', name: 'Client', address: 'Road', email: 'client@example.com', taxId: 'TAX-2', defaultCurrency: 'EUR' }],
+    nextNumber: 7, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTerms: 'Net 30', taxPercent: 20, notes: 'Thanks',
+  },
+  projects: [], recentDays: 7, exportRecommended: false,
+};
 const connectedState = {
   ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' },
   config: { owner: 'octocat', repo: 'clockoli-data', branch: 'main', recentDays: 7 },
   verificationStatus: 'write_verified', trackingRepositoryUrl: 'https://github.com/octocat/clockoli-data',
 };
 
-function element() {
-  return {
+function element(tagName = 'div') {
+  const node = {
+    tagName,
     hidden: false, open: false, disabled: false, value: '', textContent: '', className: '',
-    dataset: {}, style: {}, children: [], listeners: {}, classList: { toggle() {} },
-    append(...children) { this.children.push(...children); },
-    replaceChildren(...children) { this.children = children; },
-    setAttribute() {}, removeAttribute() {}, focus() {},
-    querySelectorAll() { return []; },
+    dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
+    append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
+    replaceChildren(...children) { this.children = []; this.append(...children); },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() {},
+    querySelectorAll(selector) {
+      const className = selector.startsWith('.') ? selector.slice(1) : '';
+      const matches = child => className && child.className.split(' ').includes(className);
+      return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]);
+    },
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+    remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
     addEventListener(type, handler) { this.listeners[type] = handler; },
   };
+  return node;
 }
 
 function harness({ reply = () => ({}), confirm = () => false } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   const requests = [];
   const context = vm.createContext({
-    document: { getElementById: id => nodes.get(id), createElement: element, addEventListener() {} },
+    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: () => 1, clearTimeout() {}, queueMicrotask: callback => callback(),
-    onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields,
+    onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings,
     ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { sendMessage(request, callback) {
       requests.push(request);
@@ -69,6 +85,7 @@ test('secondary settings collapse only on disconnect and remain reachable across
 for (const [form, requestType, success] of [
   ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Display settings saved.'],
   ['billing', 'SAVE_BILLING_SETTINGS', 'Billable rates saved locally.'],
+  ['invoicing', 'SAVE_BILLING_SETTINGS', 'Invoicing settings saved locally.'],
 ]) {
   test(`${form} save confirms beside its button, reports errors there and restores the button`, async () => {
     let fail = false;
@@ -80,6 +97,7 @@ for (const [form, requestType, success] of [
       if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
       throw new Error(`Unexpected message: ${request.type}`);
     } });
+    page.context.renderLocalPreferences(preferences);
     page.render(connectedState);
     await page.submit(`${form}-form`);
     assert.equal(page.nodes.get(`${form}-feedback`)?.textContent, success);
@@ -95,6 +113,28 @@ for (const [form, requestType, success] of [
   });
 }
 
+for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoice counter errors and refreshes the stored number after success`, async () => {
+  let fail = true;
+  const message = 'Next invoice number cannot go below 8; invoice 7 has already been issued.';
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return fail ? new Error(message) : {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return { ...preferences, invoicing: { ...preferences.invoicing, nextNumber: 9 } };
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  page.nodes.get('invoice-notes').value = 'Edited';
+  await page.submit(`${form}-form`);
+  assert.equal(page.nodes.get(`${form}-feedback`).textContent, message);
+  assert.match(page.nodes.get(`${form}-feedback`).className, /error/);
+  assert.equal(page.nodes.get(`save-${form}`).disabled, false);
+  assert.equal(page.requests.length, 1);
+  fail = false; page.nodes.get('invoice-next-number').value = '8';
+  await page.submit(`${form}-form`);
+  assert.equal(page.requests.at(-1).type, 'GET_LOCAL_PREFERENCES');
+  assert.equal(page.nodes.get('invoice-next-number').value, '9');
+  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+});
+
 test('invalid billable input reports inline without sending a mutation', async () => {
   const page = harness();
   page.nodes.get('rates-list').querySelectorAll = () => [{ querySelector: () => ({ value: 'invalid' }) }];
@@ -102,6 +142,47 @@ test('invalid billable input reports inline without sending a mutation', async (
   assert.match(page.nodes.get('billing-feedback')?.textContent || '', /rate|amount|currency/i);
   assert.equal(page.requests.length, 0);
   assert.equal(page.nodes.get('save-billing').disabled, false);
+});
+
+test('both billing saves carry rates and invoicing so neither half is erased', async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  await page.submit('billing-form');
+  await page.submit('invoicing-form');
+  const saves = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(saves.length, 2);
+  for (const save of saves) {
+    assert.equal(save.payload.rates.octocat[0].amountMinorPerHour, 12500);
+    assert.equal(save.payload.invoicing.seller.name, 'Seller');
+    assert.equal(save.payload.invoicing.clients[0].id, 'client-1');
+  }
+});
+
+for (const [field, value, message] of [
+  ['invoice-tax-percent', '101', /tax percent/i],
+  ['invoice-number-format', 'INV-{NOPE}-{NNNN}', /number format/i],
+  ['invoice-next-number', '-1', /next number/i],
+]) test(`invalid ${field} reports through form feedback without sending`, async () => {
+  const page = harness(); page.context.renderLocalPreferences(preferences);
+  page.nodes.get(field).value = value;
+  await page.submit('invoicing-form');
+  assert.match(page.nodes.get('invoicing-feedback').textContent, message);
+  assert.equal(page.requests.length, 0);
+  assert.equal(page.nodes.get('save-invoicing').disabled, false);
+});
+
+test('new client rows use the smallest unused stable client index', () => {
+  const page = harness();
+  page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [
+    preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-3' },
+  ] } });
+  page.context.addClientRow();
+  const rows = page.nodes.get('clients-list').querySelectorAll('.client-row');
+  assert.equal(rows.at(-1).dataset.clientId, 'client-2');
 });
 
 test('backup reminder appears once per page load and stays dismissed after an export', () => {

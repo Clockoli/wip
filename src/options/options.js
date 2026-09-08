@@ -1,6 +1,6 @@
 import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
-import { normalizeProjects, parseRateFields } from '../domain/local-settings.js';
+import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
 let state = null;
@@ -495,6 +495,32 @@ function addRateRow(login = '', period = null) {
   row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
+function nextClientId() {
+  const used = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  let index = 1;
+  while (used.has(`client-${index}`)) index += 1;
+  return `client-${index}`;
+}
+
+function addClientRow(client = null) {
+  const value = client || { id: nextClientId(), name: '', address: '', email: '', taxId: '', defaultCurrency: '' };
+  const row = document.createElement('div'); row.className = 'client-row'; row.dataset.clientId = value.id || nextClientId();
+  const fields = [
+    ['Name', 'client-name', 'text', 'Acme Ltd', value.name],
+    ['Email', 'client-email', 'email', 'billing@example.com', value.email],
+    ['Address', 'client-address', 'text', 'Street and city', value.address],
+    ['Tax ID', 'client-tax-id', 'text', 'VAT number', value.taxId],
+    ['Default currency', 'client-currency', 'text', 'EUR', value.defaultCurrency],
+  ];
+  for (const [labelText, className, type, placeholder, fieldValue] of fields) {
+    const label = document.createElement('label'); label.textContent = labelText;
+    const input = document.createElement('input'); input.className = className; input.type = type; input.maxLength = className === 'client-address' ? 1000 : 200; input.autocomplete = 'off'; input.placeholder = placeholder; input.value = fieldValue || '';
+    label.append(input); row.append(label);
+  }
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
+  remove.addEventListener('click', () => row.remove()); row.append(remove); $('clients-list').append(row);
+}
+
 function addProjectRow(project = { name: '', substrings: [] }) {
   const row = document.createElement('div'); row.className = 'project-row';
   const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
@@ -545,6 +571,13 @@ function renderLocalPreferences(preferences) {
     }
   }
   if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
+  const invoicing = invoicingSettings(preferences);
+  $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
+  $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
+  $('clients-list').replaceChildren();
+  for (const client of invoicing.clients) addClientRow(client);
+  $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
+  $('invoice-payment-terms').value = invoicing.paymentTerms; $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
   if (!state?.config) $('recent-days').value = preferences.recentDays || 7;
   if (!preferences.exportRecommended) $('settings-export-reminder').hidden = true;
   else if (!backupReminderShown) {
@@ -571,7 +604,23 @@ function billingPayload() {
     rates[login] ||= [];
     rates[login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
-  return { rates };
+  return { rates, invoicing: invoicingPayload() };
+}
+
+function invoicingPayload() {
+  return normalizeInvoicingSettings({
+    seller: {
+      name: $('seller-name').value, address: $('seller-address').value,
+      email: $('seller-email').value, taxId: $('seller-tax-id').value,
+    },
+    clients: [...$('clients-list').querySelectorAll('.client-row')].map(row => ({
+      id: row.dataset.clientId, name: row.querySelector('.client-name').value,
+      address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
+      taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
+    })),
+    nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
+    paymentTerms: $('invoice-payment-terms').value, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
+  });
 }
 
 function downloadText(text, filename) {
@@ -816,6 +865,7 @@ $('display-form').addEventListener('submit', async event => {
 
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
+$('add-client').addEventListener('click', () => addClientRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); $('save-billing').disabled = true; formFeedback('billing-feedback', 'Saving billable rates…');
   try {
@@ -824,6 +874,15 @@ $('billing-form').addEventListener('submit', async event => {
     formFeedback('billing-feedback', 'Billable rates saved locally.', 'success');
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); }
   finally { $('save-billing').disabled = false; }
+});
+$('invoicing-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('save-invoicing').disabled = true; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
+  try {
+    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
+    await refreshLocalPreferences();
+    formFeedback('invoicing-feedback', 'Invoicing settings saved locally.', 'success');
+  } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); }
+  finally { $('save-invoicing').disabled = false; }
 });
 $('export-settings').addEventListener('click', async () => {
   $('export-settings').disabled = true;

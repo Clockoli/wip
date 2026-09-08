@@ -3,16 +3,18 @@ import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename, reportPdfTitle, taskSource,
 } from '../domain/reporting.js';
-import { billableTotalsByCurrency, exchangeCurrencyCode, rateForUser } from '../domain/local-settings.js';
+import { buildInvoice, invoiceCsv, invoiceExchangeRequest, invoiceFilename, invoiceJson } from '../domain/invoicing.js';
+import { billableTotalsByCurrency, exchangeCurrencyCode, invoicingSettings, rateForUser } from '../domain/local-settings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories'];
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null,
   people: new Set(), projects: new Set(), repositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '',
   allSelected: { people: false, projects: true, repositories: true }, otherProjectName: 'Other',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
+  invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
 };
 
 function send(message) {
@@ -75,6 +77,71 @@ function formatMoney(minor, currency = $('billable-currency').value, position = 
   return position === 'prefix' ? `${currency}${separator}${amount}` : `${amount}${separator}${currency}`;
 }
 
+function invoiceNode(tag, className = '', text = '') {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+function invoiceParty(label, party) {
+  const values = party ? [party.name, party.address, party.email, party.taxId].filter(Boolean) : [];
+  if (!values.length) return null;
+  const section = invoiceNode('section', 'invoice-party');
+  section.append(invoiceNode('h2', '', `${label}${party.name ? `: ${party.name}` : ''}`));
+  if (party.address) section.append(invoiceNode('p', '', party.address));
+  if (party.email) section.append(invoiceNode('p', '', party.email));
+  if (party.taxId) section.append(invoiceNode('p', '', `Tax ID: ${party.taxId}`));
+  return section;
+}
+
+function renderInvoiceDocument(container, invoice) {
+  container.replaceChildren();
+  const documentRoot = invoiceNode('article', 'invoice-document');
+  const heading = invoiceNode('header', 'invoice-document-heading');
+  const mark = invoiceNode('img', 'invoice-mark'); mark.src = '../assets/clockoli-with-text.svg'; mark.alt = 'Clockoli';
+  const identity = invoiceNode('div', 'invoice-identity'); identity.append(invoiceNode('h1', '', `INVOICE  ${invoice.number}`));
+  const dates = invoiceNode('dl', 'invoice-dates');
+  for (const [label, value] of [['Issued', invoice.issueDate], ['Due', invoice.dueDate]]) {
+    const row = invoiceNode('div'); row.append(invoiceNode('dt', '', label), invoiceNode('dd', '', value)); dates.append(row);
+  }
+  identity.append(dates); heading.append(mark, identity); documentRoot.append(heading);
+  const parties = invoiceNode('div', 'invoice-parties'), seller = invoiceParty('From', invoice.seller), client = invoiceParty('Bill to', invoice.client);
+  if (seller) parties.append(seller);
+  if (client) parties.append(client);
+  if (parties.children.length) documentRoot.append(parties);
+  documentRoot.append(invoiceNode('p', 'invoice-period', `Period: ${invoice.period.startDate} — ${invoice.period.endDate}`));
+  const table = invoiceNode('table', 'invoice-table'), head = invoiceNode('thead'), headRow = invoiceNode('tr');
+  const byDay = invoice.groupBy === 'day';
+  for (const label of [...(byDay ? ['Date'] : []), 'Description', 'Hours', 'Rate', 'Amount']) headRow.append(invoiceNode('th', ['Date', 'Description'].includes(label) ? 'invoice-text-cell' : '', label));
+  head.append(headRow); table.append(head);
+  const body = invoiceNode('tbody');
+  for (const line of invoice.lines) {
+    const row = invoiceNode('tr');
+    if (byDay) row.append(invoiceNode('td', '', line.date));
+    row.append(
+      invoiceNode('td', 'invoice-text-cell', line.description), invoiceNode('td', '', line.hours.toFixed(2)),
+      invoiceNode('td', '', formatMoney(line.effectiveRateMinorPerHour, invoice.currency, invoice.currencyPosition)),
+      invoiceNode('td', '', formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)),
+    );
+    body.append(row);
+  }
+  table.append(body);
+  const foot = invoiceNode('tfoot');
+  const totalRow = (label, value) => {
+    const row = invoiceNode('tr', 'invoice-total-row'), labelCell = invoiceNode('th', '', label);
+    labelCell.colSpan = byDay ? 4 : 3; row.append(labelCell, invoiceNode('td', '', formatMoney(value, invoice.currency, invoice.currencyPosition))); return row;
+  };
+  foot.append(totalRow('Subtotal', invoice.subtotalMinor));
+  if (invoice.taxPercent !== 0) foot.append(totalRow(`VAT ${invoice.taxPercent}%`, invoice.taxMinor));
+  foot.append(totalRow('Total', invoice.totalMinor)); table.append(foot); documentRoot.append(table);
+  for (const item of invoice.unbilled) documentRoot.append(invoiceNode('p', 'invoice-unbilled', `Not billed: ${item.person} ${formatClockDuration(item.seconds)} (no hourly rate covers this time)`));
+  if (invoice.converted) documentRoot.append(invoiceNode('p', 'invoice-footnote', "Exchange rates are from Frankfurter; each entry uses the exchange rate for that entry's own date."));
+  if (invoice.paymentTerms) documentRoot.append(invoiceNode('p', 'invoice-terms', `Payment terms: ${invoice.paymentTerms}`));
+  if (invoice.notes) documentRoot.append(invoiceNode('p', 'invoice-notes', invoice.notes));
+  container.append(documentRoot);
+}
+
 function formatMetricValue(value, metric, { tooltip = false } = {}) {
   if (metric === 'billable-amount') return formatMoney(value);
   if (metric === 'task-count') {
@@ -94,6 +161,150 @@ function setDownloadsAvailable(available) {
 
 function selectedFilters() {
   return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, emptyMeansNone: true };
+}
+
+function currentFilteredRecords() { return filterReportRecords(state.records, selectedFilters()); }
+
+function invoiceCompositionKey(filtered) {
+  const records = filtered.map(record => [record.id || record.taskUrl || record.issue?.url || record.url, record.user, String(record.entryDate || record.startedAt || '').slice(0, 10), record.durationSeconds]);
+  return JSON.stringify({ range: state.range, filters: selectedFilters(), records, rates: state.billing.rates, invoicing: state.billing.invoicing });
+}
+
+function resetInvoiceReservation() {
+  state.invoiceReservedSequence = null; state.invoice = null; state.invoiceExchangeRates = null; state.invoiceRequestId += 1;
+}
+
+function syncInvoiceComposition(filtered) {
+  const key = invoiceCompositionKey(filtered);
+  if (key === state.invoiceCompositionKey) return;
+  state.invoiceCompositionKey = key; resetInvoiceReservation();
+  if ($('invoice-dialog').open) void rebuildInvoicePreview();
+}
+
+function setInvoiceAvailable(filtered) {
+  const control = $('create-invoice');
+  let reason = '';
+  if (!filtered.length) reason = 'No entries in this period to invoice';
+  else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
+  else if (state.loading) reason = 'Report is loading';
+  control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
+  if (reason) control.setAttribute('title', reason); else control.removeAttribute('title');
+}
+
+function setInvoiceActionsAvailable(available) {
+  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) $(id).disabled = !available;
+}
+
+function invoiceCurrencies(filtered) {
+  return [...new Set(filtered.map(record => rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10))?.currency).filter(Boolean))].sort();
+}
+
+function selectedInvoiceClient() {
+  return state.billing.invoicing.clients.find(client => client.id === $('invoice-client').value) || null;
+}
+
+function populateInvoiceClients() {
+  const select = $('invoice-client'), previous = state.invoiceControlsReady ? select.value : '';
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'No client'; select.append(empty);
+  for (const client of state.billing.invoicing.clients) {
+    const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option);
+  }
+  select.value = state.billing.invoicing.clients.some(client => client.id === previous) ? previous : '';
+  if (!state.invoiceClientChosen && !select.value && state.billing.invoicing.clients.length === 1) select.value = state.billing.invoicing.clients[0].id;
+}
+
+function populateInvoiceCurrencies(filtered, preferClient = false) {
+  const select = $('invoice-currency'), previous = select.value, clientCurrency = selectedInvoiceClient()?.defaultCurrency || '';
+  const currencies = invoiceCurrencies(filtered);
+  if (clientCurrency && !currencies.includes(clientCurrency)) currencies.push(clientCurrency);
+  currencies.sort(); select.replaceChildren();
+  if (currencies.length !== 1 && !clientCurrency) {
+    const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = 'Choose currency'; select.append(placeholder);
+  }
+  for (const currency of currencies) { const option = document.createElement('option'); option.value = currency; option.textContent = currency; select.append(option); }
+  if (clientCurrency && (preferClient || !currencies.includes(previous))) select.value = clientCurrency;
+  else if (currencies.length === 1) select.value = currencies[0];
+  else if (currencies.includes(previous)) select.value = previous;
+  else select.value = '';
+}
+
+function invoiceBuildOptions(sequence, exchangeRates) {
+  const dueDays = Number($('invoice-due-days').value);
+  if (dueDays > 365) throw new Error('Invoice due days must be between 0 and 365');
+  return {
+    rates: state.billing.rates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value,
+    currency: $('invoice-currency').value, exchangeRates, groupBy: $('invoice-group-by').value,
+    startDate: state.range.startDate, endDate: state.range.endDate, issueDate: $('invoice-issue-date').value,
+    dueDays, sequence,
+  };
+}
+
+function prospectiveInvoiceSequence() { return state.invoiceReservedSequence ?? state.billing.invoicing.nextNumber; }
+
+function showInvoiceLoading() {
+  $('invoice-feedback').textContent = ''; $('invoice-preview').replaceChildren(invoiceNode('p', 'invoice-loading', 'Loading exchange rates…')); setInvoiceActionsAvailable(false);
+}
+
+function showInvoiceError(error) {
+  state.invoice = null; state.invoiceExchangeRates = null; $('invoice-preview').replaceChildren();
+  $('invoice-feedback').textContent = error?.message || String(error || 'Could not build invoice.'); setInvoiceActionsAvailable(false);
+}
+
+async function rebuildInvoicePreview() {
+  if (!state.range) return;
+  const requestId = ++state.invoiceRequestId, filtered = currentFilteredRecords();
+  $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null;
+  try {
+    let exchangeRates = null;
+    const targetCurrency = $('invoice-currency').value;
+    if (targetCurrency) {
+      const payload = invoiceExchangeRequest(filtered, state.billing.rates, targetCurrency);
+      if (payload.sourceCurrencies.length) {
+        showInvoiceLoading();
+        const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...payload, requestId: `invoice-${state.requestId}-${requestId}` } });
+        if (requestId !== state.invoiceRequestId) return;
+        exchangeRates = result.rates;
+      }
+    }
+    const invoice = buildInvoice(filtered, invoiceBuildOptions(prospectiveInvoiceSequence(), exchangeRates));
+    if (requestId !== state.invoiceRequestId) return;
+    state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice); setInvoiceActionsAvailable(true);
+  } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); }
+}
+
+function prepareInvoiceControls(filtered) {
+  populateInvoiceClients(); populateInvoiceCurrencies(filtered);
+  if (!state.invoiceControlsReady) {
+    $('invoice-group-by').value = 'task'; $('invoice-issue-date').value = localDateValue(); $('invoice-due-days').value = '30'; state.invoiceControlsReady = true;
+  }
+}
+
+async function ensureReservedInvoice() {
+  if (!state.invoice) throw new Error('Invoice preview is not ready.');
+  if (state.invoiceReservedSequence === null) {
+    const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;
+    const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
+    // Keep successful reservations for retries. A worker crash between commit and response can still leave a gap in v1, never a duplicate.
+    state.invoiceReservedSequence = result.sequence;
+    if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey) throw new Error('Invoice changed while its number was being reserved. Try again.');
+  }
+  state.invoice = buildInvoice(currentFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
+  renderInvoiceDocument($('invoice-preview'), state.invoice);
+  return state.invoice;
+}
+
+function downloadInvoiceFile(format, invoice) {
+  const content = format === 'csv' ? invoiceCsv(invoice) : invoiceJson(invoice);
+  const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+  const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');
+  anchor.href = url; anchor.download = invoiceFilename(format, invoice); anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function exportInvoice(format) {
+  setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
+  try { const invoice = await ensureReservedInvoice(); downloadInvoiceFile(format, invoice); setInvoiceActionsAvailable(true); }
+  catch (error) { $('invoice-feedback').textContent = error?.message || `Could not download invoice ${format.toUpperCase()}.`; setInvoiceActionsAvailable(Boolean(state.invoice)); }
 }
 
 function updateSelectionIntent(key) {
@@ -321,6 +532,7 @@ function render() {
   $('projects-all').textContent = allProjects.length && allProjects.every(value => state.projects.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   const filtered = filterReportRecords(state.records, selectedFilters());
+  syncInvoiceComposition(filtered); setInvoiceAvailable(filtered);
   const billableTotals = renderCurrencySelector(filtered);
   renderSummary(filtered, billableTotals);
   renderEmptyState(filtered);
@@ -352,8 +564,9 @@ function render() {
 
 async function loadRange(range) {
   const requestId = ++state.requestId;
+  resetInvoiceReservation(); state.invoiceCompositionKey = '';
   state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.analyticsRequestId += 1; setError();
-  setDownloadsAvailable(false); renderRangeContext();
+  setDownloadsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
   showProgress('Connecting to GitHub…', 10); $('setup').hidden = true;
   try {
     const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, requestId } });
@@ -366,7 +579,7 @@ async function loadRange(range) {
     const firstLoad = !state.range;
     state.range = range; state.pendingRange = null; state.loading = false; state.exchangeRates = null; state.exchangeKey = '';
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
-    state.billing = { rates: result.billing?.rates || {} };
+    state.billing = { rates: result.billing?.rates || {}, invoicing: invoicingSettings(result.billing) };
     state.projectDefinitions = result.billing?.projects || [];
     state.otherProjectName = result.billing?.otherProjectName || 'Other';
     const available = buildFacets(result.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName });
@@ -385,6 +598,7 @@ async function loadRange(range) {
     if (requestId === state.requestId) {
       state.loading = false; state.pendingRange = null; renderRangeContext();
       setDownloadsAvailable(Boolean(state.range && filterReportRecords(state.records, selectedFilters()).length));
+      setInvoiceAvailable(state.range ? currentFilteredRecords() : []);
       if (state.progressRequestId === requestId) hideProgress();
     }
   }
@@ -401,6 +615,7 @@ async function applyPeriod() {
 }
 
 $('period').addEventListener('change', () => {
+  resetInvoiceReservation(); state.invoiceCompositionKey = '';
   const custom = $('period').value === 'custom'; $('custom-period').hidden = !custom;
   if (custom) {
     state.requestId += 1; state.analyticsRequestId += 1; state.loading = false; state.pendingRange = null; state.progressRequestId = null;
@@ -463,8 +678,35 @@ $('download-pdf').addEventListener('click', event => {
   window.print();
 });
 
+$('create-invoice').addEventListener('click', event => {
+  event.preventDefault();
+  if (state.loading || $('create-invoice').classList.contains('disabled')) return;
+  const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
+});
+$('invoice-close').addEventListener('click', () => $('invoice-dialog').close());
+$('invoice-dialog').addEventListener('close', () => { state.invoiceRequestId += 1; $('create-invoice').focus(); });
+for (const id of ['invoice-currency', 'invoice-group-by', 'invoice-issue-date', 'invoice-due-days']) {
+  $(id).addEventListener('change', () => { resetInvoiceReservation(); void rebuildInvoicePreview(); });
+}
+$('invoice-client').addEventListener('change', () => {
+  state.invoiceClientChosen = true; resetInvoiceReservation(); populateInvoiceCurrencies(currentFilteredRecords(), true); void rebuildInvoicePreview();
+});
+$('invoice-download-csv').addEventListener('click', () => void exportInvoice('csv'));
+$('invoice-download-json').addEventListener('click', () => void exportInvoice('json'));
+$('invoice-print').addEventListener('click', async () => {
+  setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
+  try {
+    const invoice = await ensureReservedInvoice(), previousTitle = document.title;
+    renderInvoiceDocument($('print-invoice'), invoice); document.body.classList.add('printing-invoice');
+    document.title = invoiceFilename('pdf', invoice).replace(/\.pdf$/, ''); $('invoice-dialog').close();
+    addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
+    window.print();
+  } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not print invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
+});
+
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+  state.billing = { rates: preferences.rates || {}, invoicing: invoicingSettings(preferences) };
   state.projectDefinitions = preferences.projects || [];
   state.otherProjectName = preferences.otherProjectName || 'Other';
   reconcileSelections(buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }), ['projects']);

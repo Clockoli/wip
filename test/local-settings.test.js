@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   billableMinorForRecord, billableMinorTotal, normalizeBillingSettings, parseSettingsImport,
   normalizeProjects, projectNameForUrl, rateMajorToMinor, rateMinorToMajor, settingsExportText,
+  normalizeInvoicingSettings, invoicingSettings,
 } from '../src/domain/local-settings.js';
 
 test('projects normalize ordered names and URL substrings with a safe Other fallback', () => {
@@ -63,11 +64,11 @@ test('plain-text settings export excludes credentials and imports display plus b
   assert.equal(JSON.parse(settingsExportText({ config: { recentDays: 7 } })).repository, null);
   assert.deepEqual(value.security, { credentialsIncluded: false });
   assert.doesNotMatch(text, /accessToken|refreshToken|personal access token/i);
-  assert.equal(value.version, 5);
+  assert.equal(value.version, 6);
   assert.equal(value.display.otherProjectName, 'General');
   assert.equal(value.display.showQueueDiagnostics, true);
   assert.deepEqual(value.projects, [{ name: 'work', substrings: ['github.com/acme/'] }]);
-  assert.deepEqual(parseSettingsImport(text), { recentDays: 9, projects: [{ name: 'work', substrings: ['github.com/acme/'] }], otherProjectName: 'General', showQueueDiagnostics: true, billing: { rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
+  assert.deepEqual(parseSettingsImport(text), { recentDays: 9, projects: [{ name: 'work', substrings: ['github.com/acme/'] }], otherProjectName: 'General', showQueueDiagnostics: true, billing: { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
   const legacy = JSON.parse(text);
   legacy.version = 1;
   delete legacy.projects;
@@ -75,12 +76,15 @@ test('plain-text settings export excludes credentials and imports display plus b
   delete legacy.display.showQueueDiagnostics;
   legacy.billing = { currency: 'gel', rates: { alice: [{ amountMinorPerHour: 88800, startDate: '', endDate: '' }] } };
   assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).billing, {
+    invoicing: invoicingSettings(),
     rates: { alice: [{ amountMinorPerHour: 88800, currency: 'GEL', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
   });
   assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).projects, []);
   const version2 = JSON.parse(text); version2.version = 2; delete version2.projects; delete version2.display.otherProjectName; delete version2.display.showQueueDiagnostics;
+  delete version2.billing.invoicing;
   assert.deepEqual(parseSettingsImport(JSON.stringify(version2)).projects, []);
   const version4 = JSON.parse(text); version4.version = 4; delete version4.display.showQueueDiagnostics;
+  delete version4.billing.invoicing;
   assert.equal(parseSettingsImport(JSON.stringify(version4)).showQueueDiagnostics, false);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, showQueueDiagnostics: 'yes' } })), /true or false/);
   assert.ok(new TextEncoder().encode(text).byteLength <= 262_144);
@@ -89,4 +93,59 @@ test('plain-text settings export excludes credentials and imports display plus b
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, accessToken: 'must-not-be-accepted' })), /unexpected fields/);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, security: { credentialsIncluded: true } })), /credentials/);
 
+});
+
+test('invoicing settings populate defaults and normalize browser-local seller and clients', () => {
+  const defaults = { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTerms: 'Net 30', taxPercent: 0, notes: '' };
+  assert.deepEqual(normalizeInvoicingSettings(), defaults);
+  assert.deepEqual(invoicingSettings(null), defaults);
+  assert.deepEqual(normalizeBillingSettings({ rates: {} }), { rates: {} });
+  const normalized = normalizeInvoicingSettings({ seller: { name: ' Seller ' }, clients: [{ id: ' client-1 ', name: ' Client ', defaultCurrency: ' eur ' }, { id: 'unset' }], notes: ' Thanks ', taxPercent: 7.25 });
+  assert.equal(normalized.seller.name, 'Seller');
+  assert.deepEqual(normalized.clients[0], { id: 'client-1', name: 'Client', address: '', email: '', taxId: '', defaultCurrency: 'EUR' });
+  assert.equal(normalized.clients[1].defaultCurrency, '');
+  assert.equal(normalized.notes, 'Thanks');
+  assert.equal(normalized.taxPercent, 7.25);
+  assert.deepEqual(normalizeBillingSettings({ invoicing: normalized }).invoicing, normalized);
+});
+
+test('invoicing rejects unknown fields, invalid strings, clients, numbering and tax', () => {
+  for (const value of [null, [], { unknown: true }, { seller: { unknown: '' } }, { clients: [{ id: 'a', unknown: '' }] },
+    { seller: { name: 12 } }, { notes: '\nunsafe' }, { seller: { email: 'bad\u007fmail' } },
+    { clients: [{ id: '' }] }, { clients: [{ id: 'bad/id' }] }, { clients: [{ id: 'a' }, { id: 'a' }] },
+    { clients: [{ id: 'a', defaultCurrency: 'US1' }] }, { clients: Array.from({ length: 51 }, (_, index) => ({ id: `c${index}` })) },
+    ...[0, -1, 1.5, 1e9 + 1, Number.MAX_SAFE_INTEGER, '1'].map(nextNumber => ({ nextNumber })),
+    ...[-1, 100.01, 1.001, NaN, Infinity, '5'].map(taxPercent => ({ taxPercent })),
+    ...['INV', 'INV-{DD}-{NNNN}', '{yyyy}-{NNNN}', '{NNNN}-{OTHER}'].map(numberFormat => ({ numberFormat }))]) {
+    assert.throws(() => normalizeInvoicingSettings(value));
+  }
+  for (const [field, limit] of [['name', 200], ['email', 200], ['taxId', 200], ['address', 1000]]) {
+    assert.equal(normalizeInvoicingSettings({ seller: { [field]: 'a'.repeat(limit) } }).seller[field].length, limit);
+    assert.throws(() => normalizeInvoicingSettings({ seller: { [field]: 'a'.repeat(limit + 1) } }));
+    assert.throws(() => normalizeInvoicingSettings({ clients: [{ id: 'a', [field]: 'a'.repeat(limit + 1) }] }));
+  }
+  for (const field of ['notes', 'paymentTerms']) assert.throws(() => normalizeInvoicingSettings({ [field]: 'a'.repeat(1001) }));
+  assert.throws(() => normalizeInvoicingSettings({ numberFormat: 'a'.repeat(59) + '{NNNN}' }));
+  assert.throws(() => normalizeInvoicingSettings({ clients: [{ id: 'a'.repeat(65) }] }));
+  assert.equal(normalizeInvoicingSettings({ nextNumber: 1e9, taxPercent: 100 }).nextNumber, 1e9);
+  assert.equal(normalizeInvoicingSettings({ taxPercent: 0.29 }).taxPercent, 0.29);
+});
+
+test('settings v6 round-trip invoicing and older files import explicit defaults with strict billing keys', () => {
+  const invoicing = normalizeInvoicingSettings({ seller: { name: 'Seller' }, clients: [{ id: 'client', defaultCurrency: '$' }], nextNumber: 7, numberFormat: '{YYYY}/{MM}/{NNNN}', paymentTerms: 'Net 14', taxPercent: 12.34, notes: 'Thank you' });
+  const value = JSON.parse(settingsExportText({ billing: { invoicing } }));
+  assert.equal(value.version, 6);
+  assert.deepEqual(Object.keys(value.billing).sort(), ['invoicing', 'rates']);
+  assert.deepEqual(parseSettingsImport(JSON.stringify(value)).billing, { invoicing, rates: {} });
+  assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, billing: { rates: {} } })), /billing fields/);
+  assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, extra: true } })), /display/);
+  for (const version of [2, 3, 4, 5]) {
+    const older = structuredClone(value); older.version = version;
+    if (version < 3) delete older.projects;
+    if (version < 4) delete older.display.otherProjectName;
+    if (version < 5) delete older.display.showQueueDiagnostics;
+    assert.throws(() => parseSettingsImport(JSON.stringify(older)), /billing fields/);
+    delete older.billing.invoicing;
+    assert.deepEqual(parseSettingsImport(JSON.stringify(older)).billing.invoicing, invoicingSettings());
+  }
 });

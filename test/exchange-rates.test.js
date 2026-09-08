@@ -2,8 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ExchangeRateService } from '../src/services/exchange-rates.js';
 import { exchangeCurrencyCode } from '../src/domain/local-settings.js';
+import { buildInvoice, invoiceExchangeRequest } from '../src/domain/invoicing.js';
 
 const response = value => ({ ok: true, json: async () => value });
+
+test('invoice conversion uses each record date and requests only needed currencies and dates', () => {
+  const records = ['2026-08-14', '2026-08-15'].map(entryDate => ({ user: 'alice', taskUrl: 'https://example.com/task', entryDate, durationSeconds: 1800 }));
+  const rates = { alice: { amountMinorPerHour: 10000, currency: '€' }, bob: { amountMinorPerHour: 20000, currency: 'USD' } };
+  const options = { rates, currency: 'USD', startDate: '2026-08-01', endDate: '2026-08-31', issueDate: '2026-09-01', exchangeRates: { '2026-08-14': { EUR: 1.1 }, '2026-08-15': { EUR: 1.2 } } };
+  const invoice = buildInvoice(records, options);
+  // A line never blends two exchange factors, so one task across two dates bills as two lines.
+  assert.equal(invoice.lines.length, 2);
+  assert.deepEqual(invoice.lines.map(line => line.amountMinor), [5500, 6000]);
+  assert.equal(invoice.subtotalMinor, 11500);
+  assert.equal(invoice.converted, true);
+  assert.deepEqual(invoiceExchangeRequest([...records, records[0], { ...records[0], user: 'bob', entryDate: '2026-08-16' }, { ...records[0], user: 'unrated', entryDate: '2026-08-17' }], rates, 'usd'), { targetCurrency: 'USD', sourceCurrencies: ['EUR'], dates: ['2026-08-14', '2026-08-15'] });
+  for (const factor of [undefined, 0, -1, NaN, Infinity]) {
+    assert.throws(() => buildInvoice(records, { ...options, exchangeRates: { '2026-08-15': { EUR: factor }, '2026-08-14': { EUR: 1.1 } } }), /No EUR to USD exchange rate for 2026-08-15\./);
+  }
+  assert.deepEqual(invoiceExchangeRequest(records, rates, 'EUR'), { targetCurrency: 'EUR', sourceCurrencies: [], dates: [] });
+  assert.equal(buildInvoice(records, { ...options, currency: 'EUR', exchangeRates: null }).converted, false);
+});
 
 test('currency signs map to Frankfurter ISO codes', () => {
   assert.equal(exchangeCurrencyCode('$'), 'USD');

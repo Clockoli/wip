@@ -171,7 +171,13 @@ Hourly rates and their currency signs or descriptions stay in extension-local In
 
 Billable money uses integer minor units and tracked seconds. Clockoli aggregates before final rounding to avoid accumulating per-record rounding errors.
 
-The settings JSON backup can include rates, so protect that backup according to the sensitivity of your rate card.
+The settings JSON backup can include rates and invoicing details, so protect that user-requested download according to the sensitivity of your rate card and customer data.
+
+## Invoice privacy
+
+Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in `chrome.storage.local`. Hourly rates, computed amounts, seller details, and client details never leave the browser.
+
+An invoice exists only as the on-screen preview and as a file the user prints or downloads. Clockoli does not archive invoices, and no invoice or invoice number is ever written to the time-data repository.
 
 ## Settings backup exclusions
 

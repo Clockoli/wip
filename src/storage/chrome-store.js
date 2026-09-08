@@ -1,4 +1,4 @@
-import { normalizeBillingSettings, normalizeOtherProjectName, normalizeProjects, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
+import { invoicingSettings, normalizeBillingSettings, normalizeOtherProjectName, normalizeProjects, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
@@ -359,14 +359,26 @@ export class ChromeStore {
     const projects = normalizeProjects(values[PROJECTS] || []);
     const otherProjectName = normalizeOtherProjectName(values[OTHER_PROJECT_NAME]);
     const showQueueDiagnostics = values[SHOW_QUEUE_DIAGNOSTICS] === true;
-    return { recentDays, projects, otherProjectName, showQueueDiagnostics, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision };
+    return { recentDays, projects, otherProjectName, showQueueDiagnostics, ...billing, invoicing: invoicingSettings(billing), revision, exportedRevision, exportRecommended: revision > exportedRevision };
   }
 
   async saveBillingSettings(value) {
     const billing = normalizeBillingSettings(value);
     return this.backend.mutateMany([BILLING_SETTINGS, SETTINGS_REVISION], values => {
+      const stored = invoicingSettings(values[BILLING_SETTINGS] || {}).nextNumber;
+      if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       return { set: { [BILLING_SETTINGS]: billing, [SETTINGS_REVISION]: revision }, result: { ...billing, revision, exportRecommended: true } };
+    });
+  }
+
+  async reserveInvoiceNumber() {
+    return this.backend.mutateMany([BILLING_SETTINGS, SETTINGS_REVISION], values => {
+      const billing = normalizeBillingSettings(values[BILLING_SETTINGS] || {}), invoicing = invoicingSettings(billing);
+      const sequence = invoicing.nextNumber, numberFormat = invoicing.numberFormat;
+      if (sequence >= 1e9) throw new Error('Invoice number sequence is exhausted');
+      const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
+      return { set: { [BILLING_SETTINGS]: { ...billing, invoicing: { ...invoicing, nextNumber: sequence + 1 } }, [SETTINGS_REVISION]: revision }, result: { sequence, numberFormat, revision, exportRecommended: true } };
     });
   }
 
