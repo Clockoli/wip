@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   billableMinorForRecord, billableMinorTotal, normalizeBillingSettings, parseSettingsImport,
   normalizeProjects, projectNameForUrl, rateMajorToMinor, rateMinorToMajor, settingsExportText,
-  normalizeInvoicingSettings, invoicingSettings,
+  clientForProject, normalizeInvoicingSettings, invoicingSettings,
 } from '../src/domain/local-settings.js';
 
 test('projects normalize ordered names and URL substrings with a safe Other fallback', () => {
@@ -102,11 +102,33 @@ test('invoicing settings populate defaults and normalize browser-local seller an
   assert.deepEqual(normalizeBillingSettings({ rates: {} }), { rates: {} });
   const normalized = normalizeInvoicingSettings({ seller: { name: ' Seller ' }, clients: [{ id: ' client-1 ', name: ' Client ', defaultCurrency: ' eur ' }, { id: 'unset' }], notes: ' Thanks ', taxPercent: 7.25 });
   assert.equal(normalized.seller.name, 'Seller');
-  assert.deepEqual(normalized.clients[0], { id: 'client-1', name: 'Client', address: '', email: '', taxId: '', defaultCurrency: 'EUR' });
+  assert.deepEqual(normalized.clients[0], { id: 'client-1', name: 'Client', address: '', email: '', taxId: '', defaultCurrency: 'EUR', projects: [] });
   assert.equal(normalized.clients[1].defaultCurrency, '');
   assert.equal(normalized.notes, 'Thanks');
   assert.equal(normalized.taxPercent, 7.25);
   assert.deepEqual(normalizeBillingSettings({ invoicing: normalized }).invoicing, normalized);
+});
+
+test('client project ownership normalizes, caps, de-duplicates and resolves case-insensitively', () => {
+  const invoicing = normalizeInvoicingSettings({ clients: [
+    { id: 'acme', name: 'Acme Inc', projects: [' Acme web ', 'ACME WEB', 'Acme API'] },
+    { id: 'globex', name: 'Globex GmbH', projects: ['Globex API'] },
+  ] });
+  assert.deepEqual(invoicing.clients[0].projects, ['Acme web', 'Acme API']);
+  assert.equal(clientForProject(' acme WEB ', invoicing), invoicing.clients[0]);
+  assert.equal(clientForProject('GLOBEX api', invoicing), invoicing.clients[1]);
+  assert.equal(clientForProject('Unknown', invoicing), null);
+  assert.equal(normalizeInvoicingSettings({ clients: [{ id: 'cap', projects: Array.from({ length: 50 }, (_, index) => `Project ${index}`) }] }).clients[0].projects.length, 50);
+  assert.throws(() => normalizeInvoicingSettings({ clients: [{ id: 'cap', projects: Array.from({ length: 51 }, (_, index) => `Project ${index}`) }] }), /at most 50/);
+  for (const project of ['', ' '.repeat(2), 'a'.repeat(81), 'bad\nproject']) {
+    assert.throws(() => normalizeInvoicingSettings({ clients: [{ id: 'invalid', projects: [project] }] }));
+  }
+});
+
+test('two clients cannot claim the same project', () => {
+  assert.throws(() => normalizeInvoicingSettings({ clients: [
+    { id: 'acme', projects: ['Shared'] }, { id: 'globex', projects: [' shared '] },
+  ] }), { message: 'Project shared is already assigned to another client.' });
 });
 
 test('invoicing rejects unknown fields, invalid strings, clients, numbering and tax', () => {

@@ -127,7 +127,7 @@ function invoicingText(value, label, limit) {
 }
 
 function invoicingParty(value, client = false) {
-  const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency'] : [])];
+  const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency', 'projects'] : [])];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing party has unexpected fields');
   return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200)]));
 }
@@ -137,14 +137,25 @@ export function normalizeInvoicingSettings(value = {}) {
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing settings have unexpected fields');
   const seller = invoicingParty(value.seller ?? {}), source = value.clients ?? [];
   if (!Array.isArray(source) || source.length > 50) throw new Error('Invoicing clients must be a list of at most 50 entries');
-  const ids = new Set();
+  const ids = new Set(), claimedProjects = new Set();
   const clients = source.map(raw => {
     const party = invoicingParty(raw, true), id = invoicingText(raw.id ?? '', 'client id', 64);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) throw new Error('Invalid invoicing client id');
     if (ids.has(id)) throw new Error(`Duplicate invoicing client id: ${id}`);
     ids.add(id);
     const currency = invoicingText(raw.defaultCurrency ?? '', 'client currency', 200);
-    return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '' };
+    // Project existence is checked by Options because display preferences are outside this normalizer.
+    const projectSource = raw.projects ?? [];
+    if (!Array.isArray(projectSource) || projectSource.length > MAX_PROJECTS) throw new Error(`Client ${party.name || id} projects must be a list of at most ${MAX_PROJECTS} entries`);
+    const ownProjects = new Set(), projects = [];
+    for (const value of projectSource) {
+      const name = invoicingText(value, 'client project', MAX_PROJECT_NAME), foldedName = name.toLowerCase();
+      if (!name) throw new Error('Invalid invoicing client project');
+      if (ownProjects.has(foldedName)) continue;
+      if (claimedProjects.has(foldedName)) throw new Error(`Project ${name} is already assigned to another client.`);
+      ownProjects.add(foldedName); claimedProjects.add(foldedName); projects.push(name);
+    }
+    return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '', projects };
   });
   const nextNumber = value.nextNumber ?? 1, taxPercent = value.taxPercent ?? 0;
   if (!Number.isSafeInteger(nextNumber) || nextNumber < 1 || nextNumber > 1e9) throw new Error('Invoice next number must be a positive integer no greater than 1000000000');
@@ -155,6 +166,12 @@ export function normalizeInvoicingSettings(value = {}) {
 }
 
 export function invoicingSettings(billing = {}) { return normalizeInvoicingSettings(billing?.invoicing ?? {}); }
+
+export function clientForProject(projectName, invoicing) {
+  const foldedName = String(projectName ?? '').trim().toLowerCase();
+  if (!foldedName) return null;
+  return (invoicing?.clients ?? []).find(client => (client.projects ?? []).some(name => String(name).trim().toLowerCase() === foldedName)) ?? null;
+}
 
 export function formatInvoiceNumber(numberFormat, sequence, issueDate) {
   const settings = normalizeInvoicingSettings({ numberFormat, nextNumber: sequence });

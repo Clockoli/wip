@@ -4,7 +4,8 @@ import {
   periodRange, reportFilename, reportPdfTitle, taskSource,
 } from '../domain/reporting.js';
 import { buildInvoice, invoiceCsv, invoiceExchangeRequest, invoiceFilename, invoiceJson } from '../domain/invoicing.js';
-import { billableTotalsByCurrency, exchangeCurrencyCode, invoicingSettings, rateForUser } from '../domain/local-settings.js';
+import { billableTotalsByCurrency, clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForUser } from '../domain/local-settings.js';
+import { taskUrlOf } from '../domain/values.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories'];
@@ -15,6 +16,7 @@ const state = {
   allSelected: { people: false, projects: true, repositories: true }, otherProjectName: 'Other',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
   invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
+  invoiceProjects: new Set(), invoiceProjectOptions: [],
 };
 
 function send(message) {
@@ -203,6 +205,56 @@ function selectedInvoiceClient() {
   return state.billing.invoicing.clients.find(client => client.id === $('invoice-client').value) || null;
 }
 
+function invoiceProjectName(record) { return projectNameForUrl(taskUrlOf(record), state.projectDefinitions, state.otherProjectName); }
+
+function invoiceFilteredRecords() { return currentFilteredRecords().filter(record => state.invoiceProjects.has(invoiceProjectName(record))); }
+
+function renderInvoiceProjectWarnings() {
+  const client = selectedInvoiceClient(), notices = [];
+  if (client) {
+    const foreign = new Map();
+    for (const project of state.invoiceProjects) {
+      const owner = clientForProject(project, state.billing.invoicing);
+      if (owner && owner.id !== client.id) {
+        if (!foreign.has(owner)) foreign.set(owner, []);
+        foreign.get(owner).push(project);
+      }
+    }
+    for (const [owner, projects] of foreign) notices.push(`This invoice includes work from projects assigned to ${owner.name || owner.id}: ${projects.join(', ')}.`);
+    const defined = new Set(state.projectDefinitions.map(project => project.name.toLowerCase()));
+    for (const project of client.projects) {
+      if (!defined.has(project.toLowerCase())) notices.push(`Client ${client.name || client.id} lists a project that no longer exists: ${project}.`);
+    }
+  }
+  const warning = $('invoice-project-warning'); warning.textContent = notices.join(' '); warning.hidden = !notices.length;
+}
+
+function renderInvoiceProjects() {
+  const container = $('invoice-projects'); container.replaceChildren();
+  for (const option of state.invoiceProjectOptions) {
+    const label = document.createElement('label'); label.className = 'facet-option';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.value = option.value; input.checked = state.invoiceProjects.has(option.value);
+    input.addEventListener('change', () => {
+      if (input.checked) state.invoiceProjects.add(option.value); else state.invoiceProjects.delete(option.value);
+      resetInvoiceReservation(); renderInvoiceProjects(); populateInvoiceCurrencies(invoiceFilteredRecords()); void rebuildInvoicePreview();
+    });
+    const name = document.createElement('span'); name.className = 'facet-name'; name.textContent = option.value;
+    const count = document.createElement('span'); count.className = 'facet-count'; count.textContent = `${formatClockDuration(option.seconds)} · ${option.count}`;
+    label.append(input, name, count); container.append(label);
+  }
+  $('invoice-project-count').textContent = `Billing ${state.invoiceProjects.size} of ${state.invoiceProjectOptions.length} projects`;
+  renderInvoiceProjectWarnings();
+}
+
+function resetInvoiceProjects(filtered) {
+  state.invoiceProjectOptions = buildFacets(filtered, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }).projects;
+  const client = selectedInvoiceClient(), owned = new Set((client?.projects ?? []).map(project => project.toLowerCase()));
+  state.invoiceProjects = client && client.projects.length
+    ? new Set(state.invoiceProjectOptions.filter(option => owned.has(option.value.toLowerCase())).map(option => option.value))
+    : new Set(state.invoiceProjectOptions.map(option => option.value));
+  renderInvoiceProjects();
+}
+
 function populateInvoiceClients() {
   const select = $('invoice-client'), previous = state.invoiceControlsReady ? select.value : '';
   select.replaceChildren();
@@ -253,7 +305,7 @@ function showInvoiceError(error) {
 
 async function rebuildInvoicePreview() {
   if (!state.range) return;
-  const requestId = ++state.invoiceRequestId, filtered = currentFilteredRecords();
+  const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
   $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null;
   try {
     let exchangeRates = null;
@@ -274,7 +326,7 @@ async function rebuildInvoicePreview() {
 }
 
 function prepareInvoiceControls(filtered) {
-  populateInvoiceClients(); populateInvoiceCurrencies(filtered);
+  populateInvoiceClients(); resetInvoiceProjects(filtered); populateInvoiceCurrencies(invoiceFilteredRecords());
   if (!state.invoiceControlsReady) {
     $('invoice-group-by').value = 'task'; $('invoice-issue-date').value = localDateValue(); $('invoice-due-days').value = '30'; state.invoiceControlsReady = true;
   }
@@ -289,7 +341,7 @@ async function ensureReservedInvoice() {
     state.invoiceReservedSequence = result.sequence;
     if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey) throw new Error('Invoice changed while its number was being reserved. Try again.');
   }
-  state.invoice = buildInvoice(currentFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
+  state.invoice = buildInvoice(invoiceFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
   renderInvoiceDocument($('invoice-preview'), state.invoice);
   return state.invoice;
 }
@@ -689,7 +741,7 @@ for (const id of ['invoice-currency', 'invoice-group-by', 'invoice-issue-date', 
   $(id).addEventListener('change', () => { resetInvoiceReservation(); void rebuildInvoicePreview(); });
 }
 $('invoice-client').addEventListener('change', () => {
-  state.invoiceClientChosen = true; resetInvoiceReservation(); populateInvoiceCurrencies(currentFilteredRecords(), true); void rebuildInvoicePreview();
+  state.invoiceClientChosen = true; resetInvoiceReservation(); resetInvoiceProjects(currentFilteredRecords()); populateInvoiceCurrencies(invoiceFilteredRecords(), true); void rebuildInvoicePreview();
 });
 $('invoice-download-csv').addEventListener('click', () => void exportInvoice('csv'));
 $('invoice-download-json').addEventListener('click', () => void exportInvoice('json'));

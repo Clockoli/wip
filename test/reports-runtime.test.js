@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import * as reporting from '../src/domain/reporting.js';
 import * as billing from '../src/domain/local-settings.js';
 import * as invoicing from '../src/domain/invoicing.js';
+import * as values from '../src/domain/values.js';
 
 const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
@@ -32,6 +33,7 @@ function harness() {
     add(name) { this.toggle(name, true); }, remove(name) { this.toggle(name, false); },
   });
   const document = { activeElement: null, title: 'Reports' };
+  const nodes = new Map();
   class Node {
     constructor(tag = 'div') {
       this.tagName = tag; this.children = []; this.listeners = {}; this.attributes = {}; this.dataset = {}; this.style = {};
@@ -39,8 +41,9 @@ function harness() {
       this.classList = classList(this);
     }
     append(...children) { this.children.push(...children); }
+    insertBefore(child, reference) { const index = this.children.indexOf(reference); if (index < 0) this.children.push(child); else this.children.splice(index, 0, child); }
     replaceChildren(...children) { this.children = children; }
-    setAttribute(name, value) { this.attributes[name] = value; }
+    setAttribute(name, value) { this.attributes[name] = value; if (name === 'id') nodes.set(value, this); }
     removeAttribute(name) { delete this.attributes[name]; }
     contains(node) { return this === node || this.children.some(child => child.contains?.(node)); }
     addEventListener(type, handler) { this.listeners[type] = handler; }
@@ -50,16 +53,16 @@ function harness() {
     close() { this.open = false; this.listeners.close?.(); }
     get selectedOptions() { return this.children.filter(node => node.value === this.value); }
   }
-  const nodes = new Map([...html.matchAll(/<([\w-]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([, tag, attrs, id]) => {
+  for (const [id, node] of [...html.matchAll(/<([\w-]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([, tag, attrs, id]) => {
     const node = new Node(tag); node.hidden = /\bhidden\b/.test(attrs); node.className = attrs.match(/\bclass="([^"]*)"/)?.[1] || ''; return [id, node];
-  }));
+  })) nodes.set(id, node);
   for (const [id, value] of Object.entries({ period: 'last-week', metric: 'total-time', 'horizontal-axis': 'day', 'stack-by': 'person' })) nodes.get(id).value = value;
   document.body = new Node('body');
-  document.getElementById = id => nodes.get(id); document.createElement = tag => new Node(tag);
+  document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => new Node(tag);
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
   const requests = [], downloads = [], prints = [], listeners = [], blobs = [], windowListeners = {};
   const context = vm.createContext({
-    ...reporting, ...billing, ...invoicing, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
+    ...reporting, ...billing, ...invoicing, ...values, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { requests.push({ message, callback }); } } },
@@ -77,6 +80,7 @@ function harness() {
     },
     load: range => context.loadRange(range),
     selection: key => vm.runInContext(`[...state.${key}].sort().join(',')`, context),
+    invoiceSelection: () => nodes.get('invoice-projects').children.flatMap(label => label.children).filter(node => node.checked).map(node => node.value).sort().join(','),
   };
 }
 
@@ -300,6 +304,69 @@ test('changing an invoice control invalidates its reserved sequence', async () =
   assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 8 }); await second;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
+});
+
+test('invoice client projects select independently from the report project facet', async () => {
+  const records = [record('alice'), record('alice', 'other.com')];
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const settings = { ...invoiceSettings, clients: [{ ...invoiceSettings.clients[0], projects: ['Main'] }] };
+  const page = await loaded(result(records, rates, settings));
+  assert.equal(page.selection('projects'), 'Main,Other');
+  await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
+  assert.equal(page.invoiceSelection(), 'Main');
+  assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 1 of 2 projects');
+  assert.equal(page.selection('projects'), 'Main,Other');
+});
+
+test('invoice project changes rebuild the preview and reset the reserved number', async () => {
+  const records = [
+    { ...record('alice'), taskTitle: 'Main work' },
+    { ...record('alice', 'other.com'), taskTitle: 'Other work' },
+  ];
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const page = await loaded(result(records, rates));
+  await page.fire('create-invoice'); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
+  const first = page.fire('invoice-download-json'); await page.reply({ sequence: 7 }); await first;
+  const other = page.nodes.get('invoice-projects').children.flatMap(label => label.children).find(node => node.value === 'Other');
+  other.checked = false; await other.listeners.change(); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
+  assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 1 of 2 projects');
+  const second = page.fire('invoice-download-json');
+  assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
+  await page.reply({ sequence: 8 }); await second;
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
+});
+
+test('foreign project warnings are non-blocking and clear with the selection', async () => {
+  const records = [record('alice'), record('alice', 'other.com')];
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const settings = { ...invoiceSettings, clients: [
+    { ...invoiceSettings.clients[0], name: 'Acme Inc', projects: ['Main'] },
+    { ...invoiceSettings.clients[0], id: 'globex', name: 'Globex GmbH', projects: ['Other'] },
+  ] };
+  const page = await loaded(result(records, rates, settings));
+  await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
+  const other = page.nodes.get('invoice-projects').children.flatMap(label => label.children).find(node => node.value === 'Other');
+  other.checked = true; await other.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-project-warning').textContent, 'This invoice includes work from projects assigned to Globex GmbH: Other.');
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '');
+  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
+  other.checked = false; await other.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-project-warning').textContent, '');
+});
+
+test('stale client project links are shown beside the invoice project control', async () => {
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const settings = { ...invoiceSettings, clients: [{ ...invoiceSettings.clients[0], projects: ['Deleted project'] }] };
+  const page = await loaded(result([record('alice')], rates, settings));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-project-warning').textContent, 'Client Client One lists a project that no longer exists: Deleted project.');
+  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
 });
 
 test('invoice exchange failure is blocking and never leaves a partial preview', async () => {

@@ -162,6 +162,33 @@ test('both billing saves carry rates and invoicing so neither half is erased', a
   }
 });
 
+test('undefined client projects report inline without sending or throwing', async () => {
+  const page = harness(); page.context.renderLocalPreferences(preferences);
+  page.nodes.get('clients-list').querySelector('.client-projects').value = 'Missing project';
+  await page.submit('invoicing-form');
+  assert.equal(page.nodes.get('invoicing-feedback').textContent, 'Project Missing project is not defined. Add it under Projects, or remove it from Client.');
+  assert.equal(page.requests.length, 0);
+  assert.equal(page.nodes.get('save-invoicing').disabled, false);
+});
+
+test('valid client projects save with both billing halves intact', async () => {
+  const linked = {
+    ...preferences,
+    projects: [{ name: 'Acme web', substrings: ['example.com/acme/'] }],
+    invoicing: { ...preferences.invoicing, clients: [{ ...preferences.invoicing.clients[0], projects: ['Acme web'] }] },
+  };
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return linked;
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(linked);
+  await page.submit('invoicing-form');
+  const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(save.payload.rates.octocat[0].amountMinorPerHour, 12500);
+  assert.deepEqual(save.payload.invoicing.clients[0].projects, ['Acme web']);
+});
+
 for (const [field, value, message] of [
   ['invoice-tax-percent', '101', /tax percent/i],
   ['invoice-number-format', 'INV-{NOPE}-{NNNN}', /number format/i],

@@ -503,7 +503,7 @@ function nextClientId() {
 }
 
 function addClientRow(client = null) {
-  const value = client || { id: nextClientId(), name: '', address: '', email: '', taxId: '', defaultCurrency: '' };
+  const value = client || { id: nextClientId(), name: '', address: '', email: '', taxId: '', defaultCurrency: '', projects: [] };
   const row = document.createElement('div'); row.className = 'client-row'; row.dataset.clientId = value.id || nextClientId();
   const fields = [
     ['Name', 'client-name', 'text', 'Acme Ltd', value.name],
@@ -517,6 +517,10 @@ function addClientRow(client = null) {
     const input = document.createElement('input'); input.className = className; input.type = type; input.maxLength = className === 'client-address' ? 1000 : 200; input.autocomplete = 'off'; input.placeholder = placeholder; input.value = fieldValue || '';
     label.append(input); row.append(label);
   }
+  const projectsLabel = document.createElement('label'); projectsLabel.className = 'client-projects-field'; projectsLabel.textContent = 'Projects billed to this client';
+  const projects = document.createElement('textarea'); projects.className = 'client-projects'; projects.rows = 3; projects.maxLength = 5000; projects.placeholder = 'Acme web\nAcme API'; projects.value = (value.projects || []).join('\n');
+  const projectsHelp = document.createElement('span'); projectsHelp.className = 'help'; projectsHelp.textContent = 'Work in these projects is what an invoice for this client bills.';
+  projectsLabel.append(projects, projectsHelp); row.append(projectsLabel);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
   remove.addEventListener('click', () => row.remove()); row.append(remove); $('clients-list').append(row);
 }
@@ -608,7 +612,7 @@ function billingPayload() {
 }
 
 function invoicingPayload() {
-  return normalizeInvoicingSettings({
+  const invoicing = normalizeInvoicingSettings({
     seller: {
       name: $('seller-name').value, address: $('seller-address').value,
       email: $('seller-email').value, taxId: $('seller-tax-id').value,
@@ -617,10 +621,18 @@ function invoicingPayload() {
       id: row.dataset.clientId, name: row.querySelector('.client-name').value,
       address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
       taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
+      projects: row.querySelector('.client-projects').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
     })),
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
     paymentTerms: $('invoice-payment-terms').value, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
+  const definedProjects = new Set(projectsPayload().map(project => project.name.toLowerCase()));
+  for (const client of invoicing.clients) {
+    for (const project of client.projects) {
+      if (!definedProjects.has(project.toLowerCase())) throw new Error(`Project ${project} is not defined. Add it under Projects, or remove it from ${client.name || client.id}.`);
+    }
+  }
+  return invoicing;
 }
 
 function downloadText(text, filename) {

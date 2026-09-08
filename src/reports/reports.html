@@ -76,6 +76,11 @@
         <label>Group lines by<select id="invoice-group-by"><option value="task" selected>Task</option><option value="day">Day and task</option></select></label>
         <label>Issue date<input id="invoice-issue-date" type="date" required></label>
         <label>Due in days<input id="invoice-due-days" type="number" min="0" max="365" value="30" required></label>
+        <div class="invoice-projects-control">
+          <div class="section-heading"><span>Projects</span><span id="invoice-project-count" class="muted"></span></div>
+          <div id="invoice-projects" class="facet-list" role="group" aria-label="Projects billed by this invoice"></div>
+          <p id="invoice-project-warning" class="notice" role="status" aria-live="polite" hidden></p>
+        </div>
       </div>
       <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
       <div id="invoice-preview" class="invoice-preview" aria-live="polite"></div>
