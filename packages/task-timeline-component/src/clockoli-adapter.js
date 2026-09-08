@@ -354,7 +354,8 @@
         const item = sourceItem(element.dataset.taskKey);
         element.style.setProperty('--clockoli-task-color', resolveColor(item || { id: element.dataset.taskKey }));
         if (element.classList.contains('task')) {
-          const viewport = timeline.viewport.getBoundingClientRect();
+          const viewportRect = timeline.viewport.getBoundingClientRect();
+          const viewport = { left: viewportRect.left, right: viewportRect.left + timeline.viewport.clientWidth };
           const task = element.getBoundingClientRect();
           const displayWidth = timeline._findTask?.(element.dataset.taskKey)?.displayWidth ?? task.width;
           const minimum = displayWidth <= MINIMUM_ITEM_WIDTH + 1;

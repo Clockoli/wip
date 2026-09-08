@@ -33,7 +33,7 @@ async function mount(page, overrides = {}) {
       items,
       rows: overrides.rows || [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }],
       now,
-      view: { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
+      view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
       onStart(item) {
         window.__lastStartedTitle = item.title;
         window.__calls.push(['start', item.id]);
@@ -729,7 +729,7 @@ test('data refresh keeps right-pinned now pinned when older history expands the 
     });
     const maxScroll = Math.max(0, timeline.totalWidth - timeline._viewportWidthNow());
     const line = timeline.nowLineLayer.querySelector('.timeline-now-line').getBoundingClientRect(), viewport = timeline.viewport.getBoundingClientRect();
-    return { scroll: timeline._scrollLeftNow(), maxScroll, lineRight: line.right, viewportRight: viewport.right };
+    return { scroll: timeline._scrollLeftNow(), maxScroll, lineRight: line.right, viewportRight: viewport.left + timeline.viewport.clientWidth };
   });
   expect(state.scroll).toBeCloseTo(state.maxScroll, 0);
   expect(state.lineRight).toBeLessThanOrEqual(state.viewportRight + 1);
@@ -848,21 +848,28 @@ test('a five-second block can be dragged exactly to 19:30:00', async ({ page }) 
 
 test('minimum-width boundary badges stay visible at both Timeline viewport edges', async ({ page }) => {
   const now = Date.parse('2026-09-08T21:00:00Z');
-  await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [
+  await mount(page, { view: { start: now - 9 * 24 * HOUR, end: now, focusedAt: now - 4 * 24 * HOUR }, rows: [{ id: 'one', title: 'One' }], items: [
     { id: 'entry:first-edge', url: 'https://example.com/first', title: 'First', startedAt: now - 8 * 24 * HOUR, endedAt: now - 8 * 24 * HOUR + 5_000, rowId: 'one', isEditable: true },
-    { id: 'entry:last-edge', url: 'https://example.com/last', title: 'Last', startedAt: now - 5_000, endedAt: now, rowId: 'one', isEditable: true },
+    { id: 'entry:last-edge', url: 'https://example.com/last', title: 'Last', startedAt: now - 24 * HOUR, endedAt: now - 24 * HOUR + 5_000, rowId: 'one', isEditable: true },
   ] });
   const check = async (key, edge) => {
     await page.evaluate(({ key, edge }) => {
       const timeline = window.__timeline.__timeline;
-      const maximum = Math.max(0, timeline.totalWidth - timeline._viewportWidthNow());
-      timeline._setScrollLeft(edge === 'start' ? 15 : maximum - 15);
+      const element = timeline._taskElementByKey(key);
+      const viewport = timeline.viewport.getBoundingClientRect();
+      const task = element.getBoundingClientRect();
+      const scroll = timeline._scrollLeftNow();
+      const taskLeft = scroll + task.left - viewport.left;
+      const taskRight = scroll + task.right - viewport.left;
+      timeline._setScrollLeft(edge === 'start' ? taskLeft + 15 : taskRight - timeline.viewport.clientWidth - 15);
       timeline.viewport.dispatchEvent(new Event('scroll'));
+      timeline._taskElementByKey(key).classList.add('editing');
     }, { key, edge });
     const task = page.locator(`#timeline .task[data-task-key="${key}"]`);
-    await task.hover();
     return task.evaluate((element, edge) => {
-      const viewport = element.closest('.viewport').getBoundingClientRect();
+      const viewportElement = element.closest('.viewport');
+      const viewportRect = viewportElement.getBoundingClientRect();
+      const viewport = { left: viewportRect.left, right: viewportRect.left + viewportElement.clientWidth };
       const badge = element.querySelector(`.edit-clock.${edge}`).getBoundingClientRect();
       const task = element.getBoundingClientRect();
       return { viewport: { left: viewport.left, right: viewport.right }, badge: { left: badge.left, right: badge.right, bottom: badge.bottom }, task: { left: task.left, right: task.right, top: task.top } };
