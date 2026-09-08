@@ -6,28 +6,32 @@
   <title>Clockoli Settings</title>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
+  <link rel="stylesheet" href="../styles/running-status.css">
 </head>
 <body>
 <div class="page-tabs-shell">
   <nav class="page-tabs" aria-label="Clockoli pages">
-    <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli-with-text.svg" alt=""></a>
-    <a class="page-tab" href="../times/times.html">Activity</a>
-    <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
-    <a class="page-tab" href="../reports/reports.html">Reports</a>
-    <a class="page-tab" href="../options/options.html" aria-current="page">Settings</a>
+    <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli-with-text.svg" alt="Clockoli"></a>
+    <div class="page-tab-list">
+      <a class="page-tab" href="../tasks/tasks.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z"/></svg>Top tasks</a>
+      <a class="page-tab" href="../reports/reports.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z"/></svg>Reports</a>
+      <a class="page-tab" href="../times/times.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z"/></svg>Activity</a>
+      <a class="page-tab" href="../options/options.html" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"/></svg>Settings</a>
+    </div>
   </nav>
 </div>
+<div id="running-status"></div>
 <main>
   <div id="message" role="status" aria-live="polite"></div>
 
   <section class="card connection-card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title">Connect GitHub</h2><p>Store your Clockoli data in one private GitHub repository that you control.</p></div>
+      <div><h2 id="connection-title" tabindex="-1">Connect GitHub</h2><p>Store your Clockoli data in one private GitHub repository that you control.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
     <div id="build-warning" class="notice error-notice" hidden>
-      This development build does not include the public Clockoli GitHub App client ID. Open Advanced to use a personal access token instead.
+      This development build does not include the public Clockoli GitHub App client ID. Open More settings, then Advanced to use a personal access token instead.
     </div>
     <div id="recovery-actions" class="notice recovery-notice" hidden>
       <strong id="recovery-title">Clockoli needs your attention</strong>
@@ -36,6 +40,9 @@
     </div>
 
     <div id="connected" hidden>
+      <p id="setup-complete" role="status" aria-live="polite">Setup complete. Open a task page, then click the Clockoli icon to start tracking.</p>
+      <details id="repository-verification" class="inline-details">
+        <summary>Repository verification details</summary>
       <div class="connection-dashboard">
         <div class="connection-identity">
           <span class="status-dot" aria-hidden="true"></span>
@@ -53,6 +60,7 @@
         <a id="manage-access" class="button-link secondary-link" target="_blank" rel="noreferrer">Manage GitHub access</a>
       </div>
       <p id="change-connection-help" class="help">Changing repository validates a new private destination without deleting data from the current one.</p>
+      </details>
     </div>
 
     <div id="onboarding">
@@ -66,8 +74,7 @@
           <p id="repository-access-complete" hidden><span aria-hidden="true">✓</span> Private repository access found</p>
         </div>
 
-        <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="device-step-title">
-          <h3 id="device-step-title" tabindex="-1">Connect GitHub</h3>
+        <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
           <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
           <ul class="trust-list">
             <li>Clockoli requests only the repository access needed to read and write your data.</li>
@@ -75,8 +82,8 @@
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
           <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Copy code to clipboard and connect GitHub</button>
-            <p class="help">GitHub will show a one-time code. Clockoli copies it before opening GitHub so you can paste it immediately.</p>
+            <button id="authorize" type="button">Connect GitHub</button>
+            <p class="help">Clockoli copies the one-time code before opening GitHub so you can paste it.</p>
           </div>
           <details id="connection-details" class="inline-details">
             <summary>How it works</summary>
@@ -151,6 +158,9 @@
     </div>
   </section>
 
+  <details id="more-settings" class="more-settings">
+    <summary id="more-settings-toggle">More settings</summary>
+
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
     <div class="card-heading">
       <div><h2 id="display-title">Activity</h2><p>Choose how much recent activity appears in the main tracking panel.</p></div>
@@ -161,11 +171,15 @@
       <p class="help">Track any HTTP(S) task URL. A task title is optional.</p>
       <fieldset class="projects-fieldset">
         <legend>Projects</legend>
-        <p class="help">Each project gets its own tracking timeline row and Reports filter. URLs are matched top to bottom, ignoring case. Enter one substring per line; unmatched tasks appear under Other.</p>
+        <p class="help">Each project gets its own tracking timeline row and Reports filter. URLs are matched top to bottom, ignoring case. Enter one substring per line.</p>
+        <label class="main-project-name">Main project name<input id="other-project-name" maxlength="80" value="Other" required autocomplete="off"><span class="help">Tasks that do not match a named project appear here.</span></label>
         <div id="projects-list" class="projects-list"></div>
         <button id="add-project" type="button" class="secondary">Add project</button>
       </fieldset>
-      <button id="save-display" type="submit" disabled>Save display settings</button>
+      <div class="actions">
+        <button id="save-display" type="submit" disabled>Save display settings</button>
+        <p id="display-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+      </div>
     </form>
   </section>
 
@@ -178,7 +192,10 @@
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
       <div class="actions billing-actions">
         <button id="add-rate" type="button" class="secondary">Add rate period</button>
-        <button id="save-billing" type="submit">Save billable rates</button>
+        <div class="actions">
+          <button id="save-billing" type="submit">Save billable rates</button>
+          <p id="billing-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+        </div>
       </div>
     </form>
   </section>
@@ -203,6 +220,12 @@
   <details id="advanced-settings" class="card advanced">
     <summary>Advanced</summary>
     <p class="help advanced-intro">Advanced authentication and browser or GitHub access controls.</p>
+
+    <section class="advanced-section" aria-labelledby="diagnostics-title">
+      <h2 id="diagnostics-title">Diagnostics</h2>
+      <label><input id="show-queue-diagnostics" type="checkbox" form="display-form"> Show queue diagnostics in the tracking panel</label>
+      <p class="help">Shows a local, sanitized operation log for troubleshooting save problems.</p>
+    </section>
 
     <section class="advanced-section" aria-labelledby="pat-title">
       <details id="advanced-pat" class="nested-details">
@@ -240,6 +263,7 @@
         </div>
       </div>
     </section>
+  </details>
   </details>
 </main>
 <script src="../domain/recovery-actions.js"></script>

@@ -22,7 +22,21 @@ export class GitHubOrganizationApprovalError extends GitHubApiError {
   constructor(message = 'This organization must approve Clockoli before its installations are available.') { super(message, 403, 'org_approval_required'); }
 }
 export class GitHubRateLimitError extends GitHubApiError {
-  constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403) { super(message, status, 'rate_limit'); }
+  constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403, retryAt = null) {
+    super(message, status, 'rate_limit'); this.retryAt = retryAt;
+  }
+}
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+function rateLimitRetryAt(response, now) {
+  const retryAfter = Number(response.headers?.get('retry-after'));
+  const reset = Number(response.headers?.get('x-ratelimit-reset'));
+  const timestamp = Number.isFinite(retryAfter) && retryAfter > 0
+    ? now.getTime() + retryAfter * MILLISECONDS_PER_SECOND
+    : Number.isFinite(reset) && reset > 0 ? reset * MILLISECONDS_PER_SECOND : NaN;
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function rateLimitMessage(response) {
@@ -193,7 +207,7 @@ export class GitHubClient {
     try { body = await response.json(); } catch { /* empty response */ }
     if (!response.ok) {
       if (response.status === 401) throw new GitHubAuthenticationError();
-      if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status);
+      if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status, rateLimitRetryAt(response, this.now()));
       if (response.status === 403) {
         const detail = String(body?.message || '').slice(0, 500);
         if (/organi[sz]ation[\s\S]{0,120}(?:approval|approve)|(?:approval|approve)[\s\S]{0,120}organi[sz]ation|third-party application access policy/i.test(detail)) {

@@ -15,7 +15,7 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
 
   assert.match(worker, /async function toggleActionSurface\(tab\)/);
   assert.match(worker, /chrome\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \}[\s\S]*globalThis\.__CLOCKOLI_ACTION_SURFACE__ = true/);
-  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/content\/elastic-timeline-editor\.js', 'src\/content\/github\.js'\]/);
+  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/content\/task-timeline-component\.js', 'src\/content\/github\.js'\]/);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.doesNotMatch(worker, /restoreActionPopup|REGISTER_GITHUB_ACTION_SURFACE/);
 
@@ -24,4 +24,80 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
   assert.match(content, /renderMenu\(\{ compact: true, onClose: \(\) => closeFullWidthPopup\(\) \}\)/);
   assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{ width:100vw; max-width:none/);
   assert.doesNotMatch(policy, /REGISTER_GITHUB_ACTION_SURFACE/);
+});
+
+async function actionHarness({ delivered = false, failure = 0 } = {}) {
+  const { default: vm } = await import('node:vm');
+  const calls = [];
+  const context = vm.createContext({ URL, chrome: {
+    runtime: { getURL: path => `chrome-extension://clockoli/${path}` },
+    tabs: {
+      sendMessage: async (...args) => { calls.push(['message', ...args]); if (!delivered) throw new Error('No receiver'); },
+      create: async options => { calls.push(['tab', options]); },
+    },
+    scripting: { executeScript: async options => {
+      calls.push(['inject', options]);
+      if (calls.filter(([kind]) => kind === 'inject').length === failure) throw new Error('Cannot access this page');
+    } },
+  } });
+  const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+  vm.runInContext(`${helper}\n${worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf('chrome.runtime.onInstalled.addListener'))}`, context);
+  return { calls, toggle: tab => context.toggleActionSurface(tab) };
+}
+
+test('toolbar falls back to Activity for restricted, missing, and invalid tab URLs', async () => {
+  for (const url of ['chrome://settings', 'file:///tmp/example.pdf', 'chrome-extension://pdf-viewer/index.html', 'about:blank', '', 'invalid']) {
+    const harness = await actionHarness();
+    await harness.toggle({ id: 1, url });
+    assert.equal(harness.calls.filter(([kind]) => kind === 'inject').length, 0);
+    assert.equal(harness.calls.at(-1)[0], 'tab');
+    assert.equal(harness.calls.at(-1)[1].url, 'chrome-extension://clockoli/src/times/times.html');
+  }
+  const harness = await actionHarness();
+  await harness.toggle({});
+  assert.equal(harness.calls.at(-1)[0], 'tab');
+});
+
+test('toolbar preserves delivery and HTTP injection order and falls back on either injection failure', async () => {
+  const delivered = await actionHarness({ delivered: true });
+  await delivered.toggle({ id: 1, url: 'https://github.com/acme/app/issues/1' });
+  assert.deepEqual(delivered.calls.map(([kind]) => kind), ['message']);
+  const injected = await actionHarness();
+  await injected.toggle({ id: 1, url: 'https://example.org' });
+  assert.deepEqual(injected.calls.map(([kind]) => kind), ['message', 'inject', 'inject']);
+  for (const url of ['https://chromewebstore.google.com/detail/example', 'https://example.org/file.pdf']) {
+    for (const failure of [1, 2]) {
+      const harness = await actionHarness({ failure });
+      await harness.toggle({ id: 1, url });
+      assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
+    }
+  }
+});
+
+test('action panel opens from local state and lets handled Escape stay inside the editor', () => {
+  const start = content.indexOf('  async function toggleFullWidthPopup()');
+  const end = content.indexOf('\n  function renderUi()', start);
+  const open = content.slice(start, end);
+  assert.ok(open.indexOf('refresh: false') >= 0);
+  assert.ok(open.indexOf('refresh: true') > open.indexOf('refresh: false'));
+  assert.match(content, /event\.defaultPrevented/);
+  assert.match(content, /prefers-reduced-motion: no-preference/);
+  assert.doesNotMatch(content, /#ff2d55|summaryFrames|summaryIndex|displayMs/);
+});
+
+test('shadow chrome defines local light and dark tokens without bare theme colors in selectors', () => {
+  const start = content.indexOf("    const style = el('style', `", content.indexOf('  function renderUi()'));
+  const end = content.indexOf('    if (fullWidthPopupOpen) {', start);
+  const stylesheet = content.slice(start, end);
+  assert.match(stylesheet, /@media \(prefers-color-scheme: dark\) \{\s*:host, :where\(:host > :not\(style\)\) \{/);
+  const definitions = [...stylesheet.matchAll(/--ck-[\w-]+:\s*var\(--[^;]+;/g)].map(match => match[0]);
+  assert.ok(definitions.includes('--ck-bg: var(--bgColor-default,#fff);'));
+  assert.ok(definitions.includes('--ck-bg: var(--bgColor-default,#0d1117);'));
+  assert.ok(definitions.includes('--ck-fg: var(--fgColor-default,#1f2328);'));
+  assert.ok(definitions.includes('--ck-fg: var(--fgColor-default,#f0f6fc);'));
+  const uses = stylesheet.replace(/--[\w-]+:\s*[^;]+;/g, '');
+  assert.doesNotMatch(uses, /#[\da-f]{3,8}\b/i, 'all theme colors belong to token definitions');
+  for (const name of new Set([...uses.matchAll(/var\((--ck-[\w-]+)\)/g)].map(match => match[1]))) {
+    assert.equal(definitions.filter(value => value.startsWith(`${name}:`)).length, 2, `${name} has both light and dark host-first definitions`);
+  }
 });

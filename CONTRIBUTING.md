@@ -20,7 +20,7 @@ npm test
 npm run check
 ```
 
-Chrome loads checked-in extension files directly. When changing the timeline source under `packages/elastic-timeline-editor/`, regenerate its content-script IIFE and CSS with `npm run build:timeline` before testing or loading the extension.
+Chrome loads checked-in extension files directly. When changing the timeline source or adapter under `packages/task-timeline-component/`, regenerate `src/content/task-timeline-component.js` with `npm run build:timeline` before testing or loading the extension.
 
 To load the extension:
 
@@ -46,7 +46,7 @@ Use a private test repository and test credentials. Never commit tokens, reposit
 | `src/services/` | Tracking, onboarding, reports, metadata, recovery, and exchange-rate workflows |
 | `src/storage/chrome-store.js` | Extension-origin IndexedDB state and migrations |
 | `src/popup/`, `src/options/`, `src/reports/`, `src/tasks/`, `src/times/` | Extension pages and their presentation logic |
-| `packages/elastic-timeline-editor/` | Timeline source, public types, demo, unit tests, Chromium E2E tests, package smoke test, and content-script build |
+| `packages/task-timeline-component/` | Vendored TaskTimeline, Clockoli adapter, unit tests, Chromium E2E tests, package smoke test, and content-script build |
 | `test/` | Node test suite, behavioral contracts, security checks, and release checks |
 | `scripts/` | Extension validation and deterministic release packaging |
 | `docs/` | User documentation and normative data-format documentation |

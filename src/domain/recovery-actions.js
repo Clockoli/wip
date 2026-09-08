@@ -27,5 +27,43 @@
     return Object.freeze({ kind, label: labels[kind] });
   }
 
-  globalThis.ClockoliRecovery = Object.freeze({ actionFor });
+  function describeConnectionError(error) {
+    const code = error?.code || 'error';
+    let headline = "Couldn't reach GitHub";
+    if (kinds.connect.has(code) || kinds.grant.has(code)) headline = 'GitHub access was revoked';
+    else if (['not_found', 'private_required', 'repository_access_required'].includes(code)) headline = 'Repository not found or not private';
+    else if (code === 'rate_limit') {
+      headline = 'GitHub rate limit reached';
+      const retryAt = error?.retryAt ? new Date(error.retryAt) : null;
+      if (retryAt && Number.isFinite(retryAt.getTime())) {
+        headline += ` — retry after ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+      }
+    } else if (code === 'conflict') headline = 'Your changes need review before saving';
+    else if (kinds.choose.has(code)) headline = 'GitHub repository needs attention';
+    else if (kinds.repair.has(code)) headline = 'Time storage needs repair';
+    else if (code === 'validation') headline = "GitHub couldn't save these changes";
+    return {
+      headline, detail: error?.message || '',
+      action: code === 'not_found' ? 'choose' : actionFor(code).kind,
+      recovery: error?.recovery === 'mutation-recovery' ? 'mutation-recovery' : 'read-retry',
+    };
+  }
+
+  function describeSaveStatus(state) {
+    const writes = state?.pendingWrites ?? [];
+    const pending = Math.max(writes.length, Number(state?.pendingCount) || 0);
+    if (writes.some(write => write.status === 'conflict')) {
+      return { label: 'Your changes need review before saving', pending, conflict: true, recovery: 'mutation-recovery' };
+    }
+    if (state?.error) {
+      const { headline, ...detail } = describeConnectionError({ ...state.error, message: state.error.message, recovery: 'mutation-recovery' });
+      return { label: headline, ...detail };
+    }
+    if (state?.saving) return { label: 'Saving…' };
+    if (pending) return { label: 'Saving…', pending };
+    if (state?.remoteWriteConfirmed === true) return { label: 'Saved to GitHub' };
+    return { label: 'Save to GitHub not confirmed', code: 'unconfirmed' };
+  }
+
+  globalThis.ClockoliRecovery = Object.freeze({ actionFor, describeSaveStatus, describeConnectionError });
 })();

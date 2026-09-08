@@ -29,15 +29,17 @@ Stopping an entry longer than 12 hours asks for confirmation. The warning does n
 
 ## Main tracking panel and popup
 
-The GitHub panel and browser toolbar popup use the same tracking component. They include:
+The browser toolbar opens a full-width daily panel on HTTP(S) pages. Above the timeline, the active-task strip shows **Not tracking** and **Track this task**, or the running task link, a ticking elapsed clock, and **Stop and save**. When another task is open, **Switch to this task** saves the active timer and starts the current page. The timeline's block Start and Stop actions remain available. Every Stop or switch asks for confirmation when the active entry exceeds 12 hours.
 
-- active URL, optional title, live elapsed time, and optional Stop description;
-- Start, Stop, Sync, Tasks, Times, Reports, and Settings actions;
-- pending-write and conflict status;
-- rotating totals for Today, This week, Last week, and This month;
-- recent entries grouped by task URL;
-- relative day labels and stored wall time;
-- unified inline time/metadata correction and Delete.
+Below the timeline, **Today** lists completed entries by their stored local date, with task colors matching the timeline, start–stop times, durations, pending status, and **Continue**. Continue saves any running task before restarting the selected task. Stationary **Today** and **This week** totals include applicable running time; unavailable totals display **…**, including when GitHub summary reads fail. Older entries remain available in **Activity**.
+
+The panel first reads local state and shows **Loading…** until configuration is known. On other websites, an idle panel explains that the page can be tracked and that time is saved to the private GitHub repository. State refreshes update controls, totals, save status, errors, and the timeline clock while preserving the mounted editor, its viewport, focused block, and panel scroll position. Opening focuses the strip's main action; closing restores the previous focus. Escape first cancels a timeline edit or selection, then closes the panel when the editor leaves it unhandled.
+
+Overlapping visible timeline blocks produce one warning naming the entries and intervals, with **Fix in Activity**. Save status distinguishes local acceptance, work waiting for GitHub, confirmed GitHub saves, and conflicts. Queue diagnostics stay collapsed until opened, while actionable conflicts remain visible. Connection errors show a headline, detail, and recovery action; Retry refreshes reads without repeating a tracking mutation. Reduced-motion users see static stopwatch and toolbar icons.
+
+The smaller GitHub stopwatch dialog includes an optional Stop description, separate **Stop and save** and **Save and switch to this task** actions when viewing another task, stationary Today and This week totals, and recent entries with inline correction and Delete. When complete route-matched participant totals are available, it also shows **Tracked on this issue/PR**, noting included running time. Beautified tracking commit events retain their original commit links on the timestamps.
+
+Both surfaces provide Top tasks, Activity, Reports, and Settings navigation.
 
 The GitHub split control survives GitHub's client-side navigation and mounts next to the authenticated user's avatar. Its arrow always opens Top tasks/Activity/Reports navigation.
 

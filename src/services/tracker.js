@@ -1,5 +1,5 @@
 import { activeRecordPath, assertUserMonthlyRecordsPath, localTimestamp, monthlyRecordsPath, normalizePlainTitle, parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../domain/work-records.js';
-import { applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
+import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
 import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
@@ -13,6 +13,20 @@ function isNotFound(error) { return error?.status === 404 || error?.code === 'no
 function isConflict(error) { return error?.status === 409 || error?.code === 'conflict'; }
 function isRejectedCreate(error) { return isConflict(error) || error?.status === 422 || error?.code === 'validation'; }
 function isRetryableReadFailure(error) { return error instanceof TypeError || Number(error?.status) >= 500; }
+function isRemoteRecord(record) { return !record._pending && typeof record._sha === 'string' && record._sha.length > 0; }
+function recoveryProjection({ active, recent, pendingWrites }) {
+  const records = [active, ...recent].filter(Boolean);
+  return {
+    pendingCount: pendingWrites.length,
+    pendingWrites: pendingWrites.map(({ id, operation, status, stage, conflictReason }) => ({
+      id, status, stage, ...(status === 'conflict' ? { operation } : {}), ...(conflictReason ? { conflictReason } : {}),
+    })),
+    // Successful writes retain the returned blob SHA; an empty queue is not proof of a save.
+    remoteWriteConfirmed: pendingWrites.length === 0 && records.length > 0
+      && records.every(isRemoteRecord),
+  };
+}
+
 function isPermanentQueuedWriteFailure(error) {
   const status = Number(error?.status);
   return Number.isInteger(status) && status >= 400 && status < 500
@@ -115,7 +129,10 @@ function compactSupersededQueue(pendingWrites, recentCache = []) {
       if (!targetId) { latestByTarget.clear(); continue; }
       const key = `active\u0000${targetId}`, laterIndex = latestByTarget.get(key);
       if (laterIndex === undefined) { latestByTarget.set(key, index); continue; }
-      queue[laterIndex].original = structuredClone(operation.original);
+      const later = queue[laterIndex];
+      later.original = structuredClone(operation.original);
+      if (later.startedAt === undefined && operation.startedAt !== undefined) later.startedAt = operation.startedAt;
+      if (later.description === undefined && operation.description !== undefined) later.description = operation.description;
       removed.add(index);
       continue;
     }
@@ -195,6 +212,50 @@ function locateEntry(entries, index, original) {
   return -1;
 }
 function startDate(entry) { return entry.entryDate; }
+function localReportDate(now, offset = 0) {
+  return entryDateValue(localDateParts(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12, 0, 0)));
+}
+function runningTrackedMs(active, now, start, end) {
+  return active && startDate(active) >= start && startDate(active) <= end
+    ? Math.max(0, now.getTime() - new Date(active.startedAt).getTime()) : 0;
+}
+function overlayPendingEntries(entries, pendingWrites) {
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  for (const operation of pendingWrites) {
+    if (['completeTimer', 'completeTimerAndStart'].includes(operation.operation) && operation.entry && !byId.has(operation.entry.id)) {
+      byId.set(operation.entry.id, { ...operation.entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true });
+    }
+    if (operation.operation === 'deleteEntry') byId.delete(operation.request?.original?.id);
+    const requests = operation.operation === 'editEntry' ? [operation.request]
+      : operation.operation === 'editEntries' ? operation.request.entries : [];
+    for (const request of requests) {
+      // The accepted original is authoritative even if the remote entry changed or disappeared.
+      const updated = applyEntryEdits(request.original, request.edits, new Date(Math.max(
+        new Date(operation.queuedAt).getTime(), new Date(request.original.updatedAt).getTime(),
+      )));
+      const cached = byId.get(updated.id);
+      byId.set(updated.id, { ...updated, _path: request.path, _sha: cached?._sha ?? request.originalSha, _index: cached?._index ?? request.index, _pending: true });
+    }
+  }
+  return [...byId.values()];
+}
+
+function summaryProjection(state, now) {
+  const cache = state.summaryCache, today = localReportDate(now);
+  if (!cache || cache.reportDate !== today || !Array.isArray(cache.weekEntries)) {
+    return { todayTrackedMs: null, weekTrackedMs: null, remoteWriteConfirmed: false };
+  }
+  const thisWeekStart = localReportDate(now, -((now.getDay() + 6) % 7));
+  const pendingWrites = state.pendingWrites ?? [];
+  const entries = overlayPendingEntries([...cache.weekEntries, ...(state.recentCache ?? [])], pendingWrites);
+  const trackedMs = start => entries.filter(entry => startDate(entry) >= start && startDate(entry) <= today)
+    .reduce((sum, entry) => sum + Math.max(0, new Date(entry.endedAt) - new Date(entry.startedAt)), 0)
+    + runningTrackedMs(state.activeCache, now, start, today);
+  return {
+    todayTrackedMs: trackedMs(today), weekTrackedMs: trackedMs(thisWeekStart),
+    remoteWriteConfirmed: recoveryProjection({ active: state.activeCache, recent: entries, pendingWrites }).remoteWriteConfirmed,
+  };
+}
 function newestFirst(a, b) { return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(); }
 function stripInternal(value) { return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !['_path', '_sha', '_index', '_pending'].includes(key))); }
 function monthFromPath(path, user) { return assertUserMonthlyRecordsPath(path, user).month; }
@@ -321,7 +382,7 @@ export class TrackerService {
     return effectiveActive;
   }
 
-  async getState({ refresh = false, signal } = {}) {
+  async getState({ refresh = false, signal, includeSummary = false } = {}) {
     let state = await this.store.getState();
     signal?.throwIfAborted();
     if (refresh) {
@@ -333,7 +394,16 @@ export class TrackerService {
       state = await this.store.getState();
     }
     signal?.throwIfAborted();
-    return { active: state.activeCache, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [] };
+    return {
+      active: state.activeCache, recent: state.recentCache ?? [], pendingWrites: state.pendingWrites ?? [],
+      ...(includeSummary ? summaryProjection(state, this.clock()) : {}),
+    };
+  }
+
+  async getRecoveryState() { return recoveryProjection(await this.getState()); }
+
+  async getCachedSummary() {
+    return summaryProjection(await this.store.getState(), this.clock());
   }
 
   async start(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
@@ -804,7 +874,10 @@ export class TrackerService {
           continue;
         }
         if (operation.operation === 'editActiveStart') {
-          const saved = await this.editActiveStart({ original: operation.original, startedAt: operation.startedAt });
+          const saved = await this.editActiveStart(
+            { original: operation.original, startedAt: operation.startedAt, description: operation.description },
+            { updateCache: false },
+          );
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
           await this.persistQueueOperation(operation, { remove: true, patch: { activeCache: saved } });
@@ -1035,10 +1108,7 @@ export class TrackerService {
   }
 
   async loadMenuData(limit = 50, { knownTitles = new Map() } = {}) {
-    const now = this.clock(), dateFor = offset => {
-      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12, 0, 0);
-      return entryDateValue(localDateParts(day));
-    };
+    const now = this.clock(), dateFor = offset => localReportDate(now, offset);
     const today = dateFor(0), mondayOffset = (now.getDay() + 6) % 7;
     const thisWeekStart = dateFor(-mondayOffset), lastWeekStart = dateFor(-mondayOffset - 7), lastWeekEnd = dateFor(-mondayOffset - 1);
     const thisMonthStart = `${today.slice(0, 7)}-01`;
@@ -1069,29 +1139,35 @@ export class TrackerService {
     }));
     files = await this.backfillIssueTitles(files, knownTitles);
     const remoteEntries = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
-    const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [];
-    const queuedDeletions = new Set(pendingWrites.filter(operation => operation.operation === 'deleteEntry')
-      .map(operation => `${operation.request?.path}\u0000${operation.request?.original?.id}`));
-    const persisted = remoteEntries.filter(entry => !queuedDeletions.has(`${entry._path}\u0000${entry.id}`));
-    const activeCache = await this.backfillActiveIssueTitle(state.activeCache, knownTitles);
-    const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation.operation) && operation.entry
-      && startDate(operation.entry) >= earliest && startDate(operation.entry) <= today && !persisted.some(entry => sameTimer(entry, operation.entry)))
-      .map(operation => ({ ...operation.entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true }));
-    const allEntries = [...persisted, ...pending], recent = allEntries.filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit);
+    const initialState = await this.store.getState();
+    await this.backfillActiveIssueTitle(initialState.activeCache, knownTitles);
+    const summaryCache = {
+      reportDate: today,
+      weekEntries: remoteEntries.filter(entry => startDate(entry) >= thisWeekStart),
+      computedAt: now.getTime(),
+    };
+    // Apply the queue inside the storage transaction so a concurrent acceptance cannot be overwritten.
+    await this.mutateState(state => ({
+      recentCache: overlayPendingEntries(remoteEntries, state.pendingWrites ?? [])
+        .filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit),
+      summaryCache,
+    }));
+    const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [], activeCache = state.activeCache;
+    const allEntries = overlayPendingEntries([...remoteEntries, ...(state.recentCache ?? [])], pendingWrites);
+    const recent = state.recentCache ?? [];
     const summaries = summaryRanges.map(range => ({ ...range, seconds: allEntries
       .filter(entry => startDate(entry) >= range.startDate && startDate(entry) <= range.endDate)
       .reduce((sum, entry) => sum + Math.max(0, Number(entry.durationSeconds) || 0), 0) }));
-    await this.store.patchState({ recentCache: recent });
+    const recovery = recoveryProjection({ active: activeCache, recent: allEntries, pendingWrites });
     const active = activeCache ? {
       id: activeCache.id, taskUrl: taskUrlOf(activeCache), taskTitle: taskTitleOf(activeCache), ...(activeCache.issue ? { issue: activeCache.issue } : {}), startedAt: activeCache.startedAt,
       description: activeCache.description || '', issueTitle: taskTitleOf(activeCache),
+      entryDate: activeCache.entryDate, timezone: activeCache.timezone,
     } : null;
     return {
       recent, summaries, todaySeconds: summaries[0].seconds, reportDate: today, active,
-      pendingCount: pendingWrites.length,
-      pendingWrites: pendingWrites.map(({ id, operation, status, stage, conflictReason }) => ({
-        id, status, stage, ...(status === 'conflict' ? { operation } : {}), ...(conflictReason ? { conflictReason } : {}),
-      })),
+      ...recovery,
+      ...summaryProjection(state, this.clock()),
     };
   }
 
@@ -1181,20 +1257,25 @@ export class TrackerService {
     }).then(state => ({ operationId: state.pendingWrites.at(-1)?.operation === 'editEntries' ? state.pendingWrites.at(-1).id : null, pending: true }));
   }
 
-  async queueActiveStartEdit({ original, startedAt }) {
+  async queueActiveStartEdit({ original, startedAt, description }) {
     const queuedAt = this.clock();
     return this.mutateState(state => {
       const active = state.activeCache;
       if (!active || active.id !== original?.id || active.startedAt !== original?.startedAt) throw new TrackerConflictError('The active timer changed before its edit was queued. Reload before trying again.');
-      const updated = applyActiveStartEdit(active, startedAt, queuedAt);
+      const edits = {
+        ...(startedAt !== undefined ? { startedAt } : {}),
+        ...(description !== undefined ? { description } : {}),
+      };
+      const updated = applyActiveEdits(active, edits, queuedAt);
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editActiveStart'
         && operation.original?.id === active.id);
       const operation = existing ?? {
         operation: 'editActiveStart', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
-        stage: 'editActiveStart', original: { id: active.id, startedAt: active.startedAt }, startedAt, queuedAt: queuedAt.toISOString(), lastError: '',
+        stage: 'editActiveStart', original: { id: active.id, startedAt: active.startedAt }, startedAt: updated.startedAt, description: updated.description, queuedAt: queuedAt.toISOString(), lastError: '',
       };
-      operation.startedAt = startedAt;
+      operation.startedAt = updated.startedAt;
+      operation.description = updated.description;
       if (!existing) pendingWrites.push(operation);
       return { pendingWrites, activeCache: { ...updated, _path: active._path, _sha: active._sha, _pending: true } };
     }).then(state => ({
@@ -1247,17 +1328,17 @@ export class TrackerService {
   }
 
 
-  async editActiveStart({ original, startedAt }) {
+  async editActiveStart({ original, startedAt, description }, { updateCache = true } = {}) {
     const active = await this.readRemoteActive();
     if (!active) throw new TrackerConflictError('The running timer is no longer active. Reload before saving.');
     if (!matchesOriginal(active, original) || active.startedAt !== original?.startedAt) {
       throw new TrackerConflictError('The running timer changed after the timeline loaded. Reload before saving.');
     }
-    const updated = applyActiveStartEdit(active, startedAt, this.clock());
+    const updated = applyActiveEdits(active, { startedAt, description }, this.clock());
     try {
       const result = await this.github.putText(activeRecordPath(this.user), serializeActiveRecord(updated), `timer: edit start ${this.user}`, active._sha);
       const cached = { ...updated, _path: activeRecordPath(this.user), _sha: result.sha };
-      await this.store.patchState({ activeCache: cached });
+      if (updateCache) await this.store.patchState({ activeCache: cached });
       return cached;
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('The running timer changed while you were saving. Reload before saving.');

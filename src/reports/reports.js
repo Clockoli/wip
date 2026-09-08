@@ -1,3 +1,4 @@
+import { mountRunningStatus } from '../ui/running-status.js';
 import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
   periodRange, reportFilename, reportPdfTitle, taskSource,
@@ -5,10 +6,12 @@ import {
 import { billableTotalsByCurrency, exchangeCurrencyCode, rateForUser } from '../domain/local-settings.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const FACET_KEYS = ['people', 'projects', 'repositories'];
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), projects: new Set(), repositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '',
+  allSelected: { people: false, projects: true, repositories: true }, otherProjectName: 'Other',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
 };
 
@@ -44,7 +47,7 @@ function setError(error = '') {
   const recovery = globalThis.ClockoliRecovery.actionFor(error?.code), label = recovery?.label || '';
   if (label) {
     const action = document.createElement('button'); action.type = 'button'; action.className = 'button secondary'; action.textContent = label;
-    action.addEventListener('click', () => { if (recovery.kind === 'retry') void loadRange(state.range || currentRange()); else void send({ type: 'OPEN_OPTIONS' }); });
+    action.addEventListener('click', () => { if (recovery.kind === 'retry') void applyPeriod(); else void send({ type: 'OPEN_OPTIONS' }); });
     root.append(document.createTextNode(' '), action);
   }
   root.hidden = !text;
@@ -82,6 +85,7 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 }
 
 function setDownloadsAvailable(available) {
+  available = available && !state.loading;
   for (const id of ['download-csv', 'download-json', 'download-pdf']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
@@ -89,7 +93,22 @@ function setDownloadsAvailable(available) {
 }
 
 function selectedFilters() {
-  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, emptyMeansNone: true };
+  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, emptyMeansNone: true };
+}
+
+function updateSelectionIntent(key) {
+  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName })[key];
+  state.allSelected[key] = values.length > 0 && values.every(option => state[key].has(option.value));
+  render();
+}
+
+function reconcileSelections(available, keys = FACET_KEYS) {
+  // Empty periods carry no information about the user's selection intent.
+  if (!state.records.length) return;
+  for (const key of keys) {
+    const values = new Set(available[key].map(option => option.value));
+    state[key] = state.allSelected[key] ? values : new Set([...state[key]].filter(value => values.has(value)));
+  }
 }
 
 const DATA_COLOR_TOKENS = [
@@ -147,14 +166,30 @@ function renderCurrencySelector(filtered) {
 
 function renderSummary(filtered, totals) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
-  const money = billableSummary(totals);
   $('summary-time').textContent = formatClockDuration(total);
-  $('summary-money').textContent = money;
-  $('summary-entries').textContent = String(filtered.length);
-  $('summary-people').textContent = String(new Set(filtered.map(record => record.user)).size);
-  $('summary-repositories').textContent = String(new Set(filtered.map(record => taskSource(record))).size);
+  $('summary-billable').hidden = !Object.keys(state.billing.rates).some(user => rateForUser(user, state.billing.rates));
   const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, record.entryDate || record.startedAt.slice(0, 10))).map(record => record.user))];
-  $('filtered-summary').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${formatClockDuration(total)} · ${money}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
+  $('summary-money').textContent = `${billableSummary(totals)}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
+  const people = new Set(filtered.map(record => record.user)).size;
+  const sources = new Set(filtered.map(record => taskSource(record))).size;
+  $('summary-counts').textContent = `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} · ${people} ${people === 1 ? 'person' : 'people'} · ${sources} ${sources === 1 ? 'source' : 'sources'}`;
+}
+
+function rangeLabel(range) { return `${range.startDate} — ${range.endDate}`; }
+
+function renderRangeContext() {
+  $('report-range').textContent = state.range
+    ? `Showing ${rangeLabel(state.range)}${state.pendingRange ? ` · loading ${rangeLabel(state.pendingRange)}…` : ''}` : '';
+}
+
+function renderEmptyState(filtered) {
+  const emptyPeriod = !state.records.length;
+  $('report-empty').hidden = Boolean(filtered.length);
+  $('empty-message').textContent = emptyPeriod ? `No time in ${rangeLabel(state.range)}.` : 'Filters hide all entries.';
+  $('add-time').hidden = !emptyPeriod;
+  $('reset-filters').hidden = emptyPeriod;
+  $('reports-layout').hidden = emptyPeriod;
+  $('analytics-card').hidden = !filtered.length;
 }
 
 function renderAnalyticsTable(analytics) {
@@ -276,9 +311,9 @@ async function loadBillableAnalytics(filtered, request, key) {
 function render() {
   if (!state.range) return;
   const facets = buildFacets(state.records, selectedFilters());
-  renderFacet($('people-facet'), facets.people, state.people, state.peopleSearch, render);
-  renderFacet($('projects-facet'), facets.projects, state.projects, state.projectsSearch, render);
-  renderFacet($('repositories-facet'), facets.repositories, state.repositories, state.repositoriesSearch, render);
+  for (const key of FACET_KEYS) {
+    renderFacet($(`${key}-facet`), facets[key], state[key], state[`${key}Search`], () => updateSelectionIntent(key));
+  }
   const allPeople = [...new Set(state.records.map(record => record.user))];
   const allProjects = facets.projects.map(project => project.value);
   const allRepositories = [...new Set(state.records.map(record => taskSource(record)))];
@@ -288,40 +323,71 @@ function render() {
   const filtered = filterReportRecords(state.records, selectedFilters());
   const billableTotals = renderCurrencySelector(filtered);
   renderSummary(filtered, billableTotals);
+  renderEmptyState(filtered);
   renderPrintableTimesheet(filtered);
   setDownloadsAvailable(Boolean(filtered.length));
+  if (!filtered.length) {
+    state.analyticsRequestId += 1; state.analytics = null;
+    $('analytics-chart').replaceChildren(); $('chart-legend').replaceChildren(); $('analytics-table').replaceChildren();
+    if (!state.loading) hideProgress();
+    return;
+  }
   const metric = $('metric').value, targetCurrency = $('billable-currency').value;
   let exchangeRates = null;
   if (metric === 'billable-amount' && targetCurrency) {
     const request = exchangeRequest(filtered, targetCurrency), key = JSON.stringify(request);
-    if (state.exchangeKey !== key) { state.analytics = null; $('analytics-chart').replaceChildren(); void loadBillableAnalytics(filtered, request, key); return; }
+    if (state.exchangeKey !== key) {
+      if (state.loading) return;
+      state.analytics = null; $('analytics-chart').replaceChildren(); void loadBillableAnalytics(filtered, request, key); return;
+    }
     exchangeRates = state.exchangeRates;
   } else { state.analyticsRequestId += 1; state.exchangeRates = null; state.exchangeKey = ''; }
   state.analytics = buildAnalytics(filtered, {
     metric, horizontalAxis: $('horizontal-axis').value, stackBy: $('stack-by').value,
     rates: state.billing.rates, currency: targetCurrency, exchangeRates,
   });
-  renderChart(state.analytics); setError(); hideProgress();
+  renderChart(state.analytics); setError();
+  if (!state.loading) hideProgress();
 }
 
 async function loadRange(range) {
   const requestId = ++state.requestId;
-  state.progressRequestId = requestId; state.progressValue = 0; state.range = range; state.loading = true; state.exchangeRates = null; state.exchangeKey = ''; state.analyticsRequestId += 1; setError();
-  showProgress('Connecting to GitHub…', 10); $('setup').hidden = true; $('report-content').hidden = true;
+  state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.analyticsRequestId += 1; setError();
+  setDownloadsAvailable(false); renderRangeContext();
+  showProgress('Connecting to GitHub…', 10); $('setup').hidden = true;
   try {
     const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, requestId } });
     if (requestId !== state.requestId) return;
-    if (!result.configured) { $('setup').hidden = false; return; }
+    if (!result.configured) {
+      $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
+      state.range = null; state.records = []; return;
+    }
     showProgress('Preparing report…', 80);
+    const firstLoad = !state.range;
+    state.range = range; state.pendingRange = null; state.loading = false; state.exchangeRates = null; state.exchangeKey = '';
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {} };
     state.projectDefinitions = result.billing?.projects || [];
-    state.people = new Set(result.currentUser ? [result.currentUser] : []);
-    state.projects = new Set(buildFacets(result.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value));
-    state.repositories = new Set(result.records.map(record => taskSource(record)));
+    state.otherProjectName = result.billing?.otherProjectName || 'Other';
+    const available = buildFacets(result.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName });
+    if (firstLoad) {
+      state.allSelected = { people: false, projects: true, repositories: true };
+      state.people = new Set(result.currentUser ? [result.currentUser] : []);
+      state.projects = new Set(available.projects.map(project => project.value));
+      state.repositories = new Set(available.repositories.map(repository => repository.value));
+    } else {
+      reconcileSelections(available);
+    }
+    $('period-card').hidden = false;
     $('report-content').hidden = false; render();
   } catch (error) { if (requestId === state.requestId) setError(error); }
-  finally { if (requestId === state.requestId) { state.loading = false; if (state.progressRequestId === requestId) hideProgress(); } }
+  finally {
+    if (requestId === state.requestId) {
+      state.loading = false; state.pendingRange = null; renderRangeContext();
+      setDownloadsAvailable(Boolean(state.range && filterReportRecords(state.records, selectedFilters()).length));
+      if (state.progressRequestId === requestId) hideProgress();
+    }
+  }
 }
 
 function currentRange() {
@@ -337,9 +403,10 @@ async function applyPeriod() {
 $('period').addEventListener('change', () => {
   const custom = $('period').value === 'custom'; $('custom-period').hidden = !custom;
   if (custom) {
-    state.requestId += 1; state.loading = false; state.range = null;
+    state.requestId += 1; state.analyticsRequestId += 1; state.loading = false; state.pendingRange = null; state.progressRequestId = null;
     void send({ type: 'CANCEL_REPORT' }).catch(() => {});
-    $('loading').hidden = true; $('report-content').hidden = true; setDownloadsAvailable(false);
+    hideProgress(); renderRangeContext();
+    setDownloadsAvailable(Boolean(state.range && filterReportRecords(state.records, selectedFilters()).length));
   } else void applyPeriod();
 });
 $('apply-period').addEventListener('click', () => void applyPeriod());
@@ -350,21 +417,30 @@ $('projects-search').addEventListener('input', event => { state.projectsSearch =
 $('repositories-search').addEventListener('input', event => { state.repositoriesSearch = event.target.value; render(); });
 $('people-all').addEventListener('click', () => {
   const values = [...new Set(state.records.map(record => record.user))];
-  state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); render();
+  state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); updateSelectionIntent('people');
 });
 $('projects-all').addEventListener('click', () => {
-  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
-  state.projects = values.length && values.every(value => state.projects.has(value)) ? new Set() : new Set(values); render();
+  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }).projects.map(project => project.value);
+  state.projects = values.length && values.every(value => state.projects.has(value)) ? new Set() : new Set(values); updateSelectionIntent('projects');
 });
 $('repositories-all').addEventListener('click', () => {
   const values = [...new Set(state.records.map(record => taskSource(record)))];
-  state.repositories = values.length && values.every(value => state.repositories.has(value)) ? new Set() : new Set(values); render();
+  state.repositories = values.length && values.every(value => state.repositories.has(value)) ? new Set() : new Set(values); updateSelectionIntent('repositories');
+});
+$('reset-filters').addEventListener('click', () => {
+  const facets = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName });
+  for (const key of FACET_KEYS) {
+    state.allSelected[key] = true;
+    state[key] = new Set(facets[key].map(option => option.value));
+    state[`${key}Search`] = ''; $(`${key}-search`).value = '';
+  }
+  render();
 });
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 function downloadTimesheet(format, event) {
   event.preventDefault();
   const filtered = filterReportRecords(state.records, selectedFilters());
-  if (!state.range || !filtered.length) return;
+  if (state.loading || !state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
     rates: state.billing.rates,
@@ -380,7 +456,7 @@ function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); 
 
 $('download-pdf').addEventListener('click', event => {
   event.preventDefault();
-  if ($('download-pdf').classList.contains('disabled')) return;
+  if (state.loading || $('download-pdf').classList.contains('disabled')) return;
   const previousTitle = document.title;
   document.title = pdfDocumentTitle();
   addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });
@@ -388,14 +464,10 @@ $('download-pdf').addEventListener('click', event => {
 });
 
 async function refreshProjectDefinitions() {
-  const previousValues = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
-  const hadAllSelected = previousValues.length > 0 && previousValues.every(value => state.projects.has(value));
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
   state.projectDefinitions = preferences.projects || [];
-  const available = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
-  state.projects = hadAllSelected
-    ? new Set(available)
-    : new Set([...state.projects].filter(value => available.includes(value)));
+  state.otherProjectName = preferences.otherProjectName || 'Other';
+  reconcileSelections(buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }), ['projects']);
   render();
 }
 
@@ -416,3 +488,5 @@ colorScheme.addEventListener('change', () => {
 const initial = periodRange('last-week', localDateValue());
 $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
 void loadRange(initial);
+
+mountRunningStatus($('running-status'), { send });

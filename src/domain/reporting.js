@@ -85,13 +85,13 @@ export function taskSource(record) {
   return issue ? `${issue.owner}/${issue.repo}` : new URL(taskUrl).hostname;
 }
 function repository(record) { return taskSource(record); }
-function project(record, definitions) { return projectNameForUrl(taskUrlOf(record), definitions); }
+function project(record, definitions, otherProjectName) { return projectNameForUrl(taskUrlOf(record), definitions, otherProjectName); }
 function selected(values) { return values instanceof Set ? values : new Set(values ?? []); }
 
 export function filterReportRecords(records, filters = {}) {
   const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories);
   const peopleMatch = record => people.size ? people.has(record.user) : !filters.emptyMeansNone;
-  const projectMatch = record => projects.size ? projects.has(project(record, filters.projectDefinitions)) : !filters.emptyMeansNone;
+  const projectMatch = record => projects.size ? projects.has(project(record, filters.projectDefinitions, filters.otherProjectName)) : !filters.emptyMeansNone;
   const repositoryMatch = record => repositories.size ? repositories.has(repository(record)) : !filters.emptyMeansNone;
   return (records ?? []).filter(record => peopleMatch(record) && projectMatch(record) && repositoryMatch(record));
 }
@@ -107,12 +107,12 @@ function facet(records, key) {
 
 export function buildFacets(records, filters = {}) {
   const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories);
-  const matchesProjects = record => !projects.size || projects.has(project(record, filters.projectDefinitions));
+  const matchesProjects = record => !projects.size || projects.has(project(record, filters.projectDefinitions, filters.otherProjectName));
   const matchesRepositories = record => !repositories.size || repositories.has(repository(record));
   const matchesPeople = record => !people.size || people.has(record.user);
   return {
     people: facet((records ?? []).filter(record => matchesProjects(record) && matchesRepositories(record)), record => record.user),
-    projects: facet((records ?? []).filter(record => matchesPeople(record) && matchesRepositories(record)), record => project(record, filters.projectDefinitions)),
+    projects: facet((records ?? []).filter(record => matchesPeople(record) && matchesRepositories(record)), record => project(record, filters.projectDefinitions, filters.otherProjectName)),
     repositories: facet((records ?? []).filter(record => matchesPeople(record) && matchesProjects(record)), repository),
   };
 }

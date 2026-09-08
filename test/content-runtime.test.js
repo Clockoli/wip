@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
+import { formatClockDuration } from '../src/domain/reporting.js';
+import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/values.js';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
@@ -11,7 +13,7 @@ test('extension-context interruption stops stale content timers without renderin
   assert.match(source, /function setError\(error = ''\) \{ if \(isExtensionContextInvalidated\(error\)\) \{ deactivateExtensionContext\(\); return; \}/);
   assert.match(source, /function send\(message\) \{[\s\S]*?catch \(cause\) \{[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
   assert.match(source, /function extensionResourceUrl\(path\) \{[\s\S]*?globalThis\.chrome\?\.runtime\?\.getURL\?\.\(path\)[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
-  assert.match(source, /const href = extensionResourceUrl\('src\/content\/elastic-timeline-editor\.css'\)/);
+  assert.doesNotMatch(source, /timelineEditorStylesheet|elastic-timeline-editor\.css/);
   assert.match(source, /const markUrl = extensionResourceUrl\('src\/assets\/clockoli-32\.png'\)/);
 });
 
@@ -83,6 +85,7 @@ class FakeNode {
   removeAttribute(name) { this.attributes.delete(name); }
   querySelector(selector) {
     if (selector === 'relative-time, time-ago') return this.walk().find(node => ['relative-time', 'time-ago'].includes(node.tag)) ?? null;
+    if (selector === '.clockoli-commit-timestamp') return this.walk().find(node => node.classList?.contains('clockoli-commit-timestamp')) ?? null;
     if (selector === '.clockoli-timeline-range-start') return this.walk().find(node => node.classList?.contains('clockoli-timeline-range-start')) ?? null;
     if (selector === '.TimelineItem-badge') return this.walk().find(node => node.classList?.contains('TimelineItem-badge')) ?? null;
     if (selector === '[class*="TimelineBadgeWrapper"]') return this.walk().find(node => String(node.className || '').includes('TimelineBadgeWrapper')) ?? null;
@@ -243,10 +246,12 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   assert.equal(summary.children[3].textContent, '2m 17s');
   assert.equal(summary.children[3].tag, 'span', 'tracked duration is not a commit link');
   assert.equal(summary.children[4].textContent, ' from ');
-  assert.equal(summary.children[5], firstTime);
+  assert.equal(summary.children[5].children[0], firstTime);
+  assert.equal(summary.children[5].href, commit.href);
   assert.equal(firstTime.textContent, '34 minutes ago');
   assert.equal(summary.children[6].textContent, ' to ');
-  assert.equal(summary.children[7], latestTime);
+  assert.equal(summary.children[7].children[0], latestTime);
+  assert.equal(summary.children[7].href, latestCommit.href);
   assert.equal(latestTime.textContent, '33 minutes ago');
   assert.equal(latestBody.walk().some(node => node.textContent?.includes('clockoli-data-synth')), false);
   assert.equal(latestBody.walk().some(node => node.textContent?.includes('fe64c71')), false);
@@ -265,8 +270,9 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
   assert.equal(progressiveItem.children.includes(latestItem), false, 'an already aggregated adjacent item is merged away');
   const thirdSummary = thirdBody.children[0];
   assert.equal(thirdSummary.children[3].textContent, '2m 40s');
-  assert.equal(thirdSummary.children[5], firstTime, 'the earliest timestamp survives repeated observer merges');
-  assert.equal(thirdSummary.children[7], thirdTime);
+  assert.equal(thirdSummary.children[5].children[0], firstTime, 'the earliest timestamp survives repeated observer merges');
+  assert.equal(thirdSummary.children[7].children[0], thirdTime);
+  assert.equal(thirdSummary.children[7].href, thirdCommit.href);
 
   const lazyBody = new TimelineNode('div'); lazyBody.className = 'TimelineItem-body';
   const lazyCommit = new TimelineNode('a');
@@ -1119,7 +1125,8 @@ test('opening before remote state refresh renders cache immediately and keeps st
     _path: 'times/2026-08/alice.jsonl', _sha: 'cached', _index: 0,
   };
   const refreshed = { ...cached, taskTitle: 'Refreshed entry', issueTitle: 'Refreshed entry', _sha: 'fresh' };
-  let replyCachedState, replyRemoteState, replyRecent;
+  const cachedStateReplies = [];
+  let replyRemoteState, replyRecent;
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1130,7 +1137,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         if (message.refresh) replyRemoteState = callback;
-        else replyCachedState = callback;
+        else cachedStateReplies.push(callback);
       } else if (message.type === 'LOAD_RECENT') replyRecent = callback;
       else callback({ ok: true, data: {} });
     } } },
@@ -1141,10 +1148,11 @@ test('opening before remote state refresh renders cache immediately and keeps st
 
   assert.deepEqual(messages[0], { type: 'GET_PAGE_STATE', refresh: false }, 'initial rendering reads local cache before remote active state');
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true });
+  const opening = trigger.onclick({ isTrusted: true });
+  assert.equal(cachedStateReplies.length, 2, 'opening unknown configuration also requests local state');
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false, 'the panel waits only for the local configured snapshot');
 
-  replyCachedState({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
+  for (const reply of cachedStateReplies) reply({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 1, 'the open panel automatically starts one recent refresh');
   assert.equal(messages.some(message => message.type === 'GET_PAGE_STATE' && message.refresh), false,
@@ -1156,6 +1164,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
   assert.equal(createdNodes.some(node => node.textContent === 'Open the menu again to load entries.'), false);
 
   replyRecent({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
+  await opening;
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
     'a failed automatic refresh keeps stale cached mutation controls locked');
@@ -1280,7 +1289,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('entry-day')).slice(-4).map(node => node.textContent),
+  assert.deepEqual(createdNodes.filter(node => node.className === 'entry-day').slice(-4).map(node => node.textContent),
     ['Today', 'Today', 'Yesterday', 'Wed']);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-overlap')).slice(-2).length, 2);
   assert.equal(createdNodes.filter(node => node.className.includes('overlap-warning')).slice(-2).length, 2);
@@ -1294,7 +1303,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
   let save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false, 'an incomplete direct-input draft is never sent');
-  assert.ok(createdNodes.findLast(node => node.className.includes('error') && node.textContent.includes('valid date and time')));
+  assert.ok(createdNodes.findLast(node => node.className.includes('error') && node.walk().some(child => child.textContent.includes('valid date and time'))));
   const preservedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
   assert.equal(preservedValues[7].value, '', 'validation rerender preserves the incomplete direct-input draft');
   firstStopMinute = preservedValues[7]; firstStopMinute.value = '01'; firstStopMinute.oninput({});
@@ -1506,8 +1515,8 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   releaseDelete(); await deletePromise; await new Promise(resolve => setTimeout(resolve, 0));
   const postDeleteLinks = createdNodes.slice(deleteRenderStart).filter(node => node.tag === 'a' && [older.issue.url, hidden.issue.url].includes(node.href));
   assert.deepEqual(postDeleteLinks.map(node => node.href), [older.issue.url], 'deletion keeps only the previously visible stable-ID survivor when indexes shift');
-  assert.equal(createdNodes.slice(deleteRenderStart).filter(node => node.className === 'today-total-value').at(-1)?.textContent, '1h 0m',
-    'confirmed direct deletion immediately subtracts its duration from matching summary frames');
+  assert.equal(createdNodes.slice(deleteRenderStart).filter(node => node.className === 'today-total-value').at(-1)?.textContent, '…',
+    'a direct deletion invalidates totals until the authoritative projection refreshes');
   const deletion = messages.find(message => message.type === 'DELETE_ENTRY');
   assert.equal(deletion.payload.path, newer._path);
   assert.equal(deletion.payload.index, newer._index);
@@ -1533,20 +1542,20 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
 });
 
 
-test('running time uses the stored local entry date across positive and negative UTC offsets', () => {
-  const match = source.match(/  function summarySeconds\(frame\) \{[\s\S]*?\n  \}/);
-  assert.ok(match, 'summarySeconds remains testable as one focused function');
-  const evaluate = (pageState, frame, now) => {
-    class FixedDate extends Date { static now() { return now; } }
-    return vm.runInNewContext(`(() => { ${match[0]} return summarySeconds(${JSON.stringify(frame)}); })()`, { pageState, Date: FixedDate, Math });
-  };
-  const frame18 = { seconds: 0, startDate: '2026-08-18', endDate: '2026-08-18' };
-  const frame19 = { seconds: 0, startDate: '2026-08-19', endDate: '2026-08-19' };
-  const positiveOffset = { active: { entryDate: '2026-08-18', timezone: 'Pacific/Kiritimati', startedAt: '2026-08-17T23:00:00.000Z' } };
-  assert.equal(evaluate(positiveOffset, frame18, Date.parse('2026-08-18T01:00:00.000Z')), 7200);
-  const negativeOffset = { active: { entryDate: '2026-08-18', timezone: 'America/Adak', startedAt: '2026-08-19T01:00:00.000Z' } };
-  assert.equal(evaluate(negativeOffset, frame18, Date.parse('2026-08-19T02:00:00.000Z')), 3600);
-  assert.equal(evaluate(negativeOffset, frame19, Date.parse('2026-08-19T02:00:00.000Z')), 0);
+test('projected totals tick only in their stored local date range and unknown totals stay unknown', () => {
+  const now = Date.parse('2026-08-19T02:00:00.000Z');
+  const harness = dailyPanelHarness({ now });
+  const state = { configured: true, active: { taskUrl: 'https://example.com/task', entryDate: '2026-08-18', timezone: 'America/Adak', startedAt: '2026-08-19T01:00:00.000Z' }, todayTrackedMs: 0, weekTrackedMs: 3600000, pendingWrites: [] };
+  harness.applyPageState(state);
+  harness.advance(60000);
+  assert.equal(harness.trackedTotalText('todayTrackedMs'), '0m');
+  assert.equal(harness.trackedTotalText('weekTrackedMs'), '1h 1m');
+  harness.applyPageState({ ...state, todayTrackedMs: null, weekTrackedMs: null });
+  harness.advance(60000);
+  assert.equal(harness.trackedTotalText('todayTrackedMs'), '…');
+  assert.equal(harness.trackedTotalText('weekTrackedMs'), '…');
+  harness.applyPageState({ ...state, summaryError: { code: 'error' } });
+  assert.equal(harness.trackedTotalText('weekTrackedMs'), '…');
 });
 
 
@@ -1633,7 +1642,7 @@ test('successful Delete responses accept exact empty output and reject malformed
     assert.equal(loadCalls, expectFallback ? 2 : 1, expectFallback ? 'malformed response triggers one compatibility reload' : 'empty exact response needs no compatibility reload');
     assert.equal(rerendered.some(node => node.className.includes('entry-edit') || node.className.includes('entry-delete')), false,
       'successful deletion never restores actionable stale row controls');
-    assert.equal(rerendered.some(node => node.className === 'error' && node.textContent === 'Refresh failed'), expectFallback);
+    assert.equal(rerendered.some(node => node.className === 'error' && node.walk().some(child => child.textContent === 'Refresh failed')), expectFallback);
   }
 
   await t.test('empty exact response after deleting the last record', () => exercise([], false));
@@ -1664,27 +1673,22 @@ test('main panel shows today total and opens Reports before Settings', async () 
   const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
     messages.push(structuredClone(message));
     if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: { ...recentEntry, endedAt: undefined, startedAt: `${date}T08:00:00+00:00` }, pendingCount: 0, pendingWrites: [] } });
-    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todaySeconds: 5400, reportDate: date,
-      summaries: [
-        { key: 'today', label: 'Today', seconds: 5400, startDate: date, endDate: date, displayMs: 2000 },
-        { key: 'this-week', label: 'This week', seconds: 7200, startDate: date, endDate: date, displayMs: 1000 },
-        { key: 'last-week', label: 'Last week', seconds: 3600, startDate: '2026-08-10', endDate: '2026-08-16', displayMs: 1000 },
-        { key: 'this-month', label: 'This month', seconds: 10800, startDate: '2026-08-01', endDate: date, displayMs: 1000 },
-      ], active: null, pendingCount: 0, pendingWrites: [] } });
+    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todayTrackedMs: 5400000, weekTrackedMs: 7200000, reportDate: date,
+      active: null, pendingCount: 0, pendingWrites: [] } });
     else callback({ ok: true, data: {} });
   } } }, setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const total = createdNodes.findLast(node => node.className === 'today-total');
+  const [total, week] = createdNodes.filter(node => node.className === 'today-total').slice(-2);
   assert.equal(total.children[0].textContent, 'Today:');
   assert.equal(total.children[1].textContent, '1h 30m');
-  const rotate = intervals.at(-1);
-  rotate(); assert.equal(total.children[0].textContent, 'Today:', 'Today remains visible for two seconds');
-  rotate(); assert.equal(total.children[0].textContent, 'This week:');
-  rotate(); assert.equal(total.children[0].textContent, 'Last week:');
-  rotate(); assert.equal(total.children[0].textContent, 'This month:');
+  const tick = intervals.at(-1);
+  for (let index = 0; index < 10; index += 1) tick();
+  assert.equal(total.children[0].textContent, 'Today:');
+  assert.equal(week.children[0].textContent, 'This week:');
+  assert.equal(week.children[1].textContent, '2h 0m');
   const day = createdNodes.findLast(node => node.className === 'entry-day');
   const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
   const duration = createdNodes.findLast(node => node.className === 'inline-duration');
@@ -1696,7 +1700,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'each menu opening refreshes its atomic today snapshot');
   const reports = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Reports');
-  const settings = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Time tracker settings');
+  const settings = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Settings');
   assert.ok(reports?.onclick); assert.ok(settings);
   assert.ok(reports.parentElement.children.indexOf(reports) < reports.parentElement.children.indexOf(settings));
   await reports.onclick({ isTrusted: true });
@@ -1979,7 +1983,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
 
 
 test('each highlighted recent-entry block includes its task URL and title', () => {
-  assert.match(source, /function recentRecord\(entry, overlaps\)[\s\S]*record\.append\(taskResult\(entry, 'entry-record-task-result'\)\)/);
+  assert.match(source, /function recentRecord\(entry, overlaps\)[\s\S]*identity\.append\(siteFavicon\(entry, 'entry-record-favicon'\), taskResult\(entry, 'entry-record-task-result'\)\)[\s\S]*record\.append\(identity\)/);
   assert.doesNotMatch(source, /group\.append\(taskResult\(first, 'entry-task-result'\)\)/);
 });
 
@@ -2009,4 +2013,1179 @@ test('tracking panel observes background sync completion without manual Sync', (
     'the 500 ms UI polling loop stops only for a missing record or an unsafe conflict, not a safely rebased edit');
   assert.doesNotMatch(source, /Task switch is syncing with GitHub\./);
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
+});
+
+function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
+  const messages = [], frames = [], intervals = [], confirmations = [];
+  const timeouts = new Map();
+  let timeoutId = 0;
+  class PanelNode extends FakeNode {
+    matches(selector) {
+      if (selector.startsWith('.')) return this.classList.contains(selector.slice(1));
+      if (selector === 'img.avatar') return this.tag === 'img' && this.classList.contains('avatar');
+      const attribute = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
+      if (attribute) return attribute[2] === undefined ? this.getAttribute(attribute[1]) !== null : this.getAttribute(attribute[1]) === attribute[2];
+      return this.tag === selector;
+    }
+    querySelectorAll(selector) { return this.walk().filter(node => node !== this && selector.split(',').some(value => node.matches?.(value.trim()))); }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    focus() { this.ownerDocument.activeElement = this; if (this.ownerDocument.panelShadow) this.ownerDocument.panelShadow.activeElement = this; }
+    cloneNode() { const node = this.ownerDocument.createElement(this.tag); node.textContent = this.textContent; return node; }
+    attachShadow() { const node = this.ownerDocument.createElement('shadow'); this.ownerDocument.panelShadow = node; return node; }
+  }
+  const document = { activeElement: null, panelShadow: null, createElement(tag) { const node = new PanelNode(tag); node.ownerDocument = this; return node; }, createElementNS(_ns, tag) { return this.createElement(tag); }, createTextNode: text => ({ textContent: text }), querySelector: () => null };
+  document.body = document.createElement('body');
+  if (header) {
+    const actions = document.createElement('div'), avatar = document.createElement('img');
+    avatar.className = 'avatar'; actions.append(avatar); document.body.append(actions);
+    document.documentElement = document.body;
+    document.querySelector = selector => selector === '.AppHeader-actions' ? actions : null;
+    document.getElementById = id => document.body.walk().find(node => node.id === id) || null;
+    document.addEventListener = () => {};
+  }
+  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
+  const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl),
+    requestAnimationFrame: callback => frames.push(callback), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
+    setTimeout: (callback, delay) => { const id = ++timeoutId; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
+    confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
+    ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321' },
+  });
+  vm.runInContext(recoverySource, context);
+  const end = source.lastIndexOf('\n  if (timesMode) {');
+  vm.runInContext(header ? source : source.slice(0, end) + `
+    globalThis.panel = { renderMenu, loadSelectedTimes, applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, setTimelineViewMode,
+      renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
+      set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
+      trackedTotalText: key => trackedTotalText(key),
+      mount(instance, view = null) { timelineInstance = instance; timelineWindow = { historyStart: 0, now: 1 }; if (view) timelineView = view; },
+      surface() { return compactSurface; },
+      popupRoot() { return fullWidthPopupShadow; },
+      attach(menu) { fullWidthPopupShadow = document.createElement('shadow'); document.panelShadow = fullWidthPopupShadow; fullWidthPopupShadow.append(menu); },
+      overlapHost(host, entries) { compactSurface.host = host; timelineEntriesById = new Map(entries); },
+      optimisticEdit(id) { return timelineOptimisticEdits.get(id); },
+      optimisticCompletion(id) { return timelineOptimisticCompletions.get(id); },
+      recentEntry(id) { return recent.find(entry => entry.id === id); },
+      descriptionDraftValue() { return descriptionDraft?.value; },
+      clearDescriptionDraft() { descriptionDraft = null; },
+      rememberTimelineDescription(entry, value) { return rememberTimelineDescription(entry, value); },
+      timelineItems(historyStart, currentNow) { return popupTimelineItems(historyStart, currentNow).items; },
+    };
+  })();`, context);
+  if (state && !header) context.panel.set(state, records, participants);
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, messages, frames, intervals, confirmations, timeouts, advance(ms) { now += ms; } };
+}
+
+test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
+  const now = new Date(2026, 8, 5, 14).getTime();
+  const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/7', startedAt: new Date(now - 60_000).toISOString(), entryDate: '2026-09-05', description: 'Saved description' };
+  const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [], todayTrackedMs: 59_000, weekTrackedMs: 59_000 };
+  const h = dailyPanelHarness({ header: true, state, now });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const root = h.document.panelShadow;
+  await root.querySelector('.trigger-main').onclick({ isTrusted: true });
+  const menu = root.querySelector('.menu'), input = menu.querySelector('input');
+  const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
+  const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
+  const elapsed = menu.querySelector('.running-elapsed');
+  input.value = 'Unsaved draft'; input.oninput?.({ target: input }); input.focus();
+  for (const ms of [60_000, 60_500]) {
+    h.set({ ...state, todayTrackedMs: ms, weekTrackedMs: ms }); h.advance(500);
+    const [id, poll] = [...h.timeouts].find(([, timer]) => timer.delay === 500);
+    h.timeouts.delete(id); await poll.callback();
+    assert.equal(root.querySelector('input').value, 'Unsaved draft');
+    assert.equal(root.querySelector('.menu'), menu, 'totals-only reads keep the dialog mounted');
+    assert.equal(root.querySelector('input'), input);
+    assert.equal(h.document.activeElement, input);
+    assert.equal(root.querySelector('[data-tracked-total="todayTrackedMs"]'), total);
+    assert.equal(root.querySelector('[data-tracked-total="weekTrackedMs"]'), week);
+    assert.equal(total.textContent, '1m'); assert.equal(week.textContent, '1m');
+  }
+  assert.equal(root.querySelector('.running-elapsed'), elapsed);
+  assert.equal(elapsed.textContent, '00:01:01');
+});
+
+test('header description draft survives a required rerender without leaking to a new timer', async () => {
+  const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/7', startedAt: new Date().toISOString(), description: 'Saved description' };
+  const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [] };
+  const h = dailyPanelHarness({ header: true, state });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const root = h.document.panelShadow;
+  await root.querySelector('.trigger-main').onclick({ isTrusted: true });
+  const input = root.querySelector('input');
+  input.value = ''; input.oninput?.({ target: input });
+  h.set({ ...state, active: { ...active, taskTitle: 'Updated title' } });
+  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
+  assert.notEqual(root.querySelector('input'), input, 'metadata changes require a new input');
+  assert.equal(root.querySelector('input').value, '', 'an intentionally cleared draft survives');
+  h.set({ ...state, active: { ...active, id: 'new-timer', description: 'New timer description' } });
+  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
+  assert.equal(root.querySelector('input').value, 'New timer description');
+});
+
+test('header opening retries failed initial reads and retains Retry until recovery succeeds', async () => {
+  const reads = [];
+  const state = { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [] };
+  const h = dailyPanelHarness({ header: true, respond(message, callback) {
+    if (message.type === 'GET_PAGE_STATE') reads.push({ message, callback });
+    else callback({ ok: true, data: state });
+  } });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  const reject = read => read.callback({ ok: false, error: { code: 'error', message: 'Worker unavailable' } });
+  reject(reads[0]); await settle(); reject(reads[1]); await settle();
+  assert.equal(reads.length, 2);
+  const root = h.document.panelShadow;
+  const opening = root.querySelector('.trigger-main').onclick({ isTrusted: true });
+  assert.equal(reads.length, 3, 'opening unknown configuration starts a replacement read');
+  assert.equal(reads[2].message.refresh, false, 'opening reads local state first');
+  const retry = () => root.walk().find(node => node.tag === 'button' && node.textContent === 'Retry');
+  assert.ok(retry(), 'initial error stays actionable while the replacement read is pending');
+  reject(reads[2]); await opening;
+  assert.ok(root.walk().some(node => node.textContent === "Couldn't reach GitHub"));
+  assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
+  assert.ok(retry());
+  const recovering = retry().onclick({ isTrusted: true });
+  assert.equal(reads.length, 4);
+  assert.ok(retry(), 'Retry retains the error until its read succeeds');
+  reads[3].callback({ ok: true, data: state }); await recovering;
+  assert.ok(root.walk().some(node => node.textContent === 'Start tracking this task'));
+  assert.equal(retry(), undefined);
+  assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
+});
+
+test('daily strip omits idle branding and List exclusively owns today records', () => {
+  const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const record = { id: 'today', taskUrl: 'https://example.com/today', taskTitle: 'Today task', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3600000).toISOString(), endedAt: new Date(now - 1800000).toISOString(), durationSeconds: 1800, _pending: true, _path: 'times/example' };
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [record, { ...record, id: 'yesterday', taskTitle: 'Yesterday task', entryDate: '2000-01-01' }] });
+  const menu = harness.renderMenu({ compact: true, onClose: () => {} });
+  harness.attach(menu);
+  let nodes = menu.walk();
+  assert.ok(!nodes.some(node => node.textContent === 'Not tracking'));
+  assert.equal(menu.querySelector('.active-task-strip').querySelectorAll('.clockoli-mark').length, 0);
+  assert.ok(nodes.some(node => node.textContent === 'Track this task'));
+  assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
+  assert.ok(!nodes.some(node => node.textContent === 'Yesterday task'));
+  assert.ok(nodes.some(node => node.classList?.contains('entry-pending')));
+  assert.ok(nodes.some(node => node.textContent === '▶ Continue'));
+  assert.equal(menu.querySelector('.today-list').hidden, true);
+  assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
+  harness.setTimelineViewMode('list');
+  assert.equal(menu.querySelector('.today-list').hidden, false);
+  assert.equal(menu.querySelector('.popup-timeline-section').hidden, true);
+  assert.equal(menu.querySelector('[data-timeline-view-mode="list"]').getAttribute('aria-pressed'), 'true');
+  harness.setTimelineViewMode('timeline');
+  assert.equal(menu.querySelector('.today-list').hidden, true);
+  assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
+  harness.set({ configured: true, active: { ...record, startedAt: new Date(now).toISOString() }, pendingWrites: [] }, []);
+  nodes = harness.renderMenu({ compact: true }).walk();
+  assert.ok(nodes.some(node => node.textContent === 'Stop and save'));
+  assert.ok(nodes.some(node => node.textContent === 'Switch to this task'));
+  const header = harness.renderMenu({ compact: false }).walk();
+  assert.ok(header.some(node => node.textContent === 'Stop and save' && node.className.includes('danger')));
+  assert.ok(header.some(node => node.textContent === 'Save and switch to this task' && node.className.includes('primary')));
+});
+
+test('hostile site CSS cannot supply panel tokens or style the internal shadow surface', () => {
+  assert.match(source, /:where\(:host > :not\(style\)\) \{ all:revert;/);
+  assert.match(source, /:host, :where\(:host > :not\(style\)\) \{[\s\S]*--fgColor-default:#1f2328/);
+  assert.match(source, /node\.style\?\.setProperty\?\.\(property, value, 'important'\)/);
+  assert.match(source, /set\('all', 'initial'\)/);
+});
+
+test('active strip uses a favicon and saves its editable description with Stop', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://vc.ru/story', taskTitle: 'VC story', startedAt: new Date(now - 60_000).toISOString(), description: '' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'STOP') return callback({ ok: true, data: { entry: { ...active, id: 'saved', endedAt: new Date(now).toISOString(), durationSeconds: 60 }, pending: true } });
+    callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  assert.match(menu.querySelector('.strip-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  const description = menu.querySelector('.strip-description');
+  description.value = 'Published launch story'; description.oninput();
+  await menu.walk().find(node => node.textContent === 'Stop and save').onclick({ isTrusted: true });
+  assert.equal(harness.messages.find(message => message.type === 'STOP').description, 'Published launch story');
+});
+
+test('active strip shows a green check and saves its description when clicked', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running', taskTitle: 'Running', startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') return callback({ ok: true, data: { operationId: 'active-edit' } });
+    callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  description.value = '  Saved   on blur  '; description.oninput();
+  const save = menu.walk().find(node => node.className === 'save-check' && node.getAttribute('aria-label') === 'Save description');
+  assert.equal(save.hidden, false); assert.equal(save.textContent, '✓');
+  await save.onclick({ isTrusted: true });
+  const edit = harness.messages.find(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
+  assert.equal(edit.payload.description, 'Saved on blur');
+  assert.equal(edit.payload.startedAt, undefined);
+
+  const remoteActive = { ...active, description: 'Updated on another device' };
+  harness.set({ ...state, active: remoteActive, pendingWrites: [] }, [], []);
+  assert.equal(harness.renderMenu({ compact: true }).querySelector('.strip-description').value, 'Updated on another device', 'accepted drafts must not hide later authoritative updates');
+});
+
+test('active strip keeps a newer draft and visible check while an older save finishes', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running', startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  let editCallback;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') { editCallback = callback; return; }
+    callback({ ok: true, data: {} });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  const save = menu.walk().find(node => node.className === 'save-check' && node.getAttribute('aria-label') === 'Save description');
+  description.value = 'First'; description.oninput();
+  const saving = save.onclick({ isTrusted: true });
+  description.value = 'Second'; description.oninput();
+  editCallback({ ok: true, data: { operationId: 'active-edit' } });
+  await saving;
+  assert.equal(description.value, 'Second');
+  assert.equal(save.hidden, false, 'the newer draft remains explicitly saveable');
+  assert.equal(harness.descriptionDraftValue(), 'Second');
+});
+
+test('active strip keeps its draft and save check after a rejected click save', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running', startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') { callback({ ok: false, error: { message: 'Save rejected' } }); return; }
+    callback({ ok: true, data: {} });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  description.value = 'Unsaved'; description.oninput();
+  await menu.walk().find(node => node.getAttribute?.('aria-label') === 'Save description').onclick({ isTrusted: true });
+  const strip = harness.surface().strip;
+  assert.equal(strip.querySelector('.strip-description').value, 'Unsaved');
+  const check = strip.walk().find(node => node.getAttribute?.('aria-label') === 'Save description');
+  assert.equal(check.hidden, false);
+  assert.equal(check.disabled, false);
+});
+
+test('a repeated active-description blur retains the draft if local acceptance later rejects', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running', startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  let editCallback;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') { editCallback = callback; return; }
+    callback({ ok: true, data: {} });
+  } });
+  const description = harness.renderMenu({ compact: true }).querySelector('.strip-description');
+  description.value = 'Unsaved draft'; description.oninput();
+  const firstBlur = description.onblur();
+  assert.equal(typeof editCallback, 'function');
+  await description.onblur();
+  editCallback({ ok: false, error: { message: 'Local enqueue failed' } });
+  await firstBlur;
+  const refreshed = harness.renderMenu({ compact: true });
+  assert.equal(refreshed.querySelector('.strip-description').value, 'Unsaved draft');
+  const check = refreshed.querySelectorAll('.save-check').find(node => node.getAttribute('aria-label') === 'Save description');
+  assert.equal(Boolean(check.hidden), false);
+  assert.equal(Boolean(check.disabled), false);
+});
+
+test('tracking panel exposes its page actions as labeled navigation and matches the Reports dark wordmark', () => {
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] } });
+  const menu = harness.renderMenu({ compact: true });
+  const navigation = menu.querySelector('.header-navigation');
+  assert.match(source, /const pageNavigation = el\('nav', undefined, 'header-navigation'\)/);
+  assert.equal(navigation.getAttribute('aria-label'), 'Clockoli pages');
+  assert.deepEqual(navigation.children.map(child => child.textContent), ['Top tasks', 'Reports', 'Activity', 'Settings']);
+  assert.match(source, /@media \(prefers-color-scheme: dark\)[\s\S]*:host\(\.full-width-popup-surface\) \.clockoli-wordmark \{ filter:saturate\(1\.4\) brightness\(2\.1\) \}/);
+  assert.match(source, /@media\(max-width:520px\)[\s\S]*\.header-navigation \{ flex:1 1 100%; max-width:100%; overflow-x:auto \}/);
+});
+
+test('Activity records show site favicons beside task identity', () => {
+  const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const entry = { id: 'entry', taskUrl: 'https://example.com/activity', taskTitle: 'Activity task', description: '', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 60_000).toISOString(), endedAt: new Date(now).toISOString(), durationSeconds: 60, _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now, pageUrl: 'chrome-extension://clockoli/src/times/times.html' });
+  const activity = harness.renderActivity();
+  const favicon = activity.querySelector('.entry-record-favicon');
+  assert.match(favicon.src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  assert.equal(favicon.parentElement.className, 'entry-record-task-identity');
+});
+
+test('List shows favicons and editable descriptions below task titles', async () => {
+  const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', taskTitle: 'External work', description: 'Initial note', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3_600_000).toISOString(), endedAt: new Date(now - 1_800_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, records: [entry], now, respond(message, callback) { callback({ ok: true, data: state }); } });
+  const menu = harness.renderMenu({ compact: true });
+  assert.match(menu.querySelector('.today-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  const description = menu.querySelector('.today-description');
+  assert.equal(description.value, 'Initial note');
+  description.value = 'Updated note'; await description.onchange();
+  const edit = harness.messages.find(message => message.type === 'QUEUE_ENTRY_EDIT');
+  assert.equal(edit.payload.edits.description, 'Updated note');
+});
+
+test('List keeps a newer description draft while an older save finishes', async () => {
+  const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', description: 'Initial', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3_600_000).toISOString(), endedAt: new Date(now - 1_800_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  let editCallback;
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') { editCallback = callback; return; }
+    callback({ ok: true, data: {} });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.today-description');
+  description.value = 'First'; description.oninput();
+  const saving = description.onchange();
+  await Promise.resolve();
+  description.value = 'Second'; description.oninput();
+  editCallback({ ok: true, data: { operationId: 'entry-edit' } });
+  await saving;
+  assert.equal(harness.surface().today.querySelector('.today-description').value, 'Second');
+});
+
+test('Timeline details stops projecting a reverted draft over later authoritative descriptions', () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('timeline-draft', '2026-09-05', '08');
+  entry.description = 'Saved';
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, records: [entry], now });
+  harness.rememberTimelineDescription(entry, 'Changed');
+  assert.equal(JSON.stringify(harness.timelineItems(0, now).map(item => [item.description, item.savedDescription])), JSON.stringify([['Changed', 'Saved']]));
+  harness.rememberTimelineDescription(entry, 'Saved');
+  const refreshed = { ...entry, description: 'Remote update' };
+  harness.set(state, [refreshed]);
+  assert.equal(JSON.stringify(harness.timelineItems(0, now).map(item => [item.description, item.savedDescription])), JSON.stringify([['Remote update', 'Remote update']]));
+});
+
+test('Timeline favicon projection survives an unavailable extension resource URL', () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('favicon-unavailable', '2026-09-05', '08');
+  const harness = dailyPanelHarness({
+    state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeGetURL: null,
+  });
+  assert.doesNotThrow(() => harness.timelineItems(0, now));
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+});
+
+test('compact task switches preserve the edited active description in the completion', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const active = { id: 'active', taskUrl: 'https://example.com/old', taskTitle: 'Old task', description: 'Old note', startedAt: new Date(now - 60_000).toISOString() };
+  const nextActive = { id: 'next', taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Issue 7', startedAt: new Date(now).toISOString() };
+  const state = { configured: true, active, pendingWrites: [] };
+  const makeHarness = () => {
+    let localState = state;
+    return dailyPanelHarness({ state, now, respond(message, callback) {
+      if (message.type === 'SWITCH_TASK') {
+        localState = { ...state, active: nextActive };
+        callback({ ok: true, data: { active: nextActive } });
+      } else callback({ ok: true, data: localState });
+    } });
+  };
+
+  const current = makeHarness();
+  const currentMenu = current.renderMenu({ compact: true });
+  current.mount({ update() {}, scrollToEnd() {} }, { start: now - 3_600_000, end: now, focusedAt: now });
+  const currentDescription = currentMenu.querySelector('.strip-description');
+  currentDescription.value = 'Draft for current switch'; currentDescription.oninput();
+  await currentMenu.walk().find(node => node.textContent === 'Switch to this task').onclick({ isTrusted: true });
+  const currentSwitch = current.messages.find(message => message.type === 'SWITCH_TASK');
+  assert.equal(currentSwitch.description, 'Draft for current switch');
+  assert.equal(current.optimisticCompletion('active').description, 'Draft for current switch');
+  assert.equal(current.surface().strip.querySelector('.strip-description').value, '', 'the previous draft does not leak into the new active task');
+
+  const listed = makeHarness();
+  const listedMenu = listed.renderMenu({ compact: true });
+  listed.mount({ update() {}, scrollToEnd() {} }, { start: now - 3_600_000, end: now, focusedAt: now });
+  const listedDescription = listedMenu.querySelector('.strip-description');
+  listedDescription.value = 'Draft for List switch'; listedDescription.oninput();
+  await listed.restartTimelineEntry({ id: 'listed', taskUrl: 'https://example.com/listed', taskTitle: 'Listed task' });
+  const listedSwitch = listed.messages.find(message => message.type === 'SWITCH_TASK');
+  assert.equal(listedSwitch.description, 'Draft for List switch');
+  assert.equal(listed.optimisticCompletion('active').description, 'Draft for List switch');
+  assert.equal(listed.surface().strip.querySelector('.strip-description').value, '', 'the previous draft does not leak after Continue');
+});
+
+test('a rejected compact switch restores the active task and its unsaved description draft', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const active = { id: 'active', taskUrl: 'https://example.com/old', description: 'Old note', startedAt: new Date(now - 60_000).toISOString() };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'SWITCH_TASK') callback({ ok: false, error: { message: 'Switch enqueue failed' } });
+    else callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  harness.mount({ update() {}, scrollToEnd() {} }, { start: now - 3_600_000, end: now, focusedAt: now });
+  const description = menu.querySelector('.strip-description');
+  description.value = 'Unsaved draft'; description.oninput();
+
+  await assert.rejects(harness.trackCurrentTimelineTask(), /Switch enqueue failed/);
+  assert.equal(harness.optimisticCompletion('active'), undefined);
+  assert.equal(harness.surface().strip.querySelector('.strip-description').value, 'Unsaved draft');
+
+  const context = harness.acceptTimelineStartImmediately({ taskUrl: 'https://example.com/new' }, { completePrevious: true, previousDescription: 'Unsaved draft' });
+  harness.clearDescriptionDraft();
+  harness.rollbackTimelineStart(context);
+  assert.equal(harness.descriptionDraftValue(), 'Unsaved draft', 'rollback restores the draft snapshot even after an intervening rerender clears it');
+});
+
+test('Timeline details Stop uses the edited active description from the strip', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const active = { id: 'active', taskUrl: 'https://example.com/active', description: 'Old note', startedAt: new Date(now - 60_000).toISOString() };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'STOP') callback({ ok: true, data: { entry: { ...active, id: 'completed', endedAt: new Date(now).toISOString() }, pending: true } });
+    else callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  description.value = 'Edited note'; description.oninput();
+  await harness.stopTimelineEntry(active);
+  assert.equal(harness.messages.find(message => message.type === 'STOP').description, 'Edited note');
+});
+
+test('rejected completed and active edits restore the exact pre-enqueue optimistic state', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (['QUEUE_ENTRY_EDIT', 'QUEUE_ACTIVE_START_EDIT'].includes(message.type)) callback({ ok: false, error: { message: 'Local enqueue failed' } });
+    else callback({ ok: true, data: {} });
+  } });
+
+  await assert.rejects(harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:15:00Z' }), /Local enqueue failed/);
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  assert.equal(harness.recentEntry('entry').startedAt, completed.startedAt);
+
+  await assert.rejects(harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z'), /Local enqueue failed/);
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('a rejected replacement edit preserves an earlier accepted optimistic edit', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  let completedAttempts = 0, activeAttempts = 0;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') {
+      completedAttempts += 1;
+      callback(completedAttempts === 1 ? { ok: true, data: {} } : { ok: false, error: { message: 'Replacement rejected' } });
+    } else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+      activeAttempts += 1;
+      callback(activeAttempts === 1 ? { ok: true, data: {} } : { ok: false, error: { message: 'Replacement rejected' } });
+    } else callback({ ok: true, data: {} });
+  } });
+
+  const firstCompleted = { startedAt: '2026-09-05T12:05:00Z' };
+  await harness.queueCalendarEntry(completed, firstCompleted);
+  await assert.rejects(harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' }), /Replacement rejected/);
+  assert.deepEqual(harness.optimisticEdit('entry'), firstCompleted);
+  assert.equal(harness.recentEntry('entry').startedAt, firstCompleted.startedAt);
+
+  await harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  await assert.rejects(harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z'), /Replacement rejected/);
+  assert.equal(harness.optimisticEdit('active').startedAt, '2026-09-05T13:35:00.000Z');
+});
+
+test('a late rejection cannot roll back a newer concurrently accepted edit', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const pending = { completed: [], active: [] };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') pending.completed.push(callback);
+    else if (message.type === 'QUEUE_ACTIVE_START_EDIT') pending.active.push(callback);
+    else callback({ ok: true, data: {} });
+  } });
+
+  const firstCompleted = harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  const secondCompleted = harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  pending.completed[1]({ ok: true, data: {} }); await secondCompleted;
+  pending.completed[0]({ ok: false, error: { message: 'Older edit rejected late' } }); await assert.rejects(firstCompleted, /Older edit rejected late/);
+  assert.equal(harness.optimisticEdit('entry').startedAt, '2026-09-05T12:15:00Z');
+  assert.equal(harness.recentEntry('entry').startedAt, '2026-09-05T12:15:00Z');
+
+  const firstActive = harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  const secondActive = harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z');
+  pending.active[1]({ ok: true, data: {} }); await secondActive;
+  pending.active[0]({ ok: false, error: { message: 'Older edit rejected late' } }); await assert.rejects(firstActive, /Older edit rejected late/);
+  assert.equal(harness.optimisticEdit('active').startedAt, '2026-09-05T13:45:00.000Z');
+});
+
+test('two concurrent rejections unwind past an already-rejected predecessor', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const pending = { completed: [], active: [] };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') pending.completed.push(callback);
+    else if (message.type === 'QUEUE_ACTIVE_START_EDIT') pending.active.push(callback);
+    else callback({ ok: true, data: {} });
+  } });
+
+  const firstCompleted = harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  const secondCompleted = harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  const firstCompletedRejected = assert.rejects(firstCompleted, /First rejected/);
+  pending.completed[0]({ ok: false, error: { message: 'First rejected' } }); await firstCompletedRejected;
+  const secondCompletedRejected = assert.rejects(secondCompleted, /Second rejected/);
+  pending.completed[1]({ ok: false, error: { message: 'Second rejected' } }); await secondCompletedRejected;
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  assert.equal(harness.recentEntry('entry').startedAt, completed.startedAt);
+
+  const firstActive = harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  const secondActive = harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z');
+  const firstActiveRejected = assert.rejects(firstActive, /First rejected/);
+  pending.active[0]({ ok: false, error: { message: 'First rejected' } }); await firstActiveRejected;
+  const secondActiveRejected = assert.rejects(secondActive, /Second rejected/);
+  pending.active[1]({ ok: false, error: { message: 'Second rejected' } }); await secondActiveRejected;
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('concurrent rejections also unwind when the newer edit rejects first', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const pending = { completed: [], active: [] };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') pending.completed.push(callback);
+    else if (message.type === 'QUEUE_ACTIVE_START_EDIT') pending.active.push(callback);
+    else callback({ ok: true, data: {} });
+  } });
+
+  const firstCompleted = harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  const secondCompleted = harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  const secondCompletedRejected = assert.rejects(secondCompleted, /Second rejected/);
+  pending.completed[1]({ ok: false, error: { message: 'Second rejected' } }); await secondCompletedRejected;
+  const firstCompletedRejected = assert.rejects(firstCompleted, /First rejected/);
+  pending.completed[0]({ ok: false, error: { message: 'First rejected' } }); await firstCompletedRejected;
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  assert.equal(harness.recentEntry('entry').startedAt, completed.startedAt);
+
+  const firstActive = harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  const secondActive = harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z');
+  const secondActiveRejected = assert.rejects(secondActive, /Second rejected/);
+  pending.active[1]({ ok: false, error: { message: 'Second rejected' } }); await secondActiveRejected;
+  const firstActiveRejected = assert.rejects(firstActive, /First rejected/);
+  pending.active[0]({ ok: false, error: { message: 'First rejected' } }); await firstActiveRejected;
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('a rejected successor restores a reconciled predecessor without reviving optimistic state', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const pending = { completed: null, active: null };
+  let completedCalls = 0, activeCalls = 0;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') {
+      completedCalls += 1;
+      if (completedCalls === 1) callback({ ok: true, data: { operationId: 'entry-a' } });
+      else pending.completed = callback;
+    } else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+      activeCalls += 1;
+      if (activeCalls === 1) callback({ ok: true, data: { operationId: 'active-a' } });
+      else pending.active = callback;
+    } else callback({ ok: true, data: { configured: true, active, pendingWrites: [{ id: 'entry-a' }, { id: 'active-a' }] } });
+  } });
+
+  await harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  const secondCompleted = harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  harness.applyPageState({ configured: true, active, pendingWrites: [] });
+  const secondCompletedRejected = assert.rejects(secondCompleted, /Successor rejected/);
+  pending.completed({ ok: false, error: { message: 'Successor rejected' } }); await secondCompletedRejected;
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  assert.equal(harness.recentEntry('entry').startedAt, '2026-09-05T12:05:00Z');
+
+  await harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  const secondActive = harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z');
+  harness.applyPageState({ configured: true, active, pendingWrites: [] });
+  const secondActiveRejected = assert.rejects(secondActive, /Successor rejected/);
+  pending.active({ ok: false, error: { message: 'Successor rejected' } }); await secondActiveRejected;
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('completion of an older operation cannot clear a newer optimistic generation', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  let completedCalls = 0, activeCalls = 0;
+  const allPending = [{ id: 'entry-a' }, { id: 'entry-b' }, { id: 'active-a' }, { id: 'active-b' }];
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: allPending }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') callback({ ok: true, data: { operationId: `entry-${++completedCalls === 1 ? 'a' : 'b'}` } });
+    else if (message.type === 'QUEUE_ACTIVE_START_EDIT') callback({ ok: true, data: { operationId: `active-${++activeCalls === 1 ? 'a' : 'b'}` } });
+    else callback({ ok: true, data: { configured: true, active, pendingWrites: allPending } });
+  } });
+
+  await harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  await harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  await harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  await harness.queueActiveStartEdit(active, '2026-09-05T13:45:00Z');
+
+  harness.applyPageState({ configured: true, active, pendingWrites: [{ id: 'entry-b' }, { id: 'active-b' }] });
+  assert.equal(harness.optimisticEdit('entry').startedAt, '2026-09-05T12:15:00Z');
+  assert.equal(harness.optimisticEdit('active').startedAt, '2026-09-05T13:45:00.000Z');
+  harness.applyPageState({ configured: true, active, pendingWrites: [] });
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('reverse responses sharing one compacted operation reconcile the newest generation', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z' };
+  const callbacks = { completed: [], active: [] };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, records: [completed], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') callbacks.completed.push(callback);
+    else if (message.type === 'QUEUE_ACTIVE_START_EDIT') callbacks.active.push(callback);
+    else callback({ ok: true, data: { configured: true, active, pendingWrites: [{ id: 'shared-entry' }, { id: 'shared-active' }] } });
+  } });
+
+  const firstCompleted = harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:05:00Z' });
+  const secondCompleted = harness.queueCalendarEntry(harness.recentEntry('entry'), { startedAt: '2026-09-05T12:15:00Z' });
+  callbacks.completed[1]({ ok: true, data: { operationId: 'shared-entry' } }); await secondCompleted;
+  callbacks.completed[0]({ ok: true, data: { operationId: 'shared-entry' } }); await firstCompleted;
+  harness.applyPageState({ configured: true, active, pendingWrites: [{ id: 'shared-entry' }] });
+  assert.equal(harness.optimisticEdit('entry').startedAt, '2026-09-05T12:15:00Z');
+  harness.applyPageState({ configured: true, active, pendingWrites: [] });
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+
+  const firstActive = harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  const secondActive = harness.queueActiveStartEdit({ ...active, startedAt: '2026-09-05T13:35:00.000Z' }, '2026-09-05T13:45:00Z');
+  callbacks.active[1]({ ok: true, data: { operationId: 'shared-active' } }); await secondActive;
+  callbacks.active[0]({ ok: true, data: { operationId: 'shared-active' } }); await firstActive;
+  harness.applyPageState({ configured: true, active, pendingWrites: [{ id: 'shared-active' }] });
+  assert.equal(harness.optimisticEdit('active').startedAt, '2026-09-05T13:45:00.000Z');
+  harness.applyPageState({ configured: true, active, pendingWrites: [] });
+  assert.equal(harness.optimisticEdit('active'), undefined);
+});
+
+test('unknown configuration renders Loading and complete route totals include running participants', () => {
+  const harness = dailyPanelHarness();
+  const loading = harness.renderMenu({ compact: true }).walk();
+  assert.ok(loading.some(node => node.textContent === 'Loading…'));
+  assert.ok(!loading.some(node => /Configure a private/.test(node.textContent)));
+  harness.set({ configured: true, active: null, pendingWrites: [] }, [], { complete: true, taskUrl: 'https://github.com/acme/app/issues/7', participants: [{ totalSeconds: 3600 }] });
+  assert.ok(harness.renderMenu({ compact: false }).walk().some(node => node.textContent === 'Tracked on this issue/PR: 1h 0m'));
+  harness.set({ configured: true, active: null, pendingWrites: [] }, [], { complete: false, taskUrl: 'https://github.com/acme/app/issues/7', participants: [] });
+  assert.ok(!harness.renderMenu({ compact: false }).walk().some(node => /Tracked on this/.test(node.textContent)));
+});
+
+test('all strip, header, and shared block Stop and switch paths can cancel a long entry without a mutation', async () => {
+  const now = Date.now(), active = { id: 'active', taskUrl: 'https://example.com/active', taskTitle: 'Active task', startedAt: new Date(now - 13 * 3600000).toISOString() };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, confirmResult: false, now });
+  for (const compact of [true, false]) {
+    const nodes = harness.renderMenu({ compact }).walk();
+    for (const label of ['Stop and save', compact ? 'Switch to this task' : 'Save and switch to this task']) {
+      await nodes.find(node => node.textContent === label).onclick({ isTrusted: true });
+    }
+  }
+  await harness.restartTimelineEntry({ id: 'other', taskUrl: 'https://example.com/other' });
+  await harness.stopTimelineEntry(active);
+  assert.equal(harness.confirmations.length, 6);
+  assert.ok(harness.confirmations.every(text => text === 'This entry is 13 hours long. Save anyway?'));
+  assert.equal(harness.messages.filter(message => ['STOP', 'START', 'SWITCH_TASK'].includes(message.type)).length, 0);
+});
+
+test('mounted panel refresh updates controls, errors, totals and now while preserving editor, scroll and focus', () => {
+  const now = new Date(2026, 8, 5, 14).getTime(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const state = { configured: true, active: null, pendingWrites: [], recent: [], todayTrackedMs: null, weekTrackedMs: null };
+  const harness = dailyPanelHarness({ state, now });
+  harness.applyPageState(state);
+  const menu = harness.renderMenu({ compact: true }); harness.attach(menu);
+  const updates = [], editor = { update: props => updates.push(props) }; harness.mount(editor);
+  const marker = harness.document.createElement('button'); marker.setAttribute('data-item-id', 'focused'); menu.append(marker); marker.focus(); menu.scrollTop = 125;
+  const active = { id: 'active', taskUrl: 'https://example.com/active', taskTitle: 'Running task', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 60000).toISOString() };
+  harness.applyPageState({ ...state, active, todayTrackedMs: 60000, weekTrackedMs: 3600000, summaryError: { code: 'error', message: 'Network unavailable' } });
+  harness.advance(60000); harness.refreshMountedTimeline();
+  assert.equal(updates.length, 1); assert.equal(updates[0].now, now + 60000);
+  assert.ok(updates[0].items.some(item => item.id === 'active:active'));
+  assert.equal(harness.document.activeElement, marker); assert.equal(menu.scrollTop, 125);
+  assert.ok(menu.walk().some(node => node.textContent === 'Stop and save'));
+  assert.ok(menu.walk().some(node => node.textContent === "Couldn't reach GitHub"));
+  assert.ok(menu.walk().some(node => node.textContent === 'Network unavailable'));
+  assert.ok(menu.walk().filter(node => node.getAttribute?.('data-tracked-total')).every(node => node.textContent === '…'));
+  harness.applyPageState({ ...state, active, todayTrackedMs: 120000, weekTrackedMs: 3660000 }); harness.refreshMountedTimeline();
+  assert.ok(!menu.walk().some(node => node.textContent === 'Network unavailable'));
+  const description = menu.querySelector('.strip-description');
+  description.value = 'Draft that keeps focus'; description.oninput(); description.focus();
+  const saveDescription = menu.walk().find(node => node.getAttribute?.('aria-label') === 'Save description' && node.className === 'save-check');
+  assert.equal(saveDescription.hidden, false);
+  for (let index = 0; index < 3; index += 1) {
+    harness.advance(1000);
+    harness.applyPageState({ ...state, active, todayTrackedMs: 120000 + index * 1000, weekTrackedMs: 3660000 + index * 1000 });
+    harness.refreshMountedTimeline();
+    assert.equal(menu.querySelector('.strip-description'), description, 'refresh keeps the active description input mounted');
+    assert.equal(harness.document.activeElement, description, 'refresh keeps description focus');
+    assert.equal(description.value, 'Draft that keeps focus');
+  }
+  const stop = menu.walk().find(node => node.textContent === 'Stop and save'); stop.focus();
+  harness.refreshMountedTimeline();
+  assert.equal(harness.document.activeElement.getAttribute('data-panel-action'), 'stop');
+  harness.advance(60000); harness.updatePanelClocks();
+  assert.equal(menu.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '3m');
+  assert.equal(menu.querySelector('[data-tracked-total="weekTrackedMs"]').textContent, '1h 2m');
+});
+
+test('visible overlap flags produce one named warning and open Activity without a mutation', async () => {
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] } });
+  const menu = harness.renderMenu({ compact: true }), host = harness.document.createElement('div');
+  const records = ['First', 'Second'].map((title, index) => [`entry:${index}`, { taskTitle: title, taskUrl: `https://example.com/${index}`, timezone: 'UTC', startedAt: '2026-09-05T08:00:00Z', endedAt: '2026-09-05T09:00:00Z' }]);
+  for (const [id] of records) { const block = harness.document.createElement('div'); block.setAttribute('data-overlap', 'true'); block.setAttribute('data-item-id', id); host.append(block); }
+  harness.overlapHost(host, records); harness.refreshTimelineOverlaps();
+  const warnings = menu.querySelectorAll('.overlap-warning'); assert.equal(warnings.length, 1);
+  assert.match(warnings[0].children[0].textContent, /First \(.*\).*Second \(.*\)/);
+  const link = warnings[0].querySelector('a'); assert.equal(link.textContent, 'Fix in Activity');
+  await link.onclick({ isTrusted: true, preventDefault() {} });
+  assert.equal(harness.messages.at(-1).type, 'OPEN_TIMES');
+  host.replaceChildren(); harness.refreshTimelineOverlaps();
+  assert.equal(menu.querySelectorAll('.overlap-warning').length, 0);
+});
+
+test('local refresh removes optimistic pending styling after the completed record is confirmed by GitHub', async () => {
+  const now = Date.now(), active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: new Date(now - 60000).toISOString() };
+  const entry = { ...active, endedAt: new Date(now).toISOString(), entryDate: '2026-09-05', timezone: 'UTC', _path: 'times/2026-09/alice.jsonl' };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [], entry, pending: true }, now });
+  await harness.stopTimelineEntry(active);
+  harness.applyPageState({ configured: true, active: null, recent: [{ ...entry, _sha: 'confirmed', _pending: false }], pendingWrites: [] });
+  const updates = []; harness.mount({ update: props => updates.push(props) }); harness.refreshMountedTimeline();
+  assert.equal(updates[0].items.length, 1);
+  assert.equal(updates[0].items[0].isPending, false);
+});
+
+test('ordinary refresh keeps a just-started zero-duration running item visible at the worker timestamp', () => {
+  const now = Date.now(), state = { configured: true, active: { id: 'just-started', taskUrl: 'https://example.com/active', startedAt: new Date(now).toISOString() }, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now }), updates = [];
+  harness.mount({ update: props => updates.push(props) }); harness.refreshMountedTimeline();
+  assert.equal(updates[0].now, now);
+  assert.equal(updates[0].items[0].id, 'active:just-started');
+});
+
+test('delayed Start acceptance preserves manual timeline scroll and does not scroll right twice', async () => {
+  const now = Date.now();
+  const initial = { configured: true, active: null, pendingWrites: [], recent: [] };
+  const workerActive = {
+    id: 'worker-active',
+    taskUrl: 'https://github.com/acme/app/issues/7',
+    taskTitle: 'Issue 7',
+    startedAt: new Date(now).toISOString(),
+  };
+  let startCallback = null;
+  const harness = dailyPanelHarness({ state: initial, now, respond(message, callback) {
+    if (message.type === 'START') { startCallback = callback; return; }
+    callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { ...initial, active: workerActive } : {} });
+  } });
+  const editor = {
+    scrollLeft: 0,
+    scrollToEndCalls: 0,
+    update() {},
+    scrollToEnd() { this.scrollToEndCalls += 1; this.scrollLeft = 1000; },
+  };
+  harness.mount(editor, { start: now - 86_400_000, end: now, focusedAt: now });
+
+  const start = harness.trackCurrentTimelineTask();
+  assert.equal(typeof startCallback, 'function', 'worker response is deferred after optimistic rendering');
+  assert.equal(editor.scrollToEndCalls, 1);
+  editor.scrollLeft = 321;
+  startCallback({ ok: true, data: workerActive });
+  await start;
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(editor.scrollLeft, 321, 'worker acceptance and reconciliation preserve manual scroll');
+  assert.equal(editor.scrollToEndCalls, 1, 'only the optimistic transition scrolls to the right edge');
+});
+
+test('opening focuses the primary strip action after local state and closing restores previous focus', async () => {
+  const state = { configured: true, active: null, recent: [], pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, pageUrl: 'https://example.com/task' });
+  const previous = harness.document.createElement('input'); harness.document.body.append(previous); previous.focus();
+  await harness.toggleFullWidthPopup();
+  while (harness.frames.length) harness.frames.shift()();
+  assert.equal(harness.messages[0].type, 'GET_PAGE_STATE'); assert.equal(harness.messages[0].refresh, false);
+  assert.equal(harness.messages[1].type, 'GET_PAGE_STATE'); assert.equal(harness.messages[1].refresh, true);
+  assert.equal(harness.document.activeElement.textContent, 'Track this task');
+  const menu = harness.popupRoot();
+  assert.equal(menu.querySelectorAll('.page-tracking-hint').length, 0);
+  harness.refreshMountedTimeline(); harness.refreshMountedTimeline();
+  assert.equal(menu.querySelectorAll('.page-tracking-hint').length, 0);
+  harness.closeFullWidthPopup();
+  assert.equal(harness.document.activeElement, previous);
+});
+
+test('daily save status uses words, keeps diagnostics closed and conflicts visible, and retries only reads', async () => {
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 } });
+  let menu = harness.renderMenu({ compact: true });
+  let saveStatus = menu.querySelector('.timeline-queue-spinner');
+  assert.equal(saveStatus.textContent, 'Saving…');
+  assert.equal(saveStatus.classList.contains('empty'), false);
+  assert.match(source, /\.timeline-queue-spinner \{[^}]*min-height:25px/);
+  assert.match(source, /\.timeline-queue-spinner\.empty \{ visibility:hidden \}/);
+  assert.equal(menu.querySelector('.queue-diagnostics').open, false);
+  harness.set({ configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'conflict', conflictReason: 'completion_saved_newer_timer', stage: 'clearActive', operation: 'completeTimer' }], pendingCount: 1 }, []);
+  menu = harness.renderMenu({ compact: true });
+  assert.equal(menu.querySelector('.timeline-queue-spinner').textContent, 'Your changes need review before saving');
+  assert.equal(menu.querySelector('.queue-diagnostics').open, false);
+  assert.ok(menu.walk().some(node => node.textContent === 'Keep newer timer'));
+  harness.set({ configured: true, active: null, pendingWrites: [], remoteWriteConfirmed: true, summaryError: { code: 'error', message: 'Read failed', recovery: 'read-retry' } }, []);
+  menu = harness.renderMenu({ compact: true });
+  saveStatus = menu.querySelector('.timeline-queue-spinner');
+  assert.equal(saveStatus.textContent, 'Saved to GitHub');
+  assert.equal(saveStatus.hidden, false);
+  assert.equal(saveStatus.classList.contains('empty'), true);
+  assert.equal(saveStatus.getAttribute('aria-hidden'), 'true');
+  await menu.walk().find(node => node.textContent === 'Retry').onclick({ isTrusted: true });
+  assert.deepEqual(harness.messages.filter(message => message.type !== 'LOAD_TASK_PARTICIPANTS').map(message => message.type), ['GET_PAGE_STATE', 'LOAD_RECENT']);
+});
+
+test('queue diagnostics stay hidden unless enabled in Advanced settings', () => {
+  const pending = { configured: true, active: null, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 };
+  const harness = dailyPanelHarness({ state: pending });
+  assert.equal(harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics'), null);
+  harness.set({ ...pending, showQueueDiagnostics: true }, []);
+  assert.ok(harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics'));
+});
+
+async function runningStatusHarness(initial) {
+  const moduleSource = await readFile(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
+  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [];
+  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, stopError = null, confirmed = true, readError = null;
+  const document = {
+    hidden: false, createElement: tag => new FakeNode(tag), getElementById: () => null,
+    addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
+  };
+  const context = vm.createContext({
+    document, formatClockDuration, normalizeTaskUrl, localDateParts, entryDateValue,
+    Date: class extends Date { static now() { return now; } },
+    setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
+    confirm: text => { confirmations.push(text); return confirmed; },
+  });
+  vm.runInContext(moduleSource.replace(/^import .*;\n/gm, '').replace('export function mountRunningStatus', 'function mountRunningStatus'), context);
+  const send = async message => {
+    calls.push({ ...message });
+    if (message.type === 'GET_PAGE_STATE') {
+      if (nextReads.length) return nextReads.shift();
+      if (readError) throw readError;
+      return state;
+    }
+    if (message.type === 'STOP') {
+      if (stopError) throw stopError;
+      state = { ...state, active: null }; return { pending: true };
+    }
+    throw new Error(`Unexpected message ${message.type}`);
+  };
+  const destroy = context.mountRunningStatus(container, { send });
+  const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
+  await settle();
+  return {
+    container, document, events, timers, calls, confirmations, destroy, settle,
+    find: className => container.walk().find(node => node.className === className),
+    setState: value => { state = value; }, advance: ms => { now += ms; },
+    failStop: () => { stopError = new Error('Stop rejected'); },
+    failRead: value => { readError = value ? new Error('Worker restarting') : null; },
+    cancelConfirmation: () => { confirmed = false; },
+    holdNextRead: () => {
+      let resolve;
+      nextReads.push(new Promise(done => { resolve = done; }));
+      return resolve;
+    },
+  };
+}
+
+function runningStatusState(hours = 1) {
+  const now = new Date(2026, 8, 5, 14);
+  return { configured: true, todayTrackedMs: 7_200_000, active: {
+    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: '<img> Fix tracking',
+    startedAt: new Date(now.getTime() - hours * 3_600_000).toISOString(), entryDate: '2026-09-05',
+  } };
+}
+
+test('shared running status renders idle totals and unknown summaries without inventing zero', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null, todayTrackedMs: 7_200_000 });
+  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today 2h 0m');
+  assert.equal(h.find('running-status-stop').hidden, true);
+  h.setState({ configured: true, active: null, todayTrackedMs: null });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today …');
+  h.destroy(); assert.equal(h.timers.size, 0); assert.equal(h.events.size, 0);
+});
+
+test('shared running status ticks without replacing controls and rereads after Stop', async () => {
+  const h = await runningStatusHarness(runningStatusState());
+  const link = h.find('running-status-task'), stop = h.find('running-status-stop');
+  assert.equal(link.textContent, '<img> Fix tracking'); assert.equal(link.children.length, 0);
+  assert.equal(link.href, 'https://github.com/acme/app/issues/7');
+  assert.equal(link.rel, 'noreferrer'); assert.equal(stop.textContent, 'Stop and save');
+  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m 0s');
+  h.advance(1_000); h.timers.get(1_000)();
+  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m 1s');
+  assert.equal(h.find('running-status-stop'), stop);
+  await stop.onclick(); await h.settle();
+  const stopIndex = h.calls.findIndex(call => call.type === 'STOP');
+  assert.deepEqual(h.calls[stopIndex], { type: 'STOP' });
+  assert.ok(h.calls.slice(stopIndex + 1).some(call => call.type === 'GET_PAGE_STATE'));
+  assert.equal(h.find('running-status-idle').hidden, false); assert.equal(stop.hidden, true);
+  h.destroy();
+});
+
+test('shared running status confirms only above twelve hours and preserves a rejected Stop', async () => {
+  const h = await runningStatusHarness(runningStatusState(13)); h.cancelConfirmation();
+  await h.find('running-status-stop').onclick();
+  assert.deepEqual(h.confirmations, ['This entry is 13 hours long. Save anyway?']);
+  assert.equal(h.calls.some(call => call.type === 'STOP'), false);
+  h.setState(runningStatusState(12)); await h.events.get('visibilitychange')(); await h.settle();
+  h.failStop(); await h.find('running-status-stop').onclick(); await h.settle();
+  assert.equal(h.confirmations.length, 1);
+  assert.equal(h.find('running-status-stop').hidden, false);
+  assert.equal(h.find('running-status-stop').disabled, false);
+  assert.match(h.find('running-status-error').textContent, /Stop rejected/);
+  h.destroy();
+});
+
+test('shared running status recovers fresh state after a worker restart and rejects unsafe task links', async () => {
+  const h = await runningStatusHarness(runningStatusState());
+  h.failRead(true); await h.events.get('visibilitychange')(); await h.settle();
+  assert.match(h.find('running-status-error').textContent, /Worker restarting/);
+  h.failRead(false); h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today 0m');
+  assert.equal(h.find('running-status-error').hidden, true);
+  h.setState({ ...runningStatusState(), active: { ...runningStatusState().active, taskUrl: 'javascript:alert(1)' } });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-task').getAttribute('href'), null);
+  h.destroy();
+});
+
+test('shared running status ignores late reads and accepts only one concurrent Stop', async () => {
+  const h = await runningStatusHarness(runningStatusState());
+  const releaseRead = h.holdNextRead();
+  const staleRead = h.events.get('visibilitychange')();
+  h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  await h.events.get('visibilitychange')();
+  releaseRead(runningStatusState()); await staleRead;
+  assert.equal(h.find('running-status-idle').hidden, false);
+  h.setState(runningStatusState()); await h.events.get('visibilitychange')();
+  const releaseStopRead = h.holdNextRead();
+  const stop = h.find('running-status-stop'), stopping = stop.onclick();
+  assert.equal(stop.disabled, true);
+  await stop.onclick(); releaseStopRead(runningStatusState()); await stopping;
+  assert.equal(h.calls.filter(call => call.type === 'STOP').length, 1);
+  h.destroy();
+});
+
+test('shared running status updates Today only for a timer assigned to today', async () => {
+  const h = await runningStatusHarness(runningStatusState());
+  h.advance(60_000); h.timers.get(1_000)();
+  assert.equal(h.find('running-status-today').textContent, 'Today 2h 1m');
+  h.setState({ ...runningStatusState(), active: { ...runningStatusState().active, entryDate: '2026-09-04' } });
+  await h.events.get('visibilitychange')(); h.advance(60_000); h.timers.get(1_000)();
+  assert.equal(h.find('running-status-today').textContent, 'Today 2h 0m');
+  const reads = h.calls.length;
+  h.document.hidden = true; h.timers.get(5_000)(); assert.equal(h.calls.length, reads);
+  h.document.hidden = false; h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  h.timers.get(5_000)(); await h.settle();
+  assert.equal(h.find('running-status-idle').hidden, false);
+  h.destroy();
+});
+
+function activityEntry(id, date, hour = '10', taskUrl = `https://example.com/${id}`) {
+  return { id, taskUrl, taskTitle: `Task ${id}`, entryDate: date, timezone: 'UTC',
+    startedAt: `${date}T${hour}:00:00+00:00`, endedAt: `${date}T${hour}:30:00+00:00`, durationSeconds: 1800,
+    description: '', _path: `times/${date.slice(0, 7)}/alice.jsonl`, _sha: 'original', _index: Number(id) || 0 };
+}
+
+function activityHarness(records = [], respond = null) {
+  return dailyPanelHarness({ records, respond, now: new Date('2026-09-05T12:00:00').getTime(),
+    pageUrl: 'chrome-extension://extension/src/times/times.html',
+    state: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+}
+
+test('Activity groups nonconsecutive tasks by local record date with day totals and per-record identity', () => {
+  const entries = [activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-05', '09'),
+    activityEntry('3', '2026-09-05', '10', 'https://example.com/1'), activityEntry('4', '2026-09-04'), activityEntry('5', '2026-09-02')];
+  const h = activityHarness(entries), root = h.renderActivity();
+  const groups = root.querySelectorAll('.entry');
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.map(group => group.querySelector('h2').textContent), ['Today', 'Yesterday', 'Wednesday, 2 September']);
+  assert.deepEqual(groups.map(group => group.querySelector('.entry-day-total').textContent), ['1h 30m', '30m', '30m']);
+  assert.deepEqual(groups.map(group => group.querySelectorAll('.entry-record').length), [3, 1, 1]);
+  for (const record of root.querySelectorAll('.entry-record')) {
+    assert.ok(record.querySelector('.task-title').href);
+    assert.equal(record.querySelector('.task-url').textContent, record.querySelector('.task-title').href);
+    assert.equal(record.querySelectorAll('.inline-time-value').length, 4);
+  }
+});
+
+test('Activity loads the existing colour resolver before the renderer and preserves one running strip', async () => {
+  const html = await readFile(new URL('../src/times/times.html', import.meta.url), 'utf8');
+  assert.ok(html.indexOf('../content/task-timeline-component.js') >= 0);
+  assert.ok(html.indexOf('../content/task-timeline-component.js') < html.indexOf('../content/github.js'));
+  assert.equal(html.match(/id="activity-running-status"/g).length, 1);
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08', 'https://example.com/today'), activityEntry('2', '2026-09-04', '09', 'https://example.com/today')]);
+  const titles = h.renderActivity().querySelectorAll('.task-title');
+  assert.deepEqual(titles.map(title => title.style.color), ['#123456', '#123456']);
+});
+
+test('Activity distinguishes first use from an empty period using history and offers one empty-state action', async () => {
+  for (const hasHistory of [false, true]) {
+    const h = activityHarness([], (message, callback) => callback({ ok: true, data: {
+      configured: true, recent: hasHistory && message.payload?.startDate === '0001-01-01' ? [activityEntry('old', '2025-01-01')] : [],
+      pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: false,
+    } }));
+    await h.loadSelectedTimes();
+    const root = h.renderActivity(), empty = root.querySelector('.activity-empty');
+    assert.ok(empty);
+    assert.equal(empty.querySelector('p').textContent, hasHistory ? 'No time in this range.' : 'Nothing tracked yet. Open a task page and click Clockoli to start.');
+    assert.equal(empty.querySelectorAll('button').length, hasHistory ? 1 : 0);
+    if (hasHistory) {
+      await empty.querySelector('button').onclick({ isTrusted: true });
+      assert.equal(root.querySelector('.bulk-time').open, true);
+      assert.equal(h.document.activeElement, root.querySelector('.bulk-time-input'));
+    }
+  }
+});
+
+test('Activity no-match action clears the filter and restores records', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05')]), root = h.renderActivity();
+  const filter = root.querySelector('.times-filter').querySelector('input');
+  filter.value = 'absent'; filter.oninput({});
+  const empty = root.querySelector('.activity-empty');
+  assert.equal(empty.querySelector('p').textContent, 'No entries match.');
+  assert.deepEqual(empty.querySelectorAll('button').map(node => node.textContent), ['Clear filter']);
+  await empty.querySelector('button').onclick({ isTrusted: true });
+  assert.equal(filter.value, '');
+  assert.equal(root.querySelectorAll('.entry-record').length, 1);
+});
+
+test('Activity retains independent incomplete and metadata drafts through focus, Save and Cancel', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-05', '10'), activityEntry('3', '2026-09-04')]);
+  let root = h.renderActivity(), records = root.querySelectorAll('.entry-record');
+  let values = records[0].querySelectorAll('.inline-time-value');
+  values[3].onfocus({}); values[3].value = ''; values[3].oninput({});
+  values = records[1].querySelectorAll('.inline-time-value');
+  values[3].onfocus({}); values[3].value = '31'; values[3].oninput({});
+  await records[2].querySelector('.entry-description-editable').onclick({ isTrusted: true });
+  root = h.renderActivity(); records = root.querySelectorAll('.entry-record');
+  const description = records[2].querySelector('.inline-description'); description.value = 'Keep this draft'; description.oninput({});
+  assert.equal(records[0].querySelectorAll('.inline-time-value')[3].value, '');
+  assert.equal(root.querySelectorAll('.inline-unsaved').filter(node => !node.hidden).length, 3);
+  assert.equal(h.messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false);
+  await records[0].querySelector('.inline-save').onclick({ isTrusted: true });
+  assert.equal(h.messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false, 'explicit Save also rejects incomplete input');
+  root = h.renderActivity(); records = root.querySelectorAll('.entry-record');
+  await records[1].querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries;
+  assert.equal(edits.length, 1); assert.equal(edits[0].original.id, '1'); assert.equal(edits[0].originalSha, 'original');
+  root = h.renderActivity(); records = root.querySelectorAll('.entry-record');
+  await records[0].querySelector('.inline-cancel').onclick({ isTrusted: true });
+  root = h.renderActivity();
+  assert.equal(root.querySelector('.inline-description').value, 'Keep this draft');
+  assert.equal(root.querySelectorAll('.inline-unsaved').filter(node => !node.hidden).length, 1);
+});
+
+test('Activity shows a green save check inside URL, title, and description fields', async () => {
+  for (const [fieldClass, saveLabel, value, expected] of [
+    ['inline-task-url', 'Save task URL', 'https://example.com/changed', ['taskUrl', 'https://example.com/changed']],
+    ['inline-task-title', 'Save task title', 'Changed title', ['taskTitle', 'Changed title']],
+    ['inline-description', 'Save description', 'Changed description', ['description', 'Changed description']],
+  ]) {
+    const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+    let root = h.renderActivity();
+    await root.querySelector('.entry-description-editable').onclick({ isTrusted: true });
+    root = h.renderActivity();
+    const checks = root.querySelectorAll('.save-check');
+    assert.match(source, /\.save-check \{[^}]*right:4px[^}]*color:var\(--ck-success\)/);
+    assert.deepEqual(checks.map(node => node.getAttribute('aria-label')), ['Save task URL', 'Save task title', 'Save description']);
+    const input = root.querySelector(`.${fieldClass}`); input.value = value; input.oninput({});
+    const check = checks.find(node => node.getAttribute('aria-label') === saveLabel);
+    assert.equal(check.textContent, '✓');
+    await check.onclick({ isTrusted: true });
+    const edit = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0];
+    assert.equal(edit.edits[expected[0]], expected[1]);
+  }
+});
+
+test('Activity preserves newer grouped metadata through acceptance, duplicate click, rejection, and retry', async () => {
+  const entry = activityEntry('1', '2026-09-05', '08');
+  const callbacks = [];
+  const state = { configured: true, active: null, pendingCount: 0, pendingWrites: [] };
+  const harness = activityHarness([entry], (message, callback) => {
+    if (message.type === 'QUEUE_ENTRIES_EDIT') { callbacks.push(callback); return; }
+    callback({ ok: true, data: state });
+  });
+  let root = harness.renderActivity();
+  await root.querySelector('.entry-description-editable').onclick({ isTrusted: true });
+  root = harness.renderActivity();
+  const enter = ([url, title, description]) => {
+    for (const [selector, value] of [['.inline-task-url', url], ['.inline-task-title', title], ['.inline-description', description]]) {
+      const input = root.querySelector(selector); input.value = value; input.oninput({});
+    }
+  };
+  const check = label => root.querySelectorAll('.save-check').find(node => node.getAttribute('aria-label') === label);
+  enter(['https://example.com/first', 'First title', 'First description']);
+  const first = check('Save description').onclick({ isTrusted: true });
+  assert.equal(callbacks.length, 1);
+  enter(['https://example.com/second', 'Second title', 'Second description']);
+  root = harness.renderActivity();
+  assert.deepEqual(['.inline-task-url', '.inline-task-title', '.inline-description'].map(selector => root.querySelector(selector).value),
+    ['https://example.com/second', 'Second title', 'Second description']);
+  assert.ok(root.querySelectorAll('.save-check').every(node => node.disabled), 'rerendered checks reflect the in-flight group save');
+  assert.equal(root.querySelector('.inline-save').disabled, true, 'rerendered Save time reflects the in-flight group save');
+  const duplicate = check('Save task URL').onclick({ isTrusted: true });
+  assert.equal(callbacks.length, 1, 'another field check after rerender joins the in-flight group save');
+  callbacks.shift()({ ok: true, data: { operationId: 'first' } });
+  await Promise.all([first, duplicate]);
+  assert.deepEqual(['.inline-task-url', '.inline-task-title', '.inline-description'].map(selector => root.querySelector(selector).value),
+    ['https://example.com/second', 'Second title', 'Second description']);
+  assert.ok(root.querySelectorAll('.save-check').every(node => !node.disabled), 'completion rerender releases every group check');
+  assert.equal(root.querySelector('.inline-save').disabled, false, 'completion rerender releases Save time');
+
+  const rejected = check('Save task title').onclick({ isTrusted: true });
+  assert.equal(callbacks.length, 1);
+  let edit = harness.messages.filter(message => message.type === 'QUEUE_ENTRIES_EDIT').at(-1).payload.entries[0].edits;
+  assert.deepEqual([edit.taskUrl, edit.taskTitle, edit.description], ['https://example.com/second', 'Second title', 'Second description']);
+  callbacks.shift()({ ok: false, error: { message: 'Queue rejected' } });
+  await rejected;
+  root = harness.renderActivity();
+  assert.deepEqual(['.inline-task-url', '.inline-task-title', '.inline-description'].map(selector => root.querySelector(selector).value),
+    ['https://example.com/second', 'Second title', 'Second description']);
+  assert.ok(root.querySelectorAll('.save-check').every(node => !node.disabled));
+
+  const retry = check('Save description').onclick({ isTrusted: true });
+  assert.equal(callbacks.length, 1);
+  callbacks.shift()({ ok: true, data: { operationId: 'second' } });
+  await retry;
+  root = harness.renderActivity();
+  assert.equal(root.querySelector('.inline-metadata-editor'), null);
+});
+
+test('Activity pins draft originals across a refresh and keeps a linked repair atomic after focus changes', async () => {
+  const entries = [activityEntry('1', '2026-09-05', '08'), { ...activityEntry('2', '2026-09-05', '08'), startedAt: '2026-09-05T08:30:00+00:00', endedAt: '2026-09-05T09:00:00+00:00' }];
+  const h = activityHarness(entries);
+  let root = h.renderActivity(), records = root.querySelectorAll('.entry-record');
+  let values = records[1].querySelectorAll('.inline-time-value');
+  values[3].onfocus({}); values[3].value = '35'; values[3].oninput({});
+  values = records[0].querySelectorAll('.inline-time-value'); values[1].onfocus({});
+  assert.equal(values[1].value, '35');
+  h.set({ configured: true, active: null, pendingCount: 0, pendingWrites: [] }, entries.map(entry => ({ ...entry, _sha: 'refreshed' })));
+  root = h.renderActivity(); records = root.querySelectorAll('.entry-record');
+  assert.equal(records[0].querySelectorAll('.inline-time-value')[1].value, '35');
+  assert.equal(root.querySelectorAll('.inline-unsaved').filter(node => !node.hidden).length, 2);
+  await records[0].querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries;
+  assert.equal(edits.length, 2);
+  assert.ok(edits.every(edit => edit.originalSha === 'original'));
+  assert.equal(new Date(edits.find(edit => edit.original.id === '1').edits.endedAt).toISOString(), '2026-09-05T08:35:00.000Z');
+  assert.equal(new Date(edits.find(edit => edit.original.id === '2').edits.startedAt).toISOString(), '2026-09-05T08:35:00.000Z');
+});
+
+test('Activity does not claim first use when the history lookup fails or tracking is pending', async () => {
+  for (const pendingCount of [0, 1]) {
+    const h = activityHarness([], (message, callback) => {
+      if (message.payload?.startDate === '0001-01-01') callback({ ok: false, error: { message: 'History unavailable' } });
+      else callback({ ok: true, data: { configured: true, recent: [], pendingCount, pendingWrites: [] } });
+    });
+    await h.loadSelectedTimes();
+    assert.equal(h.renderActivity().querySelector('.activity-empty').querySelector('p').textContent, 'No time in this range.');
+  }
 });

@@ -36,9 +36,8 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/background/service-worker.js',
   'src/background/task-load.js',
   'src/config/github-app.js',
-  'src/content/elastic-timeline-editor.css',
-  'src/content/elastic-timeline-editor.js',
   'src/content/github.js',
+  'src/content/task-timeline-component.js',
   'src/domain/bulk-time.js',
   'src/domain/local-settings.js',
   'src/domain/records.js',
@@ -68,11 +67,13 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/storage/chrome-store.js',
   'src/styles/github-primer.css',
   'src/styles/page-tabs.css',
+  'src/styles/running-status.css',
   'src/tasks/tasks.css',
   'src/tasks/tasks.html',
   'src/tasks/tasks.js',
   'src/times/times.css',
   'src/times/times.html',
+  'src/ui/running-status.js',
 ];
 
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {

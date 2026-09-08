@@ -45,7 +45,7 @@ Check that:
 - **Contents: Read and write** is granted;
 - an organization approval is not still pending.
 
-Use **Choose repository access on GitHub** to review the App installation, then return to Settings. Clockoli checks again automatically; use the visible Retry action if monitoring times out or reports a transient error.
+Use **Grant repository access** to review the App installation, then return to Settings. Clockoli checks again automatically; use the visible Retry action if monitoring times out or reports a transient error.
 
 ### Repository validation fails
 
@@ -224,13 +224,17 @@ Downloads use the currently loaded report, date range, facets, and local rates. 
 
 Clockoli blocks transitions that could strand active or pending work. Stop active timers and synchronize or resolve every pending entry first.
 
-### Disconnect did not revoke GitHub access
+### Signing out did not revoke GitHub access
 
-**Disconnect this browser** removes local sign-in. Revoking Clockoli user authorization, changing the GitHub App installation, and deleting repository data are separate GitHub/administrative actions.
+**Sign out on this browser** removes local sign-in. **Revoke GitHub sign-in** opens GitHub's authorization settings, where you can remove Clockoli's sign-in approval. Changing the GitHub App installation and deleting repository data are separate GitHub/administrative actions.
+
+**Clear all local Clockoli data** removes local settings, credentials and unsynced local state. Stop running timers and finish synchronization before clearing. Repository data and GitHub sign-in approval are not deleted.
 
 ### Settings import did not reconnect GitHub
 
 This is intentional. The JSON backup excludes credentials and applies only display and billing preferences. Repository coordinates are reference-only and never switch the active destination.
+
+Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
 
 ## Collecting a useful bug report
 

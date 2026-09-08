@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
+const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+
+test('content-script favicon URLs are exposed as extension resources', () => {
+  assert.ok(manifest.permissions.includes('favicon'));
+  assert.ok(manifest.web_accessible_resources.some(entry => entry.matches.includes('<all_urls>') && entry.resources.includes('_favicon/*')));
+});
 
 test('GitHub page cannot reach or synthesize privileged panel controls', () => {
   assert.match(source, /attachShadow\(\{ mode: 'closed' \}\)/);

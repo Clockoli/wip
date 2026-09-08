@@ -142,7 +142,7 @@ npm test
 npm run check
 ```
 
-Timeline changes belong in `packages/elastic-timeline-editor/`. Run `npm run build:timeline` to regenerate the checked-in content-script IIFE and CSS under `src/content/`.
+Timeline changes belong in `packages/task-timeline-component/`. Run `npm run build:timeline` to regenerate the checked-in TaskTimeline + Clockoli adapter artifact under `src/content/`.
 
 `npm run check` validates the Manifest V3 package inventory, referenced files, security invariants, and JavaScript syntax.
 
@@ -160,6 +160,6 @@ src/reports/      analytics and export page
 src/services/     tracking, sync, repository, and reporting services
 src/storage/      extension-origin IndexedDB adapter
 src/tasks/        recently tracked work page
-packages/elastic-timeline-editor/  timeline source, build, unit, E2E, and package tests
+packages/task-timeline-component/ vendored TaskTimeline, Clockoli adapter, build, unit, E2E, and package tests
 test/             Clockoli Node tests
 ```

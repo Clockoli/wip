@@ -173,14 +173,19 @@ export function validateEntry(entry) {
 }
 
 export function applyActiveStartEdit(active, startedAt, now = new Date()) {
+  return applyActiveEdits(active, { startedAt }, now);
+}
+
+export function applyActiveEdits(active, edits = {}, now = new Date()) {
   validateActiveTimer(active);
-  const nextStart = toIso(startedAt), updatedAt = toIso(now);
+  const nextStart = toIso(edits.startedAt ?? active.startedAt), updatedAt = toIso(now);
   if (new Date(nextStart).getTime() > new Date(updatedAt).getTime()) throw new Error('Active timer start must not be in the future');
   return validateActiveTimer({
     ...active,
     entryDate: localDateInTimezone(nextStart, active.timezone),
     startedAt: nextStart,
     createdAt: nextStart,
+    description: String(edits.description ?? active.description ?? '').slice(0, 2000),
     updatedAt,
   });
 }

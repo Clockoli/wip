@@ -34,12 +34,16 @@
   let fullWidthPopupOpen = false;
   let timelineWindowTimer = null;
   let timelineView = null;
+  let timelineViewMode = 'timeline';
+  let timelineGraphicViewMode = 'timeline';
   let timelineInstance = null;
   let timelineWindow = null;
   let timelineEntriesById = new Map();
   let timelineQueueIndicator = null;
-  let timelineSaving = false;
+
   let timelineOptimisticEdits = new Map();
+  const timelineOptimisticEditGenerations = new Map();
+  const timelineOptimisticEditStates = new WeakMap();
   const timelineQueuedOperationIds = new Map();
   const timelineQueueAcceptances = new Set();
   let timelineQueueAcceptanceSequence = 0;
@@ -54,7 +58,9 @@
 
   let menuOpen = false, menuScrollTop = 0;
   let navigationOpen = false;
-  let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
+  let descriptionDraft = null;
+  const timelineDescriptionDrafts = new Map();
+  let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
   let recent = [];
   let recentLoaded = false;
   let recentFresh = false;
@@ -69,19 +75,30 @@
   let timesStartDate = '';
   let timesEndDate = '';
   let timesFilter = '';
+  let timesHasTrackedTime = null;
   let bulkDraft = '';
   let bulkMutation = false;
+  let bulkOpen = false;
+  const ACTIVITY_HISTORY_RANGE = { startDate: '0001-01-01', endDate: '9999-12-31' };
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
   const inlineBoundaryLinks = new Map();
+  const inlineGroupSaves = new Map();
   let errorText = '';
   let errorCode = '';
   let todayReportDate = '';
-  let summaryFrames = [];
-  let summaryLabel = null;
-  let summaryTotalValue = null;
-  let summaryIndex = 0;
-  let summaryElapsedMs = 0;
+  let summaryUpdatedAt = 0;
+  let summaryActive = null;
+  let connectionError = null;
+  let compactSurface = null;
+  let popupReturnFocus = null;
+  let popupFocusPending = false;
+
+  const LONG_ENTRY_HOURS = 12;
+  const HOUR_MS = 3_600_000;
+  const PANEL_TICK_MS = 1_000;
+  const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
+  const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
 
   function normalizeTaskUrl(value) {
@@ -117,18 +134,65 @@
     }
     return result;
   }
+
+  function siteFavicon(value, className = '') {
+    const image = el('img');
+    image.className = `site-favicon${className ? ` ${className}` : ''}`;
+    image.alt = '';
+    image.width = 20;
+    image.height = 20;
+    image.referrerPolicy = 'no-referrer';
+    try {
+      image.src = siteFaviconUrl(value);
+    }
+    catch { image.hidden = true; }
+    image.addEventListener('error', () => { image.hidden = true; }, { once: true });
+    return image;
+  }
+
+  function siteFaviconUrl(value) {
+    const base = extensionResourceUrl('/_favicon/');
+    const pageUrl = taskUrlOf(value);
+    if (!base || !pageUrl) return '';
+    try {
+      const favicon = new URL(base);
+      favicon.searchParams.set('pageUrl', pageUrl);
+      favicon.searchParams.set('size', '32');
+      return favicon.href;
+    } catch { return ''; }
+  }
   function taskFromUrl(value, title = '') {
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
   function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
-  function projectNameForUrl(url, projects = []) {
+  function activeDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    const id = active.id || active.startedAt;
+    return descriptionDraft && descriptionDraft.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+      ? descriptionDraft.value
+      : timelineOptimisticEdits.get(id)?.description ?? active.description ?? '';
+  }
+
+  function savedActiveDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    return timelineOptimisticEdits.get(active.id || active.startedAt)?.description ?? active.description ?? '';
+  }
+  function normalizedDescription(value) {
+    return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+  }
+  function retireActiveDescriptionDraft(active, value) {
+    const id = active?.id || active?.startedAt;
+    if (descriptionDraft?.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+        && normalizedDescription(descriptionDraft.value) === value) descriptionDraft = null;
+  }
+  function projectNameForUrl(url, projects = [], otherProjectName = 'Other') {
     const candidate = String(url || '').toLowerCase();
     for (const project of projects || []) {
       if ((project.substrings || []).some(substring => candidate.includes(String(substring).toLowerCase()))) return project.name;
     }
-    return 'Other';
+    return String(otherProjectName || 'Other');
   }
   function projectRowId(name) { return `project:${String(name).toLowerCase()}`; }
 
@@ -177,7 +241,7 @@
       if (!Number.isSafeInteger(previousSeconds) || previousSeconds < 0) break;
       const beforePrevious = previous.previousElementSibling;
       const previousTimestamp = previousBody.querySelector?.('.clockoli-timeline-range-start')
-        || previousBody.querySelector?.('relative-time, time-ago');
+        || previousBody.querySelector?.('.clockoli-commit-timestamp') || previousBody.querySelector?.('relative-time, time-ago');
       if (previousTimestamp) firstTimestamp = previousTimestamp;
       total += previousSeconds;
       previous.remove();
@@ -209,7 +273,9 @@
       if (!body) continue;
       const item = body.closest?.('.TimelineItem, .Timeline-Item')
         || body.closest?.('.js-timeline-item, [data-testid="timeline-item"]') || body;
-      const timestamp = body.querySelector?.('relative-time, time-ago');
+      const originalTimestamp = body.querySelector?.('relative-time, time-ago');
+      const timestamp = originalTimestamp ? el('a', undefined, 'clockoli-commit-timestamp') : null;
+      if (timestamp) { timestamp.href = commitUrl.href; timestamp.append(originalTimestamp); }
       const summary = el('span', undefined, 'clockoli-timeline-summary');
       Object.assign(summary.style, {
         display: 'inline-flex', alignItems: 'center', gap: '4px', minHeight: '24px',
@@ -477,7 +543,7 @@
   function updateTaskAnimation() {
     if (popupMode || timesMode) return;
     if (!actionAnimationReady) return;
-    const running = document.hidden !== true && sameTask(taskFromLocation(), pageState.active);
+    const running = motionPreference?.matches !== false && document.hidden !== true && sameTask(taskFromLocation(), pageState.active);
     if (running === actionAnimationRunning) return;
     actionAnimationRunning = running;
     clearInterval(actionAnimationTimer); actionAnimationTimer = null;
@@ -535,6 +601,14 @@
     return svg;
   }
 
+  function clockoliWordmark() {
+    const image = el('img');
+    image.className = 'clockoli-wordmark';
+    image.src = extensionResourceUrl('src/assets/clockoli-with-text.svg') || '';
+    image.alt = 'Clockoli';
+    return image;
+  }
+
   function formatElapsed(startedAt) {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
     return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
@@ -568,17 +642,65 @@
     throw new Error('Choose a valid custom date range.');
   }
 
-  function summarySeconds(frame) {
-    let seconds = Math.max(0, Number(frame?.seconds) || 0);
-    const activeDate = pageState.active?.entryDate;
-    if (activeDate && activeDate >= frame.startDate && activeDate <= frame.endDate) seconds += Math.max(0, Math.floor((Date.now() - new Date(pageState.active.startedAt).getTime()) / 1000));
-    return seconds;
+  function applyTrackedTotals(data) {
+    pageState = { ...pageState, todayTrackedMs: data?.todayTrackedMs ?? null, weekTrackedMs: data?.weekTrackedMs ?? null,
+      remoteWriteConfirmed: data?.remoteWriteConfirmed === true, summaryError: data?.summaryError ?? null };
+    summaryUpdatedAt = Date.now(); summaryActive = pageState.active;
+    todayReportDate = data?.reportDate || localDateValue();
   }
+
+  function trackedTotalText(key) {
+    const value = pageState[key];
+    if (value == null || pageState.summaryError || todayReportDate !== localDateValue()) return '…';
+    const today = localDateValue(), monday = new Date(`${today}T12:00:00`);
+    monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
+    const startDate = key === 'todayTrackedMs' ? today : localDateValue(monday);
+    const activeDate = summaryActive?.entryDate;
+    const ticking = activeDate && activeDate >= startDate && activeDate <= today
+      && summaryActive?.startedAt === pageState.active?.startedAt && sameTask(summaryActive, pageState.active);
+    return formatDuration((value + (ticking ? Math.max(0, Date.now() - summaryUpdatedAt) : 0)) / 1000);
+  }
+
+  function confirmLongEntry(active = pageState.active) {
+    const hours = active ? (Date.now() - new Date(active.startedAt).getTime()) / HOUR_MS : 0;
+    return hours <= LONG_ENTRY_HOURS || confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`);
+  }
+
 
   function reconcileQueuedInlineOperations(pendingIds) {
     let completed = false;
     for (const id of inlineQueuedOperationIds) if (!pendingIds.has(id)) { inlineQueuedOperationIds.delete(id); completed = true; }
     if (completed) void refreshRecent(true).catch(setError);
+  }
+
+  function trackTimelineQueuedOperation(operationId, entryId, generation = null) {
+    if (!operationId) return;
+    const tracked = timelineQueuedOperationIds.get(operationId);
+    if (generation && tracked && typeof tracked !== 'string' && tracked.entryId === entryId) {
+      tracked.generations.add(generation);
+      return;
+    }
+    timelineQueuedOperationIds.set(operationId, generation
+      ? { entryId, generations: new Set([generation]) }
+      : entryId);
+  }
+
+  function reconcileTimelineQueuedOperations(pendingIds) {
+    for (const [id, tracked] of timelineQueuedOperationIds) {
+      if (pendingIds.has(id)) continue;
+      timelineQueuedOperationIds.delete(id);
+      const entryId = typeof tracked === 'string' ? tracked : tracked.entryId;
+      const generations = typeof tracked === 'string' ? null : tracked.generations;
+      for (const generation of generations || []) {
+        const generationState = timelineOptimisticEditStates.get(generation);
+        if (generationState) generationState.settled = true;
+      }
+      const currentGeneration = timelineOptimisticEditGenerations.get(entryId);
+      if (!generations || generations.has(currentGeneration)) {
+        timelineOptimisticEdits.delete(entryId);
+        timelineOptimisticEditGenerations.delete(entryId);
+      }
+    }
   }
 
 
@@ -597,26 +719,18 @@
   function applyMenuData(data, fresh = true) {
     recent = Array.isArray(data) ? data : data?.recent ?? [];
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
-    const fallbackTodaySeconds = Array.isArray(data)
-      ? recent.filter(entry => (entry.entryDate || entry.startedAt?.slice(0, 10)) === todayReportDate).reduce((sum, entry) => sum + (Number(entry.durationSeconds) || 0), 0)
-      : Math.max(0, Number(data?.todaySeconds) || 0);
-    summaryFrames = Array.isArray(data?.summaries) && data.summaries.length ? data.summaries : [
-      { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
-    ];
     if (!Array.isArray(data)) {
       pageState = reconcileTimelineAcceptedActive({
         ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
         pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
       });
+      applyTrackedTotals(data);
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
-      for (const [entryId] of timelineOptimisticCompletions) {
-        if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
-      }
-      for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
-        timelineQueuedOperationIds.delete(id);
-        timelineOptimisticEdits.delete(entryId);
-      }
+      reconcileTimelineQueuedOperations(pendingIds);
+    }
+    for (const [entryId] of timelineOptimisticCompletions) {
+      if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
     }
     refreshTimelineQueueIndicator();
     recentLoaded = true;
@@ -624,16 +738,15 @@
   }
 
   function applyPageState(data) {
+    if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
     pageState = reconcileTimelineAcceptedActive(data);
+    applyTrackedTotals(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
-    for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
-      timelineQueuedOperationIds.delete(id);
-      timelineOptimisticEdits.delete(entryId);
-    }
-    if (!recentLoaded && Array.isArray(data?.recent) && data.recent.length) applyMenuData(data.recent, false);
+    reconcileTimelineQueuedOperations(pendingIds);
+    if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
       recentFresh = true;
@@ -716,11 +829,13 @@
       item.id, item.status, item.stage, item.operation, item.conflictReason,
     ]);
     return JSON.stringify({
-      configured: state?.configured !== false,
+      configured: state?.configured ?? null,
       active: active ? [active.id, active.taskUrl, active.taskTitle, active.startedAt, active.description] : null,
       pendingCount: state?.pendingCount ?? 0,
       pending,
       projects: state?.projects ?? [],
+      showQueueDiagnostics: state?.showQueueDiagnostics === true,
+      remoteWriteConfirmed: state?.remoteWriteConfirmed, summaryError: state?.summaryError,
     });
   }
 
@@ -741,6 +856,7 @@
         applyPageState(data);
         if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
+        else updatePanelClocks();
       } catch { schedulePendingRefresh(); }
     }, 500);
     pendingRefreshTimer?.unref?.();
@@ -857,10 +973,23 @@
     return null;
   }
 
+  function isolateShadowHost(node, { fullWidth = false } = {}) {
+    const set = (property, value) => node.style?.setProperty?.(property, value, 'important');
+    set('all', 'initial');
+    set('box-sizing', 'border-box');
+    set('position', fullWidth ? 'fixed' : 'relative');
+    set('display', fullWidth ? 'block' : 'inline-flex');
+    if (fullWidth) {
+      set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
+      set('width', '100vw'); set('pointer-events', 'none');
+    } else set('align-items', 'center');
+  }
+
   function mountInHeader() {
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
+      isolateShadowHost(root);
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
@@ -869,6 +998,7 @@
     if (!target) return false;
     if (!root) {
       root = el('div'); root.id = ROOT_ID;
+      isolateShadowHost(root);
       shadow = root.attachShadow({ mode: 'closed' });
     }
     if (root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) target.actions.insertBefore(root, target.anchor);
@@ -885,9 +1015,21 @@
     return node;
   }
 
-  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
+  function saveCheckButton(label, handler) {
+    const save = button('✓', 'save-check', async (_event, node) => {
+      node.disabled = true;
+      try { await handler(); }
+      catch (error) { setError(error); }
+      finally { node.disabled = false; }
+    });
+    save.title = label; save.setAttribute('aria-label', label);
+    save.addEventListener('mousedown', event => event.preventDefault());
+    return save;
+  }
 
-  function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
+  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+
+  function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
   function originalRecord(entry) { return { id: entry.id, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
@@ -988,7 +1130,18 @@
     const loadId = ++recentLoadId, request = recentRequest();
     recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
     let load;
-    load = send(request).then(data => {
+    load = send(request).then(async data => {
+      if (timesMode && loadId === recentLoadId && data?.configured) {
+        let hasTrackedTime = Boolean(data.recent?.length || data.remoteWriteConfirmed || data.pendingCount);
+        if (!hasTrackedTime) {
+          try {
+            const history = await send({ type: 'LOAD_TIMES', payload: ACTIVITY_HISTORY_RANGE });
+            hasTrackedTime = history?.configured && Array.isArray(history.recent)
+              ? Boolean(history.recent.length || history.remoteWriteConfirmed || history.pendingCount) : null;
+          } catch { hasTrackedTime = null; }
+        }
+        if (loadId === recentLoadId) timesHasTrackedTime = hasTrackedTime;
+      }
       if (loadId === recentLoadId) applyMenuData(data, true);
       return data;
     }).finally(() => {
@@ -1038,13 +1191,12 @@
     try {
       const result = await send({ type: 'DELETE_ENTRY', payload: { path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
       activeInlineKey = null;
-      const entryDate = entry.entryDate || entry.startedAt.slice(0, 10);
-      summaryFrames = summaryFrames.map(frame => entryDate >= frame.startDate && entryDate <= frame.endDate
-        ? { ...frame, seconds: Math.max(0, frame.seconds - entry.durationSeconds) } : frame);
+      pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
       const reconciled = reconcileDeletedFile(entry, result?.entries);
       if (reconciled) {
         recent = reconciled;
         renderUi();
+        void send({ type: 'GET_PAGE_STATE', refresh: true }).then(data => { applyTrackedTotals(data); updatePanelClocks(); }).catch(setError);
       } else {
         recentLoaded = false;
         await refreshState(false, true);
@@ -1075,12 +1227,7 @@
     return changed;
   }
 
-  function activateTimeInput(key, boundary, part) {
-    if (activeInlineKey && activeInlineKey !== key) {
-      cancelActiveInlineDraft(key); renderUi();
-      globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.[boundary === 'start' ? 'startPicker' : 'stopPicker']?.focus(part));
-      return;
-    }
+  function activateTimeInput(key) {
     activeInlineKey = key;
   }
 
@@ -1110,8 +1257,13 @@
     } catch { return entry; }
   }
 
+  function recordsWithDrafts() {
+    const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
+    return [...recent.filter(entry => !drafts.some(draft => draft.id === entry.id && draft._path === entry._path)), ...drafts];
+  }
+
   function refreshOverlapWarnings() {
-    const overlaps = overlappingEntries(recent.map(entryWithInlineDraft));
+    const overlaps = overlappingEntries(recordsWithDrafts().map(entryWithInlineDraft));
     for (const [key, editor] of inlineEditors) editor.setOverlap?.(overlaps.has(key));
   }
 
@@ -1220,12 +1372,14 @@
     const range = el('div', undefined, 'inline-time-range entry-meta');
     const day = el('div', relativeDayLabel((draft?.start?.date || timestampParts(entry.startedAt, entry.timezone).date)), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
+    const unsaved = el('span', 'Unsaved', 'inline-unsaved'); unsaved.hidden = !draft;
     let startPicker, stopPicker, save, cancel;
     const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
       const previous = inlineDrafts.get(key) || {};
-      const value = { ...previous, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
+      const value = { ...previous, entry, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
       inlineDrafts.set(key, value); activeInlineKey ||= key;
+      unsaved.hidden = false;
       if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
       day.textContent = relativeDayLabel(value.start.date);
       try {
@@ -1239,15 +1393,16 @@
       updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
     startPicker = timePicker('Start', entry.startedAt, draft?.start, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: part => activateTimeInput(key, 'start', part),
+      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: () => activateTimeInput(key),
     });
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: part => activateTimeInput(key, 'stop', part),
+      compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: () => activateTimeInput(key),
     });
-    const saveGroup = async () => {
-      const group = inlineDrafts.get(key)?.group || key;
+    const saveGroupOnce = async group => {
       try {
-        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey, value]) => {
+        const submittedDrafts = new Map([...inlineDrafts.entries()].filter(([, value]) => value.group === group)
+          .map(([draftKey, value]) => [draftKey, JSON.parse(JSON.stringify(value))]));
+        const entries = [...submittedDrafts.entries()].map(([draftKey, value]) => {
           const editor = inlineEditors.get(draftKey), target = editor?.entry;
           if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
           const task = value.metadataActive ? taskFromUrl(value.taskUrl, value.taskTitle) : taskFromUrl(taskUrlOf(target), taskTitleOf(target));
@@ -1257,22 +1412,42 @@
           const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
           return changed ? { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
-        const savedKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+        const savedKeys = new Set(submittedDrafts.keys());
         if (!entries.length) {
           clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
         const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { entries } });
         if (queued?.operationId) inlineQueuedOperationIds.add(queued.operationId);
         applyQueuedInlineEntries(entries);
-        clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
-        activeInlineKey = null; renderUi();
+        const acceptedKeys = new Set();
+        for (const draftKey of savedKeys) {
+          const current = inlineDrafts.get(draftKey), submitted = submittedDrafts.get(draftKey);
+          if (current && JSON.stringify(current) === JSON.stringify(submitted)) { inlineDrafts.delete(draftKey); acceptedKeys.add(draftKey); }
+        }
+        clearBoundaryLinks(acceptedKeys);
+        activeInlineKey = inlineDrafts.has(key) ? key : null; renderUi();
         void refreshState(false, false).catch(setError);
       } catch (error) { setError(error); }
+    };
+    const saveGroup = () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      const pending = inlineGroupSaves.get(group);
+      if (pending) return pending;
+      let operation;
+      operation = saveGroupOnce(group).finally(() => {
+        if (inlineGroupSaves.get(group) === operation) {
+          inlineGroupSaves.delete(group);
+          renderUi();
+        }
+      });
+      inlineGroupSaves.set(group, operation);
+      return operation;
     };
     const cancelGroup = async () => { clearInlineGroup(key); activeInlineKey = null; renderUi(); };
     save = button('Save time', 'link-button inline-save', saveGroup);
     cancel = button('Cancel', 'link-button inline-cancel', cancelGroup);
     save.hidden = !draft; cancel.hidden = !draft;
+    save.disabled = inlineGroupSaves.has(draft?.group || key);
     const onEnter = event => {
       if (event.key !== 'Enter' || !event.isTrusted) return;
       event.preventDefault(); void saveGroup();
@@ -1281,15 +1456,16 @@
     const separator = el('span', '-', 'inline-time-separator'), timeLine = el('div', undefined, 'inline-time-line');
     timeLine.append(startPicker.node, separator, stopPicker.node); range.append(timeLine);
     inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft, saveGroup, cancelGroup });
-    return { node: range, day, duration, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+    return { node: range, day, duration, unsaved, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
   }
 
   function beginMetadataEdit(entry) {
     const key = entryKey(entry);
-    if (activeInlineKey && activeInlineKey !== key) cancelActiveInlineDraft(key); else activeInlineKey = key;
+    activeInlineKey = key;
     const existing = inlineDrafts.get(key);
     inlineDrafts.set(key, {
       ...(existing || {
+        entry,
         start: { ...timestampParts(entry.startedAt, entry.timezone), timestamp: entry.startedAt },
         stop: { ...timestampParts(entry.endedAt, entry.timezone), timestamp: entry.endedAt },
         group: key,
@@ -1308,7 +1484,11 @@
       if (active && !warning.parentElement) record.prepend(warning); else if (!active) warning.remove();
     };
     setOverlap(overlapping);
-    record.append(taskResult(entry, 'entry-record-task-result'));
+    const identity = el('div', undefined, 'entry-record-task-identity');
+    identity.append(siteFavicon(entry, 'entry-record-favicon'), taskResult(entry, 'entry-record-task-result'));
+    record.append(identity);
+    const title = record.querySelector('.task-title');
+    if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
     const timeRow = el('div', undefined, 'entry-time-row'); let day;
     if (entry._pending) {
       day = el('div', relativeDayLabel(timestampParts(entry.startedAt, entry.timezone).date), 'entry-day');
@@ -1321,17 +1501,28 @@
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(loadingRecent || !recentFresh);
-      for (const control of [inline.save, inline.cancel, remove]) control.disabled = disabled;
+      inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
+      for (const control of [inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
       if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
+      timeRow.append(inline.unsaved);
       if (draft?.metadataActive) {
         const metadata = el('div', undefined, 'inline-metadata-editor');
         const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = 'url'; urlField.required = true; urlField.value = draft.taskUrl;
         const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
         const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
-        const field = (labelText, input) => { const label = el('label', labelText); label.append(input); return label; };
-        metadata.append(field('Task URL', urlField), field('Task title (optional)', titleField), field('Description', descriptionField));
         const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
+        const field = (labelText, input, saveLabel) => {
+          const label = el('label', labelText), control = el('span', undefined, 'save-field');
+          const save = saveCheckButton(saveLabel, async () => { updateMetadata(); await inline.saveGroup(); });
+          save.disabled = disabled || inlineGroupSaves.has(draft.group || key);
+          control.append(input, save); label.append(control); return label;
+        };
+        metadata.append(
+          field('Task URL', urlField, 'Save task URL'),
+          field('Task title (optional)', titleField, 'Save task title'),
+          field('Description', descriptionField, 'Save description'),
+        );
         for (const input of [urlField, titleField, descriptionField]) {
           input.disabled = disabled; input.addEventListener('input', updateMetadata);
           input.addEventListener('keydown', event => { if (event.key === 'Enter' && event.isTrusted) { event.preventDefault(); updateMetadata(); void inline.saveGroup(); } });
@@ -1343,17 +1534,25 @@
         record.append(description);
       }
     }
-    record.prepend(day, timeRow);
+    if (timesMode) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
 
   function recentGroup(entries, overlaps) {
     const group = el('article', undefined, 'entry');
+    const date = entries[0].entryDate || timestampParts(entries[0].startedAt, entries[0].timezone).date;
+    const relative = relativeDayLabel(date);
+    const marker = new Date(`${date}T12:00:00Z`);
+    const label = ['Today', 'Yesterday'].includes(relative) ? relative
+      : `${marker.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })}, ${marker.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })}`;
+    const header = el('div', undefined, 'entry-date-header');
+    header.append(el('h2', label), el('span', formatDuration(entries.reduce((sum, entry) => sum + entry.durationSeconds, 0)), 'entry-day-total'));
+    group.append(header);
     for (const entry of entries) group.append(recentRecord(entry, overlaps));
     return group;
   }
 
-  function renderRecent(container, sourceEntries = recent) {
+  function renderRecent(container, sourceEntries = recent, emptyState = null) {
     inlineEditors.clear();
     const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode ? 'Tracked time' : 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
@@ -1366,15 +1565,17 @@
     refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
-    if (!sourceEntries.length) { container.append(el('div', timesMode ? 'No time entries match this period and filter.' : 'No entries in the configured display window.', 'muted')); return; }
+    if (emptyState) container.append(emptyState);
+    if (!sourceEntries.length) { if (!emptyState) container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
     const entries = [...sourceEntries].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
-    let group = [];
+    const groups = new Map();
     for (const entry of entries) {
-      if (group.length && !sameTask(group[0], entry)) { container.append(recentGroup(group, overlaps)); group = []; }
-      group.push(entry);
+      const date = entry.entryDate || timestampParts(entry.startedAt, entry.timezone).date;
+      if (!groups.has(date)) groups.set(date, []);
+      groups.get(date).push(entry);
     }
-    if (group.length) container.append(recentGroup(group, overlaps));
+    for (const [, group] of [...groups].sort(([left], [right]) => right.localeCompare(left))) container.append(recentGroup(group, overlaps));
   }
 
   function renderPendingConflicts(container) {
@@ -1421,7 +1622,7 @@
 
   async function loadSelectedTimes() {
     const loadId = ++timesLoadId;
-    cancelActiveInlineDraft(); recentLoaded = false; errorText = ''; renderUi();
+    recentLoaded = false; errorText = ''; renderUi();
     try { await refreshRecent(true); }
     catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
   }
@@ -1453,16 +1654,27 @@
     const result = el('section', undefined, 'times-results');
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
-      const matches = query ? recent.filter(entry => taskUrlOf(entry).toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...recent];
+      const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
+      const entries = recordsWithDrafts();
+      const matches = query ? entries.filter(entry => taskUrlOf(entry).toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
+      let empty = null;
+      if (!matches.length) {
+        empty = el('div', undefined, 'activity-empty');
+        const firstUse = !recent.length && timesHasTrackedTime === false;
+        empty.append(el('p', recent.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
+        if (recent.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
+        else if (!firstUse) empty.append(button('Add time', 'secondary', async () => { bulkOpen = true; bulk.open = true; input.focus(); }));
+      }
       if (query && inlineDrafts.size) {
         const visible = new Set(matches.map(entryKey));
-        for (const entry of recent) if (inlineDrafts.has(entryKey(entry)) && !visible.has(entryKey(entry))) matches.push(entry);
+        for (const entry of drafts) if (!visible.has(entryKey(entry))) matches.push(entry);
       }
-      renderRecent(result, matches);
+      renderRecent(result, matches, empty);
     };
     filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered(); body.append(result);
     const bulk = el('details', undefined, 'bulk-time');
-    const summary = el('summary', 'Add time in bulk'); bulk.append(summary);
+    bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
+    const summary = el('summary', 'Add time'); bulk.append(summary);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
     const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
     input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
@@ -1506,7 +1718,7 @@
       && new Date(entry.startedAt).getTime() < now && new Date(entry.endedAt).getTime() > windowStart)
       .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
     const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
-    if (pageState.active && new Date(pageState.active.startedAt).getTime() < now) {
+    if (pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
       entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
     }
     return entries.map(entry => {
@@ -1523,13 +1735,16 @@
     const items = entries.map((entry) => {
       const stableId = entry.id || `${entry._path}:${entry._index}`;
       const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
-      const projectName = pageState.projects?.length ? projectNameForUrl(taskUrlOf(entry), pageState.projects) : '';
+      const projectName = projectNameForUrl(taskUrlOf(entry), pageState.projects, pageState.otherProjectName);
       byId.set(id, entry);
       return {
         id,
-        rowId: pageState.projects?.length ? projectRowId(projectName) : 'tracked',
+        rowId: projectRowId(projectName),
         url: taskUrlOf(entry),
         title: taskTitleOf(entry) || taskUrlOf(entry) || 'Untitled task',
+        faviconUrl: siteFaviconUrl(entry),
+        description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
+        savedDescription: entry.description || '',
         startedAt: Math.max(historyStart, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
@@ -1547,13 +1762,22 @@
     return { items, rows, byId };
   }
 
-  function popupTimelineRows(entries) {
-    if (!pageState.projects?.length) return [{ id: 'tracked', title: '' }];
-    const rows = pageState.projects.map(project => ({ id: projectRowId(project.name), title: project.name }));
-    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects) === 'Other')) {
-      rows.push({ id: projectRowId('Other'), title: 'Other' });
+  function rememberTimelineDescription(entry, value) {
+    if (entry._active) {
+      descriptionDraft = { id: entry.id || entry.startedAt, taskUrl: taskUrlOf(entry), value };
+      return;
     }
-    return rows;
+    if (normalizedDescription(value) === normalizedDescription(entry.description)) timelineDescriptionDrafts.delete(entry.id);
+    else timelineDescriptionDrafts.set(entry.id, value);
+  }
+
+  function popupTimelineRows(entries) {
+    const rows = (pageState.projects || []).map(project => ({ id: projectRowId(project.name), title: project.name }));
+    const otherProjectName = String(pageState.otherProjectName || 'Other');
+    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects, otherProjectName) === otherProjectName)) {
+      rows.push({ id: projectRowId(otherProjectName), title: otherProjectName });
+    }
+    return rows.length ? rows : [{ id: projectRowId(otherProjectName), title: otherProjectName }];
   }
 
   function timelineTrackActionDisabled() {
@@ -1562,11 +1786,18 @@
       || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
   }
 
+  function timelineNow() {
+    const activeStart = new Date(pageState.active?.startedAt).getTime();
+    return Number.isFinite(activeStart) ? Math.max(Date.now(), activeStart) : Date.now();
+  }
+
   function refreshMountedTimeline() {
-    if (!timelineInstance || !timelineWindow) return false;
+    if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
+    timelineWindow = { ...timelineWindow, now: timelineNow() };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows });
+    timelineInstance.update({ items, rows, now: timelineWindow.now });
+    refreshCompactSurface();
     return true;
   }
 
@@ -1587,33 +1818,39 @@
     if (!Number.isFinite(startedAtMs)) return false;
     timelineScrollToRightPending = true;
     if (!timelineInstance || !timelineWindow || !timelineView) return false;
-    const now = Math.max(Date.now(), startedAtMs + 1);
-    const span = Math.max(1, timelineView.end - timelineView.start);
+    const now = Math.max(Date.now(), startedAtMs);
     timelineWindow = { ...timelineWindow, now };
-    timelineView = { start: now - span, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows, now, view: timelineView });
+    if (timelineGraphicViewMode === 'calendar') {
+      timelineInstance.update({ items, rows, now });
+    } else {
+      const span = Math.max(1, timelineView.end - timelineView.start);
+      timelineView = { start: now - span, end: now, focusedAt: now };
+      timelineInstance.update({ items, rows, now, view: timelineView });
+    }
     timelineInstance.scrollToEnd();
+    refreshCompactSurface();
     timelineScrollToRightPending = false;
     return true;
   }
 
-  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '' } = {}) {
+  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '', previousDescription } = {}) {
     const startedAt = new Date().toISOString();
     const previousActive = pageState.active;
     const acceptanceId = beginTimelineQueueAcceptance();
-    const context = { acceptanceId, acceptedActive: null, previousActive, startedAt };
+    const previousDescriptionDraft = descriptionDraft ? { ...descriptionDraft } : null;
+    const context = { acceptanceId, acceptedActive: null, previousActive, previousDescriptionDraft, startedAt };
     try {
       if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
         timelineOptimisticCompletions.set(previousActive.id, {
-          ...previousActive, endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt, _pending: true, _optimisticCompletion: true,
         });
       }
       const acceptedActive = {
         id: `timeline-local:${identity || taskUrlOf(task)}:${acceptanceId}`,
         taskUrl: taskUrlOf(task), taskTitle: taskTitleOf(task) || '',
-        startedAt, _pending: true,
+        startedAt, entryDate: localDateValue(new Date(startedAt)), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, _pending: true,
       };
       context.acceptedActive = acceptedActive;
       timelineAcceptedActive = acceptedActive;
@@ -1626,6 +1863,7 @@
       timelineAcceptedActive = null;
       if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
       pageState = { ...pageState, active: previousActive };
+      descriptionDraft = previousDescriptionDraft;
       finishTimelineQueueAcceptance(acceptanceId);
       throw error;
     }
@@ -1635,6 +1873,7 @@
     timelineAcceptedActive = null;
     if (context.previousActive?.id) timelineOptimisticCompletions.delete(context.previousActive.id);
     pageState = { ...pageState, active: context.previousActive };
+    descriptionDraft = context.previousDescriptionDraft;
     if (!refreshMountedTimeline()) renderUi();
   }
 
@@ -1648,15 +1887,17 @@
       if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
       if (sameTask(task, pageState.active)) return;
       const switching = Boolean(pageState.active);
-      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task' });
+      if (switching && !confirmLongEntry()) return;
+      const previousDescription = activeDescriptionValue();
+      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task', previousDescription });
       const result = await send(switching
-        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' }
+        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '', description: previousDescription }
         : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
       const active = switching ? result?.active : result;
       if (active?.id) {
         timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+        if (!refreshMountedTimeline()) renderUi();
       }
       void refreshMountedTimelineState().catch(setError);
     } catch (error) {
@@ -1683,11 +1924,13 @@
 
   function refreshTimelineQueueIndicator() {
     if (!timelineQueueIndicator) return;
-    const count = timelineQueueSize();
-    timelineQueueIndicator.hidden = count === 0;
-    timelineQueueIndicator.setAttribute('aria-label', count > 0 ? `${count} timeline changes queued for GitHub` : '');
-    const label = timelineQueueIndicator.querySelector('.timeline-queue-count');
-    if (label) label.textContent = count > 0 ? String(count) : '';
+    const status = globalThis.ClockoliRecovery.describeSaveStatus({ ...pageState, pendingCount: timelineQueueSize(),
+      saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight });
+    const empty = status.label === 'Saved to GitHub';
+    timelineQueueIndicator.hidden = false;
+    timelineQueueIndicator.classList.toggle('empty', empty);
+    timelineQueueIndicator.setAttribute('aria-hidden', String(empty));
+    timelineQueueIndicator.textContent = status.label;
   }
 
   function applyTimelineOptimisticEntry(entry, edits) {
@@ -1702,7 +1945,45 @@
     });
   }
 
+  function rollbackTimelineOptimisticEdit(entry, generation, restoreRecent) {
+    const state = timelineOptimisticEditStates.get(generation);
+    if (!state) return;
+    state.rejected = true;
+    if (timelineOptimisticEditGenerations.get(entry.id) !== generation) return;
+    let restore = state;
+    while (restore.previousGeneration) {
+      const previousState = timelineOptimisticEditStates.get(restore.previousGeneration);
+      if (previousState?.settled) {
+        if (restoreRecent && restore.previousEntry) {
+          recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+        }
+        timelineOptimisticEdits.delete(entry.id);
+        timelineOptimisticEditGenerations.delete(entry.id);
+        return;
+      }
+      if (!previousState?.rejected) break;
+      restore = previousState;
+    }
+    if (restoreRecent && restore.previousEntry) {
+      recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+    }
+    if (restore.hadPreviousOptimisticEdit) timelineOptimisticEdits.set(entry.id, restore.previousOptimisticEdit);
+    else timelineOptimisticEdits.delete(entry.id);
+    if (restore.previousGeneration) timelineOptimisticEditGenerations.set(entry.id, restore.previousGeneration);
+    else timelineOptimisticEditGenerations.delete(entry.id);
+  }
+
   async function queueCalendarEntry(entry, edits) {
+    const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path);
+    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
+    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
+    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+    const optimisticEditGeneration = {};
+    timelineOptimisticEditStates.set(optimisticEditGeneration, {
+      previousEntry, hadPreviousOptimisticEdit, previousOptimisticEdit,
+      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+    });
+    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
     timelineOptimisticEdits.set(entry.id, edits);
     applyTimelineOptimisticEntry(entry, edits);
     refreshMountedTimeline();
@@ -1715,8 +1996,9 @@
         path: entry._path, originalSha: entry._sha, index: entry._index,
         original: originalRecord(entry), edits,
       } });
-      if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
     } catch (error) {
+      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, true);
       recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
       throw error;
     } finally {
@@ -1727,15 +2009,58 @@
     void refreshMountedTimelineState().catch(setError);
   }
 
+  async function queueActiveEdit(entry, requestedEdits, diagnostic = 'Edit running timer') {
+    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
+    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
+    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+    const optimisticEditGeneration = {};
+    timelineOptimisticEditStates.set(optimisticEditGeneration, {
+      previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
+      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+    });
+    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+    const edits = { ...(previousOptimisticEdit || {}), ...requestedEdits };
+    timelineOptimisticEdits.set(entry.id, edits);
+    refreshMountedTimeline();
+    const acceptanceId = beginTimelineQueueAcceptance();
+    refreshTimelineQueueIndicator();
+    recordTimelineQueueDiagnostic(`${diagnostic}: accepted locally and queued for GitHub.`);
+    if (!timelineInstance) renderUi();
+    try {
+      const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+        original: { id: entry.id, startedAt: entry.startedAt },
+        ...(edits.startedAt !== undefined ? { startedAt: edits.startedAt } : {}),
+        ...(edits.description !== undefined ? { description: edits.description } : {}),
+      } });
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+    } catch (error) {
+      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, false);
+      recordTimelineQueueDiagnostic(`${diagnostic}: local queue rejected the change.`);
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
+  function queueActiveStartEdit(entry, startedAt) {
+    return queueActiveEdit(entry, { startedAt: new Date(startedAt).toISOString() }, 'Adjust timer start');
+  }
+
+  async function queueActiveDescriptionEdit(entry, description) {
+    await queueActiveEdit(entry, { description }, 'Edit running timer description');
+    retireActiveDescriptionDraft(entry, description);
+  }
+
   async function queueTimelineEntryDelete(entry) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
+    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
     const previousRecent = recent;
-    const previousSummaries = summaryFrames;
-    const entryDate = entry.entryDate || entry.startedAt.slice(0, 10);
+    const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path));
     timelineOptimisticCompletions.delete(entry.id);
-    summaryFrames = summaryFrames.map(frame => entryDate >= frame.startDate && entryDate <= frame.endDate
-      ? { ...frame, seconds: Math.max(0, frame.seconds - entry.durationSeconds) } : frame);
+    pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
     const acceptanceId = beginTimelineQueueAcceptance();
     refreshTimelineQueueIndicator();
     refreshMountedTimeline();
@@ -1747,7 +2072,7 @@
       if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
     } catch (error) {
       recent = previousRecent;
-      summaryFrames = previousSummaries;
+      pageState = { ...pageState, ...previousTotals };
       recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
       throw error;
     } finally {
@@ -1756,77 +2081,103 @@
       if (!refreshMountedTimeline()) renderUi();
     }
     void refreshMountedTimelineState().catch(setError);
+    return true;
+  }
+
+  async function stopTimelineEntry(activeEntry) {
+    if (!activeEntry || timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return false;
+    try {
+      if (!confirmLongEntry(activeEntry)) return false;
+      const result = await send({ type: 'STOP', description: activeDescriptionValue(activeEntry) });
+      if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
+      if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
+      timelineOptimisticCompletions.set(result.entry.id, {
+        ...result.entry,
+        _pending: Boolean(result.pending),
+        _optimisticCompletion: true,
+      });
+      pageState = { ...pageState, active: null };
+      refreshMountedTimeline();
+      await refreshState(false, false);
+      return true;
+    } catch (error) { setError(error); throw error; }
+    finally { finishTimelineStop(); }
+  }
+
+  async function restartTimelineEntry(entry) {
+    if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!confirmLongEntry()) return false;
+    timelineStartInFlight = true;
+    refreshMountedTimeline();
+    try {
+    const previousDescription = activeDescriptionValue();
+    const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
+    try {
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
+      if (result?.active) {
+        timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
+        pageState = { ...pageState, active: timelineAcceptedActive };
+        if (!refreshMountedTimeline()) renderUi();
+      }
+    } catch (error) {
+      rollbackTimelineStart(startContext);
+      setError(error); throw error;
+    } finally {
+      finishTimelineQueueAcceptance(startContext.acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+    } finally {
+      timelineStartInFlight = false;
+      refreshMountedTimeline();
+    }
+    return true;
   }
 
   function renderPopupTimeline() {
     const section = el('section', undefined, 'popup-timeline-section');
-    const createTimeline = globalThis.ElasticTimelineEditor?.createElasticTimeline;
+    const spinner = el('div', undefined, 'timeline-queue-spinner');
+    spinner.setAttribute('role', 'status');
+    timelineQueueIndicator = spinner;
+    section.append(spinner);
+    refreshTimelineQueueIndicator();
+    const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
     if (!createTimeline) {
       section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
       return section;
     }
     if (!recentLoaded && !timelineAcceptedActive) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
-    const now = Date.now(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
+    const now = timelineNow(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
     timelineWindow = { historyStart, now };
     timelineView ||= { start: defaultStart, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
-    const timelineShell = el('div', undefined, `timeline-shell${timelineSaving ? ' is-saving' : ''}`);
-    timelineShell.setAttribute('aria-busy', String(timelineSaving));
-    timelineShell.inert = timelineSaving;
-    const host = el('div', undefined, 'elastic-timeline-host'); timelineShell.append(host);
-    const spinner = el('div', undefined, 'timeline-queue-spinner');
-    spinner.setAttribute('role', 'status');
-    spinner.append(el('span', undefined, 'timeline-queue-wheel'), el('span', '', 'timeline-queue-count'));
-    timelineQueueIndicator = spinner;
-    section.append(spinner);
-    refreshTimelineQueueIndicator();
-    if (timelineSaving) {
-      const spinner = el('div', undefined, 'timeline-saving-spinner');
-      spinner.setAttribute('role', 'status'); spinner.setAttribute('aria-label', 'Saving timeline changes');
-      spinner.append(el('span', undefined, 'timeline-saving-wheel'));
-      timelineShell.append(spinner);
-    }
+    const timelineShell = el('div', undefined, 'timeline-shell');
+    const host = el('div', undefined, 'task-timeline-host'); timelineShell.append(host);
+    if (compactSurface) compactSurface.host = host;
     section.append(timelineShell);
     globalThis.requestAnimationFrame(() => {
       if (!host.isConnected) return;
-      timelineInstance = createTimeline(host, {
+      try {
+        timelineInstance = createTimeline(host, {
         items,
         rows,
         now,
-        // Clockoli records timestamps to the second. A one-second snap also
-        // defines the exact gap retained when neighbouring blocks touch.
-        snapMs: 1_000,
         view: timelineView,
-        onViewChange: view => { timelineView = view; },
+        viewMode: timelineGraphicViewMode,
+        onViewModeChange: mode => { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; },
+        onViewChange: view => { timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
-        onStop: async item => {
-          const activeEntry = timelineEntriesById.get(item.id);
-          if (!activeEntry || timelineDeleteInFlight || !beginTimelineStop()) return;
-          try {
-            const result = await send({ type: 'STOP', description: activeEntry?.description || '' });
-            if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
-            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
-            timelineOptimisticCompletions.set(result.entry.id, {
-              ...result.entry,
-              _pending: Boolean(result.pending),
-              _optimisticCompletion: true,
-            });
-            pageState = { ...pageState, active: null };
-            refreshMountedTimeline();
-            await refreshState(false, false);
-          } catch (error) { setError(error); throw error; }
-          finally { finishTimelineStop(); }
-        },
+        onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
-          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return;
+          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
           if (!entry._active) {
-            if (entry._pending) return;
-            await queueTimelineEntryDelete(entry);
-            return;
+            if (entry._pending) return false;
+            return queueTimelineEntryDelete(entry);
           }
-          if (!confirm('Delete this running timer without saving its tracked time?')) return;
+          if (!confirm('Delete this running timer without saving its tracked time?')) return false;
           timelineDeleteInFlight = true;
           const acceptanceId = beginTimelineQueueAcceptance();
           refreshTimelineQueueIndicator();
@@ -1845,34 +2196,26 @@
             timelineDeleteInFlight = false;
             refreshMountedTimeline();
           }
+          return true;
         },
-        onStart: async item => {
+        onStart: item => restartTimelineEntry(timelineEntriesById.get(item.id)),
+        onDescriptionInput: (item, value) => {
           const entry = timelineEntriesById.get(item.id);
-          if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return;
-          timelineStartInFlight = true;
-          refreshMountedTimeline();
-          try {
-          const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id });
-          try {
-            const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '' });
-            if (result?.active) {
-              timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
-              pageState = { ...pageState, active: timelineAcceptedActive };
-              refreshMountedTimelineAtRightEdge(result.active.startedAt || startContext.startedAt);
-            }
-          } catch (error) {
-            rollbackTimelineStart(startContext);
-            setError(error); throw error;
-          } finally {
-            finishTimelineQueueAcceptance(startContext.acceptanceId);
-            refreshTimelineQueueIndicator();
-            if (!refreshMountedTimeline()) renderUi();
+          if (!entry) return;
+          rememberTimelineDescription(entry, value);
+        },
+        onDescriptionCommit: async (item, value) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return false;
+          const description = normalizedDescription(value);
+          if (description === String(entry._active ? savedActiveDescriptionValue(entry) : entry.description || '').trim()) {
+            if (entry._active && description === normalizedDescription(entry.description)) retireActiveDescriptionDraft(entry, description);
+            return true;
           }
-          void refreshMountedTimelineState().catch(setError);
-          } finally {
-            timelineStartInFlight = false;
-            refreshMountedTimeline();
-          }
+          if (entry._active) await queueActiveDescriptionEdit(entry, description);
+          else await queueCalendarEntry(entry, { description });
+          if (normalizedDescription(timelineDescriptionDrafts.get(entry.id)) === description) timelineDescriptionDrafts.delete(entry.id);
+          return true;
         },
         onEditCommit: async edit => {
           const entry = timelineEntriesById.get(edit.id);
@@ -1880,27 +2223,7 @@
           if (entry._active) {
             if (edit.kind !== 'resize-left') return;
             try {
-              timelineOptimisticEdits.set(entry.id, { startedAt: new Date(edit.startedAt).toISOString() });
-              refreshMountedTimeline();
-              const acceptanceId = beginTimelineQueueAcceptance();
-              refreshTimelineQueueIndicator();
-              recordTimelineQueueDiagnostic('Adjust timer start: accepted locally and queued for GitHub.');
-              if (!timelineInstance) renderUi();
-              try {
-                const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
-                  original: { id: entry.id, startedAt: entry.startedAt },
-                  startedAt: new Date(edit.startedAt).toISOString(),
-                } });
-                if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
-              } catch (error) {
-                recordTimelineQueueDiagnostic('Adjust timer start: local queue rejected the change.');
-                throw error;
-              } finally {
-                finishTimelineQueueAcceptance(acceptanceId);
-                refreshTimelineQueueIndicator();
-                if (!refreshMountedTimeline()) renderUi();
-              }
-              void refreshMountedTimelineState().catch(setError);
+              await queueActiveStartEdit(entry, edit.startedAt);
             } catch (error) { setError(error); throw error; }
             return;
           }
@@ -1910,13 +2233,17 @@
               ? { startedAt: new Date(edit.startedAt).toISOString() }
               : { endedAt: new Date(edit.endedAt).toISOString() };
           try { await queueCalendarEntry(entry, edits); }
-          catch (error) {
-            timelineOptimisticEdits.delete(entry.id);
-            applyTimelineOptimisticEntry(entry, { startedAt: entry.startedAt, endedAt: entry.endedAt });
-            renderUi(); setError(error); throw error;
-          }
+          catch (error) { setError(error); throw error; }
         },
-      });
+        });
+        timelineInstance.scrollToEnd();
+      } catch (error) {
+        timelineInstance = null;
+        const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
+        timelineShell.replaceChildren(el('div', `Timeline cannot display invalid overlapping entries. Fix them in Activity. ${message}`, 'error'));
+        return;
+      }
+      refreshTimelineOverlaps();
       if (timelineScrollToRightPending) {
         timelineInstance.scrollToEnd();
         timelineScrollToRightPending = false;
@@ -1926,9 +2253,10 @@
   }
 
   function renderQueueDiagnostics() {
+    if (pageState.showQueueDiagnostics !== true) return null;
     if (!queueDiagnostics.length && !pageState.pendingWrites?.length) return null;
     const diagnostics = el('details', undefined, 'queue-diagnostics');
-    diagnostics.open = Boolean(pageState.pendingWrites?.length);
+    diagnostics.open = false;
     diagnostics.setAttribute('data-testid', 'queue-diagnostics');
     diagnostics.append(el('summary', `Queue diagnostics${pageState.pendingCount ? ` (${pageState.pendingCount})` : ''}`));
     const explanation = el('div', 'Local diagnostic log. Safe operation details only.', 'muted');
@@ -1943,8 +2271,247 @@
     return diagnostics;
   }
 
+  function taskTrackedText() {
+    if (!participantData?.complete || participantData.taskUrl !== taskUrlOf(taskFromLocation()) || !Array.isArray(participantData.participants)) return '';
+    const totals = participantData.participants.map(effectiveParticipantSeconds);
+    if (totals.some(value => value === null)) return '';
+    return `Tracked on this issue/PR: ${formatDuration(totals.reduce((sum, value) => sum + value, 0))}${participantData.participants.some(value => value.activeStartedAt) ? ' (includes running time)' : ''}`;
+  }
+
+  function appendTrackedTotals(parent, compact = false) {
+    for (const [key, label] of [['todayTrackedMs', 'Today'], ['weekTrackedMs', 'This week']]) {
+      const row = el('div', undefined, 'today-total');
+      const value = el('strong', trackedTotalText(key), 'today-total-value'); value.setAttribute('data-tracked-total', key);
+      row.append(el('span', `${label}${compact ? ' ·' : ':'}`), value); parent.append(row);
+    }
+  }
+
+  function updatePanelClocks() {
+    for (const scope of [shadow, fullWidthPopupShadow]) {
+      for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
+      for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) value.textContent = formatElapsed(pageState.active.startedAt);
+      for (const value of scope?.querySelectorAll?.('.task-tracked-total') ?? []) value.textContent = taskTrackedText();
+    }
+  }
+
+  function startPanelClock() {
+    clearInterval(tick);
+    tick = setInterval(() => {
+      if (!extensionContextActive) return;
+      updatePanelClocks();
+      if (timelineInstance && timelineWindow) {
+        timelineWindow = { ...timelineWindow, now: timelineNow() };
+        timelineInstance.update({ now: timelineWindow.now });
+        refreshTimelineOverlaps();
+      }
+      if (todayReportDate && todayReportDate !== localDateValue()) {
+        todayReportDate = ''; pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
+        void refreshState(true).catch(setError);
+      }
+    }, PANEL_TICK_MS);
+  }
+
+  function renderPanelFeedback(parent, { conflicts = true } = {}) {
+    if (conflicts) renderPendingConflicts(parent);
+    const diagnostics = renderQueueDiagnostics();
+    if (diagnostics) parent.append(diagnostics);
+    const failure = errorText ? { ...connectionError, message: errorText, code: errorCode } : pageState.summaryError;
+    if (!failure) return;
+    const description = globalThis.ClockoliRecovery.describeConnectionError(failure);
+    const error = el('div', undefined, 'error');
+    error.append(el('strong', description.headline), el('div', description.detail));
+    const recovery = globalThis.ClockoliRecovery.actionFor(description.action === 'choose' ? 'repository_access_required' : failure.code || 'error');
+    if (recovery?.label) error.append(button(recovery.label, 'secondary wide', async () => {
+      if (recovery.kind === 'retry') {
+        if (pageState.configured != null) { errorText = ''; errorCode = ''; connectionError = null; }
+        renderUi();
+        try { await refreshState(true); await refreshRecent(true); }
+        catch (retryError) { setError(retryError); }
+        return;
+      }
+      await send({ type: 'OPEN_OPTIONS' }); closeMenu();
+    }));
+    parent.prepend(error);
+  }
+
+  function focusPopupAction() {
+    if (!popupFocusPending) return;
+    globalThis.requestAnimationFrame?.(() => {
+      const action = fullWidthPopupShadow?.querySelector?.('[data-strip-primary]');
+      if (!popupFocusPending || !action || action.disabled) return;
+      action.focus({ preventScroll: true }); popupFocusPending = false;
+    });
+  }
+
+  function applyCompactViewMode() {
+    if (!compactSurface) return;
+    const list = timelineViewMode === 'list';
+    compactSurface.timeline.hidden = list;
+    compactSurface.overlaps.hidden = list;
+    compactSurface.today.hidden = !list;
+    for (const control of fullWidthPopupShadow?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+      control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
+    }
+  }
+
+  function setTimelineViewMode(mode) {
+    if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+    timelineViewMode = mode;
+    if (mode !== 'list') {
+      timelineGraphicViewMode = mode;
+      timelineInstance?.setViewMode(mode);
+    }
+    applyCompactViewMode();
+  }
+
+  function refreshCompactSurface() {
+    if (!compactSurface) return;
+    const { strip, today, feedback } = compactSurface;
+    const activeElement = fullWidthPopupShadow?.activeElement || shadow?.activeElement;
+    const actionKey = activeElement?.getAttribute?.('data-panel-action');
+    const scroll = fullWidthPopupShadow?.querySelector?.('.full-width-popup');
+    const scrollTop = scroll?.scrollTop;
+    const diagnosticsOpen = feedback.querySelector?.('details')?.open;
+    const active = pageState.active, current = taskFromLocation();
+    const activeIdentity = active ? String(active.id || active.startedAt) : '';
+    const preserveActiveDescription = Boolean(active && activeElement?.classList?.contains('strip-description')
+      && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
+    if (!preserveActiveDescription) {
+      strip.replaceChildren();
+      strip.setAttribute('data-active-id', activeIdentity); strip.setAttribute('data-active-url', active ? taskUrlOf(active) : '');
+    }
+    if (active && !preserveActiveDescription) {
+      strip.append(siteFavicon(active, 'strip-favicon'));
+      const copy = el('div', undefined, 'strip-task-copy');
+      copy.append(taskResult(active, 'strip-task'));
+      const description = el('input');
+      description.className = 'strip-description';
+      description.maxLength = 2000;
+      description.placeholder = 'Description (optional)';
+      description.value = activeDescriptionValue(active);
+      const descriptionField = el('div', undefined, 'save-field strip-description-field');
+      const saveDescription = saveCheckButton('Save description', async () => {
+        const value = normalizedDescription(description.value);
+        if (value === String(savedActiveDescriptionValue(active)).trim()) return;
+        await queueActiveDescriptionEdit(active, value);
+        updateDescriptionSave();
+      });
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === String(savedActiveDescriptionValue(active)).trim(); };
+      updateDescriptionSave();
+      description.addEventListener('input', () => {
+        descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+        updateDescriptionSave();
+      });
+      description.addEventListener('blur', async () => {
+        const value = normalizedDescription(description.value);
+        if (value === String(savedActiveDescriptionValue(active)).trim()) {
+          if (value === normalizedDescription(active.description)) retireActiveDescriptionDraft(active, value);
+          return;
+        }
+        try { await queueActiveDescriptionEdit(active, value); updateDescriptionSave(); }
+        catch (error) { setError(error); }
+      });
+      descriptionField.append(description, saveDescription); copy.append(descriptionField);
+      strip.append(copy, el('span', formatElapsed(active.startedAt), 'running-elapsed'));
+      const stop = button('Stop and save', 'danger', async () => {
+        try { await stopTimelineEntry({ ...pageState.active, description: description.value }); } catch {}
+      });
+      stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
+      stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      strip.append(stop);
+    }
+    if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
+      const track = button('Track this task', 'primary popup-timeline-track', async () => {
+        if (timelineTrackActionDisabled()) return;
+        try { await trackCurrentTimelineTask(); } catch {}
+      });
+      if (active) { track.textContent = 'Switch to this task'; track.className = 'secondary popup-timeline-track'; }
+      else track.setAttribute('data-strip-primary', 'true');
+      track.setAttribute('data-testid', 'popup-timeline-track'); track.setAttribute('data-panel-action', 'track');
+      track.disabled = timelineTrackActionDisabled(); strip.append(track);
+    }
+    if (preserveActiveDescription) {
+      const elapsed = strip.querySelector('.running-elapsed'); if (elapsed) elapsed.textContent = formatElapsed(active.startedAt);
+      const stop = strip.querySelector('[data-panel-action="stop"]');
+      if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      const track = strip.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
+    }
+    today.replaceChildren();
+    const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
+    const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
+      .filter(entry => entry.entryDate === localDateValue() && entry.endedAt)
+      .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+    for (const entry of entries) {
+      const row = el('div', undefined, 'entry-record today-record');
+      const identity = el('div', undefined, 'today-task-identity');
+      const task = taskResult(entry, 'today-task');
+      const title = task.querySelector?.('a') || task.children[task.children.length - 1];
+      if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
+      const description = el('input');
+      description.className = 'today-description';
+      description.maxLength = 2000;
+      description.placeholder = 'Add description';
+      description.value = timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? '';
+      const descriptionField = el('span', undefined, 'save-field today-description-field');
+      const saveDescription = saveCheckButton('Save description', async () => commitDescription());
+      const savedDescription = () => normalizedDescription(timelineOptimisticEdits.get(entry.id)?.description ?? entry.description);
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === savedDescription(); };
+      const commitDescription = async () => {
+        const value = normalizedDescription(description.value);
+        if (value === savedDescription()) { timelineDescriptionDrafts.delete(entry.id); updateDescriptionSave(); return; }
+        try {
+          await queueCalendarEntry(entry, { description: value });
+          if (normalizedDescription(timelineDescriptionDrafts.get(entry.id)) === value) timelineDescriptionDrafts.delete(entry.id);
+          updateDescriptionSave();
+        } catch (error) { setError(error); }
+      };
+      description.addEventListener('input', () => { timelineDescriptionDrafts.set(entry.id, description.value); updateDescriptionSave(); });
+      description.addEventListener('change', commitDescription);
+      description.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); description.blur(); }
+      });
+      updateDescriptionSave(); descriptionField.append(description, saveDescription);
+      identity.append(siteFavicon(entry, 'today-favicon'), task);
+      task.append(descriptionField);
+      const range = el('span', `${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${wallTime(timestampParts(entry.endedAt, entry.timezone))}`, 'entry-time-range');
+      const duration = el('span', formatDuration(Math.max(0, new Date(entry.endedAt) - new Date(entry.startedAt)) / 1000), 'inline-duration');
+      const resume = button('▶ Continue', 'secondary', async () => { try { await restartTimelineEntry(entry); } catch {} });
+      resume.setAttribute('data-panel-action', `continue:${entry.id}`);
+      resume.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      row.append(identity, range, duration);
+      if (entry._pending || timelineOptimisticEdits.has(entry.id)) {
+        const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; row.append(pending);
+      }
+      row.append(resume); today.append(row);
+    }
+    if (!entries.length) today.append(el('div', recentLoaded ? 'No completed entries today.' : 'Loading today’s entries…', 'muted'));
+    feedback.replaceChildren(); renderPanelFeedback(feedback);
+    const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
+    refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();
+    if (actionKey) {
+      const replacement = [...strip.querySelectorAll?.('[data-panel-action]') ?? [], ...today.querySelectorAll?.('[data-panel-action]') ?? []]
+        .find(node => node.getAttribute('data-panel-action') === actionKey);
+      replacement?.focus?.({ preventScroll: true });
+    }
+    if (scroll && scrollTop !== undefined) scroll.scrollTop = scrollTop;
+    focusPopupAction();
+  }
+
+  function refreshTimelineOverlaps() {
+    if (!compactSurface) return;
+    const { host, overlaps } = compactSurface;
+    const blocks = host?.querySelectorAll?.('[data-overlap="true"]') ?? [];
+    const entries = [...blocks].map(block => timelineEntriesById.get(block.getAttribute('data-item-id'))).filter(Boolean);
+    overlaps.replaceChildren();
+    if (!entries.length) return;
+    const warning = el('div', undefined, 'overlap-warning');
+    warning.append(el('span', `Overlapping entries: ${entries.map(entry => `${taskTitleOf(entry) || taskUrlOf(entry)} (${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${entry._active ? 'now' : wallTime(timestampParts(entry.endedAt, entry.timezone))})`).join('; ')}. `));
+    const link = el('a', 'Fix in Activity'); link.href = extensionResourceUrl('src/times/times.html');
+    link.addEventListener('click', event => { if (!event.isTrusted) return; event.preventDefault(); void send({ type: 'OPEN_TIMES' }).catch(setError); });
+    warning.append(link); overlaps.append(warning);
+  }
+
   function renderMenu({ compact = popupMode, onClose = null } = {}) {
-    let elapsedValue = null;
     const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
     const updateScrollState = event => {
       if (event?.isTrusted) menuScrollTop = menu.scrollTop;
@@ -1954,29 +2521,36 @@
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
-    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliMark(22), el('strong', 'Clockoli'));
+    const pageNavigation = el('nav', undefined, 'header-navigation');
+    pageNavigation.setAttribute('aria-label', 'Clockoli pages');
+    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliWordmark());
     const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks'; tasks.prepend(icon('checklist', TASKS_PATH));
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
     const activity = button('Activity', 'reports-button', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); }); activity.title = 'Open activity'; activity.prepend(icon('history', ACTIVITY_PATH));
-    const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
-    headerActions.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    const settings = button('Settings', 'reports-button settings-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Open settings'; settings.prepend(icon('gear', GEAR_PATH));
+    pageNavigation.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    headerActions.append(pageNavigation);
+    if (compact && onClose) {
+      const modeButton = (mode, label) => {
+        const control = button(label, 'reports-button timeline-view-button', () => setTimelineViewMode(mode));
+        control.setAttribute('data-timeline-view-mode', mode);
+        control.setAttribute('aria-pressed', String(timelineViewMode === mode));
+        return control;
+      };
+      const timelineMode = modeButton('timeline', 'Timeline');
+      const calendarMode = modeButton('calendar', 'Calendar');
+      const listMode = modeButton('list', 'List');
+      const viewModes = el('div', undefined, 'timeline-view-modes');
+      viewModes.setAttribute('role', 'group');
+      viewModes.setAttribute('aria-label', 'Timeline view');
+      viewModes.append(timelineMode, calendarMode, listMode);
+      headerActions.prepend(viewModes);
+    }
     if (compact) {
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
         close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
         const timelineToolbarEnd = el('div', undefined, 'timeline-toolbar-end');
-        if (pageState.configured) {
-          const track = button('Track this task', 'primary popup-timeline-track', async (event, node) => {
-            if (timelineTrackActionDisabled()) return;
-            node.disabled = true;
-            try { await trackCurrentTimelineTask(); } catch {}
-          });
-          track.title = 'Start tracking this task';
-          track.setAttribute('aria-label', 'Track this task');
-          track.setAttribute('data-testid', 'popup-timeline-track');
-          track.disabled = timelineTrackActionDisabled();
-          timelineToolbarEnd.append(track);
-        }
         timelineToolbarEnd.append(close);
         header.append(brand, headerActions, timelineToolbarEnd);
       } else header.append(brand, headerActions);
@@ -1985,11 +2559,22 @@
       header.append(headerActions); menu.append(header);
     }
     const body = el('div', undefined, 'menu-body');
-    if (!pageState.configured) {
+    if (pageState.configured == null) {
+      if (!errorText) body.append(el('p', 'Loading…', 'muted'));
+    } else if (!pageState.configured) {
       body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
       body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
-      if (compact) body.append(renderPopupTimeline());
+      if (compact) {
+        const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list');
+        const feedback = el('div', undefined, 'panel-feedback'), overlaps = el('div', undefined, 'timeline-overlaps');
+        compactSurface = { strip, today, feedback, overlaps, timeline: null, body, host: null };
+        const timeline = renderPopupTimeline();
+        compactSurface.timeline = timeline;
+        body.append(strip);
+        body.append(timeline, overlaps, today, feedback);
+        refreshCompactSurface();
+      }
       const current = taskFromLocation();
       if (pageState.active) {
         if (!compact) {
@@ -1998,14 +2583,15 @@
         tracking.append(document.createTextNode('Tracking '), el('strong', same ? 'this' : 'another'), document.createTextNode(' task'));
         body.append(tracking);
         body.append(taskResult(active, 'active-task-result'));
-        elapsedValue = el('div', formatElapsed(active.startedAt), 'elapsed'); body.append(elapsedValue);
-        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
+        body.append(el('div', formatElapsed(active.startedAt), 'elapsed running-elapsed'));
+        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = activeDescriptionValue(active); label.append(description); body.append(label);
+        description.addEventListener('input', () => { descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value }; });
         const switchToCurrent = Boolean(!same && current);
+        const makeStop = switchToCurrent => {
         const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save', switchToCurrent ? 'primary wide' : 'danger wide', async (event, node) => {
           if (timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return;
           try {
-            const hours = (Date.now() - new Date(active.startedAt).getTime()) / 3600000;
-            if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
+            if (!confirmLongEntry(active)) return;
             node.disabled = true;
             const actionRoute = popupMode ? null : `${location.protocol}//${location.hostname}${location.pathname}`;
             const recentWasFresh = !switchToCurrent && recentFresh;
@@ -2024,6 +2610,9 @@
         });
         stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
+        };
+        makeStop(false);
+        if (switchToCurrent) makeStop(true);
         }
       } else if (!compact) {
         const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
@@ -2048,7 +2637,7 @@
             if (active?.id) {
               timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
               pageState = { ...pageState, active: timelineAcceptedActive };
-              refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+              if (!refreshMountedTimeline()) renderUi();
             }
             await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
@@ -2062,52 +2651,16 @@
         body.append(startButton);
         if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
-      renderPendingConflicts(body);
       if (!compact) {
-      const today = el('div', undefined, 'today-total');
-      summaryIndex = 0; summaryElapsedMs = 0;
-      const currentSummary = () => summaryFrames[summaryIndex] ?? { label: 'Today', seconds: 0, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 };
-      const updateSummary = () => {
-        const frame = currentSummary();
-        if (summaryLabel) summaryLabel.textContent = `${frame.label}:`;
-        if (summaryTotalValue) summaryTotalValue.textContent = recentLoaded && todayReportDate === localDateValue() ? formatDuration(summarySeconds(frame)) : '…';
-      };
-      today.append(summaryLabel = el('span'), summaryTotalValue = el('strong', undefined, 'today-total-value'));
-      updateSummary(); body.append(today);
-      clearInterval(tick); tick = setInterval(() => {
-        if (!extensionContextActive) return;
-        const todayDate = localDateValue();
-        if (elapsedValue && pageState.active) elapsedValue.textContent = formatElapsed(pageState.active.startedAt);
-        if (todayReportDate && todayReportDate !== todayDate) {
-          clearInterval(tick); tick = null; recentLoaded = false; summaryTotalValue.textContent = '…';
-          void refreshState(false, true).catch(setError); return;
-        }
-        summaryElapsedMs += 1000;
-        if (summaryElapsedMs >= currentSummary().displayMs) {
-          summaryIndex = (summaryIndex + 1) % summaryFrames.length; summaryElapsedMs = 0;
-        }
-        updateSummary();
-      }, 1000);
+      renderPendingConflicts(body);
+      appendTrackedTotals(body);
+      const taskTotal = el('div', taskTrackedText(), 'task-tracked-total muted'); body.append(taskTotal);
       renderRecent(body);
       const more = el('div', undefined, 'more-times'); more.append(button('View activity', 'secondary', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); })); body.append(more);
       }
     }
-    const diagnostics = renderQueueDiagnostics();
-    if (diagnostics) body.append(diagnostics);
-    if (errorText) {
-      const error = el('div', errorText, 'error'), recovery = globalThis.ClockoliRecovery.actionFor(errorCode), label = recovery?.label || '';
-      if (label) error.append(button(label, 'secondary wide', async () => {
-        if (recovery.kind === 'retry') {
-          errorText = ''; errorCode = ''; renderUi();
-          try { await refreshState(true, true); }
-          catch (retryError) { setError(retryError); }
-          return;
-        }
-        await send({ type: 'OPEN_OPTIONS' }); closeMenu();
-      }));
-      body.prepend(error);
-    }
-    menu.append(body); return menu;
+    if (!compact || !pageState.configured) renderPanelFeedback(body, { conflicts: false });
+    menu.append(body); startPanelClock(); return menu;
   }
 
   function renderNavigationMenu() {
@@ -2128,51 +2681,52 @@
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
-  function timelineEditorStylesheet() {
-    const href = extensionResourceUrl('src/content/elastic-timeline-editor.css');
-    if (!href) return null;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    return link;
-  }
-
   function mountFullWidthPopup() {
     if (fullWidthPopupRoot?.isConnected) return;
     fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
     fullWidthPopupRoot.className = 'full-width-popup-surface';
+    isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
     fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
     (document.body || document.documentElement).append(fullWidthPopupRoot);
   }
 
   function closeFullWidthPopup() {
     fullWidthPopupOpen = false;
+    compactSurface = null; popupFocusPending = false;
+    clearInterval(tick); tick = null;
     clearInterval(timelineWindowTimer); timelineWindowTimer = null;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     timelineView = null;
     fullWidthPopupRoot?.remove(); fullWidthPopupRoot = null; fullWidthPopupShadow = null;
     renderUi();
+    const target = popupReturnFocus?.isConnected ? popupReturnFocus : shadow?.querySelector?.('.trigger-main');
+    target?.focus?.({ preventScroll: true }); popupReturnFocus = null;
   }
 
   function renderFullWidthPopup(style) {
     if (!fullWidthPopupOpen || !fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected) return;
+    compactSurface = null;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     const surface = el('section', undefined, 'full-width-popup');
-    const timelineStylesheet = timelineEditorStylesheet();
-    if (!timelineStylesheet) return;
     surface.append(renderMenu({ compact: true, onClose: () => closeFullWidthPopup() }));
-    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), timelineStylesheet, surface);
+    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
+    focusPopupAction();
   }
 
   async function toggleFullWidthPopup() {
     fullWidthPopupOpen = !fullWidthPopupOpen;
     if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
+    popupReturnFocus = shadow?.activeElement || document.activeElement; popupFocusPending = true;
     mountFullWidthPopup(); renderUi();
     clearInterval(timelineWindowTimer);
     timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
     timelineWindowTimer?.unref?.();
     try {
+      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
+      if (!fullWidthPopupOpen) return false;
+      renderUi();
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
+      if (!fullWidthPopupOpen) return false;
       if (pageState.configured) await refreshRecent(true);
       else renderUi();
     } catch (error) { setError(error); }
@@ -2181,73 +2735,274 @@
 
   function renderUi() {
     if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
+    if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
+        || descriptionDraft.taskUrl !== taskUrlOf(pageState.active))) descriptionDraft = null;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
-    const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && timelineInstance && timelineWindow);
-    clearInterval(tick); tick = null; summaryLabel = null; summaryTotalValue = null;
+    const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
+    clearInterval(tick); tick = null;
     if (!preserveFullWidthTimeline) {
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
     const style = el('style', `
-      :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
-      * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
-      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .clockoli-mark { display:block; width:22px; height:22px; flex:none; transform-origin:center } .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
-      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,#fff); border-inline:1px solid var(--borderColor-muted,#d1d9e0b3) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,#59636e); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
-      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:#ff2d55; color:#fff; box-shadow:0 0 0 2px #ff2d5533 }
-      a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
-      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .section-head { margin-bottom:7px }
-      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      :host, :where(:host > :not(style)) {
+        /* One side gutter for every full-width panel row, so they stay aligned as the viewport grows. */
+        --clockoli-gutter: clamp(16px, 2.5vw, 32px);
+        --ck-fg: var(--fgColor-default,#1f2328);
+        --ck-border: var(--borderColor-default,#d1d9e0);
+        --ck-button-default-bg-rest: var(--button-default-bgColor-rest,#f6f8fa);
+        --ck-fg-muted: var(--fgColor-muted,#59636e);
+        --ck-button-default-bg-hover: var(--button-default-bgColor-hover,#eff2f5);
+        --ck-button-default-bg-active: var(--button-default-bgColor-active,#e6eaef);
+        --ck-button-default-bg-selected: var(--button-default-bgColor-selected,#e6eaef);
+        --ck-focus: var(--focus-outlineColor,#0969da);
+        --ck-bg: var(--bgColor-default,#fff);
+        --ck-shadow: var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f);
+        --ck-border-muted: var(--borderColor-muted,#d1d9e0b3);
+        --ck-control-border-rest: var(--control-borderColor-rest,#d1d9e0);
+        --ck-control-bg-rest: var(--control-bgColor-rest,#f6f8fa);
+        --ck-control-fg-rest: var(--control-fgColor-rest,#25292e);
+        --ck-bg-muted: var(--bgColor-muted,#f6f8fa);
+        --ck-bg-attention: var(--bgColor-attention-muted,#fff8c5);
+        --ck-accent: var(--fgColor-accent,#0969da);
+        --ck-success: var(--fgColor-success,#1f883d);
+        --ck-button-default-border-rest: var(--button-default-borderColor-rest,#d1d9e0);
+        --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#25292e);
+        --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#818b981a);
+        --ck-button-default-bg-disabled: var(--button-default-bgColor-disabled,#eff2f5);
+        --ck-button-default-fg-disabled: var(--button-default-fgColor-disabled,#818b98);
+        --ck-button-primary-border-rest: var(--button-primary-borderColor-rest,#1f232826);
+        --ck-button-primary-bg-rest: var(--button-primary-bgColor-rest,#1f883d);
+        --ck-button-primary-fg-rest: var(--button-primary-fgColor-rest,#fff);
+        --ck-button-primary-bg-hover: var(--button-primary-bgColor-hover,#1c8139);
+        --ck-button-primary-bg-active: var(--button-primary-bgColor-active,#197935);
+        --ck-button-primary-border-disabled: var(--button-primary-borderColor-disabled,#95d8a6);
+        --ck-button-primary-bg-disabled: var(--button-primary-bgColor-disabled,#95d8a6);
+        --ck-button-primary-fg-disabled: var(--button-primary-fgColor-disabled,#fffc);
+        --ck-button-danger-border-rest: var(--button-danger-borderColor-rest,#d1d9e0);
+        --ck-button-danger-bg-rest: var(--button-danger-bgColor-rest,#f6f8fa);
+        --ck-button-danger-fg-rest: var(--button-danger-fgColor-rest,#d1242f);
+        --ck-button-danger-border-hover: var(--button-danger-borderColor-hover,#1f232826);
+        --ck-button-danger-bg-hover: var(--button-danger-bgColor-hover,#cf222e);
+        --ck-button-danger-fg-hover: var(--button-danger-fgColor-hover,#fff);
+        --ck-button-danger-border-active: var(--button-danger-borderColor-active,#1f232826);
+        --ck-button-danger-bg-active: var(--button-danger-bgColor-active,#a40e26);
+        --ck-button-danger-fg-active: var(--button-danger-fgColor-active,#fff);
+        --ck-button-danger-bg-disabled: var(--button-danger-bgColor-disabled,#eff2f5);
+        --ck-button-danger-fg-disabled: var(--button-danger-fgColor-disabled,#d1242f80);
+        --ck-button-invisible-border-rest: var(--button-invisible-borderColor-rest,#fff0);
+        --ck-button-invisible-bg-rest: var(--button-invisible-bgColor-rest,#fff0);
+        --ck-button-invisible-icon-rest: var(--button-invisible-iconColor-rest,#59636e);
+        --ck-button-invisible-border-hover: var(--button-invisible-borderColor-hover,#fff0);
+        --ck-button-invisible-bg-hover: var(--button-invisible-bgColor-hover,#818b981a);
+        --ck-button-invisible-icon-hover: var(--button-invisible-iconColor-hover,#59636e);
+        --ck-button-invisible-bg-active: var(--button-invisible-bgColor-active,#818b9826);
+        --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#fff0);
+        --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#fff0);
+        --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#818b98);
+        --ck-button-invisible-fg-rest: var(--button-invisible-fgColor-rest,#25292e);
+        --ck-border-danger: var(--borderColor-danger-muted,#ff818266);
+        --ck-bg-danger: var(--bgColor-danger-muted,#ffebe9);
+        --ck-danger: var(--fgColor-danger,#d1242f);
+        --ck-bg-editable: var(--bgColor-default,#fff0);
+        --ck-control-fg-placeholder: var(--control-fgColor-placeholder,#59636e);
+        --ck-control-bg-hover: var(--control-bgColor-hover,#eff2f5);
+        --ck-control-bg-active: var(--control-bgColor-active,#e6eaef);
+        --ck-control-border-disabled: var(--control-borderColor-disabled,#818b981a);
+        --ck-control-bg-disabled: var(--control-bgColor-disabled,#eff2f5);
+        --ck-control-fg-disabled: var(--control-fgColor-disabled,#818b98);
+        --ck-shadow-overlay: var(--shadow-floating-small,0 12px 30px #1f23284d);
+        --ck-transparent: var(--button-invisible-bgColor-rest,#fff0);
+        /* Shadow DOM blocks selectors, but inherited custom properties still cross
+           the host boundary. Pin every Primer-compatible style value locally so a site
+           such as vc.ru cannot restyle Clockoli. */
+        --fgColor-default:#1f2328; --fgColor-muted:#59636e; --fgColor-accent:#0969da; --fgColor-danger:#d1242f;
+        --bgColor-default:#fff; --bgColor-muted:#f6f8fa; --bgColor-inset:#f6f8fa; --bgColor-attention-muted:#fff8c5; --bgColor-danger-muted:#ffebe9;
+        --borderColor-default:#d1d9e0; --borderColor-muted:#d1d9e0b3; --borderColor-danger-muted:#ff818266; --focus-outlineColor:#0969da;
+        --button-default-borderColor-rest:#d1d9e0; --button-default-bgColor-rest:#f6f8fa; --button-default-fgColor-rest:#25292e;
+        --button-default-bgColor-hover:#eff2f5; --button-default-bgColor-active:#e6eaef; --button-default-bgColor-selected:#e6eaef;
+        --button-default-borderColor-disabled:#818b981a; --button-default-bgColor-disabled:#eff2f5; --button-default-fgColor-disabled:#818b98;
+        --button-primary-borderColor-rest:#1f232826; --button-primary-bgColor-rest:#1f883d; --button-primary-fgColor-rest:#fff;
+        --button-primary-bgColor-hover:#1c8139; --button-primary-bgColor-active:#197935; --button-primary-borderColor-disabled:#95d8a6; --button-primary-bgColor-disabled:#95d8a6; --button-primary-fgColor-disabled:#fffc;
+        --button-danger-borderColor-rest:#d1d9e0; --button-danger-bgColor-rest:#f6f8fa; --button-danger-fgColor-rest:#d1242f;
+        --button-danger-borderColor-hover:#1f232826; --button-danger-bgColor-hover:#cf222e; --button-danger-fgColor-hover:#fff;
+        --button-danger-borderColor-active:#1f232826; --button-danger-bgColor-active:#a40e26; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#eff2f5; --button-danger-fgColor-disabled:#d1242f80;
+        --button-invisible-borderColor-rest:#fff0; --button-invisible-bgColor-rest:#fff0; --button-invisible-iconColor-rest:#59636e; --button-invisible-fgColor-rest:#25292e;
+        --button-invisible-borderColor-hover:#fff0; --button-invisible-bgColor-hover:#818b981a; --button-invisible-iconColor-hover:#59636e; --button-invisible-bgColor-active:#818b9826;
+        --button-invisible-borderColor-disabled:#fff0; --button-invisible-bgColor-disabled:#fff0; --button-invisible-fgColor-disabled:#818b98;
+        --control-borderColor-rest:#d1d9e0; --control-bgColor-rest:#f6f8fa; --control-fgColor-rest:#25292e; --control-fgColor-placeholder:#59636e;
+        --control-bgColor-hover:#eff2f5; --control-bgColor-active:#e6eaef; --control-borderColor-disabled:#818b981a; --control-bgColor-disabled:#eff2f5; --control-fgColor-disabled:#818b98;
+        --shadow-floating-small:0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f;
+        --fontStack-sansSerif:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+        --fontStack-monospace:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+        --text-body-shorthand-medium:400 14px/1.5 var(--fontStack-sansSerif);
+        --text-caption-shorthand:400 12px/1.25 var(--fontStack-sansSerif);
+      }
+      @media (prefers-color-scheme: dark) {
+        :host, :where(:host > :not(style)) {
+          --ck-fg: var(--fgColor-default,#f0f6fc);
+          --ck-border: var(--borderColor-default,#3d444d);
+          --ck-button-default-bg-rest: var(--button-default-bgColor-rest,#212830);
+          --ck-fg-muted: var(--fgColor-muted,#9198a1);
+          --ck-button-default-bg-hover: var(--button-default-bgColor-hover,#262c36);
+          --ck-button-default-bg-active: var(--button-default-bgColor-active,#2a313c);
+          --ck-button-default-bg-selected: var(--button-default-bgColor-selected,#2a313c);
+          --ck-focus: var(--focus-outlineColor,#1f6feb);
+          --ck-bg: var(--bgColor-default,#0d1117);
+          --ck-shadow: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
+          --ck-border-muted: var(--borderColor-muted,#3d444db3);
+          --ck-control-border-rest: var(--control-borderColor-rest,#3d444d);
+          --ck-control-bg-rest: var(--control-bgColor-rest,#212830);
+          --ck-control-fg-rest: var(--control-fgColor-rest,#f0f6fc);
+          --ck-bg-muted: var(--bgColor-muted,#151b23);
+          --ck-bg-attention: var(--bgColor-attention-muted,#151b23);
+          --ck-accent: var(--fgColor-accent,#4493f8);
+          --ck-success: var(--fgColor-success,#3fb950);
+          --ck-button-default-border-rest: var(--button-default-borderColor-rest,#3d444d);
+          --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#f0f6fc);
+          --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#656c761a);
+          --ck-button-default-bg-disabled: var(--button-default-bgColor-disabled,#212830);
+          --ck-button-default-fg-disabled: var(--button-default-fgColor-disabled,#656c76);
+          --ck-button-primary-border-rest: var(--button-primary-borderColor-rest,#ffffff26);
+          --ck-button-primary-bg-rest: var(--button-primary-bgColor-rest,#238636);
+          --ck-button-primary-fg-rest: var(--button-primary-fgColor-rest,#fff);
+          --ck-button-primary-bg-hover: var(--button-primary-bgColor-hover,#29903b);
+          --ck-button-primary-bg-active: var(--button-primary-bgColor-active,#2e9a40);
+          --ck-button-primary-border-disabled: var(--button-primary-borderColor-disabled,#105823);
+          --ck-button-primary-bg-disabled: var(--button-primary-bgColor-disabled,#105823);
+          --ck-button-primary-fg-disabled: var(--button-primary-fgColor-disabled,#fff6);
+          --ck-button-danger-border-rest: var(--button-danger-borderColor-rest,#3d444d);
+          --ck-button-danger-bg-rest: var(--button-danger-bgColor-rest,#212830);
+          --ck-button-danger-fg-rest: var(--button-danger-fgColor-rest,#fa5e55);
+          --ck-button-danger-border-hover: var(--button-danger-borderColor-hover,#ffffff26);
+          --ck-button-danger-bg-hover: var(--button-danger-bgColor-hover,#b62324);
+          --ck-button-danger-fg-hover: var(--button-danger-fgColor-hover,#fff);
+          --ck-button-danger-border-active: var(--button-danger-borderColor-active,#ffffff26);
+          --ck-button-danger-bg-active: var(--button-danger-bgColor-active,#da3633);
+          --ck-button-danger-fg-active: var(--button-danger-fgColor-active,#fff);
+          --ck-button-danger-bg-disabled: var(--button-danger-bgColor-disabled,#212830);
+          --ck-button-danger-fg-disabled: var(--button-danger-fgColor-disabled,#f8514980);
+          --ck-button-invisible-border-rest: var(--button-invisible-borderColor-rest,#0000);
+          --ck-button-invisible-bg-rest: var(--button-invisible-bgColor-rest,#0000);
+          --ck-button-invisible-icon-rest: var(--button-invisible-iconColor-rest,#9198a1);
+          --ck-button-invisible-border-hover: var(--button-invisible-borderColor-hover,#0000);
+          --ck-button-invisible-bg-hover: var(--button-invisible-bgColor-hover,#656c7633);
+          --ck-button-invisible-icon-hover: var(--button-invisible-iconColor-hover,#9198a1);
+          --ck-button-invisible-bg-active: var(--button-invisible-bgColor-active,#656c7640);
+          --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#0000);
+          --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#0000);
+          --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#656c76);
+          --ck-button-invisible-fg-rest: var(--button-invisible-fgColor-rest,#f0f6fc);
+          --ck-border-danger: var(--borderColor-danger-muted,#f8514966);
+          --ck-bg-danger: var(--bgColor-danger-muted,#f851491a);
+          --ck-danger: var(--fgColor-danger,#f85149);
+          --ck-bg-editable: var(--bgColor-default,#0000);
+          --ck-control-fg-placeholder: var(--control-fgColor-placeholder,#9198a1);
+          --ck-control-bg-hover: var(--control-bgColor-hover,#262c36);
+          --ck-control-bg-active: var(--control-bgColor-active,#2a313c);
+          --ck-control-border-disabled: var(--control-borderColor-disabled,#656c761a);
+          --ck-control-bg-disabled: var(--control-bgColor-disabled,#212830);
+          --ck-control-fg-disabled: var(--control-fgColor-disabled,#656c76);
+          --ck-shadow-overlay: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
+          --ck-transparent: var(--button-invisible-bgColor-rest,#0000);
+          --fgColor-default:#f0f6fc; --fgColor-muted:#9198a1; --fgColor-accent:#4493f8; --fgColor-danger:#fa5e55;
+          --bgColor-default:#0d1117; --bgColor-muted:#151b23; --bgColor-inset:#010409; --bgColor-attention-muted:#151b23; --bgColor-danger-muted:#f851491a;
+          --borderColor-default:#3d444d; --borderColor-muted:#3d444db3; --borderColor-danger-muted:#f8514966; --focus-outlineColor:#1f6feb;
+          --button-default-borderColor-rest:#3d444d; --button-default-bgColor-rest:#212830; --button-default-fgColor-rest:#f0f6fc;
+          --button-default-bgColor-hover:#262c36; --button-default-bgColor-active:#2a313c; --button-default-bgColor-selected:#2a313c;
+          --button-default-borderColor-disabled:#656c761a; --button-default-bgColor-disabled:#212830; --button-default-fgColor-disabled:#656c76;
+          --button-primary-borderColor-rest:#ffffff26; --button-primary-bgColor-rest:#238636; --button-primary-fgColor-rest:#fff;
+          --button-primary-bgColor-hover:#29903b; --button-primary-bgColor-active:#2e9a40; --button-primary-borderColor-disabled:#105823; --button-primary-bgColor-disabled:#105823; --button-primary-fgColor-disabled:#fff6;
+          --button-danger-borderColor-rest:#3d444d; --button-danger-bgColor-rest:#212830; --button-danger-fgColor-rest:#fa5e55;
+          --button-danger-borderColor-hover:#ffffff26; --button-danger-bgColor-hover:#b62324; --button-danger-fgColor-hover:#fff;
+          --button-danger-borderColor-active:#ffffff26; --button-danger-bgColor-active:#da3633; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#212830; --button-danger-fgColor-disabled:#f8514980;
+          --button-invisible-borderColor-rest:#0000; --button-invisible-bgColor-rest:#0000; --button-invisible-iconColor-rest:#9198a1; --button-invisible-fgColor-rest:#f0f6fc;
+          --button-invisible-borderColor-hover:#0000; --button-invisible-bgColor-hover:#656c7633; --button-invisible-iconColor-hover:#9198a1; --button-invisible-bgColor-active:#656c7640;
+          --button-invisible-borderColor-disabled:#0000; --button-invisible-bgColor-disabled:#0000; --button-invisible-fgColor-disabled:#656c76;
+          --control-borderColor-rest:#3d444d; --control-bgColor-rest:#212830; --control-fgColor-rest:#f0f6fc; --control-fgColor-placeholder:#9198a1;
+          --control-bgColor-hover:#262c36; --control-bgColor-active:#2a313c; --control-borderColor-disabled:#656c761a; --control-bgColor-disabled:#212830; --control-fgColor-disabled:#656c76;
+          --shadow-floating-small:0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966;
+        }
+        :host(.full-width-popup-surface) .clockoli-wordmark { filter:saturate(1.4) brightness(2.1) }
+      }
+      :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
+      :where(:host > :not(style)) { all:revert; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
+      * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .trigger:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) } .clockoli-mark { display:block; width:22px; height:22px; flex:none; transform-origin:center } @media(prefers-reduced-motion: no-preference) { .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px }
+      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,var(--ck-fg-muted)),var(--shadow-floating-small,var(--ck-shadow)) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,var(--ck-fg-muted)); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
+      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,var(--ck-fg-muted)); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,var(--ck-fg-muted)); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-muted,var(--ck-fg-muted)) }
+      a { color:var(--fgColor-accent,var(--ck-accent)); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
+      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px }
+      .save-field { position:relative; display:block; width:100% } .save-field input { padding-right:34px }
+      .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:5px; background:transparent; color:var(--ck-success); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
+      .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
+      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
-      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff0); color:var(--fgColor-muted,#59636e); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,#818b981a); color:var(--fgColor-default,#1f2328) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:7px; background:var(--bgColor-muted,#f6f8fa) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
- .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,#1f2328); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,#59636e); font-variant-numeric:tabular-nums }
- label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,var(--ck-button-invisible-fg-rest)); text-align:left }
+      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
+      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
     `);
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
-      :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,#d1d9e0b3); border-bottom:0 }
+      :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-bottom:0 }
       :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
       :host(.popup-surface) .reports-button svg { width:14px; height:14px }
       :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
-      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:calc(100vh - 8px); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,#d1d9e0); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:0 12px 30px #1f23284d }
+      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:calc(100vh - 8px); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,var(--ck-border)); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
       :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
       :host(.full-width-popup-surface) .menu-body { padding:0 }
-      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) }
-      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; gap:8px; color:var(--fgColor-default,#1f2328); font-size:14px }
+      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
+      :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
+      :host(.full-width-popup-surface) .timeline-view-modes { display:inline-flex; align-items:center; margin-right:8px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; overflow:hidden }
+      :host(.full-width-popup-surface) .timeline-view-button { border:0; border-radius:0; padding:5px 8px }
+      :host(.full-width-popup-surface) .timeline-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)); color:var(--fgColor-default,var(--ck-fg)) }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
-      :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:transparent; font-size:24px; font-weight:400; line-height:1 }
+      :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
       @media(max-width:520px) {
         :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
         :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
+        :host(.full-width-popup-surface) .clockoli-wordmark { height:24px }
         :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
         :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:start; flex-wrap:wrap }
+        :host(.full-width-popup-surface) .header-navigation { flex:1 1 100%; max-width:100%; overflow-x:auto }
       }
-      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px; border:0; border-radius:0; background:transparent }
+      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
-      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
-      :host(.full-width-popup-surface) .popup-timeline-section > .timeline-queue-spinner { position:absolute; top:8px; right:16px; z-index:7; display:grid; place-items:center; width:30px; height:30px; pointer-events:none }
-      :host(.full-width-popup-surface) .timeline-queue-spinner[hidden] { display:none !important }
-      :host(.full-width-popup-surface) .timeline-queue-wheel { position:absolute; inset:0; border:2px solid var(--borderColor-default,#d1d9e0); border-top-color:var(--fgColor-accent,#0969da); border-radius:50%; animation:clockoli-timeline-spin .75s linear infinite }
-      :host(.full-width-popup-surface) .timeline-queue-count { position:relative; z-index:1; color:var(--fgColor-default,#1f2328); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums }
-      :host(.full-width-popup-surface) .timeline-shell.is-saving .elastic-timeline-host { opacity:.56 }
-      :host(.full-width-popup-surface) .timeline-saving-spinner { position:absolute; inset:0; z-index:2; display:grid; place-items:center; pointer-events:auto; background:color-mix(in srgb,var(--bgColor-default,#fff) 24%,transparent) }
-      :host(.full-width-popup-surface) .timeline-saving-wheel { width:28px; height:28px; border:3px solid var(--borderColor-default,#d1d9e0); border-top-color:var(--fgColor-accent,#0969da); border-radius:50%; animation:clockoli-timeline-spin .75s linear infinite }
-      @keyframes clockoli-timeline-spin { to { transform:rotate(360deg) } }
-      @media(prefers-reduced-motion:reduce) { :host(.full-width-popup-surface) .timeline-saving-wheel { animation:none } }
-      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
+      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
+      .timeline-queue-spinner { min-height:25px; padding:0 0 10px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      .timeline-queue-spinner.empty { visibility:hidden }
+      .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
+      .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
+      .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
+      .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
+      .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
+      .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
+      .today-record { display:flex; align-items:center; gap:12px; margin-top:8px }
+      .today-task-identity { display:flex; align-items:flex-start; gap:10px; flex:1; min-width:0 } .today-task { flex:1; min-width:0 } .today-task .task-url { display:none } .today-task.task-result-untitled .task-url { display:block }
+      @media(max-width:520px) { .active-task-strip,.today-record { flex-wrap:wrap } .strip-task-copy,.strip-idle,.today-task-identity { flex-basis:70% } }
+
+      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
     `;
     if (fullWidthPopupOpen) {
       if (preserveFullWidthTimeline) refreshMountedTimeline();
       else renderFullWidthPopup(style);
     }
+    if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
     if (timesMode) { shadow.append(style, renderTimesPage()); return; }
-    if (popupMode) { shadow.append(style, timelineEditorStylesheet(), renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
+    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
@@ -2258,9 +3013,14 @@
       if (!event.isTrusted) return;
       const activatedTask = taskFromLocation();
       if (!activatedTask) return;
-      navigationOpen = false; menuOpen = !menuOpen; if (!menuOpen) menuScrollTop = 0; cancelActiveInlineDraft(); errorText = ''; renderUi();
-      if (menuOpen && pageState.configured) {
-        try { await refreshRecent(); }
+      navigationOpen = false; menuOpen = !menuOpen; if (!menuOpen) menuScrollTop = 0; cancelActiveInlineDraft();
+      if (pageState.configured != null) errorText = '';
+      renderUi();
+      if (menuOpen) {
+        try {
+          if (pageState.configured == null) await refreshState(false);
+          if (menuOpen && pageState.configured) await refreshRecent();
+        }
         catch (error) { setError(error); }
       }
     });
@@ -2268,7 +3028,7 @@
     arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports, top tasks, and activity'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
     arrow.addEventListener('click', event => {
       if (!event.isTrusted) return;
-      menuOpen = false; menuScrollTop = 0; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
+      menuOpen = false; menuScrollTop = 0; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); if (pageState.configured != null) errorText = ''; renderUi();
     });
     group.append(main, arrow); shadow.append(style, group);
     if (navigationOpen) shadow.append(renderNavigationMenu());
@@ -2346,7 +3106,7 @@
       return true;
     });
     document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape') closeFullWidthPopup();
+      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) closeFullWidthPopup();
     });
     void toggleFullWidthPopup();
   } else {
@@ -2360,10 +3120,11 @@
       if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
     });
     document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape') { closeFullWidthPopup(); return; }
-      if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu();
+      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) { closeFullWidthPopup(); return; }
+      if ((menuOpen || navigationOpen) && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
     });
     document.addEventListener('visibilitychange', updateTaskAnimation);
+    motionPreference?.addEventListener?.('change', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();
     navigationTimer = setInterval(() => { if (extensionContextActive) navigationCheck(); }, 750);

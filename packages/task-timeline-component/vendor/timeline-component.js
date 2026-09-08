@@ -1,0 +1,4326 @@
+(function (global) {
+  'use strict';
+
+  const SECOND = 1000;
+  const HOUR = 60 * 60 * SECOND;
+  const DAY = 24 * HOUR;
+  const DIRECT_GAP = SECOND;
+  const MIN_TASK_DURATION = SECOND;
+
+  const TASK_COLORS = [
+    '#eb0dff', '#0bd90b', '#ff490d', '#33ccff', '#8c315f',
+    '#8c8531', '#0d72ff', '#0bd9a5', '#ff0d72', '#0d0dff',
+    '#ffae0d', '#1c548c', '#bcd92b', '#8c3307', '#1c8c1c',
+    '#d94cc1', '#318c85', '#6c09b2', '#ff9059', '#599eff'
+  ];
+
+  const TEMPLATE = `
+    <style>
+      :host {
+        display: block;
+        --tt-panel: #ffffff;
+        --tt-text: #172033;
+        --tt-muted: #667085;
+        --tt-border: #d7deea;
+        --tt-grid: #e7ebf2;
+        --tt-grid-major: #cbd3e1;
+        --tt-empty: #f4f6fa;
+        --tt-shadow: 0 12px 28px rgba(29, 41, 57, 0.08);
+        --tt-radius: 14px;
+        color: var(--tt-text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      .shell {
+        position: relative;
+        background: var(--tt-panel);
+        border: 1px solid var(--tt-border);
+        border-radius: var(--tt-radius);
+        box-shadow: var(--tt-shadow);
+        overflow: hidden;
+      }
+      .meta {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 16px;
+        min-height: 42px;
+        padding: 0 14px;
+        background: #fbfcfe;
+        border-bottom: 1px solid var(--tt-border);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: #475467;
+        user-select: none;
+      }
+      .domain-start, .domain-end {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 650;
+      }
+      .domain-end { text-align: right; }
+
+      .calendar-view[hidden], .viewport[hidden] { display: none !important; }
+      .calendar-view {
+        background: #fff;
+        border-bottom: 1px solid var(--tt-border);
+      }
+      .calendar-toolbar {
+        min-height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 5px 10px;
+        border-bottom: 1px solid var(--tt-border);
+        background: #fbfcfe;
+      }
+      .calendar-toolbar-title {
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--tt-text);
+        white-space: nowrap;
+      }
+      .calendar-nav {
+        display: flex;
+        gap: 5px;
+      }
+      .calendar-nav button {
+        height: 28px;
+        padding: 0 9px;
+        border: 1px solid var(--tt-border);
+        border-radius: 7px;
+        background: #fff;
+        color: var(--tt-text);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 750;
+        cursor: pointer;
+      }
+      .calendar-viewport {
+        position: relative;
+        width: 100%;
+        max-height: 650px;
+        overflow: auto;
+        overscroll-behavior: contain;
+        outline: none;
+        background: #fff;
+      }
+      .calendar-canvas {
+        position: relative;
+        min-width: 100%;
+        background: #fff;
+      }
+      .calendar-sticky-header {
+        position: sticky;
+        top: 0;
+        left: 0;
+        z-index: 20;
+        pointer-events: none;
+        background: #fbfcfe;
+        border-bottom: 1px solid var(--tt-border);
+        box-shadow: 0 2px 7px rgba(16,24,40,.06);
+      }
+      .calendar-corner {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 8;
+        background: #fbfcfe;
+        border-right: 1px solid var(--tt-border);
+        border-bottom: 1px solid var(--tt-border);
+      }
+      .calendar-day-header {
+        position: absolute;
+        top: 0;
+        z-index: 6;
+        display: grid;
+        place-items: center;
+        background: #fbfcfe;
+        border-right: 1px solid var(--tt-border);
+        border-bottom: 1px solid var(--tt-border);
+        font-size: 11px;
+        font-weight: 800;
+        color: #344054;
+        text-align: center;
+        padding: 0 6px;
+      }
+      .calendar-day-header.today { background: #eef3ff; color: #2449a8; }
+      .calendar-time-label {
+        position: absolute;
+        left: 0;
+        z-index: 5;
+        display: flex;
+        justify-content: flex-end;
+        align-items: flex-start;
+        padding: 3px 8px 0 0;
+        border-right: 1px solid var(--tt-border);
+        color: var(--tt-muted);
+        background: #fff;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+      .calendar-hour-line {
+        position: absolute;
+        height: 1px;
+        background: var(--tt-grid);
+        pointer-events: none;
+      }
+      .calendar-day-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--tt-grid-major);
+        pointer-events: none;
+      }
+      .calendar-row-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: rgba(203,211,225,.45);
+        pointer-events: none;
+      }
+      .calendar-row-name {
+        position: absolute;
+        z-index: 12;
+        display: flex;
+        align-items: center;
+        padding: 0 6px;
+        color: #475467;
+        background: #fff;
+        border-right: 1px solid rgba(203,211,225,.55);
+        font-size: 10px;
+        font-weight: 750;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+      .calendar-task {
+        position: absolute;
+        z-index: 3;
+        min-height: 18px;
+        border-radius: 6px;
+        padding: 3px 5px;
+        overflow: hidden;
+        border-bottom: 2px solid rgba(255,255,255,.94);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.28);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+        cursor: grab;
+        touch-action: none;
+        outline: none;
+      }
+      .calendar-task:hover {
+        /* Stay below project names (7) and the sticky day header (20). */
+        z-index: 6;
+        overflow: visible;
+      }
+      .calendar-task.editing {
+        z-index: 6;
+        overflow: visible;
+        cursor: grabbing;
+        box-shadow: inset 0 0 0 2px rgba(255,255,255,.58), 0 4px 12px rgba(23,32,51,.16);
+      }
+      .calendar-resize-handle {
+        position: absolute;
+        left: 3px;
+        right: 3px;
+        height: 6px;
+        z-index: 7;
+        cursor: ns-resize;
+        touch-action: none;
+      }
+      .calendar-resize-handle.start { top: 0; }
+      .calendar-resize-handle.end { bottom: 0; }
+      .calendar-resize-handle::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        width: min(34px, 48%);
+        height: 3px;
+        border-radius: 999px;
+        transform: translateX(-50%);
+        background: rgba(255,255,255,.88);
+        opacity: 0;
+        transition: opacity .12s ease, transform .12s ease;
+      }
+      .calendar-resize-handle.start::after { top: 2px; }
+      .calendar-resize-handle.end::after { bottom: 2px; }
+      .calendar-task:hover .calendar-resize-handle::after,
+      .calendar-task.editing .calendar-resize-handle::after {
+        opacity: 1;
+        transform: translateX(-50%) scaleX(1.12);
+      }
+      .calendar-task.editing.resize-left .calendar-resize-handle.start::after,
+      .calendar-task.editing.resize-right .calendar-resize-handle.end::after {
+        height: 4px;
+        background: #fff;
+        box-shadow: 0 0 0 2px rgba(23,32,51,.30);
+      }
+      .calendar-connector-dot {
+        position: absolute;
+        width: 7px;
+        height: 7px;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        background: #172033;
+        box-shadow: 0 0 0 1.5px #fff, 0 1px 3px rgba(23,32,51,.26);
+        z-index: 9;
+        pointer-events: none;
+      }
+      .calendar-connector-dot.boundary {
+        width: 6px;
+        height: 6px;
+      }
+      .calendar-edit-clock {
+        position: absolute;
+        z-index: 30;
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: #172033;
+        color: #fff;
+        box-shadow: 0 2px 7px rgba(23,32,51,.28);
+        font-size: 10px;
+        font-weight: 850;
+        line-height: 15px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity .08s ease;
+      }
+      .calendar-task:hover .calendar-edit-clock,
+      .calendar-task.editing .calendar-edit-clock { opacity: 1; visibility: visible; }
+      .calendar-task:hover .calendar-task-time,
+      .calendar-task.editing .calendar-task-time { display: none; }
+      .calendar-edit-clock.start {
+        right: calc(50% + 4px);
+        left: auto;
+        top: -20px;
+        bottom: auto;
+      }
+      .calendar-edit-clock.end {
+        left: calc(50% + 4px);
+        right: auto;
+        top: -20px;
+        bottom: auto;
+      }
+      .calendar-edit-clock .kind {
+        opacity: .66;
+        margin-right: 4px;
+        font-weight: 700;
+      }
+      .calendar-magnet-guide {
+        position: absolute;
+        z-index: 28;
+        height: 2px;
+        background: #315ecf;
+        box-shadow: 0 0 0 1px rgba(49,94,207,.12);
+        pointer-events: none;
+      }
+      .calendar-magnet-guide.snapped {
+        height: 3px;
+        background: #1f49b6;
+      }
+      .calendar-task-name { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .calendar-task-time { opacity: .9; font-size: 9px; white-space: nowrap; }
+      /* The normal in-card time describes the resting card/segment. During an
+         edit it can disagree with the live task boundary (especially for
+         multi-day calendar segments), so keep one source of truth: the external
+         Start/End edit badges. */
+      .calendar-task.editing .calendar-task-time { display: none; }
+      .calendar-task.selected { outline: 3px solid #172033; outline-offset: 1px; z-index: 8; }
+      .calendar-task.focused:not(.selected) { outline: 2px solid #667085; outline-offset: 1px; }
+      .calendar-task.pending { opacity: .72; }
+      .calendar-task.running { animation: running-task-pulse 1.35s ease-in-out infinite; z-index: 7; }
+      .calendar-task.segment-continuation::before {
+        content: '';
+        position: absolute;
+        left: 0; right: 0; top: 0;
+        height: 3px;
+        background: rgba(255,255,255,.8);
+      }
+      .calendar-now-line {
+        position: absolute;
+        height: 2px;
+        background: #d92d20;
+        z-index: 10;
+        pointer-events: none;
+      }
+      .calendar-now-dot {
+        position: absolute;
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: #d92d20;
+        transform: translate(-50%,-3px);
+      }
+      .timeline-now-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #d92d20;
+        z-index: 10;
+        pointer-events: none;
+        transform: translateX(-1px);
+      }
+      .timeline-now-line::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #d92d20;
+        transform: translate(-50%, -3px);
+      }
+      .tracked {
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 800;
+        color: var(--tt-text);
+      }
+      .viewport {
+        position: relative;
+        width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        cursor: grab;
+        touch-action: pan-y;
+        user-select: none;
+        scrollbar-gutter: stable;
+        outline: none;
+      }
+      .viewport.dragging { cursor: grabbing; }
+      /* During zoom, keep painting cheap. Geometry still updates exactly, but
+         expensive decorative effects are paused until the gesture ends. */
+      .viewport.zooming .task {
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+      }
+      .viewport.zooming .task.running {
+        animation-play-state: paused;
+        filter: none;
+      }
+      .viewport.zooming .connector-dot { box-shadow: none; }
+      .viewport.zooming .row-label { backdrop-filter: none; }
+      .content {
+        position: relative;
+        min-width: 100%;
+        background: #fff;
+      }
+      .day-row, .ruler-row, .task-row, .grid-layer, .now-line-layer, .edit-guide-layer {
+        position: absolute;
+        left: 0;
+        right: 0;
+      }
+      .day-row {
+        top: 0;
+        height: 34px;
+        background: #fbfcfe;
+        border-bottom: 1px solid var(--tt-border);
+        overflow: hidden;
+      }
+      .ruler-row {
+        top: 34px;
+        height: 50px;
+        background: #fff;
+        border-bottom: 1px solid var(--tt-border);
+        overflow: hidden;
+      }
+      .grid-layer {
+        top: 84px;
+        pointer-events: none;
+        z-index: 1;
+      }
+      .task-row {
+        top: 84px;
+        z-index: 2;
+        background: #fff;
+      }
+      .edit-guide-layer {
+        top: 84px;
+        z-index: 12;
+        pointer-events: none;
+      }
+      .now-line-layer {
+        top: 84px;
+        z-index: 13;
+        pointer-events: none;
+      }
+      .edit-guide {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: rgba(23,32,51,.68);
+        pointer-events: none;
+      }
+      .edit-guide.active { width: 2px; background: #172033; }
+      .edit-guide.magnet {
+        width: 2px;
+        background: #315ecf;
+        box-shadow: 0 0 0 1px rgba(49,94,207,.14);
+      }
+      .edit-guide.magnet.snapped {
+        width: 3px;
+        background: #1f49b6;
+      }
+      .edit-guide-label {
+        position: absolute;
+        top: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: #172033;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .row-label {
+        position: absolute;
+        z-index: 11;
+        max-width: 150px;
+        padding: 4px 7px;
+        border: 1px solid rgba(152,162,179,.42);
+        border-radius: 6px;
+        background: rgba(255,255,255,.9);
+        color: #475467;
+        font-size: 10px;
+        font-weight: 750;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+        backdrop-filter: blur(2px);
+      }
+      .row-separator {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: var(--tt-grid-major);
+        pointer-events: none;
+      }
+      .day-band {
+        position: absolute;
+        top: 0;
+        height: 34px;
+        border-left: 1px solid var(--tt-grid-major);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #344054;
+      }
+      .ruler-cell {
+        position: absolute;
+        top: 0;
+        height: 50px;
+        border-left: 1px solid var(--tt-grid);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 12px;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        color: #344054;
+      }
+      .ruler-cell.empty {
+        background: var(--tt-empty);
+        color: #7b8496;
+        font-style: italic;
+      }
+      .ruler-cell.dense {
+        padding-inline: 0;
+        font-size: 9px;
+      }
+      .grid-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: var(--tt-grid);
+      }
+      .grid-line.major { background: var(--tt-grid-major); }
+      .task {
+        position: absolute;
+        will-change: transform, width;
+        min-width: 1px;
+        border-radius: 8px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), 0 4px 10px rgba(25,61,150,.18);
+        overflow: visible;
+        white-space: nowrap;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        cursor: grab;
+        touch-action: none;
+        outline: none;
+      }
+      .task-main {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 8px;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .task.editing {
+        cursor: grabbing;
+        z-index: 8;
+        box-shadow: inset 0 0 0 2px rgba(255,255,255,.55), 0 8px 18px rgba(25,61,150,.28);
+      }
+      .task.selected {
+        z-index: 9;
+        outline: 3px solid #172033;
+        outline-offset: 2px;
+      }
+      .task.focused:not(.selected) {
+        z-index: 8;
+        outline: 2px solid #667085;
+        outline-offset: 2px;
+      }
+      .task.hovered:not(.editing) {
+        box-shadow: inset 0 0 0 2px rgba(255,255,255,.45), 0 6px 14px rgba(25,61,150,.26);
+      }
+      .task.pending { opacity: .78; }
+      .task.pending::after {
+        content: "";
+        position: absolute;
+        inset: 2px;
+        border: 2px dashed rgba(255,255,255,.78);
+        border-radius: inherit;
+        pointer-events: none;
+      }
+      .task.short .task-main { padding: 0; }
+      .task.short { border-radius: 5px; }
+      .resize-handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: min(10px, 32%);
+        z-index: 6;
+        cursor: ew-resize;
+        touch-action: none;
+      }
+      .resize-handle.left { left: 0; }
+      .resize-handle.right { right: 0; }
+      .resize-handle::after {
+        content: "";
+        position: absolute;
+        top: 10px;
+        bottom: 10px;
+        width: 3px;
+        border-radius: 3px;
+        background: rgba(255,255,255,.82);
+        opacity: 0;
+        transition: opacity .12s ease, transform .12s ease;
+      }
+      .resize-handle.left::after { left: 2px; }
+      .resize-handle.right::after { right: 2px; }
+      .task:hover .resize-handle::after,
+      .task.hovered .resize-handle::after,
+      .task.editing .resize-handle::after { opacity: 1; transform: scaleX(1.18); }
+      .task.editing.resize-left .resize-handle.left::after,
+      .task.editing.resize-right .resize-handle.right::after {
+        background: #fff;
+        box-shadow: 0 0 0 2px rgba(23,32,51,.28);
+      }
+      .connector-dot {
+        position: absolute;
+        width: 7px;
+        height: 7px;
+        transform: translate(-50%, -50%);
+        border-radius: 50%;
+        background: #172033;
+        box-shadow: 0 0 0 1.5px #fff, 0 1px 3px rgba(23,32,51,.26);
+        z-index: 7;
+        pointer-events: none;
+      }
+      @keyframes running-task-pulse {
+        0%, 100% {
+          filter: brightness(1);
+          box-shadow: inset 0 0 0 2px rgba(255,255,255,.62), 0 6px 14px rgba(25,61,150,.24);
+        }
+        50% {
+          filter: brightness(1.13);
+          box-shadow: inset 0 0 0 3px rgba(255,255,255,.82), 0 8px 22px rgba(25,61,150,.42);
+        }
+      }
+      .task.running {
+        animation: running-task-pulse 1.35s ease-in-out infinite;
+        will-change: filter, box-shadow;
+      }
+      .task.running.editing { animation: none; filter: none; }
+      .task-name { font-weight: 800; flex: 0 0 auto; }
+      .task-time { opacity: .86; overflow: hidden; text-overflow: ellipsis; }
+      .task:hover .task-time,
+      .task.editing .task-time { display: none; }
+      .edit-clock {
+        position: absolute;
+        z-index: 30;
+        padding: 2px 5px;
+        border-radius: 5px;
+        background: #172033;
+        color: #fff;
+        box-shadow: 0 2px 7px rgba(23,32,51,.28);
+        font-size: 10px;
+        font-weight: 850;
+        line-height: 15px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity .08s ease;
+      }
+      .edit-clock.start { right: calc(50% + 4px); left: auto; top: -20px; bottom: auto; }
+      .edit-clock.end { left: calc(50% + 4px); right: auto; top: -20px; bottom: auto; }
+      .edit-clock.duration { left: -3px; right: auto; top: auto; bottom: -20px; }
+      .edit-clock.start { left: -3px; right: auto; }
+      .edit-clock.end { left: auto; right: -1px; }
+      .task:hover .edit-clock,
+      .task.editing .edit-clock { opacity: 1; visibility: visible; }
+      .edit-clock .kind { opacity: .66; margin-right: 4px; font-weight: 700; }
+      .history-controls {
+        margin-left: auto;
+        display: flex;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
+      .history-button {
+        height: 28px;
+        min-width: 34px;
+        padding: 0 8px;
+        border: 1px solid var(--tt-border);
+        border-radius: 7px;
+        background: #fff;
+        color: var(--tt-text);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .history-button:disabled { opacity: .38; cursor: default; }
+      .details-info {
+        min-width: 0;
+        flex: 1 1 500px;
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) repeat(3, auto);
+        align-items: center;
+        gap: 8px 20px;
+      }
+      .details {
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        padding: 10px 14px;
+        border-top: 1px solid var(--tt-border);
+        background: #fff;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        color: var(--tt-muted);
+      }
+      .details strong { color: var(--tt-text); }
+      .details a { color: #315ecf; text-decoration: none; }
+      .details a:hover { text-decoration: underline; }
+      .details-pointer { position: absolute; z-index: 14; width: 1px; transform: translateX(-50%); background: #0969da; pointer-events: none; }
+      .details-pointer::after { position: absolute; bottom: -1px; left: 50%; width: 7px; height: 7px; transform: translate(-50%, 25%) rotate(45deg); border-right: 1px solid #0969da; border-bottom: 1px solid #0969da; background: var(--tt-panel); content: ''; }
+      .details-pointer[hidden] { display: none; }
+      .details-primary { min-width: 0; display: grid; gap: 2px; }
+      .details-title { overflow: hidden; font-size: 14px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+      .details-project { overflow: hidden; color: var(--tt-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .details-value { display: grid; gap: 1px; white-space: nowrap; }
+      .details-label { color: var(--tt-muted); font-size: 10px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+      .details-value strong { font-size: 12px; }
+      @media (max-width: 720px) { .details-info { grid-template-columns: 1fr 1fr; } .details-primary { grid-column: 1 / -1; } }
+      .hint { color: var(--tt-muted); }
+    </style>
+    <section class="shell">
+      <div class="meta">
+        <div class="domain-start"></div>
+        <div class="tracked">Tracked: 0s</div>
+        <div class="domain-end"></div>
+      </div>
+      <div class="viewport" tabindex="0" aria-label="Interactive task timeline">
+        <div class="content">
+          <div class="day-row"></div>
+          <div class="ruler-row"></div>
+          <div class="grid-layer"></div>
+          <div class="task-row"></div>
+          <div class="now-line-layer"></div>
+          <div class="edit-guide-layer"></div>
+        </div>
+      </div>
+      <div class="calendar-view" hidden>
+        <div class="calendar-toolbar">
+          <div class="calendar-toolbar-title">Calendar</div>
+          <div class="calendar-nav">
+            <button class="calendar-prev" type="button" title="Previous period">‹</button>
+            <button class="calendar-today" type="button">Today</button>
+            <button class="calendar-next" type="button" title="Next period">›</button>
+          </div>
+        </div>
+        <div class="calendar-viewport" tabindex="0" aria-label="Calendar view">
+          <div class="calendar-canvas"></div>
+        </div>
+      </div>
+      <div class="details-pointer" aria-hidden="true" hidden></div>
+      <div class="details">
+        <div class="details-info"><span class="hint">Hover or select a task to see its details.</span></div>
+        <div class="history-controls" aria-label="Edit history">
+          <button class="history-button undo" type="button" title="Undo (Ctrl/Cmd+Z)" disabled>↶</button>
+          <button class="history-button redo" type="button" title="Redo (Ctrl/Cmd+Shift+Z)" disabled>↷</button>
+        </div>
+      </div>
+    </section>
+  `;
+
+  function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function snapSecond(time) { return Math.round(time / SECOND) * SECOND; }
+
+  function toMs(value) {
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+    const ms = new Date(value).getTime();
+    return ms;
+  }
+
+  function hashTaskId(id) {
+    const str = String(id);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return h >>> 0;
+  }
+
+  function taskColor(id) {
+    return TASK_COLORS[hashTaskId(id) % TASK_COLORS.length];
+  }
+
+  function textColorForBackground(hex) {
+    const rgb = hex.slice(1).match(/../g).map(v => parseInt(v, 16));
+    const luminance = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+    return luminance > 0.64 ? '#172033' : '#ffffff';
+  }
+
+  class TaskTimeline {
+    constructor(container, options = {}) {
+      if (!(container instanceof Element)) {
+        throw new TypeError('TaskTimeline: container must be a DOM Element');
+      }
+
+      this.host = container;
+      this.shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
+      this.shadow.innerHTML = TEMPLATE;
+
+      this.options = {
+        minTaskWidth: 30,
+        trailingGutterRatio: 0,
+        visibleDays: 3,
+        minVisibleDays: 1 / 6,
+        maxVisibleDays: 7,
+        nominalTaskHeight: 58,
+        maxTaskHeightFactor: 2,
+        rowHeight: 142,
+        rowPaddingBottom: 13,
+        locale: 'ru-RU',
+        rulerLabelSidePadding: 12,
+        zoomStepFactor: 1.08,
+        wheelZoomSensitivity: 0.00055,
+        zoomAnimationMs: 180,
+        scrollSpeed: 1,
+        zoomSpeed: 8,
+        historyLimit: 100,
+        virtualizeThreshold: 150,
+        overscanScreens: 1.5,
+        magneticSnap: true,
+        magnetStepsMinutes: [1, 5, 15],
+        magnetScaleThresholdDays: [1, 3],
+        magnetZonePx: 20,
+        magnetSnapPx: 8,
+        magnetReleasePx: 16,
+        viewMode: 'timeline',
+        calendarHourHeight: 60,
+        calendarTimeAxisWidth: 62,
+        calendarDayMinWidth: 180,
+        calendarProjectMinWidth: 96,
+        calendarMinTaskHeight: 18,
+        calendarMaxDays: 7,
+        rows: [],
+        ...options
+      };
+      this.options.scrollSpeed = clamp(Number(this.options.scrollSpeed) || 1, 0.1, 5);
+      this.options.zoomSpeed = clamp(Number(this.options.zoomSpeed) || 8, 0.1, 8);
+      this.options.zoomAnimationMs = clamp(Number(this.options.zoomAnimationMs) || 180, 80, 500);
+      this.options.historyLimit = Math.max(1, Math.floor(Number(this.options.historyLimit) || 100));
+      this.options.virtualizeThreshold = Math.max(0, Math.floor(Number(this.options.virtualizeThreshold) || 150));
+      this.options.overscanScreens = clamp(Number(this.options.overscanScreens) || 1.5, 0.25, 10);
+      this.options.magneticSnap = this.options.magneticSnap !== false;
+      this.options.magnetStepsMinutes = Array.isArray(this.options.magnetStepsMinutes)
+        ? this.options.magnetStepsMinutes.map(Number).filter(v => Number.isFinite(v) && v > 0).sort((a,b) => a-b)
+        : [1, 5, 15];
+      if (!this.options.magnetStepsMinutes.length) this.options.magnetStepsMinutes = [1, 5, 15];
+      this.options.magnetScaleThresholdDays = Array.isArray(this.options.magnetScaleThresholdDays)
+        ? this.options.magnetScaleThresholdDays.map(Number).filter(Number.isFinite).sort((a,b) => a-b)
+        : [1, 3];
+      this.options.magnetZonePx = clamp(Number(this.options.magnetZonePx) || 20, 2, 80);
+      this.options.magnetSnapPx = clamp(Number(this.options.magnetSnapPx) || 8, 0.5, this.options.magnetZonePx);
+      this.options.magnetReleasePx = clamp(Number(this.options.magnetReleasePx) || 16, this.options.magnetSnapPx, this.options.magnetZonePx);
+      this.options.viewMode = this.options.viewMode === 'calendar' ? 'calendar' : 'timeline';
+      this.options.calendarHourHeight = clamp(Number(this.options.calendarHourHeight) || 60, 30, 160);
+      this.options.calendarTimeAxisWidth = clamp(Number(this.options.calendarTimeAxisWidth) || 62, 44, 100);
+      this.options.calendarDayMinWidth = clamp(Number(this.options.calendarDayMinWidth) || 180, 110, 420);
+      this.options.calendarProjectMinWidth = clamp(Number(this.options.calendarProjectMinWidth) || 96, 60, 240);
+      this.options.calendarMinTaskHeight = clamp(Number(this.options.calendarMinTaskHeight) || 18, 10, 60);
+      this.options.calendarMaxDays = clamp(Math.floor(Number(this.options.calendarMaxDays) || 7), 1, 14);
+
+      this.callbacks = {
+        onStart: options.onStart || null,
+        onStop: options.onStop || null,
+        onChange: options.onChange || null,
+        onDelete: options.onDelete || null,
+        onSelect: options.onSelect || null,
+        onUndo: options.onUndo || null,
+        onRedo: options.onRedo || null,
+        onError: options.onError || null,
+        onViewModeChange: options.onViewModeChange || null
+      };
+      this.canChange = typeof options.canChange === 'function'
+        ? options.canChange
+        : (typeof options.onBeforeChange === 'function' ? options.onBeforeChange : null);
+
+      this.shell = this.shadow.querySelector('.shell');
+      this.viewport = this.shadow.querySelector('.viewport');
+      this.content = this.shadow.querySelector('.content');
+      this.dayRow = this.shadow.querySelector('.day-row');
+      this.rulerRow = this.shadow.querySelector('.ruler-row');
+      this.gridLayer = this.shadow.querySelector('.grid-layer');
+      this.taskRow = this.shadow.querySelector('.task-row');
+      this.nowLineLayer = this.shadow.querySelector('.now-line-layer');
+      this.details = this.shadow.querySelector('.details');
+      this.detailsPointer = this.shadow.querySelector('.details-pointer');
+      this.detailsInfo = this.shadow.querySelector('.details-info');
+      this.undoButton = this.shadow.querySelector('.history-button.undo');
+      this.redoButton = this.shadow.querySelector('.history-button.redo');
+      this.editGuideLayer = this.shadow.querySelector('.edit-guide-layer');
+      this.calendarView = this.shadow.querySelector('.calendar-view');
+      this.calendarViewport = this.shadow.querySelector('.calendar-viewport');
+      this.calendarCanvas = this.shadow.querySelector('.calendar-canvas');
+      this.calendarTitle = this.shadow.querySelector('.calendar-toolbar-title');
+      this.calendarPrevButton = this.shadow.querySelector('.calendar-prev');
+      this.calendarTodayButton = this.shadow.querySelector('.calendar-today');
+      this.calendarNextButton = this.shadow.querySelector('.calendar-next');
+      this.domainStartLabel = this.shadow.querySelector('.domain-start');
+      this.trackedLabel = this.shadow.querySelector('.tracked');
+      this.domainEndLabel = this.shadow.querySelector('.domain-end');
+
+      this.tasks = [];
+      this._nextKey = 1;
+      this.domainStart = 0;
+      this.domainEnd = 0;
+      this.baseDomainEnd = 0;
+      this.currentTime = Number(this.options.currentTime);
+      this.visibleDays = clamp(Number(this.options.visibleDays) || 3, this.options.minVisibleDays, this.options.maxVisibleDays);
+      this.minTaskWidth = Math.max(1, Number(this.options.minTaskWidth) || 30);
+      this.segments = [];
+      this.scalePxPerMs = 0;
+      this.totalWidth = 0;
+      this.tickHours = 4;
+      this.rowValues = [0];
+      this.rowIndex = new Map([[0, 0]]);
+      this.rowDefinitions = [];
+      this.viewMode = this.options.viewMode;
+      this.calendarStartDay = null;
+      this.calendarDayCount = 1;
+      this.calendarWindowInitialized = false;
+      this.calendarScrollInitialized = false;
+      this.calendarEditState = null;
+      this._calendarMetrics = null;
+      this.selectedKey = null;
+      this.focusedKey = null;
+      this.hoveredKey = null;
+      this.lastDetailsKey = null;
+      this.detailsKey = null;
+      this.runningKey = null;
+      this.runningTimer = null;
+      this.interactionPausedRunning = false;
+      this.editState = null;
+      this.dragState = null;
+      this.measureCtx = null;
+      this._rulerScalesCache = null;
+      this.undoStack = [];
+      this.redoStack = [];
+      this.pendingKeys = new Set();
+      this._renderWindow = null;
+      // Zoom is frame-synchronised, not animated. Wheel/pinch events only queue
+      // the next exact scale; one requestAnimationFrame applies the latest
+      // value. When input stops, geometry stops too — there is no inertia.
+      this._zoomAnimationRaf = 0;
+      this._zoomTargetDays = this.visibleDays;
+      this._zoomAnchorClientX = null;
+      this._zoomAnchorTime = null;
+      this._zoomGestureTimer = 0;
+      this._zoomGestureActive = false;
+      // Cached viewport metrics keep the zoom hot path free of synchronous
+      // layout reads. Reading scrollLeft/clientWidth immediately after changing
+      // content width forces Chromium to flush layout and was by far the
+      // largest zoom cost in profiling.
+      this._viewportWidth = 0;
+      this._scrollLeft = 0;
+      this.destroyed = false;
+      this.setRows(this.options.rows, { render: false });
+
+      this._boundWindowPointerMove = e => this._onWindowPointerMove(e);
+      this._boundWindowPointerUp = e => this._onWindowPointerUp(e);
+      window.addEventListener('pointermove', this._boundWindowPointerMove, { passive: false });
+      window.addEventListener('pointerup', this._boundWindowPointerUp);
+      window.addEventListener('pointercancel', this._boundWindowPointerUp);
+
+      this._bindViewportEvents();
+      this._bindTaskEvents();
+      this._bindCalendarEvents();
+      this.calendarPrevButton.addEventListener('click', () => this.shiftCalendar(-1));
+      this.calendarTodayButton.addEventListener('click', () => this.setCalendarDate(Date.now()));
+      this.calendarNextButton.addEventListener('click', () => this.shiftCalendar(1));
+      this.undoButton.addEventListener('click', () => this.undo());
+      this.redoButton.addEventListener('click', () => this.redo());
+      this.resizeObserver = new ResizeObserver(entries => {
+        const width = entries && entries[0] ? entries[0].contentRect.width : 0;
+        if (width > 0) this._viewportWidth = Math.max(320, width);
+        this._onResize();
+      });
+      this.resizeObserver.observe(this.viewport);
+      this.calendarResizeObserver = new ResizeObserver(() => {
+        if (this.viewMode === 'calendar' && this.domainEnd > this.domainStart) this._renderCalendar();
+      });
+      this.calendarResizeObserver.observe(this.host);
+      this._applyViewModeDom();
+
+      if (Array.isArray(options.tasks) && options.tasks.length) {
+        this.setTasks(options.tasks, {
+          domainStart: options.domainStart,
+          domainEnd: options.domainEnd,
+          preserveScroll: false
+        });
+      } else if (options.domainStart != null && options.domainEnd != null) {
+        this.setTasks([], {
+          domainStart: options.domainStart,
+          domainEnd: options.domainEnd,
+          preserveScroll: false
+        });
+      }
+    }
+
+    _viewportWidthNow() {
+      if (this._viewportWidth > 0) return this._viewportWidth;
+      // The first measurement happens before any zoom writes, so it cannot
+      // create a zoom-frame forced reflow. ResizeObserver keeps it current.
+      this._viewportWidth = Math.max(320, this.viewport.clientWidth || 0);
+      return this._viewportWidth;
+    }
+
+    _scrollLeftNow() {
+      // Outside an active zoom burst, accept direct/user scrolling as the
+      // source of truth. During zoom we intentionally use the cached value:
+      // reading scrollLeft after width/style writes synchronously flushes
+      // layout in Chromium.
+      if (!this._zoomGestureActive) this._scrollLeft = this.viewport.scrollLeft;
+      return this._scrollLeft;
+    }
+
+    _setScrollLeft(value) {
+      const max = Math.max(0, this.totalWidth - this._viewportWidthNow());
+      const next = clamp(Number(value) || 0, 0, max);
+      this._scrollLeft = next;
+      this.viewport.scrollLeft = next;
+      return next;
+    }
+
+    // -----------------------------------------------------------------------
+    // Public API
+    // -----------------------------------------------------------------------
+
+    setTasks(taskData, { domainStart = null, domainEnd = null, preserveScroll = false, preserveHistory = false } = {}) {
+      const oldCenter = preserveScroll && this.segments.length
+        ? this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2)
+        : null;
+
+      this._clearRunningTimer();
+      this.runningKey = null;
+      this.interactionPausedRunning = false;
+      this.editState = null;
+      this.selectedKey = null;
+      this.focusedKey = null;
+      this.hoveredKey = null;
+      this.pendingKeys.clear();
+      this._nextKey = 1;
+
+      const seen = new Set();
+      this.tasks = (taskData || []).map((raw, index) => {
+        const task = this._normalizeTask(raw, index);
+        if (seen.has(task._key)) {
+          throw new RangeError(`TaskTimeline: duplicate instanceId "${task.instanceId}"`);
+        }
+        seen.add(task._key);
+        return task;
+      });
+      this.tasks.sort((a, b) => a.start - b.start || a.end - b.end || String(a._key).localeCompare(String(b._key)));
+      this._validateNoOverlap(this.tasks);
+      this._rebuildRows();
+
+      const minTaskStart = this.tasks.length ? this.tasks[0].start : Date.now() - DAY;
+      const maxTaskEnd = this.tasks.length ? this.tasks[this.tasks.length - 1].end : Date.now();
+      this.domainStart = domainStart == null ? this._floorDay(minTaskStart) : toMs(domainStart);
+      this.domainEnd = domainEnd == null ? maxTaskEnd : toMs(domainEnd);
+
+      if (!Number.isFinite(this.domainStart) || !Number.isFinite(this.domainEnd) || this.domainEnd <= this.domainStart) {
+        throw new RangeError('TaskTimeline: domainStart/domainEnd are invalid');
+      }
+      if (this.tasks.length && (this.tasks[0].start < this.domainStart || this.tasks[this.tasks.length - 1].end > this.domainEnd)) {
+        throw new RangeError('TaskTimeline: all tasks must fit inside the supplied domain');
+      }
+
+      this.baseDomainEnd = this.domainEnd;
+      if (!preserveHistory) this.clearHistory();
+      this._renderAll();
+
+      if (oldCenter != null) {
+        this._setScrollLeft(
+          this.timeToX(clamp(oldCenter, this.domainStart, this.domainEnd)) - this._viewportWidthNow() / 2
+        );
+      } else {
+        this._setScrollLeft(0);
+      }
+      this._updateTimelineMeta();
+      return this;
+    }
+
+    getTasks() { return this.tasks.map(task => this._publicTask(task)); }
+
+    getTask(instanceId) {
+      const task = this._findTask(instanceId);
+      return task ? this._publicTask(task) : null;
+    }
+
+    getSelectedTask() {
+      const task = this._selectedTask();
+      return task ? this._publicTask(task) : null;
+    }
+
+    getInteractionState() {
+      return {
+        viewMode: this.viewMode,
+        selectedInstanceId: this.selectedKey,
+        focusedInstanceId: this.focusedKey,
+        hoveredInstanceId: this.hoveredKey,
+        runningInstanceId: this.runningKey,
+        editingInstanceId: this.calendarEditState ? this.calendarEditState.key : (this.editState ? this.editState.key : null),
+        editMode: this.calendarEditState ? `calendar:${this.calendarEditState.mode}` : (this.editState ? this.editState.mode : null),
+        pendingInstanceIds: [...this.pendingKeys]
+      };
+    }
+
+    isRunning() { return this.runningKey !== null; }
+
+    getRunningTask() {
+      const task = this._runningTask();
+      return task ? this._publicTask(task) : null;
+    }
+
+    setRows(rows, { render = true } = {}) {
+      const source = Array.isArray(rows) ? rows : [];
+      const seen = new Set();
+      this.rowDefinitions = source.map((row, index) => {
+        const rawId = row && typeof row === 'object' ? row.id : row;
+        const id = rawId == null ? index : rawId;
+        const key = String(id);
+        if (seen.has(key)) throw new RangeError(`TaskTimeline: duplicate row id "${id}"`);
+        seen.add(key);
+        return {
+          id,
+          name: row && typeof row === 'object' && row.name != null ? String(row.name) : String(id)
+        };
+      });
+      if (this.tasks) this._rebuildRows();
+      if (render && this.domainEnd > this.domainStart) this._renderAll();
+      return this;
+    }
+
+    getRows() { return this.rowDefinitions.map(row => ({ ...row })); }
+
+    setViewMode(mode, { emit = true } = {}) {
+      const next = mode === 'calendar' ? 'calendar' : 'timeline';
+      if (next === this.viewMode) return this;
+      this._cancelZoomAnimation();
+      if (this.editState) this._finishTaskEdit();
+      if (this.calendarEditState) this._finishCalendarTaskEdit();
+
+      if (next === 'calendar' && !this.calendarWindowInitialized) {
+        this._initializeCalendarWindowFromTimeline();
+      }
+      this.viewMode = next;
+      this._applyViewModeDom();
+      if (next === 'calendar') this._renderCalendar();
+      else {
+        this._renderAll({ invalidateRulerScales: false });
+        this._updateTimelineMeta();
+      }
+      if (emit) {
+        const detail = { viewMode: this.viewMode, timeline: this };
+        if (typeof this.callbacks.onViewModeChange === 'function') {
+          this.callbacks.onViewModeChange(this.viewMode, detail);
+        }
+        this.host.dispatchEvent(new CustomEvent('timeline:viewmodechange', { detail: { viewMode: this.viewMode } }));
+      }
+      return this;
+    }
+
+    getViewMode() { return this.viewMode; }
+
+    setCalendarDate(value) {
+      const time = toMs(value);
+      if (!Number.isFinite(time)) return this;
+      this.calendarStartDay = this._clampCalendarStart(this._floorDay(time));
+      this.calendarWindowInitialized = true;
+      this.calendarScrollInitialized = false;
+      if (this.viewMode === 'calendar') this._renderCalendar();
+      return this;
+    }
+
+    shiftCalendar(direction = 1) {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const amount = Math.max(1, this.calendarDayCount) * (Number(direction) < 0 ? -1 : 1);
+      this.calendarStartDay = this._clampCalendarStart(this._addDaysLocal(this.calendarStartDay, amount));
+      this.calendarScrollInitialized = false;
+      if (this.viewMode === 'calendar') this._renderCalendar();
+      return this;
+    }
+
+    getCalendarRange() {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const start = this.calendarStartDay;
+      const end = this._addDaysLocal(start, this.calendarDayCount);
+      return { start, end, days: this.calendarDayCount };
+    }
+
+    _applyVisibleDays(days, anchorClientX = this._viewportWidthNow() / 2, anchorTime = null, { incremental = false, forceRender = false } = {}) {
+      const next = clamp(Number(days) || this.visibleDays, this.options.minVisibleDays, this.options.maxVisibleDays);
+      const anchor = clamp(Number(anchorClientX) || 0, 0, this._viewportWidthNow());
+      if ((!forceRender && Math.abs(next - this.visibleDays) < 0.000001) || !this.segments.length) {
+        this.visibleDays = next;
+        return this;
+      }
+      const fixedAnchorTime = anchorTime == null
+        ? this.xToTime(this._scrollLeftNow() + anchor)
+        : anchorTime;
+      this.visibleDays = next;
+      if (this.viewMode === 'calendar') {
+        this.calendarDayCount = clamp(Math.ceil(this.visibleDays), 1, this.options.calendarMaxDays);
+        if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+        this.calendarStartDay = this._clampCalendarStart(this.calendarStartDay);
+      }
+      if (incremental) this._renderZoomFrame();
+      else this._renderAll({ invalidateRulerScales: false });
+      this._setScrollLeft(this.timeToX(fixedAnchorTime) - anchor);
+      if (incremental) {
+        // Keep the exact same DOM nodes throughout a zoom gesture. Swapping the
+        // virtual window mid-gesture creates visible "passing" blocks and costs
+        // much more than updating the already-rendered elements.
+        this._updateTaskGeometry({ visibleOnly: false });
+      }
+      this._updateTimelineMeta();
+      this._updateRowLabelPositions();
+      this.host.dispatchEvent(new CustomEvent('timelinezoom', {
+        detail: { visibleDays: this.visibleDays, targetVisibleDays: this._zoomTargetDays }
+      }));
+      return this;
+    }
+
+    _cancelZoomAnimation() {
+      if (this._zoomAnimationRaf) cancelAnimationFrame(this._zoomAnimationRaf);
+      if (this._zoomGestureTimer) clearTimeout(this._zoomGestureTimer);
+      this._zoomAnimationRaf = 0;
+      this._zoomGestureTimer = 0;
+      this._zoomTargetDays = this.visibleDays;
+      this._zoomAnchorClientX = null;
+      this._zoomAnchorTime = null;
+      if (this._zoomGestureActive) {
+        this._zoomGestureActive = false;
+        this.viewport.classList.remove('zooming');
+      }
+    }
+
+    _finishZoomGestureSoon() {
+      if (this._zoomGestureTimer) clearTimeout(this._zoomGestureTimer);
+      this._zoomGestureTimer = setTimeout(() => {
+        this._zoomGestureTimer = 0;
+        if (this.destroyed) return;
+        this._zoomGestureActive = false;
+        this.viewport.classList.remove('zooming');
+        // Ruler density and the virtual render window are intentionally
+        // reconciled only after the input burst. This does not move geometry.
+        this._renderRuler();
+        if (this._virtualizationEnabled()) this._renderTasks();
+        else this._updateTaskGeometry({ visibleOnly: false });
+        this._updateTimelineMeta();
+        this._updateRowLabelPositions();
+      }, 72);
+    }
+
+    _animateZoomTo(days, anchorClientX = this._viewportWidthNow() / 2) {
+      const target = clamp(Number(days) || this.visibleDays, this.options.minVisibleDays, this.options.maxVisibleDays);
+      if (this.viewMode === 'calendar') {
+        this._cancelZoomAnimation();
+        return this.setVisibleDays(target, anchorClientX);
+      }
+      if (!this.segments.length) {
+        this.visibleDays = target;
+        this._zoomTargetDays = target;
+        return this;
+      }
+
+      const anchor = clamp(Number(anchorClientX) || 0, 0, this._viewportWidthNow());
+      this._zoomTargetDays = target;
+      this._zoomAnchorClientX = anchor;
+      // Capture the exact time currently under the cursor. The queued frame
+      // applies the latest requested scale around this point.
+      this._zoomAnchorTime = this.xToTime(this._scrollLeftNow() + anchor);
+      if (!this._zoomGestureActive) {
+        this._zoomGestureActive = true;
+        this.viewport.classList.add('zooming');
+      }
+
+      if (!this._zoomAnimationRaf) {
+        this._zoomAnimationRaf = requestAnimationFrame(() => {
+          this._zoomAnimationRaf = 0;
+          if (this.destroyed || this._zoomAnchorTime == null) return;
+          const frameTarget = this._zoomTargetDays;
+          const frameAnchor = this._zoomAnchorClientX;
+          const frameAnchorTime = this._zoomAnchorTime;
+          this._applyVisibleDays(frameTarget, frameAnchor, frameAnchorTime, { incremental: true });
+          this._zoomTargetDays = this.visibleDays;
+          this._zoomAnchorTime = null;
+          this._zoomAnchorClientX = null;
+        });
+      }
+      this._finishZoomGestureSoon();
+      return this;
+    }
+
+    setVisibleDays(days, anchorClientX = this._viewportWidthNow() / 2) {
+      this._cancelZoomAnimation();
+      const next = clamp(Number(days) || this.visibleDays, this.options.minVisibleDays, this.options.maxVisibleDays);
+      this._zoomTargetDays = next;
+      return this._applyVisibleDays(next, anchorClientX);
+    }
+
+    getVisibleDays() { return this.visibleDays; }
+    getTargetVisibleDays() { return this._zoomTargetDays; }
+    getTickHours() { return this.tickHours; }
+
+    setScrollSpeed(multiplier) {
+      const value = Number(multiplier);
+      this.options.scrollSpeed = clamp(Number.isFinite(value) ? value : 1, 0.1, 5);
+      return this;
+    }
+    getScrollSpeed() { return this.options.scrollSpeed; }
+
+    setZoomSpeed(multiplier) {
+      const value = Number(multiplier);
+      this.options.zoomSpeed = clamp(Number.isFinite(value) ? value : 8, 0.1, 8);
+      return this;
+    }
+    getZoomSpeed() { return this.options.zoomSpeed; }
+
+    setMagneticSnap(enabled) {
+      this.options.magneticSnap = Boolean(enabled);
+      return this;
+    }
+    getMagneticSnap() { return this.options.magneticSnap; }
+
+    _zoomFactor() { return Math.pow(this.options.zoomStepFactor, this.options.zoomSpeed); }
+    zoomIn(anchorClientX = this._viewportWidthNow() / 2) {
+      const base = this._zoomTargetDays || this.visibleDays;
+      return this._animateZoomTo(base / this._zoomFactor(), anchorClientX);
+    }
+    zoomOut(anchorClientX = this._viewportWidthNow() / 2) {
+      const base = this._zoomTargetDays || this.visibleDays;
+      return this._animateZoomTo(base * this._zoomFactor(), anchorClientX);
+    }
+
+    setMinTaskWidth(px) {
+      const centerTime = this.segments.length
+        ? this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2)
+        : null;
+      this.minTaskWidth = Math.max(1, Number(px) || 30);
+      if (this.domainEnd > this.domainStart) {
+        this._renderAll();
+        if (centerTime != null) {
+          this._setScrollLeft(this.timeToX(centerTime) - this._viewportWidthNow() / 2);
+        }
+      }
+      return this;
+    }
+
+    start(template = null, { source = 'api', scrollToEnd = true } = {}) {
+      if (this.editState) this._finishTaskEdit();
+      if (this.calendarEditState) this._finishCalendarTaskEdit();
+      if (this.runningKey !== null) this.stop({ source: 'replaced', render: false });
+
+      let base = template;
+      if (!base) {
+        const selected = this._selectedTask();
+        if (!selected) throw new Error('TaskTimeline.start(): pass a task template or select an existing task first');
+        base = selected;
+      }
+
+      const beforeState = this._captureState();
+      const last = this.tasks[this.tasks.length - 1] || null;
+      const now = snapSecond(Date.now());
+      const start = Math.max(now, last ? last.end + DIRECT_GAP : this.domainStart);
+      const task = this._normalizeTask({
+        instanceId: base && base._key != null ? undefined : (base.instanceId ?? base.key),
+        id: base.id,
+        name: base.name ?? String(base.id),
+        url: base.url ?? '',
+        row: base.row ?? 0,
+        data: base.data ?? null,
+        start,
+        end: start + MIN_TASK_DURATION
+      }, this.tasks.length);
+      if (this.tasks.some(t => t._key === task._key)) {
+        throw new RangeError(`TaskTimeline.start(): duplicate instanceId "${task.instanceId}"`);
+      }
+      task.running = true;
+
+      if (task.start < this.domainStart) this.domainStart = task.start;
+      this.tasks.push(task);
+      this._rebuildRows();
+      this.runningKey = task._key;
+      this.domainEnd = task.end;
+      this.interactionPausedRunning = false;
+      if (this.viewMode === 'calendar') {
+        this.calendarStartDay = this._clampCalendarStart(this._floorDay(task.start));
+        this.calendarWindowInitialized = true;
+        this.calendarScrollInitialized = false;
+      }
+      this._renderAll();
+
+      if (scrollToEnd) {
+        if (this.viewMode === 'calendar') this._scrollCalendarTaskIntoView(task);
+        else this._setScrollLeft(Math.max(0, this.totalWidth - this._viewportWidthNow()));
+      }
+      this._selectTask(task, false);
+      this._showTaskDetails(task);
+
+      this._clearRunningTimer();
+      this.runningTimer = setInterval(() => this._tickRunningTask(), 1000);
+      const event = this._makeEvent('start', {
+        task,
+        before: null,
+        after: this._publicTask(task),
+        source
+      });
+      this._commitExternalOnly('start', event, beforeState);
+      return this._publicTask(task);
+    }
+
+    stop({ source = 'api', render = true } = {}) {
+      const task = this._runningTask();
+      if (!task) {
+        this._clearRunningTimer();
+        this.runningKey = null;
+        this.interactionPausedRunning = false;
+        return null;
+      }
+      const beforeState = this._captureState();
+      const beforeTask = this._publicTask(task);
+      this._clearRunningTimer();
+      this.interactionPausedRunning = false;
+      this._updateRunningTaskIncremental(Date.now());
+      task.running = false;
+      this.domainEnd = task.end;
+      this.runningKey = null;
+
+      if (render) {
+        this._renderAll();
+        this._showTaskDetails(task);
+      }
+      const event = this._makeEvent('stop', {
+        task,
+        before: beforeTask,
+        after: this._publicTask(task),
+        source
+      });
+      this._commitExternalOnly('stop', event, beforeState);
+      return this._publicTask(task);
+    }
+
+    updateTask(instanceId, patch, { emit = false, source = 'api' } = {}) {
+      const task = this._findTask(instanceId);
+      if (!task) return null;
+      const beforeState = this._captureState();
+      const beforeTask = this._publicTask(task);
+
+      if (patch && patch.instanceId != null && String(patch.instanceId) !== task._key) {
+        throw new Error('TaskTimeline.updateTask(): instanceId is immutable; replace the task through setTasks() if its identity changes');
+      }
+      if (patch && patch.id != null) task.id = patch.id;
+      if (patch && patch.name != null) task.name = String(patch.name);
+      if (patch && patch.url != null) task.url = String(patch.url);
+      if (patch && patch.row != null) task.row = patch.row;
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'data')) task.data = patch.data;
+      if (patch && patch.start != null) task.start = toMs(patch.start);
+      if (patch && patch.end != null) task.end = toMs(patch.end);
+      if (!Number.isFinite(task.start) || !Number.isFinite(task.end) || task.end <= task.start) {
+        this._restoreState(beforeState);
+        throw new RangeError('TaskTimeline.updateTask(): invalid start/end');
+      }
+
+      this.tasks.sort((a, b) => a.start - b.start || a.end - b.end || String(a._key).localeCompare(String(b._key)));
+      try { this._validateNoOverlap(this.tasks); }
+      catch (error) {
+        this._restoreState(beforeState);
+        throw error;
+      }
+      this._rebuildRows();
+      this.domainEnd = Math.max(this.baseDomainEnd, this.tasks.length ? this.tasks[this.tasks.length - 1].end : this.baseDomainEnd);
+      this._renderAll();
+      const afterTask = this._publicTask(this._findTask(instanceId));
+
+      if (emit) {
+        const afterState = this._captureState();
+        this._commitMutation({
+          action: 'update',
+          beforeState,
+          afterState,
+          beforeTask,
+          afterTask,
+          source,
+          history: true
+        });
+      }
+      return afterTask;
+    }
+
+    deleteSelected({ source = 'keyboard-or-api' } = {}) {
+      if (this.editState || this.calendarEditState) return false;
+      const task = this._selectedTask();
+      if (!task) return false;
+
+      const beforeState = this._captureState();
+      const beforeTask = this._publicTask(task);
+      if (task._key === this.runningKey) {
+        this._clearRunningTimer();
+        this.runningKey = null;
+        this.interactionPausedRunning = false;
+      }
+
+      const index = this.tasks.indexOf(task);
+      if (index < 0) return false;
+      this.tasks.splice(index, 1);
+      this.selectedKey = null;
+      this.focusedKey = null;
+      this.hoveredKey = null;
+      this._rebuildRows();
+
+      const latest = this.tasks.length ? this.tasks[this.tasks.length - 1].end : this.baseDomainEnd;
+      this.domainEnd = Math.max(this.baseDomainEnd, latest);
+      this._renderAll();
+      this._clearTaskDetails();
+      const afterState = this._captureState();
+      this._commitMutation({
+        action: 'delete',
+        beforeState,
+        afterState,
+        beforeTask,
+        afterTask: null,
+        source,
+        history: true,
+        callbackType: 'delete'
+      });
+      return true;
+    }
+
+    undo() { return this._applyHistory('undo'); }
+    redo() { return this._applyHistory('redo'); }
+    canUndo() { return this.undoStack.length > 0; }
+    canRedo() { return this.redoStack.length > 0; }
+    clearHistory() {
+      this.undoStack.length = 0;
+      this.redoStack.length = 0;
+      this._updateHistoryButtons();
+      return this;
+    }
+
+    scrollToEnd() {
+      this._setScrollLeft(Math.max(0, this.totalWidth - this._viewportWidthNow()));
+      this._updateTimelineMeta();
+      this._updateRowLabelPositions();
+      return this;
+    }
+
+    getVirtualizationStats() {
+      return {
+        enabled: this._virtualizationEnabled(),
+        totalTasks: this.tasks.length,
+        renderedTasks: this.taskRow.querySelectorAll('.task').length,
+        window: this._renderWindow ? { ...this._renderWindow } : null
+      };
+    }
+
+    destroy() {
+      if (this.destroyed) return;
+      this.destroyed = true;
+      this._clearRunningTimer();
+      this._cancelZoomAnimation();
+      if (this.resizeObserver) this.resizeObserver.disconnect();
+      if (this.calendarResizeObserver) this.calendarResizeObserver.disconnect();
+      window.removeEventListener('pointermove', this._boundWindowPointerMove);
+      window.removeEventListener('pointerup', this._boundWindowPointerUp);
+      window.removeEventListener('pointercancel', this._boundWindowPointerUp);
+      this.shadow.innerHTML = '';
+    }
+
+    // -----------------------------------------------------------------------
+    // Data, events, optimistic commits and history
+    // -----------------------------------------------------------------------
+
+    _newInstanceId() {
+      let id;
+      do { id = `auto-${this._nextKey++}`; }
+      while (this.tasks && this.tasks.some(task => task._key === id));
+      return id;
+    }
+
+    _normalizeTask(raw, index) {
+      if (raw == null || raw.id == null) {
+        throw new TypeError(`TaskTimeline: task at index ${index} has no id`);
+      }
+      const start = toMs(raw.start);
+      const end = toMs(raw.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || (end === start && !raw.running)) {
+        throw new RangeError(`TaskTimeline: invalid start/end for task at index ${index}`);
+      }
+      const instanceId = raw.instanceId != null
+        ? raw.instanceId
+        : (raw.key != null ? raw.key : this._newInstanceId());
+      return {
+        _key: String(instanceId),
+        instanceId,
+        id: raw.id,
+        name: raw.name == null ? String(raw.id) : String(raw.name),
+        url: raw.url == null ? '' : String(raw.url),
+        start,
+        end,
+        row: raw.row == null ? 0 : raw.row,
+        data: Object.prototype.hasOwnProperty.call(raw, 'data') ? raw.data : null,
+        running: Boolean(raw.running),
+        x0: 0,
+        x1: 0,
+        realWidth: 0,
+        displayWidth: 0
+      };
+    }
+
+    _cloneData(value) {
+      if (value == null) return value;
+      if (typeof structuredClone === 'function') {
+        try { return structuredClone(value); } catch (_) {}
+      }
+      if (typeof value === 'object') {
+        try { return JSON.parse(JSON.stringify(value)); } catch (_) {}
+      }
+      return value;
+    }
+
+    _publicTask(task) {
+      if (!task) return null;
+      return {
+        instanceId: task.instanceId,
+        id: task.id,
+        name: task.name,
+        url: task.url,
+        start: task.start,
+        end: task.end,
+        row: task.row,
+        running: Boolean(task.running),
+        data: this._cloneData(task.data)
+      };
+    }
+
+    _findTask(instanceId) {
+      if (instanceId == null) return null;
+      const key = String(instanceId);
+      return this.tasks.find(task => task._key === key) || null;
+    }
+
+    _validateNoOverlap(list) {
+      for (let i = 1; i < list.length; i++) {
+        if (list[i].start < list[i - 1].end) {
+          throw new RangeError(`TaskTimeline: tasks overlap at sorted positions ${i - 1} and ${i}`);
+        }
+      }
+    }
+
+    _makeEvent(action, { task = null, before = null, after = null, source = 'internal', type = null, edge = null, originalAction = null } = {}) {
+      const taskSnapshot = task && task._key != null ? this._publicTask(task) : (after || before || task || null);
+      const event = {
+        action,
+        type: type || action,
+        edge,
+        source,
+        originalAction,
+        instanceId: taskSnapshot ? taskSnapshot.instanceId : null,
+        task: taskSnapshot ? { ...taskSnapshot, data: this._cloneData(taskSnapshot.data) } : null,
+        before: before ? { ...before, data: this._cloneData(before.data) } : null,
+        after: after ? { ...after, data: this._cloneData(after.data) } : null,
+        timestamp: Date.now()
+      };
+      return event;
+    }
+
+    _emitEvent(type, event) {
+      const callback = this.callbacks[`on${type[0].toUpperCase()}${type.slice(1)}`];
+      const detail = {
+        ...event,
+        task: event.task ? { ...event.task, data: this._cloneData(event.task.data) } : null,
+        before: event.before ? { ...event.before, data: this._cloneData(event.before.data) } : null,
+        after: event.after ? { ...event.after, data: this._cloneData(event.after.data) } : null
+      };
+      this.host.dispatchEvent(new CustomEvent(`timeline:${type}`, { detail }));
+      if (typeof callback === 'function') {
+        return callback(detail.task, { ...detail, timeline: this });
+      }
+      return undefined;
+    }
+
+    _emit(type, taskOrSnapshot, meta = {}) {
+      const task = taskOrSnapshot && taskOrSnapshot._key != null ? taskOrSnapshot : null;
+      const snapshot = task ? this._publicTask(task) : taskOrSnapshot;
+      const event = this._makeEvent(type, {
+        task: task || snapshot,
+        before: meta.before || null,
+        after: meta.after || snapshot || null,
+        source: meta.source || 'internal',
+        type: meta.type || type,
+        edge: meta.edge || null,
+        originalAction: meta.originalAction || null
+      });
+      return this._emitEvent(type, event);
+    }
+
+    _reportError(error, event = null, rolledBack = false) {
+      const err = error instanceof Error ? error : new Error(String(error || 'Timeline operation failed'));
+      const detail = { error: err, event, rolledBack, timeline: this };
+      this.host.dispatchEvent(new CustomEvent('timeline:error', { detail: { error: err, event, rolledBack } }));
+      if (typeof this.callbacks.onError === 'function') {
+        try { this.callbacks.onError(err, detail); } catch (_) {}
+      }
+    }
+
+    _setPending(instanceId, pending) {
+      if (instanceId == null) return;
+      const key = String(instanceId);
+      if (pending) this.pendingKeys.add(key); else this.pendingKeys.delete(key);
+      const el = this._taskElementByKey ? this._taskElementByKey(key) : null;
+      if (el) el.classList.toggle('pending', pending);
+    }
+
+    _captureState() {
+      return {
+        tasks: this.tasks.map(task => this._publicTask(task)),
+        domainStart: this.domainStart,
+        domainEnd: this.domainEnd,
+        baseDomainEnd: this.baseDomainEnd,
+        selectedInstanceId: this.selectedKey,
+        focusedInstanceId: this.focusedKey,
+        runningInstanceId: this.runningKey,
+        visibleDays: this.visibleDays,
+        scrollLeft: this.viewport ? this._scrollLeftNow() : 0
+      };
+    }
+
+    _restoreState(snapshot, { resumeRunning = true } = {}) {
+      if (!snapshot) return;
+      this._clearRunningTimer();
+      this.interactionPausedRunning = false;
+      this.editState = null;
+      this._nextKey = Math.max(this._nextKey, 1);
+      this.tasks = snapshot.tasks.map((raw, index) => this._normalizeTask(raw, index));
+      this.tasks.sort((a, b) => a.start - b.start || a.end - b.end || String(a._key).localeCompare(String(b._key)));
+      this.domainStart = snapshot.domainStart;
+      this.domainEnd = snapshot.domainEnd;
+      this.baseDomainEnd = snapshot.baseDomainEnd;
+      this.visibleDays = clamp(snapshot.visibleDays || this.visibleDays, this.options.minVisibleDays, this.options.maxVisibleDays);
+      this.selectedKey = snapshot.selectedInstanceId != null && this._findTask(snapshot.selectedInstanceId) ? String(snapshot.selectedInstanceId) : null;
+      this.focusedKey = snapshot.focusedInstanceId != null && this._findTask(snapshot.focusedInstanceId) ? String(snapshot.focusedInstanceId) : null;
+      this.runningKey = snapshot.runningInstanceId != null && this._findTask(snapshot.runningInstanceId) ? String(snapshot.runningInstanceId) : null;
+      for (const task of this.tasks) task.running = task._key === this.runningKey;
+      this._rebuildRows();
+      this._renderAll();
+      this._setScrollLeft(snapshot.scrollLeft || 0);
+      this._updateTimelineMeta();
+      this._updateRowLabelPositions();
+      if (resumeRunning && this.runningKey !== null) {
+        this.runningTimer = setInterval(() => this._tickRunningTask(), 1000);
+      }
+    }
+
+    _pushHistory(entry) {
+      this.undoStack.push(entry);
+      if (this.undoStack.length > this.options.historyLimit) this.undoStack.shift();
+      this.redoStack.length = 0;
+      this._updateHistoryButtons();
+    }
+
+    _updateHistoryButtons() {
+      if (!this.undoButton || !this.redoButton) return;
+      this.undoButton.disabled = !this.canUndo();
+      this.redoButton.disabled = !this.canRedo();
+    }
+
+    _commitMutation({ action, beforeState, afterState, beforeTask, afterTask, source = 'internal', edge = null, history = true, callbackType = 'change' }) {
+      const event = this._makeEvent(action, {
+        task: afterTask || beforeTask,
+        before: beforeTask,
+        after: afterTask,
+        source,
+        type: action,
+        edge
+      });
+      const pendingId = (afterTask || beforeTask)?.instanceId;
+      this._setPending(pendingId, true);
+
+      const rollback = error => {
+        this._setPending(pendingId, false);
+        this._restoreState(beforeState);
+        this._reportError(error, event, true);
+        return false;
+      };
+      const commit = () => {
+        let callbackResult;
+        try { callbackResult = this._emitEvent(callbackType, event); }
+        catch (error) { return rollback(error); }
+        const finish = value => {
+          if (value === false) return rollback(new Error(`${callbackType} callback rejected ${action}`));
+          this._setPending(pendingId, false);
+          if (history) {
+            this._pushHistory({ action, beforeState, afterState, beforeTask, afterTask, source, edge, callbackType });
+          }
+          return true;
+        };
+        if (callbackResult && typeof callbackResult.then === 'function') {
+          return Promise.resolve(callbackResult).then(finish, rollback);
+        }
+        return finish(callbackResult);
+      };
+
+      if (typeof this.canChange !== 'function') return commit();
+      let verdict;
+      try { verdict = this.canChange({ ...event, timeline: this }); }
+      catch (error) { return rollback(error); }
+      const validate = allowed => allowed === false
+        ? rollback(new Error(`canChange rejected ${action}`))
+        : commit();
+      if (verdict && typeof verdict.then === 'function') {
+        return Promise.resolve(verdict).then(validate, rollback);
+      }
+      return validate(verdict);
+    }
+
+    _commitExternalOnly(type, event, beforeState) {
+      const pendingId = event.instanceId;
+      this._setPending(pendingId, true);
+      const rollback = error => {
+        this._setPending(pendingId, false);
+        this._restoreState(beforeState);
+        this._reportError(error, event, true);
+        return false;
+      };
+      let result;
+      try { result = this._emitEvent(type, event); }
+      catch (error) { return rollback(error); }
+      const finish = value => {
+        if (value === false) return rollback(new Error(`${type} callback rejected operation`));
+        this._setPending(pendingId, false);
+        return true;
+      };
+      if (result && typeof result.then === 'function') return Promise.resolve(result).then(finish, rollback);
+      return finish(result);
+    }
+
+    _applyHistory(direction) {
+      if (this.editState || this.pendingKeys.size) return false;
+      const from = direction === 'undo' ? this.undoStack : this.redoStack;
+      const to = direction === 'undo' ? this.redoStack : this.undoStack;
+      const entry = from[from.length - 1];
+      if (!entry) return false;
+
+      const currentState = this._captureState();
+      const target = direction === 'undo' ? entry.beforeState : entry.afterState;
+      const beforeTask = direction === 'undo' ? entry.afterTask : entry.beforeTask;
+      const afterTask = direction === 'undo' ? entry.beforeTask : entry.afterTask;
+      this._restoreState(target);
+
+      const event = this._makeEvent(direction, {
+        task: afterTask || beforeTask,
+        before: beforeTask,
+        after: afterTask,
+        source: 'history',
+        type: direction,
+        edge: entry.edge,
+        originalAction: entry.action
+      });
+      let result;
+      try { result = this._emitEvent('change', event); }
+      catch (error) {
+        this._restoreState(currentState);
+        this._reportError(error, event, true);
+        return false;
+      }
+      const finish = value => {
+        if (value === false) {
+          this._restoreState(currentState);
+          this._reportError(new Error(`onChange rejected ${direction}`), event, true);
+          return false;
+        }
+        from.pop();
+        to.push(entry);
+        this._updateHistoryButtons();
+        const cb = this.callbacks[direction === 'undo' ? 'onUndo' : 'onRedo'];
+        if (typeof cb === 'function') {
+          try { cb(event.task, { ...event, timeline: this }); } catch (error) { this._reportError(error, event, false); }
+        }
+        this.host.dispatchEvent(new CustomEvent(`timeline:${direction}`, { detail: event }));
+        return true;
+      };
+      if (result && typeof result.then === 'function') {
+        return Promise.resolve(result).then(finish, error => {
+          this._restoreState(currentState);
+          this._reportError(error, event, true);
+          return false;
+        });
+      }
+      return finish(result);
+    }
+
+    _rebuildRows() {
+      const values = [];
+      const seen = new Set();
+      for (const row of this.rowDefinitions) {
+        const key = String(row.id);
+        if (!seen.has(key)) { seen.add(key); values.push(row.id); }
+      }
+      for (const task of this.tasks) {
+        const key = String(task.row);
+        if (!seen.has(key)) { seen.add(key); values.push(task.row); }
+      }
+      if (!values.length) values.push(0);
+      this.rowValues = values;
+      this.rowIndex = new Map(values.map((value, index) => [String(value), index]));
+      this._updateVerticalGeometry();
+    }
+
+    _rowInfo(rowId) {
+      const key = String(rowId);
+      const explicit = this.rowDefinitions.find(row => String(row.id) === key);
+      return explicit ? { ...explicit } : { id: rowId, name: String(rowId) };
+    }
+
+    _updateVerticalGeometry() {
+      const taskAreaHeight = this.rowValues.length * this.options.rowHeight;
+      this.taskRow.style.height = `${taskAreaHeight}px`;
+      this.gridLayer.style.height = `${taskAreaHeight}px`;
+      this.nowLineLayer.style.height = `${taskAreaHeight}px`;
+      this.editGuideLayer.style.height = `${taskAreaHeight}px`;
+      this.content.style.height = `${84 + taskAreaHeight}px`;
+    }
+
+    // -----------------------------------------------------------------------
+    // Time/x geometry
+    // -----------------------------------------------------------------------
+
+    _usesOneDayRuler() {
+      // A local calendar day can be 23, 24, or 25 elapsed hours across DST.
+      return this.visibleDays <= 25 / 24 + 1e-6;
+    }
+
+    _chooseTickHoursForScale(scale, rulerScales) {
+      // Pick the finest ruler whose labels actually fit at the current,
+      // continuously changing scale. Changing the ruler never changes block
+      // geometry, so crossing a ruler threshold cannot make tasks jump.
+      const oneDay = this._usesOneDayRuler();
+      const steps = oneDay ? [1] : [1, 2, 4, 12, 24];
+      for (const step of steps) {
+        if (scale + 1e-12 >= rulerScales.get(step)) return step;
+      }
+      if (oneDay) return 2;
+      return 24;
+    }
+
+    _getRulerScales() {
+      if (!this._rulerScalesCache) {
+        this._rulerScalesCache = new Map([1, 2, 4, 12, 24].map(step => [step, this._requiredRulerScale(step)]));
+      }
+      return this._rulerScalesCache;
+    }
+
+    _buildSegments() {
+      const viewportWidth = this._viewportWidthNow();
+      // visibleDays controls the actual time scale continuously. Ruler-label
+      // requirements must NEVER clamp this value; otherwise dense labels make
+      // 1, 2, 3... days look almost identical. The ruler adapts to the scale
+      // instead (1h -> 2h -> 4h -> 12h -> 24h), while task geometry stays smooth.
+      const nominalScale = viewportWidth / (this.visibleDays * DAY);
+      const rulerScales = this._getRulerScales();
+      this.scalePxPerMs = nominalScale;
+      this.tickHours = this._chooseTickHoursForScale(this.scalePxPerMs, rulerScales);
+
+      const out = [];
+      let tCursor = this.domainStart;
+      let xCursor = 0;
+
+      for (const task of this.tasks) {
+        if (task.start > tCursor) {
+          const width = (task.start - tCursor) * this.scalePxPerMs;
+          out.push({ kind: 'gap', t0: tCursor, t1: task.start, x0: xCursor, x1: xCursor + width });
+          xCursor += width;
+        }
+
+        const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
+        const displayWidth = Math.max(realWidth, this.minTaskWidth);
+        task.x0 = xCursor;
+        task.x1 = xCursor + displayWidth;
+        task.realWidth = realWidth;
+        task.displayWidth = displayWidth;
+        out.push({ kind: 'task', task, t0: task.start, t1: task.end, x0: xCursor, x1: xCursor + displayWidth });
+        xCursor += displayWidth;
+        tCursor = task.end;
+      }
+
+      if (tCursor < this.domainEnd) {
+        const width = (this.domainEnd - tCursor) * this.scalePxPerMs;
+        out.push({ kind: 'gap', t0: tCursor, t1: this.domainEnd, x0: xCursor, x1: xCursor + width });
+        xCursor += width;
+      }
+
+      this.segments = out;
+      const trailingGutter = viewportWidth * clamp(Number(this.options.trailingGutterRatio) || 0, 0, 0.5);
+      this.totalWidth = Math.max(viewportWidth, xCursor + trailingGutter);
+      this.content.style.width = `${this.totalWidth}px`;
+    }
+
+    _findSegmentByTime(t) {
+      if (!this.segments.length) return null;
+      if (t <= this.segments[0].t0) return this.segments[0];
+      if (t >= this.segments[this.segments.length - 1].t1) return this.segments[this.segments.length - 1];
+      let lo = 0, hi = this.segments.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const s = this.segments[mid];
+        if (t < s.t0) hi = mid - 1;
+        else if (t > s.t1) lo = mid + 1;
+        else return s;
+      }
+      return this.segments[Math.max(0, Math.min(this.segments.length - 1, lo))];
+    }
+
+    _findSegmentByX(x) {
+      if (!this.segments.length) return null;
+      if (x <= this.segments[0].x0) return this.segments[0];
+      if (x >= this.segments[this.segments.length - 1].x1) return this.segments[this.segments.length - 1];
+      let lo = 0, hi = this.segments.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const s = this.segments[mid];
+        if (x < s.x0) hi = mid - 1;
+        else if (x > s.x1) lo = mid + 1;
+        else return s;
+      }
+      return this.segments[Math.max(0, Math.min(this.segments.length - 1, lo))];
+    }
+
+    timeToX(t) {
+      t = clamp(t, this.domainStart, this.domainEnd);
+      const s = this._findSegmentByTime(t);
+      if (!s || s.t1 === s.t0) return s ? s.x0 : 0;
+      const p = (t - s.t0) / (s.t1 - s.t0);
+      return s.x0 + p * (s.x1 - s.x0);
+    }
+
+    xToTime(x) {
+      x = clamp(x, 0, this.segments[this.segments.length - 1].x1);
+      const s = this._findSegmentByX(x);
+      if (!s || s.x1 === s.x0) return s ? s.t0 : this.domainStart;
+      const p = (x - s.x0) / (s.x1 - s.x0);
+      return s.t0 + p * (s.t1 - s.t0);
+    }
+
+    _xToTimeFromSnapshot(x, snapshot, snapshotWidth) {
+      if (!snapshot.length) return this.domainStart;
+      x = clamp(x, 0, snapshotWidth);
+      let lo = 0, hi = snapshot.length - 1;
+      let seg = snapshot[0];
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const s = snapshot[mid];
+        if (x < s.x0) hi = mid - 1;
+        else if (x > s.x1) lo = mid + 1;
+        else { seg = s; break; }
+      }
+      if (lo > hi) seg = snapshot[Math.max(0, Math.min(snapshot.length - 1, lo))];
+      if (seg.x1 === seg.x0) return seg.t0;
+      const p = (x - seg.x0) / (seg.x1 - seg.x0);
+      return seg.t0 + p * (seg.t1 - seg.t0);
+    }
+
+    _timeToXFromSnapshot(time, snapshot, snapshotWidth) {
+      if (!snapshot.length) return 0;
+      time = clamp(time, snapshot[0].t0, snapshot[snapshot.length - 1].t1);
+      let lo = 0, hi = snapshot.length - 1;
+      let seg = snapshot[0];
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const s = snapshot[mid];
+        if (time < s.t0) hi = mid - 1;
+        else if (time > s.t1) lo = mid + 1;
+        else { seg = s; break; }
+      }
+      if (lo > hi) seg = snapshot[Math.max(0, Math.min(snapshot.length - 1, lo))];
+      if (seg.t1 === seg.t0) return seg.x0;
+      const p = (time - seg.t0) / (seg.t1 - seg.t0);
+      return clamp(seg.x0 + p * (seg.x1 - seg.x0), 0, snapshotWidth);
+    }
+
+    _magnetStepMs() {
+      const steps = this.options.magnetStepsMinutes;
+      if (steps.length === 1) return steps[0] * 60 * SECOND;
+      const thresholds = this.options.magnetScaleThresholdDays;
+      let index = 0;
+      while (index < thresholds.length && this.visibleDays > thresholds[index]) index++;
+      return steps[Math.min(index, steps.length - 1)] * 60 * SECOND;
+    }
+
+    _roundToManipulationStep(time, stepMs) {
+      if (!Number.isFinite(stepMs) || stepMs <= 0) return time;
+      // Round in local wall-clock time so a 5-minute grid means :00/:05/:10
+      // regardless of timezone offset. This also keeps the calendar and
+      // timeline modes on the same minute grid.
+      const d = new Date(time);
+      const minutesPerStep = Math.max(1, Math.round(stepMs / (60 * SECOND)));
+      const totalMinutes = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
+      const roundedMinutes = Math.round(totalMinutes / minutesPerStep) * minutesPerStep;
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      day.setMinutes(roundedMinutes, 0, 0);
+      return day.getTime();
+    }
+
+    _timelineNeighborSnap(rawTime, gridTime, targets, state, minTime, maxTime) {
+      const base = clamp(gridTime, minTime, maxTime);
+      if (!this.options.magneticSnap || !state || !state.snapshot?.length || !targets?.length) {
+        if (state) state.magnetVisual = null;
+        return base;
+      }
+      const validTargets = targets.filter(t => t && Number.isFinite(t.time) && t.time >= minTime && t.time <= maxTime);
+      if (!validTargets.length) { state.magnetVisual = null; return base; }
+      const rawX = this._timeToXFromSnapshot(rawTime, state.snapshot, state.snapshotWidth);
+      const magnet = state.magnet || (state.magnet = {});
+      const releasePx = this.options.magnetReleasePx;
+      const snapPx = this.options.magnetSnapPx;
+
+      if (Number.isFinite(magnet.neighborTarget)) {
+        const latched = validTargets.find(t => t.time === magnet.neighborTarget);
+        if (latched) {
+          const targetX = this._timeToXFromSnapshot(latched.time, state.snapshot, state.snapshotWidth);
+          if (Math.abs(rawX - targetX) <= releasePx) {
+            state.magnetVisual = { target: Number.isFinite(latched.guideTime) ? latched.guideTime : latched.time, stepMs: 0, snapped: true, influenced: true, neighbor: true };
+            return latched.time;
+          }
+        }
+        magnet.neighborTarget = null;
+      }
+
+      let best = null;
+      for (const target of validTargets) {
+        const targetX = this._timeToXFromSnapshot(target.time, state.snapshot, state.snapshotWidth);
+        const distance = Math.abs(rawX - targetX);
+        if (!best || distance < best.distance) best = { ...target, distance };
+      }
+      // Crossing a collision boundary must still clamp exactly to the neighbor,
+      // even when the pointer moved farther than the visual snap radius.
+      const boundaryHit = validTargets.find(t => base === t.time);
+      if (boundaryHit || (best && best.distance <= snapPx)) {
+        const chosen = boundaryHit || best;
+        magnet.neighborTarget = chosen.time;
+        state.magnetVisual = { target: Number.isFinite(chosen.guideTime) ? chosen.guideTime : chosen.time, stepMs: 0, snapped: true, influenced: true, neighbor: true };
+        return chosen.time;
+      }
+      state.magnetVisual = null;
+      return base;
+    }
+
+    _magnetizeTime(rawTime, minTime, maxTime, state, neighborTargets = []) {
+      const stepMs = this._magnetStepMs();
+      const rounded = this._roundToManipulationStep(rawTime, stepMs);
+      const gridTime = clamp(rounded, minTime, maxTime);
+      if (state) {
+        // Round-time attraction is no longer elastic. Free editing is already
+        // quantized to 1/5/15-minute steps. magnetVisual is reserved for exact
+        // attachment to neighboring tasks.
+        state.magnetVisual = null;
+      }
+      return this._timelineNeighborSnap(rawTime, gridTime, neighborTargets, state, minTime, maxTime);
+    }
+
+    // -----------------------------------------------------------------------
+    // Formatting and ruler cells
+    // -----------------------------------------------------------------------
+
+    _floorDay(time) {
+      const d = new Date(time);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+
+    _floorToStep(time, stepHours) {
+      const d = new Date(time);
+      d.setMinutes(0, 0, 0);
+      if (stepHours === 24) d.setHours(0, 0, 0, 0);
+      else d.setHours(Math.floor(d.getHours() / stepHours) * stepHours, 0, 0, 0);
+      return d.getTime();
+    }
+
+    _addHoursLocal(time, hours) {
+      const d = new Date(time);
+      d.setHours(d.getHours() + hours);
+      return d.getTime();
+    }
+
+    _addDaysLocal(time, days) {
+      const d = new Date(time);
+      d.setDate(d.getDate() + days);
+      return d.getTime();
+    }
+
+    _formatHour(time) { return `${pad2(new Date(time).getHours())}:00`; }
+    _formatClockMinute(time) {
+      const d = new Date(time);
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+    _formatClockSecond(time) {
+      const d = new Date(time);
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+    }
+    _formatDate(time) {
+      return new Intl.DateTimeFormat(this.options.locale, {
+        weekday: 'short', day: '2-digit', month: 'short'
+      }).format(new Date(time));
+    }
+    _formatDateTime(time, withSeconds = true) {
+      const d = new Date(time);
+      const date = `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
+      const clock = withSeconds
+        ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+        : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      return `${date} ${clock}`;
+    }
+    _formatDuration(ms) {
+      const totalSeconds = Math.max(0, Math.round(ms / SECOND));
+      if (totalSeconds < 60) return `${totalSeconds}s`;
+      const minutes = Math.floor(totalSeconds / 60);
+      if (minutes < 60) {
+        const s = totalSeconds % 60;
+        return s ? `${minutes}m ${s}s` : `${minutes}m`;
+      }
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return m ? `${h}h ${m}m` : `${h}h`;
+    }
+    _formatTrackedDuration(ms) { return this._formatDuration(ms); }
+
+    _taskIntersects(start, end) {
+      for (const task of this.tasks) {
+        if (task.start >= end) return false;
+        if (task.end > start && task.start < end) return true;
+      }
+      return false;
+    }
+
+    _buildTickCells(stepHours) {
+      const cells = [];
+      let t = this._floorToStep(this.domainStart, stepHours);
+      if (t < this.domainStart) t = this._addHoursLocal(t, stepHours);
+      if (t > this.domainStart) cells.push({ start: this.domainStart, end: Math.min(t, this.domainEnd) });
+      while (t < this.domainEnd) {
+        const next = Math.min(this.domainEnd, this._addHoursLocal(t, stepHours));
+        cells.push({ start: t, end: next });
+        t = next;
+      }
+      return cells;
+    }
+
+    _buildVisualRulerCells(stepHours) {
+      const cells = this._buildTickCells(stepHours);
+      const visual = [];
+      let i = 0;
+      while (i < cells.length) {
+        const cell = cells[i];
+        const empty = !this._taskIntersects(cell.start, cell.end);
+        const canMerge = stepHours === 1 && empty;
+        const maxMergedCells = this._usesOneDayRuler() ? 2 : 6;
+        let j = i + 1;
+        if (canMerge) {
+          const startDay = new Date(cell.start).toDateString();
+          while (
+            j < cells.length &&
+            j - i < maxMergedCells &&
+            new Date(cells[j].start).toDateString() === startDay &&
+            !this._taskIntersects(cells[j].start, cells[j].end)
+          ) j++;
+        }
+        visual.push({ start: cell.start, end: canMerge ? cells[j - 1].end : cell.end, empty });
+        i = canMerge ? j : i + 1;
+      }
+      return visual;
+    }
+
+    _getRulerLabel(cell, preciseEnd = cell.end === this.domainEnd, compact = this.tickHours <= 2) {
+      const start = this._formatHour(cell.start);
+      if (compact) return start;
+      const end = preciseEnd ? this._formatClockMinute(cell.end) : this._formatHour(cell.end);
+      if (start === '00:00' && end === '00:00') return '';
+      return `${start} – ${end}`;
+    }
+
+    _measureRulerLabel(text, italic = false) {
+      if (!this.measureCtx) {
+        const canvas = document.createElement('canvas');
+        this.measureCtx = canvas.getContext('2d');
+      }
+      this.measureCtx.font = `${italic ? 'italic ' : ''}400 11px Inter, Arial, sans-serif`;
+      return Math.ceil(this.measureCtx.measureText(text).width);
+    }
+
+    _requiredRulerScale(stepHours) {
+      let minScale = 0;
+      for (const cell of this._buildVisualRulerCells(stepHours)) {
+        const compact = stepHours <= 2;
+        const label = this._getRulerLabel(cell, cell.end === this.domainEnd, compact);
+        if (!label) continue;
+        const duration = Math.max(1, cell.end - cell.start);
+        const required = this._measureRulerLabel(label, cell.empty)
+          + (compact ? 2 : 2 * this.options.rulerLabelSidePadding + 2);
+        minScale = Math.max(minScale, required / duration);
+      }
+      return minScale;
+    }
+
+    // -----------------------------------------------------------------------
+    // Rendering
+    // -----------------------------------------------------------------------
+
+    _renderAll({ invalidateRulerScales = true } = {}) {
+      if (!(this.domainEnd > this.domainStart)) return;
+      if (invalidateRulerScales) this._rulerScalesCache = null;
+      this._updateVerticalGeometry();
+      this._buildSegments();
+      this._renderDays();
+      this._renderRuler();
+      this._renderTasks();
+      this._renderTimelineNowLine();
+      if (this.viewMode === 'calendar') this._renderCalendar();
+      this._updateTimelineMeta();
+      this._updateHistoryButtons();
+    }
+
+    _renderZoomFrame() {
+      if (!(this.domainEnd > this.domainStart)) return;
+      this._buildSegments();
+      this._updateDayGeometry();
+      // Do not rebuild the ruler while a gesture is in progress. Existing cells
+      // follow the new geometry, and the final tick density is rendered once
+      // after input stops. This removes a large source of zoom jank.
+      this._updateRulerGeometry();
+    }
+
+    _updateDayGeometry() {
+      const bands = this.dayRow.querySelectorAll('.day-band');
+      if (!bands.length) {
+        this._renderDays();
+        return;
+      }
+      for (const el of bands) {
+        const start = Number(el.dataset.start);
+        const end = Number(el.dataset.end);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        el.style.left = `${this.timeToX(start)}px`;
+        el.style.width = `${Math.max(0, this.timeToX(end) - this.timeToX(start))}px`;
+      }
+    }
+
+    _updateRulerGeometry() {
+      for (const el of this.rulerRow.querySelectorAll('.ruler-cell')) {
+        const start = Number(el.dataset.start);
+        const end = Number(el.dataset.end);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        const x0 = this.timeToX(start);
+        const x1 = this.timeToX(end);
+        el.style.left = `${x0}px`;
+        el.style.width = `${Math.max(1, x1 - x0)}px`;
+      }
+      for (const line of this.gridLayer.querySelectorAll('.grid-line')) {
+        const time = Number(line.dataset.time);
+        if (Number.isFinite(time)) line.style.left = `${this.timeToX(time)}px`;
+      }
+      this._renderTimelineNowLine();
+    }
+
+    _updateTaskGeometry({ visibleOnly = false } = {}) {
+      const taskByKey = new Map(this.tasks.map(task => [String(task._key), task]));
+      const overscan = this._viewportWidthNow() * 1.5;
+      const left = visibleOnly ? Math.max(0, this._scrollLeft - overscan) : -Infinity;
+      const right = visibleOnly ? this._scrollLeft + this._viewportWidthNow() + overscan : Infinity;
+
+      for (const el of this.taskRow.querySelectorAll('.task[data-task-key]')) {
+        const task = taskByKey.get(String(el.dataset.taskKey));
+        if (!task) continue;
+        // Never leave a rendered element at stale coordinates during zoom.
+        // Stale off-screen nodes were the source of blocks visibly "driving"
+        // through the background when zooming out.
+        const width = Math.max(1, task.x1 - task.x0);
+        el.style.transform = `translate3d(${task.x0}px,0,0)`;
+        el.style.width = `${width}px`;
+        el.classList.toggle('short', width < 46);
+      }
+      for (const dot of this.taskRow.querySelectorAll('.connector-dot')) {
+        const a = taskByKey.get(String(dot.dataset.fromKey));
+        const b = taskByKey.get(String(dot.dataset.toKey));
+        if (!a || !b) continue;
+        const x = (a.x1 + b.x0) / 2;
+        dot.style.left = `${x}px`;
+      }
+    }
+
+    _renderDays() {
+      this.dayRow.innerHTML = '';
+      // Day bands are calendar intervals, not domain-sized chunks. Starting at
+      // an arbitrary domain timestamp makes every later boundary inherit that
+      // clock time (for example 14:37 instead of local 00:00).
+      let t = this._floorDay(this.domainStart);
+      while (t < this.domainEnd) {
+        const next = this._addDaysLocal(t, 1);
+        const el = document.createElement('div');
+        el.className = 'day-band';
+        el.dataset.start = String(t);
+        el.dataset.end = String(next);
+        el.style.left = `${this.timeToX(t)}px`;
+        el.style.width = `${Math.max(0, this.timeToX(next) - this.timeToX(t))}px`;
+        el.textContent = this._formatDate(t);
+        this.dayRow.appendChild(el);
+        t = next;
+      }
+    }
+
+    _renderRuler() {
+      this.rulerRow.innerHTML = '';
+      this.gridLayer.innerHTML = '';
+      const cells = this._buildTickCells(this.tickHours);
+      const visualCells = this._buildVisualRulerCells(this.tickHours);
+
+      visualCells.forEach((cell, index) => {
+        const x0 = this.timeToX(cell.start);
+        const x1 = this.timeToX(cell.end);
+        const rightmost = index === visualCells.length - 1;
+        const el = document.createElement('div');
+        el.className = `ruler-cell${cell.empty ? ' empty' : ''}${this.tickHours <= 2 ? ' dense' : ''}${rightmost ? ' rightmost' : ''}`;
+        el.style.left = `${x0}px`;
+        el.style.width = `${Math.max(1, x1 - x0)}px`;
+        el.dataset.start = String(cell.start);
+        el.dataset.end = String(cell.end);
+        el.dataset.boundaryEnd = String(this._addHoursLocal(cell.start, this.tickHours));
+        el.textContent = this._getRulerLabel(cell, rightmost && cell.end === this.domainEnd);
+        el.title = `${this._formatDateTime(cell.start, false)} – ${this._formatDateTime(cell.end, false)}`;
+        this.rulerRow.appendChild(el);
+      });
+
+      for (const cell of cells) {
+        const line = document.createElement('div');
+        line.className = `grid-line${this._floorDay(cell.start) === cell.start ? ' major' : ''}`;
+        line.dataset.time = String(cell.start);
+        line.style.left = `${this.timeToX(cell.start)}px`;
+        this.gridLayer.appendChild(line);
+      }
+    }
+
+    _renderTimelineNowLine() {
+      for (const old of this.gridLayer.querySelectorAll('.timeline-now-line')) old.remove();
+      for (const old of this.nowLineLayer.querySelectorAll('.timeline-now-line')) old.remove();
+      const time = Number(this.currentTime);
+      if (!Number.isFinite(time) || time < this.domainStart || time > this.domainEnd) return;
+      const line = document.createElement('div');
+      line.className = 'timeline-now-line';
+      line.dataset.time = String(time);
+      line.style.left = `${this.timeToX(time)}px`;
+      this.nowLineLayer.appendChild(line);
+    }
+
+    _rowIndexOf(task) {
+      return this.rowIndex.get(String(task.row)) ?? 0;
+    }
+
+    _taskHeight(task) {
+      const minH = Number(this.options.nominalTaskHeight) || 58;
+      const maxH = minH * (Number(this.options.maxTaskHeightFactor) || 2);
+      const duration = Math.max(MIN_TASK_DURATION, task.end - task.start);
+      const minD = 2 * SECOND;
+      const maxD = 6.5 * HOUR;
+      const progress = clamp((Math.log(duration) - Math.log(minD)) / (Math.log(maxD) - Math.log(minD)), 0, 1);
+      return Math.round(minH + progress * (maxH - minH));
+    }
+
+    _taskTop(task) {
+      const rowIndex = this._rowIndexOf(task);
+      const h = this._taskHeight(task);
+      return rowIndex * this.options.rowHeight + this.options.rowHeight - this.options.rowPaddingBottom - h;
+    }
+
+    _taskCenterY(task) { return this._taskTop(task) + this._taskHeight(task) / 2; }
+
+    _sameRow(a, b) { return String(a.row) === String(b.row); }
+    _isDirectlyConnected(a, b) {
+      return this._sameRow(a, b) && Math.round(b.start - a.end) === DIRECT_GAP;
+    }
+
+    _virtualizationEnabled() {
+      return this.options.virtualizeThreshold > 0 && this.tasks.length >= this.options.virtualizeThreshold;
+    }
+
+    _visibleTaskRange() {
+      const n = this.tasks.length;
+      if (!n || !this._virtualizationEnabled()) {
+        this._renderWindow = { start: 0, end: n, left: 0, right: this.totalWidth };
+        return [0, n];
+      }
+      const overscan = this._viewportWidthNow() * this.options.overscanScreens;
+      const left = Math.max(0, this._scrollLeft - overscan);
+      const right = Math.min(this.totalWidth, this._scrollLeft + this._viewportWidthNow() + overscan);
+      let lo = 0, hi = n;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (this.tasks[mid].x1 < left) lo = mid + 1; else hi = mid;
+      }
+      const start = Math.max(0, lo - 1);
+      lo = start; hi = n;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (this.tasks[mid].x0 <= right) lo = mid + 1; else hi = mid;
+      }
+      let end = Math.min(n, lo + 1);
+      if (this.editState) {
+        const editIndex = this.tasks.findIndex(task => task._key === this.editState.key);
+        if (editIndex >= 0) {
+          this._renderWindow = { start: Math.min(start, editIndex), end: Math.max(end, editIndex + 1), left, right };
+          return [this._renderWindow.start, this._renderWindow.end];
+        }
+      }
+      this._renderWindow = { start, end, left, right };
+      return [start, end];
+    }
+
+    _maybeRefreshVirtualWindow() {
+      if (!this._virtualizationEnabled()) return;
+      const w = this._renderWindow;
+      const viewLeft = this._scrollLeft;
+      const viewRight = viewLeft + this._viewportWidthNow();
+      if (!w || viewLeft < w.left + this._viewportWidthNow() * 0.25 || viewRight > w.right - this._viewportWidthNow() * 0.25) {
+        this._renderTasks();
+      }
+    }
+
+    _renderTasks() {
+      this.taskRow.innerHTML = '';
+      this.editGuideLayer.innerHTML = '';
+      if (!this.editState) this._clearTaskDetails();
+
+      for (let i = 1; i < this.rowValues.length; i++) {
+        const line = document.createElement('div');
+        line.className = 'row-separator';
+        line.style.top = `${i * this.options.rowHeight}px`;
+        this.taskRow.appendChild(line);
+      }
+      this._renderRowLabels();
+
+      const [startIndex, endIndex] = this._visibleTaskRange();
+
+      // Connectors are deliberately restricted to adjacent blocks in the same visual row.
+      for (let i = Math.max(0, startIndex - 1); i < Math.min(this.tasks.length - 1, endIndex); i++) {
+        const a = this.tasks[i];
+        const b = this.tasks[i + 1];
+        if (!this._isDirectlyConnected(a, b)) continue;
+        if (b.x0 < (this._renderWindow?.left ?? 0) || a.x1 > (this._renderWindow?.right ?? this.totalWidth)) continue;
+        const dot = document.createElement('div');
+        dot.className = 'connector-dot';
+        dot.dataset.fromKey = String(a._key);
+        dot.dataset.toKey = String(b._key);
+        dot.style.left = `${(a.x1 + b.x0) / 2}px`;
+        dot.style.top = `${(this._taskCenterY(a) + this._taskCenterY(b)) / 2}px`;
+        dot.title = `${a.name} → ${b.name}: +1 second`;
+        this.taskRow.appendChild(dot);
+      }
+
+      for (let i = startIndex; i < endIndex; i++) {
+        this.taskRow.appendChild(this._createTaskElement(this.tasks[i]));
+      }
+      this._renderEditGuides();
+      this._updateRowLabelPositions();
+      this._renderDetailsPointer();
+    }
+
+    _createTaskElement(task) {
+      const width = Math.max(1, task.x1 - task.x0);
+      const el = document.createElement('div');
+      const editing = Boolean(this.editState && this.editState.key === task._key);
+      const editMode = editing ? this.editState.mode : '';
+      const selected = this.selectedKey === task._key;
+      const focused = this.focusedKey === task._key;
+      const hovered = this.hoveredKey === task._key;
+      const pending = this.pendingKeys.has(task._key);
+      const narrowEdit = Boolean(editing && this.editState.didMutate && width < 150);
+      el.className = `task${width < 46 ? ' short' : ''}${editing ? ` editing ${editMode}` : ''}${task.running ? ' running' : ''}${selected ? ' selected' : ''}${focused ? ' focused' : ''}${hovered ? ' hovered' : ''}${pending ? ' pending' : ''}${narrowEdit ? ' narrow-edit' : ''}`;
+      el.style.left = '0px';
+      el.style.transform = `translate3d(${task.x0}px,0,0)`;
+      el.style.top = `${this._taskTop(task)}px`;
+      el.style.width = `${width}px`;
+      el.style.height = `${this._taskHeight(task)}px`;
+      const bg = taskColor(task.id);
+      el.style.background = bg;
+      el.style.color = textColorForBackground(bg);
+      el.dataset.taskKey = String(task._key);
+      el.dataset.taskId = String(task.id);
+      el.tabIndex = 0;
+      el.setAttribute('role', 'option');
+      el.setAttribute('aria-selected', selected ? 'true' : 'false');
+      el.setAttribute('aria-label', `${task.name}: ${this._formatDateTime(task.start)} — ${this._formatDateTime(task.end)}`);
+
+
+
+      const main = document.createElement('div');
+      main.className = 'task-main';
+      if (width >= 46 || task.running) {
+        const name = document.createElement('span');
+        name.className = 'task-name';
+        name.textContent = task.name || `#${task.id}`;
+        main.appendChild(name);
+      }
+      if (width >= 118 || task.running) {
+        const time = document.createElement('span');
+        time.className = 'task-time';
+        time.textContent = `${this._formatClockSecond(task.start)}–${this._formatClockSecond(task.end)} · ${this._formatDuration(task.end - task.start)}`;
+        main.appendChild(time);
+      }
+      el.appendChild(main);
+
+      const left = document.createElement('div');
+      left.className = 'resize-handle left';
+      left.title = 'Change start time';
+      left.setAttribute('aria-label', 'Change start time');
+      el.appendChild(left);
+
+      if (!task.running) {
+        const right = document.createElement('div');
+        right.className = 'resize-handle right';
+        right.title = 'Change end time';
+        right.setAttribute('aria-label', 'Change end time');
+        el.appendChild(right);
+      }
+
+      const startClock = document.createElement('span');
+      startClock.className = 'edit-clock start';
+      startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockSecond(task.start)}`;
+      el.appendChild(startClock);
+      const endClock = document.createElement('span');
+      endClock.className = 'edit-clock end';
+      endClock.innerHTML = `<span class="kind">End</span>${this._formatClockSecond(task.end)}`;
+      el.appendChild(endClock);
+      const durationClock = document.createElement('span');
+      durationClock.className = 'edit-clock duration';
+      durationClock.innerHTML = `<span class="kind">Duration</span>${this._formatDuration(task.end - task.start)}`;
+      el.appendChild(durationClock);
+
+      return el;
+    }
+
+    _renderRowLabels() {
+      for (let i = 0; i < this.rowValues.length; i++) {
+        const row = this._rowInfo(this.rowValues[i]);
+        const label = document.createElement('div');
+        label.className = 'row-label';
+        label.dataset.rowIndex = String(i);
+        label.style.top = `${i * this.options.rowHeight + 6}px`;
+        label.textContent = row.name;
+        label.title = `Row: ${row.name}`;
+        this.taskRow.appendChild(label);
+      }
+    }
+
+    _updateRowLabelPositions() {
+      const left = this._scrollLeft + 8;
+      for (const label of this.taskRow.querySelectorAll('.row-label')) {
+        label.style.left = `${left}px`;
+      }
+    }
+
+    _renderEditGuides() {
+      this.editGuideLayer.innerHTML = '';
+      const state = this.editState;
+      if (!state || !state.didMutate) return;
+      const task = this._findTask(state.key);
+      if (!task) return;
+      const edges = state.mode === 'resize-left'
+        ? [{ name:'start', time:task.start, active:true }]
+        : state.mode === 'resize-right'
+          ? [{ name:'end', time:task.end, active:true }]
+          : [{ name:'start', time:task.start, active:true }, { name:'end', time:task.end, active:true }];
+      for (const edge of edges) {
+        const guide = document.createElement('div');
+        guide.className = `edit-guide${edge.active ? ' active' : ''}`;
+        guide.style.left = `${this.timeToX(edge.time)}px`;
+        this.editGuideLayer.appendChild(guide);
+      }
+      const magnet = state.magnetVisual;
+      if (magnet && Number.isFinite(magnet.target)) {
+        const guide = document.createElement('div');
+        guide.className = `edit-guide magnet${magnet.snapped ? ' snapped' : ''}`;
+        guide.style.left = `${this.timeToX(magnet.target)}px`;
+        this.editGuideLayer.appendChild(guide);
+      }
+    }
+
+    _applyViewModeDom() {
+      const calendar = this.viewMode === 'calendar';
+      this.viewport.hidden = calendar;
+      this.calendarView.hidden = !calendar;
+      this._updateTimelineMeta();
+    }
+
+    _initializeCalendarWindowFromTimeline() {
+      let visibleStart = this.domainStart;
+      let visibleEnd = this.domainEnd;
+      if (this.segments.length) {
+        visibleStart = this._visibleStartTime();
+        visibleEnd = this._visibleEndTime();
+      }
+      const startDay = this._floorDay(visibleStart);
+      const endProbe = Math.max(visibleStart, visibleEnd - 1);
+      const endDay = this._floorDay(endProbe);
+      let count = 1;
+      let cursor = startDay;
+      while (cursor < endDay && count < this.options.calendarMaxDays) {
+        cursor = this._addDaysLocal(cursor, 1);
+        count++;
+      }
+      this.calendarDayCount = clamp(count, 1, this.options.calendarMaxDays);
+      this.calendarStartDay = this._clampCalendarStart(startDay);
+      this.calendarWindowInitialized = true;
+      this.calendarScrollInitialized = false;
+    }
+
+    _calendarDomainStartDay() { return this._floorDay(this.domainStart); }
+    _calendarDomainEndDay() { return this._floorDay(Math.max(this.domainStart, this.domainEnd)); }
+
+    _clampCalendarStart(day) {
+      const min = this._calendarDomainStartDay();
+      let max = this._calendarDomainEndDay();
+      for (let i = 1; i < this.calendarDayCount; i++) max = this._addDaysLocal(max, -1);
+      if (max < min) max = min;
+      return clamp(day, min, max);
+    }
+
+    _calendarEndDay() {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      return this._addDaysLocal(this.calendarStartDay, this.calendarDayCount);
+    }
+
+    _calendarDayIndexForTime(time) {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      let day = this.calendarStartDay;
+      for (let i = 0; i < this.calendarDayCount; i++) {
+        const next = this._addDaysLocal(day, 1);
+        if (time >= day && time < next) return i;
+        day = next;
+      }
+      if (time === this._calendarEndDay()) return this.calendarDayCount - 1;
+      return -1;
+    }
+
+    _calendarMinutesOfDay(time, dayStart, dayEnd = this._addDaysLocal(dayStart, 1)) {
+      if (time <= dayStart) return 0;
+      if (time >= dayEnd) return 1440;
+      const d = new Date(time);
+      return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
+    }
+
+    _calendarTimeFromDayAndMinutes(dayStart, minutes) {
+      const m = clamp(minutes, 0, 1440);
+      if (m >= 1440) return this._addDaysLocal(dayStart, 1);
+      const whole = Math.floor(m);
+      const seconds = Math.round((m - whole) * 60);
+      const d = new Date(dayStart);
+      d.setHours(0, 0, 0, 0);
+      d.setMinutes(whole, seconds, 0);
+      return d.getTime();
+    }
+
+    _buildCalendarVerticalMap(hourHeight) {
+      const basePxPerMs = hourHeight / HOUR;
+      const minTaskHeight = this.options.calendarMinTaskHeight;
+      const dayMs = 24 * HOUR;
+      const nodes = new Set([0, dayMs]);
+      const constraints = [];
+
+      for (const segment of this._calendarSegments()) {
+        const startMinutes = this._calendarMinutesOfDay(segment.segmentStart, segment.dayStart, segment.dayEnd);
+        const endMinutes = this._calendarMinutesOfDay(segment.segmentEnd, segment.dayStart, segment.dayEnd);
+        const start = clamp(Math.round(startMinutes * 60 * SECOND), 0, dayMs);
+        const end = clamp(Math.round(endMinutes * 60 * SECOND), 0, dayMs);
+        if (!(end > start)) continue;
+        nodes.add(start);
+        nodes.add(end);
+        constraints.push({ start, end, minHeight: minTaskHeight });
+      }
+
+      // Hour boundaries are explicit nodes so hour labels/grid lines remain
+      // exact even when short tasks locally stretch the calendar scale.
+      for (let hour = 1; hour < 24; hour++) nodes.add(hour * HOUR);
+
+      const times = [...nodes].sort((a, b) => a - b);
+      const index = new Map(times.map((time, i) => [time, i]));
+      const endingAt = Array.from({ length: times.length }, () => []);
+      for (const c of constraints) {
+        const startIndex = index.get(c.start);
+        const endIndex = index.get(c.end);
+        if (startIndex != null && endIndex != null && endIndex > startIndex) {
+          endingAt[endIndex].push({ startIndex, minHeight: c.minHeight });
+        }
+      }
+
+      const ys = new Array(times.length).fill(0);
+      for (let i = 1; i < times.length; i++) {
+        let y = ys[i - 1] + (times[i] - times[i - 1]) * basePxPerMs;
+        for (const c of endingAt[i]) y = Math.max(y, ys[c.startIndex] + c.minHeight);
+        ys[i] = y;
+      }
+
+      const toY = minutes => {
+        const value = clamp(Number(minutes) || 0, 0, 1440) * 60 * SECOND;
+        if (value <= times[0]) return ys[0];
+        if (value >= times[times.length - 1]) return ys[ys.length - 1];
+        let lo = 0, hi = times.length - 2;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (value < times[mid]) hi = mid - 1;
+          else if (value > times[mid + 1]) lo = mid + 1;
+          else {
+            const dt = times[mid + 1] - times[mid];
+            const p = dt > 0 ? (value - times[mid]) / dt : 0;
+            return ys[mid] + p * (ys[mid + 1] - ys[mid]);
+          }
+        }
+        return ys[Math.max(0, Math.min(ys.length - 1, lo))];
+      };
+
+      const fromY = y => {
+        const value = clamp(Number(y) || 0, 0, ys[ys.length - 1]);
+        if (value <= ys[0]) return 0;
+        if (value >= ys[ys.length - 1]) return 1440;
+        let lo = 0, hi = ys.length - 2;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (value < ys[mid]) hi = mid - 1;
+          else if (value > ys[mid + 1]) lo = mid + 1;
+          else {
+            const dy = ys[mid + 1] - ys[mid];
+            const p = dy > 0 ? (value - ys[mid]) / dy : 0;
+            return (times[mid] + p * (times[mid + 1] - times[mid])) / (60 * SECOND);
+          }
+        }
+        return times[Math.max(0, Math.min(times.length - 1, lo))] / (60 * SECOND);
+      };
+
+      return { times, ys, toY, fromY, totalHeight: ys[ys.length - 1], basePxPerMs };
+    }
+
+    _calendarMetricsForRender() {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const timeAxisWidth = this.options.calendarTimeAxisWidth;
+      const dateHeaderHeight = 30;
+      const projectHeaderHeight = 24;
+      const headerHeight = dateHeaderHeight + projectHeaderHeight;
+      const hourHeight = this.options.calendarHourHeight;
+      const viewportWidth = Math.max(320, this.calendarViewport.clientWidth || this._viewportWidthNow());
+      const available = Math.max(0, viewportWidth - timeAxisWidth);
+      const rowCount = Math.max(1, this.rowValues.length);
+      const projectWidthFloor = rowCount * this.options.calendarProjectMinWidth;
+      const dayWidth = Math.max(this.options.calendarDayMinWidth, projectWidthFloor, available / this.calendarDayCount);
+      const laneWidth = dayWidth / rowCount;
+      const width = timeAxisWidth + dayWidth * this.calendarDayCount;
+      const verticalMap = this._buildCalendarVerticalMap(hourHeight);
+      const height = headerHeight + verticalMap.totalHeight;
+      const metrics = { timeAxisWidth, dateHeaderHeight, projectHeaderHeight, headerHeight, hourHeight, dayWidth, rowCount, laneWidth, width, height, verticalMap };
+      this._calendarMetrics = metrics;
+      return metrics;
+    }
+
+    _formatCalendarHeader(dayStart) {
+      return new Intl.DateTimeFormat(this.options.locale, {
+        weekday: 'short', day: '2-digit', month: 'short'
+      }).format(new Date(dayStart));
+    }
+
+    _formatCalendarRangeTitle() {
+      const start = this.calendarStartDay;
+      const end = this._addDaysLocal(start, this.calendarDayCount - 1);
+      const fmt = new Intl.DateTimeFormat(this.options.locale, { day: '2-digit', month: 'short', year: 'numeric' });
+      return this.calendarDayCount === 1 ? fmt.format(new Date(start)) : `${fmt.format(new Date(start))} – ${fmt.format(new Date(end))}`;
+    }
+
+    _calendarSegments() {
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const rangeStart = this.calendarStartDay;
+      const rangeEnd = this._calendarEndDay();
+      const segments = [];
+      for (const task of this.tasks) {
+        if (task.running && task.end === task.start && task.start >= rangeStart && task.start < rangeEnd) {
+          const day = this._floorDay(task.start);
+          const dayIndex = this._calendarDayIndexForTime(task.start);
+          if (dayIndex >= 0) {
+            segments.push({
+              task,
+              dayStart: day,
+              dayEnd: this._addDaysLocal(day, 1),
+              dayIndex,
+              segmentStart: task.start,
+              segmentEnd: task.end,
+              startsTask: true,
+              endsTask: true
+            });
+          }
+          continue;
+        }
+        if (task.end <= rangeStart) continue;
+        if (task.start >= rangeEnd) break;
+        let day = this._floorDay(Math.max(task.start, rangeStart));
+        if (day < rangeStart) day = rangeStart;
+        while (day < task.end && day < rangeEnd) {
+          const next = this._addDaysLocal(day, 1);
+          const segmentStart = Math.max(task.start, day);
+          const segmentEnd = Math.min(task.end, next, rangeEnd);
+          if (segmentEnd > segmentStart) {
+            const dayIndex = this._calendarDayIndexForTime(segmentStart);
+            if (dayIndex >= 0) {
+              segments.push({
+                task,
+                dayStart: day,
+                dayEnd: next,
+                dayIndex,
+                segmentStart,
+                segmentEnd,
+                startsTask: segmentStart === task.start,
+                endsTask: segmentEnd === task.end
+              });
+            }
+          }
+          day = next;
+        }
+      }
+      return segments;
+    }
+
+    _layoutCalendarSegments(metrics) {
+      const map = metrics.verticalMap;
+      return this._calendarSegments().map(segment => {
+        const rowIndex = this._rowIndexOf(segment.task);
+        const topMinutes = this._calendarMinutesOfDay(segment.segmentStart, segment.dayStart, segment.dayEnd);
+        const endMinutes = this._calendarMinutesOfDay(segment.segmentEnd, segment.dayStart, segment.dayEnd);
+        const top = metrics.headerHeight + map.toY(topMinutes);
+        const bottom = metrics.headerHeight + map.toY(endMinutes);
+        const height = Math.max(this.options.calendarMinTaskHeight, bottom - top);
+        return { ...segment, rowIndex, top, height, displayBottom: top + height };
+      });
+    }
+
+    _renderCalendar() {
+      if (!this.calendarView || this.viewMode !== 'calendar') return;
+      if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const metrics = this._calendarMetricsForRender();
+      this.calendarCanvas.innerHTML = '';
+      this.calendarCanvas.style.width = `${metrics.width}px`;
+      this.calendarCanvas.style.height = `${metrics.height}px`;
+      this.calendarTitle.textContent = this._formatCalendarRangeTitle();
+
+      const stickyHeader = document.createElement('div');
+      stickyHeader.className = 'calendar-sticky-header';
+      stickyHeader.style.width = `${metrics.width}px`;
+      stickyHeader.style.height = `${metrics.headerHeight}px`;
+      this.calendarCanvas.appendChild(stickyHeader);
+
+      const corner = document.createElement('div');
+      corner.className = 'calendar-corner';
+      corner.style.width = `${metrics.timeAxisWidth}px`;
+      corner.style.height = `${metrics.headerHeight}px`;
+      stickyHeader.appendChild(corner);
+
+      let day = this.calendarStartDay;
+      const today = this._floorDay(Date.now());
+      for (let i = 0; i < this.calendarDayCount; i++) {
+        const header = document.createElement('div');
+        header.className = `calendar-day-header${day === today ? ' today' : ''}`;
+        header.style.left = `${metrics.timeAxisWidth + i * metrics.dayWidth}px`;
+        header.style.width = `${metrics.dayWidth}px`;
+        header.style.height = `${metrics.dateHeaderHeight}px`;
+        header.textContent = this._formatCalendarHeader(day);
+        stickyHeader.appendChild(header);
+
+        const dayLine = document.createElement('div');
+        dayLine.className = 'calendar-day-line';
+        dayLine.style.left = `${metrics.timeAxisWidth + i * metrics.dayWidth}px`;
+        dayLine.style.top = `${metrics.headerHeight}px`;
+        this.calendarCanvas.appendChild(dayLine);
+
+        for (let r = 1; r < metrics.rowCount; r++) {
+          const rowLine = document.createElement('div');
+          rowLine.className = 'calendar-row-line';
+          rowLine.style.left = `${metrics.timeAxisWidth + i * metrics.dayWidth + r * metrics.laneWidth}px`;
+          rowLine.style.top = `${metrics.headerHeight}px`;
+          this.calendarCanvas.appendChild(rowLine);
+        }
+        for (let r = 0; r < metrics.rowCount; r++) {
+          const row = this._rowInfo(this.rowValues[r]);
+          const label = document.createElement('div');
+          label.className = 'calendar-row-name';
+          label.style.left = `${metrics.timeAxisWidth + i * metrics.dayWidth + r * metrics.laneWidth}px`;
+          label.style.top = `${metrics.dateHeaderHeight}px`;
+          label.style.width = `${Math.max(20, metrics.laneWidth)}px`;
+          label.style.height = `${metrics.projectHeaderHeight}px`;
+          label.textContent = row.name;
+          label.title = row.name;
+          stickyHeader.appendChild(label);
+        }
+        day = this._addDaysLocal(day, 1);
+      }
+
+      for (let hour = 0; hour <= 24; hour++) {
+        const y = metrics.headerHeight + metrics.verticalMap.toY(hour * 60);
+        if (hour < 24) {
+          const nextY = metrics.headerHeight + metrics.verticalMap.toY((hour + 1) * 60);
+          const label = document.createElement('div');
+          label.className = 'calendar-time-label';
+          label.style.top = `${y}px`;
+          label.style.width = `${metrics.timeAxisWidth}px`;
+          label.style.height = `${Math.max(1, nextY - y)}px`;
+          label.textContent = `${pad2(hour)}:00`;
+          this.calendarCanvas.appendChild(label);
+        }
+        const line = document.createElement('div');
+        line.className = 'calendar-hour-line';
+        line.style.left = `${metrics.timeAxisWidth}px`;
+        line.style.top = `${y}px`;
+        line.style.width = `${metrics.dayWidth * this.calendarDayCount}px`;
+        this.calendarCanvas.appendChild(line);
+      }
+
+      this._renderCalendarTasks(metrics);
+      this._renderCalendarNowLine(metrics);
+      if (!this.calendarScrollInitialized) {
+        const rangeStart = this.calendarStartDay;
+        const rangeEnd = this._calendarEndDay();
+        let earliestMinutes = 8 * 60;
+        for (const task of this.tasks) {
+          if (task.end <= rangeStart) continue;
+          if (task.start >= rangeEnd) break;
+          const day = this._floorDay(Math.max(task.start, rangeStart));
+          const next = this._addDaysLocal(day, 1);
+          earliestMinutes = Math.min(earliestMinutes, this._calendarMinutesOfDay(Math.max(task.start, day), day, next));
+        }
+        const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, earliestMinutes - 45)));
+        this.calendarViewport.scrollTop = top;
+        this.calendarScrollInitialized = true;
+      }
+      this._updateTimelineMeta();
+    }
+
+    _scrollCalendarTaskIntoView(task, { verticalOffset = 72 } = {}) {
+      if (!task || this.viewMode !== 'calendar' || !this.calendarViewport) return false;
+      if (!this.calendarWindowInitialized || this._calendarDayIndexForTime(task.start) < 0) {
+        this.calendarStartDay = this._clampCalendarStart(this._floorDay(task.start));
+        this.calendarWindowInitialized = true;
+        this.calendarScrollInitialized = true;
+        this._renderCalendar();
+      }
+
+      const metrics = this._calendarMetrics || this._calendarMetricsForRender();
+      const dayIndex = this._calendarDayIndexForTime(task.start);
+      if (dayIndex < 0) return false;
+      const rowIndex = this._rowIndexOf(task);
+      const laneLeft = metrics.timeAxisWidth + dayIndex * metrics.dayWidth + rowIndex * metrics.laneWidth;
+      const laneCenter = laneLeft + metrics.laneWidth / 2;
+      const viewportWidth = Math.max(1, this.calendarViewport.clientWidth);
+      const maxLeft = Math.max(0, metrics.width - viewportWidth);
+      const targetLeft = clamp(laneCenter - viewportWidth / 2, 0, maxLeft);
+
+      const item = this._layoutCalendarSegments(metrics).find(segment =>
+        segment.task._key === task._key && (segment.startsTask || (task.start >= segment.segmentStart && task.start < segment.segmentEnd))
+      );
+      let targetTop = this.calendarViewport.scrollTop;
+      if (item) {
+        const viewportHeight = Math.max(1, this.calendarViewport.clientHeight);
+        const maxTop = Math.max(0, metrics.height - viewportHeight);
+        targetTop = clamp(item.top - metrics.headerHeight - Math.max(12, verticalOffset), 0, maxTop);
+      }
+
+      this.calendarViewport.scrollTo({ left: targetLeft, top: targetTop, behavior: 'auto' });
+      this.calendarScrollInitialized = true;
+      return true;
+    }
+
+    _renderCalendarConnectors(metrics, items) {
+      for (const old of this.calendarCanvas.querySelectorAll('.calendar-connector-dot')) old.remove();
+      if (!items || !items.length || this.tasks.length < 2) return;
+
+      const starts = new Map();
+      const ends = new Map();
+      for (const item of items) {
+        const key = String(item.task._key);
+        if (item.startsTask) starts.set(key, item);
+        if (item.endsTask) ends.set(key, item);
+      }
+
+      const addDot = (item, y, fromTask, toTask, boundary = false) => {
+        if (!item) return;
+        const laneLeft = metrics.timeAxisWidth + item.dayIndex * metrics.dayWidth + item.rowIndex * metrics.laneWidth;
+        const dot = document.createElement('div');
+        dot.className = `calendar-connector-dot${boundary ? ' boundary' : ''}`;
+        dot.dataset.fromKey = String(fromTask._key);
+        dot.dataset.toKey = String(toTask._key);
+        dot.style.left = `${laneLeft + metrics.laneWidth / 2}px`;
+        dot.style.top = `${y}px`;
+        dot.title = `${fromTask.name} → ${toTask.name}: +1 second`;
+        this.calendarCanvas.appendChild(dot);
+      };
+
+      for (let i = 0; i < this.tasks.length - 1; i++) {
+        const a = this.tasks[i];
+        const b = this.tasks[i + 1];
+        if (!this._isDirectlyConnected(a, b)) continue;
+
+        const endItem = ends.get(String(a._key)) || null;
+        const startItem = starts.get(String(b._key)) || null;
+        if (!endItem && !startItem) continue;
+
+        if (endItem && startItem && endItem.dayIndex === startItem.dayIndex && endItem.rowIndex === startItem.rowIndex) {
+          const y = (endItem.displayBottom + startItem.top) / 2;
+          addDot(startItem, y, a, b, false);
+          continue;
+        }
+
+        // A +1s connection crossing a day/window boundary is represented at
+        // both visible edges instead of drawing a misleading diagonal across
+        // unrelated day/project columns.
+        if (endItem) {
+          const y = Math.min(metrics.height - 4, Math.max(metrics.headerHeight + 4, endItem.displayBottom + 2));
+          addDot(endItem, y, a, b, true);
+        }
+        if (startItem) {
+          const y = Math.max(metrics.headerHeight + 4, Math.min(metrics.height - 4, startItem.top - 2));
+          addDot(startItem, y, a, b, true);
+        }
+      }
+    }
+
+    _calendarResizeEdgePx(height) {
+      // A short calendar task must always keep a real draggable center.
+      // With the old fixed 9px handles, an 18px minimum-height task had no
+      // move area at all: top + bottom handles covered the whole block.
+      // Keep each edge small enough that at least ~56% of the card remains
+      // dedicated to moving, while still leaving a usable resize target.
+      const h = Math.max(1, Number(height) || this.options.calendarMinTaskHeight);
+      return Math.max(2, Math.min(6, h * 0.22));
+    }
+
+    _calendarRoundToMagnetStep(time, stepMs) {
+      const day = this._floorDay(time);
+      const next = this._addDaysLocal(day, 1);
+      const minutes = this._calendarMinutesOfDay(time, day, next);
+      const stepMinutes = stepMs / (60 * SECOND);
+      const rounded = Math.round(minutes / stepMinutes) * stepMinutes;
+      return this._calendarTimeFromDayAndMinutes(day, rounded);
+    }
+
+    _calendarVisualOffsetPx(time, targetTime, verticalMap) {
+      const targetDay = this._floorDay(targetTime);
+      const timeDay = this._floorDay(time);
+      const ordinal = d => {
+        const date = new Date(d);
+        return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY;
+      };
+      const dayDelta = ordinal(timeDay) - ordinal(targetDay);
+      const timeMinutes = this._calendarMinutesOfDay(time, timeDay, this._addDaysLocal(timeDay, 1));
+      const targetMinutes = this._calendarMinutesOfDay(targetTime, targetDay, this._addDaysLocal(targetDay, 1));
+      return dayDelta * verticalMap.totalHeight + verticalMap.toY(timeMinutes) - verticalMap.toY(targetMinutes);
+    }
+
+    _calendarTimeAtVisualOffset(targetTime, offsetPx, verticalMap) {
+      let day = this._floorDay(targetTime);
+      const targetMinutes = this._calendarMinutesOfDay(targetTime, day, this._addDaysLocal(day, 1));
+      let y = verticalMap.toY(targetMinutes) + offsetPx;
+      const height = Math.max(1, verticalMap.totalHeight);
+      while (y < 0) { day = this._addDaysLocal(day, -1); y += height; }
+      while (y > height) { y -= height; day = this._addDaysLocal(day, 1); }
+      return this._calendarTimeFromDayAndMinutes(day, verticalMap.fromY(y));
+    }
+
+    _calendarMagnetStepMs(rawTime, state) {
+      // Calendar editing uses the same 1/5/15-minute precision selected by
+      // the current period. We no longer promote the step merely because the
+      // marks are visually close: round-time magnetic hit-testing is gone, so
+      // a 1px-per-minute calendar can still edit reliably at one-minute steps.
+      return Math.max(60 * SECOND, this._magnetStepMs());
+    }
+
+    _calendarNeighborSnap(rawTime, gridTime, targets, state, minTime, maxTime) {
+      const base = clamp(gridTime, minTime, maxTime);
+      if (!this.options.magneticSnap || !state || !targets?.length) {
+        if (state) state.magnetVisual = null;
+        return base;
+      }
+      const validTargets = targets.filter(t => t && Number.isFinite(t.time) && t.time >= minTime && t.time <= maxTime);
+      if (!validTargets.length) { state.magnetVisual = null; return base; }
+      const map = state.verticalMapSnapshot || this._calendarMetrics?.verticalMap || this._buildCalendarVerticalMap(this.options.calendarHourHeight);
+      const magnet = state.magnet || (state.magnet = {});
+
+      if (Number.isFinite(magnet.neighborTarget)) {
+        const latched = validTargets.find(t => t.time === magnet.neighborTarget);
+        if (latched) {
+          const distance = Math.abs(this._calendarVisualOffsetPx(rawTime, latched.time, map));
+          if (distance <= this.options.magnetReleasePx) {
+            state.magnetVisual = { target: Number.isFinite(latched.guideTime) ? latched.guideTime : latched.time, stepMs: 0, snapped: true, influenced: true, neighbor: true };
+            return latched.time;
+          }
+        }
+        magnet.neighborTarget = null;
+      }
+
+      let best = null;
+      for (const target of validTargets) {
+        const distance = Math.abs(this._calendarVisualOffsetPx(rawTime, target.time, map));
+        if (!best || distance < best.distance) best = { ...target, distance };
+      }
+      const boundaryHit = validTargets.find(t => base === t.time);
+      if (boundaryHit || (best && best.distance <= this.options.magnetSnapPx)) {
+        const chosen = boundaryHit || best;
+        magnet.neighborTarget = chosen.time;
+        state.magnetVisual = { target: Number.isFinite(chosen.guideTime) ? chosen.guideTime : chosen.time, stepMs: 0, snapped: true, influenced: true, neighbor: true };
+        return chosen.time;
+      }
+      state.magnetVisual = null;
+      return base;
+    }
+
+    _calendarMagnetizeTime(rawTime, minTime, maxTime, state, neighborTargets = []) {
+      const stepMs = this._calendarMagnetStepMs(rawTime, state);
+      const rounded = this._calendarRoundToMagnetStep(rawTime, stepMs);
+      const gridTime = clamp(rounded, minTime, maxTime);
+      if (state) state.magnetVisual = null;
+      return this._calendarNeighborSnap(rawTime, gridTime, neighborTargets, state, minTime, maxTime);
+    }
+
+    _renderCalendarMagnetGuide(metrics) {
+      const state = this.calendarEditState;
+      const magnet = state?.magnetVisual;
+      if (!state?.didMutate || !magnet || !Number.isFinite(magnet.target)) return;
+      const task = this._findTask(state.key);
+      if (!task) return;
+      const dayIndex = this._calendarDayIndexForTime(magnet.target);
+      if (dayIndex < 0) return;
+      let day = this.calendarStartDay;
+      for (let i = 0; i < dayIndex; i++) day = this._addDaysLocal(day, 1);
+      const minutes = this._calendarMinutesOfDay(magnet.target, day, this._addDaysLocal(day, 1));
+      const rowIndex = this._rowIndexOf(task);
+      const left = metrics.timeAxisWidth + dayIndex * metrics.dayWidth + rowIndex * metrics.laneWidth;
+      const guide = document.createElement('div');
+      guide.className = `calendar-magnet-guide${magnet.snapped ? ' snapped' : ''}`;
+      guide.style.left = `${left}px`;
+      guide.style.top = `${metrics.headerHeight + metrics.verticalMap.toY(minutes)}px`;
+      guide.style.width = `${metrics.laneWidth}px`;
+      this.calendarCanvas.appendChild(guide);
+    }
+
+    _renderCalendarTasks(metrics = this._calendarMetrics || this._calendarMetricsForRender()) {
+      for (const old of this.calendarCanvas.querySelectorAll('.calendar-task, .calendar-connector-dot')) old.remove();
+      const items = this._layoutCalendarSegments(metrics);
+      for (const item of items) {
+        const task = item.task;
+        const laneLeft = metrics.timeAxisWidth + item.dayIndex * metrics.dayWidth + item.rowIndex * metrics.laneWidth;
+        const left = laneLeft + 3;
+        const width = Math.max(14, metrics.laneWidth - 6);
+        const el = document.createElement('div');
+        const editing = Boolean(this.calendarEditState && this.calendarEditState.key === task._key);
+        const editMode = editing ? this.calendarEditState.mode : '';
+        el.className = `calendar-task${this.selectedKey === task._key ? ' selected' : ''}${this.focusedKey === task._key ? ' focused' : ''}${this.pendingKeys.has(task._key) ? ' pending' : ''}${task.running ? ' running' : ''}${!item.startsTask ? ' segment-continuation' : ''}${editing ? ` editing ${editMode}` : ''}`;
+        el.dataset.taskKey = String(task._key);
+        el.dataset.segmentStart = String(item.segmentStart);
+        el.dataset.segmentEnd = String(item.segmentEnd);
+        el.tabIndex = 0;
+        el.style.left = `${left}px`;
+        el.style.top = `${item.top}px`;
+        el.style.width = `${width}px`;
+        el.style.height = `${item.height}px`;
+        const bg = taskColor(task.id);
+        el.style.background = bg;
+        el.style.color = textColorForBackground(bg);
+        el.setAttribute('aria-label', `${task.name}: ${this._formatDateTime(task.start)} — ${this._formatDateTime(task.end)}`);
+
+        const name = document.createElement('div');
+        name.className = 'calendar-task-name';
+        name.textContent = task.name || `#${task.id}`;
+        el.appendChild(name);
+        if (item.height >= 28) {
+          const time = document.createElement('div');
+          time.className = 'calendar-task-time';
+          time.textContent = `${this._formatClockSecond(item.segmentStart)}–${this._formatClockSecond(item.segmentEnd)}`;
+          el.appendChild(time);
+        }
+
+        // Explicit vertical equivalents of Timeline's left/right resize handles.
+        // A multi-day task only exposes the handle on the segment that contains
+        // the real task boundary.
+        if (item.startsTask) {
+          const startHandle = document.createElement('div');
+          startHandle.className = 'calendar-resize-handle start';
+          startHandle.dataset.resizeMode = 'resize-left';
+          startHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
+          startHandle.title = 'Change start time';
+          startHandle.setAttribute('aria-label', 'Change start time');
+          el.appendChild(startHandle);
+        }
+        if (item.endsTask && !task.running) {
+          const endHandle = document.createElement('div');
+          endHandle.className = 'calendar-resize-handle end';
+          endHandle.dataset.resizeMode = 'resize-right';
+          endHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
+          endHandle.title = 'Change end time';
+          endHandle.setAttribute('aria-label', 'Change end time');
+          el.appendChild(endHandle);
+        }
+
+        const state = editing ? this.calendarEditState : null;
+        const editAnchorTime = state && state.mode === 'move'
+          ? clamp(task.start + (Number(state.pointerTaskOffset) || 0), task.start, Math.max(task.start, task.end - 1))
+          : null;
+        const activeEditSegment = !editing || !state?.didMutate
+          ? true
+          : state.mode === 'resize-left'
+            ? item.startsTask
+            : state.mode === 'resize-right'
+              ? item.endsTask
+              : (Number.isFinite(editAnchorTime)
+                  ? (editAnchorTime >= item.segmentStart && (editAnchorTime < item.segmentEnd || (item.endsTask && editAnchorTime === item.segmentEnd)))
+                  : item.startsTask);
+        if (activeEditSegment) {
+          const startClock = document.createElement('div');
+          startClock.className = 'calendar-edit-clock start';
+          startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockSecond(task.start)}`;
+          el.appendChild(startClock);
+          const endClock = document.createElement('div');
+          endClock.className = 'calendar-edit-clock end';
+          endClock.innerHTML = `<span class="kind">End</span>${this._formatClockSecond(task.end)}`;
+          el.appendChild(endClock);
+        }
+        this.calendarCanvas.appendChild(el);
+      }
+      this._renderCalendarConnectors(metrics, items);
+      this._renderCalendarMagnetGuide(metrics);
+    }
+
+    _renderCalendarNowLine(metrics = this._calendarMetrics) {
+      for (const old of this.calendarCanvas.querySelectorAll('.calendar-now-line')) old.remove();
+      if (!metrics) return;
+      const time = this.currentTime;
+      const dayIndex = this._calendarDayIndexForTime(time);
+      if (dayIndex < 0) return;
+      let day = this.calendarStartDay;
+      for (let i = 0; i < dayIndex; i++) day = this._addDaysLocal(day, 1);
+      const next = this._addDaysLocal(day, 1);
+      const minutes = this._calendarMinutesOfDay(time, day, next);
+      const line = document.createElement('div');
+      line.className = 'calendar-now-line';
+      line.dataset.time = String(time);
+      line.style.left = `${metrics.timeAxisWidth + dayIndex * metrics.dayWidth}px`;
+      line.style.top = `${metrics.headerHeight + metrics.verticalMap.toY(minutes)}px`;
+      line.style.width = `${metrics.dayWidth}px`;
+      const dot = document.createElement('span');
+      dot.className = 'calendar-now-dot';
+      line.appendChild(dot);
+      this.calendarCanvas.appendChild(line);
+    }
+
+    _calendarPointerDayIndex(clientX, metricsOverride = null) {
+      const metrics = metricsOverride || this._calendarMetrics || this._calendarMetricsForRender();
+      const rect = this.calendarCanvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      return clamp(Math.floor((x - metrics.timeAxisWidth) / metrics.dayWidth), 0, this.calendarDayCount - 1);
+    }
+
+    _calendarPointerToTime(clientX, clientY, verticalMapOverride = null) {
+      const metrics = this._calendarMetrics || this._calendarMetricsForRender();
+      const rect = this.calendarCanvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      const dayIndex = clamp(Math.floor((x - metrics.timeAxisWidth) / metrics.dayWidth), 0, this.calendarDayCount - 1);
+      let day = this.calendarStartDay;
+      for (let i = 0; i < dayIndex; i++) day = this._addDaysLocal(day, 1);
+      const map = verticalMapOverride || metrics.verticalMap;
+      const minutes = map.fromY(y - metrics.headerHeight);
+      return this._calendarTimeFromDayAndMinutes(day, minutes);
+    }
+
+    _showTaskDetails(task) {
+      if (!task || !this.detailsInfo) return;
+      this.lastDetailsKey = task._key;
+      this.detailsKey = task._key;
+      const row = this._rowInfo(task.row);
+      const title = task.url
+        ? `<a class="details-title" href="${this._escapeAttr(task.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(task.name)}</a>`
+        : `<strong class="details-title">${this._escapeHtml(task.name)}</strong>`;
+      this.detailsInfo.innerHTML = `
+        <span class="details-primary">${title}<span class="details-project">${this._escapeHtml(row.name)}</span></span>
+        <span class="details-value"><span class="details-label">Start</span><strong>${this._formatDateTime(task.start)}</strong></span>
+        <span class="details-value"><span class="details-label">End</span><strong>${this._formatDateTime(task.end)}</strong></span>
+        <span class="details-value"><span class="details-label">Duration</span><strong>${this._formatDuration(task.end - task.start)}</strong></span>
+      `;
+      this._renderDetailsPointer(task);
+    }
+
+    _renderDetailsPointer(task = this.detailsKey == null ? null : this._findTask(this.detailsKey)) {
+      const pointer = this.detailsPointer;
+      if (!pointer || this.viewMode !== 'timeline' || !task) { if (pointer) pointer.hidden = true; return; }
+      const item = this._taskElementByKey(task._key);
+      if (!item) { pointer.hidden = true; return; }
+      const shellRect = this.shell.getBoundingClientRect();
+      const viewportRect = this.viewport.getBoundingClientRect();
+      const itemRect = item.getBoundingClientRect();
+      const detailsRect = this.details.getBoundingClientRect();
+      const center = itemRect.left + itemRect.width / 2;
+      if (center < viewportRect.left || center > viewportRect.right) { pointer.hidden = true; return; }
+      const top = itemRect.bottom - shellRect.top;
+      pointer.style.left = `${center - shellRect.left}px`;
+      pointer.style.top = `${top}px`;
+      pointer.style.height = `${Math.max(8, detailsRect.top - shellRect.top - top)}px`;
+      pointer.hidden = false;
+    }
+
+    _clearTaskDetails() {
+      if (this.editState || this.calendarEditState) return;
+      const selected = this._selectedTask();
+      if (selected) return this._showTaskDetails(selected);
+      const previous = this.lastDetailsKey == null ? null : this._findTask(this.lastDetailsKey);
+      if (previous) return this._showTaskDetails(previous);
+      this.detailsKey = null;
+      if (this.detailsPointer) this.detailsPointer.hidden = true;
+      if (this.detailsInfo) this.detailsInfo.innerHTML = '<span class="hint">Hover or select a task to see its details.</span>';
+    }
+
+    _escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+    }
+    _escapeAttr(value) { return this._escapeHtml(value); }
+
+    _selectedTask() { return this.selectedKey == null ? null : this._findTask(this.selectedKey); }
+
+    _taskElementByKey(key) {
+      const target = String(key);
+      return [...this.taskRow.querySelectorAll('.task')].find(el => el.dataset.taskKey === target) || null;
+    }
+
+    _selectTask(task, emit = true) {
+      this.selectedKey = task ? task._key : null;
+      for (const el of this.taskRow.querySelectorAll('.task.selected')) {
+        el.classList.remove('selected');
+        el.setAttribute('aria-selected', 'false');
+      }
+      if (task) {
+        const el = this._taskElementByKey(task._key);
+        if (el) {
+          el.classList.add('selected');
+          el.setAttribute('aria-selected', 'true');
+        }
+        for (const calendarEl of this.calendarCanvas.querySelectorAll('.calendar-task.selected')) calendarEl.classList.remove('selected');
+        for (const calendarEl of this.calendarCanvas.querySelectorAll(`[data-task-key="${task._key}"]`)) calendarEl.classList.add('selected');
+        this._showTaskDetails(task);
+      } else {
+        for (const calendarEl of this.calendarCanvas.querySelectorAll('.calendar-task.selected')) calendarEl.classList.remove('selected');
+        this._clearTaskDetails();
+      }
+      if (emit) this._emit('select', task, { source: 'user' });
+    }
+
+    _visibleStartTime() {
+      if (!this.segments.length) return this.domainStart;
+      return clamp(this.xToTime(clamp(this._scrollLeft, 0, this.totalWidth)), this.domainStart, this.domainEnd);
+    }
+
+    _visibleEndTime() {
+      if (!this.segments.length) return this.domainEnd;
+      const x = clamp(this._scrollLeft + this._viewportWidthNow(), 0, this.totalWidth);
+      return clamp(this.xToTime(x), this.domainStart, this.domainEnd);
+    }
+
+    _trackedDurationInRange(start, end) {
+      if (!(end > start)) return 0;
+      let total = 0;
+      for (const task of this.tasks) {
+        if (task.end <= start) continue;
+        if (task.start >= end) break;
+        total += Math.max(0, Math.min(task.end, end) - Math.max(task.start, start));
+      }
+      return total;
+    }
+
+    _updateRightMetaOnly() {
+      this.domainEndLabel.textContent = this._formatDateTime(this.domainEnd);
+      this.domainEndLabel.title = `Timeline maximum: ${this._formatDateTime(this.domainEnd)}`;
+    }
+
+    _updateTimelineMeta() {
+      if (this.viewMode === 'calendar') {
+        if (!(this.domainEnd > this.domainStart)) {
+          this.domainStartLabel.textContent = '';
+          this.domainEndLabel.textContent = '';
+          this.trackedLabel.textContent = 'Tracked: 0s';
+          return;
+        }
+        if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+        const start = Math.max(this.domainStart, this.calendarStartDay);
+        const end = Math.min(this.domainEnd, this._calendarEndDay());
+        this.domainStartLabel.textContent = this._formatDateTime(start);
+        this.domainStartLabel.title = `Calendar start: ${this._formatDateTime(start)}`;
+        this.domainEndLabel.textContent = this._formatDateTime(end);
+        this.domainEndLabel.title = `Calendar end: ${this._formatDateTime(end)}`;
+        this.trackedLabel.textContent = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(start, Math.max(start, end)))}`;
+        return;
+      }
+      if (!this.segments.length) {
+        this.domainStartLabel.textContent = '';
+        this.domainEndLabel.textContent = '';
+        this.trackedLabel.textContent = 'Tracked: 0s';
+        return;
+      }
+      const start = this._visibleStartTime();
+      const end = this._visibleEndTime();
+      this.domainStartLabel.textContent = this._formatDateTime(start);
+      this.domainStartLabel.title = `Visible start: ${this._formatDateTime(start)}`;
+      this._updateRightMetaOnly();
+      this.trackedLabel.textContent = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(Math.min(start, end), Math.max(start, end)))}`;
+    }
+
+    // -----------------------------------------------------------------------
+    // Editing and live task
+    // -----------------------------------------------------------------------
+
+    _runningTask() { return this.runningKey == null ? null : this._findTask(this.runningKey); }
+
+    _pauseRunningTimerForInteraction() {
+      const task = this._runningTask();
+      if (!task) return;
+      const pauseAt = snapSecond(Date.now());
+      this._updateRunningTaskIncremental(Math.max(task.end, pauseAt));
+      this._clearRunningTimer();
+      this.interactionPausedRunning = true;
+    }
+
+    _resumeRunningTimerAfterInteraction() {
+      if (!this.interactionPausedRunning) return;
+      this.interactionPausedRunning = false;
+      if (this.runningKey !== null && this.runningTimer === null) {
+        this.runningTimer = setInterval(() => this._tickRunningTask(), 1000);
+      }
+    }
+
+    _finalizePausedRunningForEdit() {
+      if (!this.interactionPausedRunning) return;
+      const task = this._runningTask();
+      this._clearRunningTimer();
+      if (task) {
+        const before = this._publicTask(task);
+        task.running = false;
+        this.domainEnd = task.end;
+        this.runningKey = null;
+        const event = this._makeEvent('stop', { task, before, after: this._publicTask(task), source: 'edit' });
+        try {
+          const result = this._emitEvent('stop', event);
+          if (result && typeof result.then === 'function') result.catch(error => this._reportError(error, event, false));
+        } catch (error) { this._reportError(error, event, false); }
+      } else {
+        this.runningKey = null;
+      }
+      this.interactionPausedRunning = false;
+    }
+
+    _stopRunningForManualEdit() {
+      if (this.runningKey === null) return;
+      this._pauseRunningTimerForInteraction();
+      this._finalizePausedRunningForEdit();
+    }
+
+    _beginTaskEdit(e, task, mode) {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      const index = this.tasks.indexOf(task);
+      if (index < 0) return;
+
+      this._cancelZoomAnimation();
+      this._pauseRunningTimerForInteraction();
+      const rect = this.viewport.getBoundingClientRect();
+      const contentX = this._scrollLeftNow() + (e.clientX - rect.left);
+      const snapshot = this.segments.map(seg => ({ t0:seg.t0, t1:seg.t1, x0:seg.x0, x1:seg.x1 }));
+      this.editState = {
+        pointerId: e.pointerId,
+        key: task._key,
+        mode,
+        originalStart: task.start,
+        originalEnd: task.end,
+        duration: task.end - task.start,
+        pointerTime: this._xToTimeFromSnapshot(contentX, snapshot, this.totalWidth),
+        snapshot,
+        snapshotWidth: this.totalWidth,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        didMutate: false,
+        beforeState: null,
+        beforeTask: null,
+        magnet: { latchedTarget: null, cooldownTarget: null },
+        magnetVisual: null
+      };
+      this._showTaskDetails(task);
+    }
+
+    _contentXFromPointer(e) {
+      const rect = this.viewport.getBoundingClientRect();
+      return this._scrollLeftNow() + (e.clientX - rect.left);
+    }
+
+    _applyTaskEdit(e) {
+      const state = this.editState;
+      if (!state || e.pointerId !== state.pointerId) return false;
+      const task = this._findTask(state.key);
+      if (!task) return false;
+
+      if (!state.didMutate) {
+        const distance = Math.hypot(e.clientX - state.startClientX, e.clientY - state.startClientY);
+        if (distance < 3) return false;
+        state.didMutate = true;
+        this._finalizePausedRunningForEdit();
+        state.beforeState = this._captureState();
+        state.beforeTask = this._publicTask(task);
+      }
+
+      const index = this.tasks.indexOf(task);
+      const currentTime = this._xToTimeFromSnapshot(this._contentXFromPointer(e), state.snapshot, state.snapshotWidth);
+      const delta = currentTime - state.pointerTime;
+      const prev = this.tasks[index - 1] || null;
+      const next = this.tasks[index + 1] || null;
+
+      if (state.mode === 'move') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        const latestEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const latestStart = Math.max(earliest, latestEnd - state.duration);
+        const rawStart = state.originalStart + delta;
+        const start = this._magnetizeTime(rawStart, earliest, latestStart, state, [
+          prev ? { time: earliest, guideTime: earliest, side: 'prev' } : null,
+          next ? { time: latestStart, guideTime: latestEnd, side: 'next' } : null
+        ]);
+        task.start = start;
+        task.end = start + state.duration;
+      } else if (state.mode === 'resize-left') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        const latest = task.end - MIN_TASK_DURATION;
+        task.start = this._magnetizeTime(state.originalStart + delta, earliest, latest, state,
+          prev ? [{ time: earliest, side: 'prev' }] : []);
+      } else if (state.mode === 'resize-right') {
+        const earliest = task.start + MIN_TASK_DURATION;
+        const latest = next ? next.start - DIRECT_GAP : this.domainEnd;
+        task.end = this._magnetizeTime(state.originalEnd + delta, earliest, latest, state,
+          next ? [{ time: latest, side: 'next' }] : []);
+      }
+
+      this._renderAll();
+      this._showTaskDetails(task);
+      return true;
+    }
+
+    _finishTaskEdit(e = null) {
+      const state = this.editState;
+      if (!state || (e && e.pointerId !== state.pointerId)) return false;
+      const task = this._findTask(state.key);
+
+      if (state.didMutate && task) {
+        const afterTask = this._publicTask(task);
+        const afterState = this._captureState();
+        this.editState = null;
+        this._renderAll();
+        this._showTaskDetails(task);
+        const action = state.mode === 'move' ? 'move' : state.mode === 'resize-left' ? 'resize-start' : 'resize-end';
+        const edge = state.mode === 'resize-left' ? 'start' : state.mode === 'resize-right' ? 'end' : null;
+        this._commitMutation({
+          action,
+          beforeState: state.beforeState,
+          afterState,
+          beforeTask: state.beforeTask,
+          afterTask,
+          source: 'pointer',
+          edge,
+          history: true
+        });
+      } else {
+        this.editState = null;
+        this._resumeRunningTimerAfterInteraction();
+        this._renderEditGuides();
+        if (task) this._showTaskDetails(task);
+      }
+      return true;
+    }
+
+    _keyboardEditSelected(kind, delta, source = 'keyboard') {
+      const task = this._selectedTask();
+      if (!task || !Number.isFinite(delta) || delta === 0) return false;
+      this._stopRunningForManualEdit();
+      const index = this.tasks.indexOf(task);
+      const prev = this.tasks[index - 1] || null;
+      const next = this.tasks[index + 1] || null;
+      const beforeState = this._captureState();
+      const beforeTask = this._publicTask(task);
+      const duration = task.end - task.start;
+
+      const stepMs = this.viewMode === 'calendar'
+        ? this._calendarMagnetStepMs(task.start, { verticalMapSnapshot: this._calendarMetrics?.verticalMap })
+        : this._magnetStepMs();
+      if (kind === 'move') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        const latestEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const latestStart = Math.max(earliest, latestEnd - duration);
+        const start = clamp(this._roundToManipulationStep(task.start + delta, stepMs), earliest, latestStart);
+        task.start = start;
+        task.end = start + duration;
+      } else if (kind === 'resize-start') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        task.start = clamp(this._roundToManipulationStep(task.start + delta, stepMs), earliest, task.end - MIN_TASK_DURATION);
+      } else if (kind === 'resize-end') {
+        const latest = next ? next.start - DIRECT_GAP : this.domainEnd;
+        task.end = clamp(this._roundToManipulationStep(task.end + delta, stepMs), task.start + MIN_TASK_DURATION, latest);
+      } else return false;
+
+      const afterTask = this._publicTask(task);
+      if (beforeTask.start === afterTask.start && beforeTask.end === afterTask.end) return false;
+      this._renderAll();
+      this._selectTask(task, false);
+      const afterState = this._captureState();
+      this._commitMutation({
+        action: kind,
+        beforeState,
+        afterState,
+        beforeTask,
+        afterTask,
+        source,
+        edge: kind === 'resize-start' ? 'start' : kind === 'resize-end' ? 'end' : null,
+        history: true
+      });
+      return true;
+    }
+
+    _clearRunningTimer() {
+      if (this.runningTimer !== null) {
+        clearInterval(this.runningTimer);
+        this.runningTimer = null;
+      }
+    }
+
+    _updateRightmostRulerCell() {
+      let cell = this.rulerRow.querySelector('.ruler-cell.rightmost');
+      if (!cell) return;
+      const boundaryEnd = Number(cell.dataset.boundaryEnd);
+      if (Number.isFinite(boundaryEnd) && this.domainEnd > boundaryEnd) {
+        this._renderRuler();
+        cell = this.rulerRow.querySelector('.ruler-cell.rightmost');
+        if (!cell) return;
+      }
+      const start = Number(cell.dataset.start);
+      cell.style.left = `${this.timeToX(start)}px`;
+      cell.style.width = `${Math.max(1, this.timeToX(this.domainEnd) - this.timeToX(start))}px`;
+      cell.dataset.end = String(this.domainEnd);
+      cell.textContent = this._getRulerLabel({ start, end: this.domainEnd, empty: false }, true);
+      cell.title = `${this._formatDateTime(start, false)} – ${this._formatDateTime(this.domainEnd, false)}`;
+    }
+
+    _updateRunningTaskIncremental(targetEnd) {
+      const task = this._runningTask();
+      if (!task) return false;
+      const wasPinnedRight = this._scrollLeftNow() >= Math.max(0, this.totalWidth - this._viewportWidthNow()) - 1;
+      // A running task may be younger than the normal edit minimum. Its visual
+      // minimum is handled by minTaskWidth; extending time would display future.
+      const taskIndex = this.tasks.indexOf(task);
+      const nextTask = taskIndex >= 0 ? this.tasks[taskIndex + 1] : null;
+      const boundedEnd = nextTask ? Math.min(Number(targetEnd), nextTask.start) : Number(targetEnd);
+      const newEnd = Math.max(task.start, boundedEnd);
+      this.currentTime = Number(targetEnd);
+      if (newEnd <= task.end) {
+        this._renderTimelineNowLine();
+        return false;
+      }
+
+      task.end = newEnd;
+      const lastTaskEnd = this.tasks.length ? this.tasks[this.tasks.length - 1].end : newEnd;
+      this.domainEnd = Math.max(this.baseDomainEnd, lastTaskEnd, newEnd);
+      let seg = null;
+      for (let i = this.segments.length - 1; i >= 0; i--) {
+        if (this.segments[i].kind === 'task' && this.segments[i].task?._key === task._key) {
+          seg = this.segments[i];
+          break;
+        }
+      }
+      if (!seg) return false;
+
+      const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
+      const displayWidth = Math.max(realWidth, this.minTaskWidth);
+      task.realWidth = realWidth;
+      task.displayWidth = displayWidth;
+      task.x0 = seg.x0;
+      task.x1 = seg.x0 + displayWidth;
+      seg.t1 = task.end;
+      seg.x1 = task.x1;
+      const viewportWidth = this._viewportWidthNow();
+      const trailingGutter = viewportWidth * clamp(Number(this.options.trailingGutterRatio) || 0, 0, 0.5);
+      this.totalWidth = Math.max(this.totalWidth, viewportWidth, task.x1 + trailingGutter);
+      this.content.style.width = `${this.totalWidth}px`;
+      if (wasPinnedRight) this._setScrollLeft(Math.max(0, this.totalWidth - viewportWidth));
+
+      const el = this._taskElementByKey(task._key);
+      if (el) {
+        const width = Math.max(1, task.x1 - task.x0);
+        el.style.width = `${width}px`;
+        el.style.height = `${this._taskHeight(task)}px`;
+        el.style.top = `${this._taskTop(task)}px`;
+        el.classList.toggle('short', width < 46);
+        const time = el.querySelector('.task-time');
+        if (time) time.textContent = `${this._formatClockSecond(task.start)}–${this._formatClockSecond(task.end)} · ${this._formatDuration(task.end - task.start)}`;
+      }
+      this._updateRightMetaOnly();
+      this._updateRightmostRulerCell();
+      this._renderTimelineNowLine();
+      if (this.viewMode === 'calendar') {
+        if (this._calendarDayIndexForTime(task.end) < 0) {
+          this.calendarStartDay = this._clampCalendarStart(this._floorDay(task.end));
+          this.calendarWindowInitialized = true;
+          this._renderCalendar();
+        } else {
+          this._renderCalendarTasks();
+          this._renderCalendarNowLine();
+          this._updateTimelineMeta();
+        }
+      }
+      if (this.selectedKey === task._key) this._showTaskDetails(task);
+      return true;
+    }
+
+    _tickRunningTask() {
+      if (!this._runningTask() || this.interactionPausedRunning) return;
+      this._updateRunningTaskIncremental(Date.now());
+      // No renderAll(), no scroll changes, no Tracked recalculation here.
+    }
+
+    // -----------------------------------------------------------------------
+    // Input events
+    // -----------------------------------------------------------------------
+
+    _bindCalendarEvents() {
+      const taskFromEvent = e => {
+        const el = e.target instanceof Element ? e.target.closest('.calendar-task[data-task-key]') : null;
+        if (!el || !this.calendarCanvas.contains(el)) return [null, null];
+        return [el, this._findTask(el.dataset.taskKey)];
+      };
+
+      this.calendarCanvas.addEventListener('pointerover', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        this.hoveredKey = task._key;
+        this._showTaskDetails(task);
+      });
+      this.calendarCanvas.addEventListener('pointerout', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        if (this.calendarEditState?.key === task._key) return;
+        if (this.hoveredKey === task._key) this.hoveredKey = null;
+        this._clearTaskDetails();
+      });
+      this.calendarCanvas.addEventListener('focusin', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        this.focusedKey = task._key;
+        el.classList.add('focused');
+      });
+      this.calendarCanvas.addEventListener('focusout', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        if (this.focusedKey === task._key) this.focusedKey = null;
+        el.classList.remove('focused');
+      });
+      this.calendarCanvas.addEventListener('click', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        e.stopPropagation();
+        el.focus({ preventScroll: true });
+        this._selectTask(task, true);
+        for (const item of this.calendarCanvas.querySelectorAll('.calendar-task.selected')) item.classList.remove('selected');
+        for (const item of this.calendarCanvas.querySelectorAll(`[data-task-key="${task._key}"]`)) item.classList.add('selected');
+      });
+      this.calendarCanvas.addEventListener('dblclick', e => {
+        const [, task] = taskFromEvent(e);
+        if (!task) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (task.running && this.runningKey === task._key) this.stop({ source: 'double-click' });
+        else this.start({ id: task.id, name: task.name, url: task.url, row: task.row, data: task.data }, { source: 'double-click' });
+      });
+      this.calendarCanvas.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        const explicitHandle = e.target instanceof Element ? e.target.closest('.calendar-resize-handle') : null;
+        let mode = explicitHandle && el.contains(explicitHandle) ? explicitHandle.dataset.resizeMode : null;
+        if (!mode) {
+          const rect = el.getBoundingClientRect();
+          const localY = e.clientY - rect.top;
+          const edge = this._calendarResizeEdgePx(rect.height);
+          const segmentStart = Number(el.dataset.segmentStart);
+          const segmentEnd = Number(el.dataset.segmentEnd);
+          mode = 'move';
+          if (segmentStart === task.start && localY <= edge) mode = 'resize-left';
+          else if (!task.running && segmentEnd === task.end && rect.height - localY <= edge) mode = 'resize-right';
+        }
+        if (task.running && mode === 'move') return;
+        this._beginCalendarTaskEdit(e, task, mode, el);
+      });
+
+      this.calendarViewport.addEventListener('keydown', e => {
+        const modifier = e.ctrlKey || e.metaKey;
+        if (modifier && !e.altKey && String(e.key).toLowerCase() === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) this.redo(); else this.undo();
+          return;
+        }
+        if (modifier && !e.altKey && String(e.key).toLowerCase() === 'y') {
+          e.preventDefault(); this.redo(); return;
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedKey != null) {
+          e.preventDefault(); this.deleteSelected({ source: 'keyboard' }); return;
+        }
+        if (e.key === 'Escape' && this.selectedKey != null) {
+          e.preventDefault(); this._selectTask(null, true); this._renderCalendarTasks(); return;
+        }
+        if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && this.selectedKey != null) {
+          e.preventDefault();
+          const direction = e.key === 'ArrowLeft' ? -1 : 1;
+          const baseStep = this.viewMode === 'calendar' ? this._calendarMagnetStepMs((this._selectedTask()?.start || Date.now()), { verticalMapSnapshot: this._calendarMetrics?.verticalMap }) : this._magnetStepMs();
+          const step = baseStep * (e.shiftKey ? 5 : 1) * direction;
+          if (e.altKey) this._keyboardEditSelected('resize-start', step);
+          else if (modifier) this._keyboardEditSelected('resize-end', step);
+          else this._keyboardEditSelected('move', step);
+        }
+      });
+
+      this.calendarViewport.addEventListener('wheel', e => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        let delta = e.deltaY;
+        if (e.deltaMode === 1) delta *= 16;
+        else if (e.deltaMode === 2) delta *= Math.max(320, this.calendarViewport.clientHeight);
+        delta = clamp(delta, -120, 120);
+        const target = clamp(
+          this.visibleDays * Math.exp(delta * this.options.wheelZoomSensitivity * this.options.zoomSpeed),
+          this.options.minVisibleDays,
+          this.options.maxVisibleDays
+        );
+        this.setVisibleDays(target);
+        this._renderCalendar();
+      }, { passive: false });
+    }
+
+    _beginCalendarTaskEdit(e, task, mode, segmentEl = null) {
+      e.preventDefault();
+      e.stopPropagation();
+      this._cancelZoomAnimation();
+      this._pauseRunningTimerForInteraction();
+      const verticalMapSnapshot = this._calendarMetrics?.verticalMap || this._buildCalendarVerticalMap(this.options.calendarHourHeight);
+      const pointerTime = this._calendarPointerToTime(e.clientX, e.clientY, verticalMapSnapshot);
+      const startPointerDayIndex = this._calendarPointerDayIndex(e.clientX);
+      this.calendarEditState = {
+        pointerId: e.pointerId,
+        key: task._key,
+        mode,
+        originalStart: task.start,
+        originalEnd: task.end,
+        duration: task.end - task.start,
+        pointerTime,
+        currentPointerTime: pointerTime,
+        pointerTaskOffset: clamp(pointerTime - task.start, 0, Math.max(0, task.end - task.start - 1)),
+        startPointerDayIndex,
+        activeSegmentStart: segmentEl ? Number(segmentEl.dataset.segmentStart) : null,
+        activeSegmentEnd: segmentEl ? Number(segmentEl.dataset.segmentEnd) : null,
+        verticalMapSnapshot,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        didMutate: false,
+        beforeState: null,
+        beforeTask: null,
+        magnet: { latchedTarget: null, cooldownTarget: null },
+        magnetVisual: null
+      };
+      this._showTaskDetails(task);
+    }
+
+    _applyCalendarTaskEdit(e) {
+      const state = this.calendarEditState;
+      if (!state || e.pointerId !== state.pointerId) return false;
+      const task = this._findTask(state.key);
+      if (!task) return false;
+      if (!state.didMutate) {
+        const distance = Math.hypot(e.clientX - state.startClientX, e.clientY - state.startClientY);
+        if (distance < 3) return false;
+        state.didMutate = true;
+        this._finalizePausedRunningForEdit();
+        state.beforeState = this._captureState();
+        state.beforeTask = this._publicTask(task);
+      }
+      const index = this.tasks.indexOf(task);
+      const prev = this.tasks[index - 1] || null;
+      const next = this.tasks[index + 1] || null;
+      const currentTime = this._calendarPointerToTime(e.clientX, e.clientY, state.verticalMapSnapshot);
+      state.currentPointerTime = currentTime;
+      const dayDelta = this._calendarPointerDayIndex(e.clientX) - state.startPointerDayIndex;
+      const visualDeltaY = e.clientY - state.startClientY;
+      const shiftedBoundary = originalTime => this._addDaysLocal(
+        this._calendarTimeAtVisualOffset(originalTime, visualDeltaY, state.verticalMapSnapshot),
+        dayDelta
+      );
+
+      if (state.mode === 'move') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        const latestEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const latestStart = Math.max(earliest, latestEnd - state.duration);
+        const rawStart = shiftedBoundary(state.originalStart);
+        const start = this._calendarMagnetizeTime(rawStart, earliest, latestStart, state, [
+          prev ? { time: earliest, guideTime: earliest, side: 'prev' } : null,
+          next ? { time: latestStart, guideTime: latestEnd, side: 'next' } : null
+        ]);
+        task.start = start;
+        task.end = start + state.duration;
+      } else if (state.mode === 'resize-left') {
+        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        const rawStart = shiftedBoundary(state.originalStart);
+        task.start = this._calendarMagnetizeTime(rawStart, earliest, task.end - MIN_TASK_DURATION, state,
+          prev ? [{ time: earliest, side: 'prev' }] : []);
+      } else if (state.mode === 'resize-right') {
+        const latest = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const rawEnd = shiftedBoundary(state.originalEnd);
+        task.end = this._calendarMagnetizeTime(rawEnd, task.start + MIN_TASK_DURATION, latest, state,
+          next ? [{ time: latest, side: 'next' }] : []);
+      }
+      this._renderCalendar();
+      this._showTaskDetails(task);
+      return true;
+    }
+
+    _finishCalendarTaskEdit(e = null) {
+      const state = this.calendarEditState;
+      if (!state || (e && e.pointerId !== state.pointerId)) return false;
+      const task = this._findTask(state.key);
+      this.calendarEditState = null;
+      if (state.didMutate && task) {
+        const afterTask = this._publicTask(task);
+        const afterState = this._captureState();
+        this._renderAll();
+        this._renderCalendar();
+        const action = state.mode === 'move' ? 'move' : state.mode === 'resize-left' ? 'resize-start' : 'resize-end';
+        const edge = state.mode === 'resize-left' ? 'start' : state.mode === 'resize-right' ? 'end' : null;
+        this._commitMutation({
+          action,
+          beforeState: state.beforeState,
+          afterState,
+          beforeTask: state.beforeTask,
+          afterTask,
+          source: 'calendar-pointer',
+          edge,
+          history: true
+        });
+      } else {
+        this._resumeRunningTimerAfterInteraction();
+      }
+      if (task) this._showTaskDetails(task);
+      return true;
+    }
+
+    _bindTaskEvents() {
+      const taskFromEvent = e => {
+        const el = e.target instanceof Element ? e.target.closest('.task[data-task-key]') : null;
+        if (!el || !this.taskRow.contains(el)) return [null, null];
+        return [el, this._findTask(el.dataset.taskKey)];
+      };
+
+      this.taskRow.addEventListener('pointerover', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        this.hoveredKey = task._key;
+        el.classList.add('hovered');
+        this._showTaskDetails(task);
+      });
+
+      this.taskRow.addEventListener('pointerout', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        if (this.hoveredKey === task._key) this.hoveredKey = null;
+        el.classList.remove('hovered');
+        this._clearTaskDetails();
+      });
+
+      this.taskRow.addEventListener('focusin', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        this.focusedKey = task._key;
+        el.classList.add('focused');
+      });
+
+      this.taskRow.addEventListener('focusout', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
+        if (this.focusedKey === task._key) this.focusedKey = null;
+        el.classList.remove('focused');
+      });
+
+      this.taskRow.addEventListener('click', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        e.stopPropagation();
+        el.focus({ preventScroll: true });
+        this._selectTask(task, true);
+      });
+
+      this.taskRow.addEventListener('dblclick', e => {
+        const [, task] = taskFromEvent(e);
+        if (!task) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (task.running && this.runningKey === task._key) {
+          this.stop({ source: 'double-click' });
+        } else {
+          this.start({ id: task.id, name: task.name, url: task.url, row: task.row, data: task.data }, { source: 'double-click' });
+        }
+      });
+
+      this.taskRow.addEventListener('pointerdown', e => {
+        const [el, task] = taskFromEvent(e);
+        if (!el || !task) return;
+        const handle = e.target instanceof Element ? e.target.closest('.resize-handle') : null;
+        if (handle && el.contains(handle)) {
+          if (handle.classList.contains('left')) this._beginTaskEdit(e, task, 'resize-left');
+          else if (!task.running && handle.classList.contains('right')) this._beginTaskEdit(e, task, 'resize-right');
+          return;
+        }
+        if (!task.running) this._beginTaskEdit(e, task, 'move');
+      });
+    }
+
+    _bindViewportEvents() {
+      this.viewport.addEventListener('wheel', e => {
+        const rect = this.viewport.getBoundingClientRect();
+        const anchor = clamp(e.clientX - rect.left, 0, this._viewportWidthNow());
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          let delta = e.deltaY;
+          if (e.deltaMode === 1) delta *= 16;
+          else if (e.deltaMode === 2) delta *= Math.max(320, this.viewport.clientHeight);
+          delta = clamp(delta, -120, 120);
+
+          const base = this._zoomTargetDays || this.visibleDays;
+          const target = clamp(
+            base * Math.exp(delta * this.options.wheelZoomSensitivity * this.options.zoomSpeed),
+            this.options.minVisibleDays,
+            this.options.maxVisibleDays
+          );
+          this._animateZoomTo(target, anchor);
+          return;
+        }
+        e.preventDefault();
+        this._cancelZoomAnimation();
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        this._setScrollLeft(this._scrollLeftNow() + delta * this.options.scrollSpeed);
+      }, { passive: false });
+
+      let metaRaf = 0;
+      this.viewport.addEventListener('scroll', () => {
+        // Scroll events are delivered after layout; reading scrollLeft here is
+        // cheap and keeps later zoom frames free of forced layout reads.
+        this._scrollLeft = this.viewport.scrollLeft;
+        if (metaRaf) return;
+        metaRaf = requestAnimationFrame(() => {
+          metaRaf = 0;
+          this._updateTimelineMeta();
+          this._updateRowLabelPositions();
+          this._renderDetailsPointer();
+          // Programmatic scrollLeft changes are part of zoom anchoring. Do not
+          // rebuild the virtual window for those scroll events: it used to
+          // recreate dozens of task nodes on almost every zoom frame. The
+          // virtual window is reconciled once when the gesture finishes.
+          if (!this._zoomGestureActive) this._maybeRefreshVirtualWindow();
+        });
+      }, { passive: true });
+
+      this.viewport.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.target.closest('.task')) return;
+        this._cancelZoomAnimation();
+        this.dragState = { pointerId:e.pointerId, x:e.clientX, scroll:this._scrollLeftNow() };
+        this.viewport.classList.add('dragging');
+        this.viewport.setPointerCapture(e.pointerId);
+      });
+
+      this.viewport.addEventListener('click', e => {
+        if (!e.target.closest('.task')) this._selectTask(null, true);
+      });
+
+      this.viewport.addEventListener('pointermove', e => {
+        if (this.editState) return;
+        if (!this.dragState || e.pointerId !== this.dragState.pointerId) return;
+        this._setScrollLeft(this.dragState.scroll - (e.clientX - this.dragState.x));
+      });
+
+      const stopDrag = e => {
+        if (!this.dragState || (e && e.pointerId !== this.dragState.pointerId)) return;
+        const pointerId = this.dragState.pointerId;
+        this.dragState = null;
+        this.viewport.classList.remove('dragging');
+        if (this.viewport.hasPointerCapture(pointerId)) this.viewport.releasePointerCapture(pointerId);
+      };
+      this.viewport.addEventListener('pointerup', stopDrag);
+      this.viewport.addEventListener('pointercancel', stopDrag);
+
+      this.viewport.addEventListener('keydown', e => {
+        const modifier = e.ctrlKey || e.metaKey;
+        if (modifier && !e.altKey && String(e.key).toLowerCase() === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) this.redo(); else this.undo();
+          return;
+        }
+        if (modifier && !e.altKey && String(e.key).toLowerCase() === 'y') {
+          e.preventDefault();
+          this.redo();
+          return;
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedKey != null) {
+          e.preventDefault();
+          this.deleteSelected({ source: 'keyboard' });
+          return;
+        }
+        if (e.key === 'Escape' && this.selectedKey != null) {
+          e.preventDefault();
+          this._selectTask(null, true);
+          return;
+        }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          const direction = e.key === 'ArrowLeft' ? -1 : 1;
+          if (this.selectedKey != null) {
+            e.preventDefault();
+            const baseStep = this.viewMode === 'calendar' ? this._calendarMagnetStepMs((this._selectedTask()?.start || Date.now()), { verticalMapSnapshot: this._calendarMetrics?.verticalMap }) : this._magnetStepMs();
+          const step = baseStep * (e.shiftKey ? 5 : 1) * direction;
+            if (e.altKey) this._keyboardEditSelected('resize-start', step);
+            else if (modifier) this._keyboardEditSelected('resize-end', step);
+            else this._keyboardEditSelected('move', step);
+          } else {
+            e.preventDefault();
+            this._setScrollLeft(this._scrollLeftNow() + direction * this._viewportWidthNow() * 0.2 * this.options.scrollSpeed);
+          }
+          return;
+        }
+        if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          this.zoomIn();
+        } else if (e.key === '-') {
+          e.preventDefault();
+          this.zoomOut();
+        }
+      });
+    }
+
+    _onWindowPointerMove(e) {
+      if (this.calendarEditState && e.pointerId === this.calendarEditState.pointerId) {
+        e.preventDefault();
+        this._applyCalendarTaskEdit(e);
+        return;
+      }
+      if (!this.editState || e.pointerId !== this.editState.pointerId) return;
+      e.preventDefault();
+      this._applyTaskEdit(e);
+    }
+
+    _onWindowPointerUp(e) {
+      if (this.calendarEditState && e.pointerId === this.calendarEditState.pointerId) {
+        this._finishCalendarTaskEdit(e);
+        return;
+      }
+      if (this.editState && e.pointerId === this.editState.pointerId) this._finishTaskEdit(e);
+    }
+
+    _onResize() {
+      if (this.destroyed || !this.segments.length) return;
+      if (!this._viewportWidth) this._viewportWidth = Math.max(320, this.viewport.clientWidth || 0);
+      this._cancelZoomAnimation();
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = setTimeout(() => {
+        if (!this.segments.length) return;
+        const center = this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2);
+        this._renderAll({ invalidateRulerScales: false });
+        this._setScrollLeft(this.timeToX(center) - this._viewportWidthNow() / 2);
+        this._updateTimelineMeta();
+      }, 50);
+    }
+  }
+
+  TaskTimeline.COLORS = TASK_COLORS.slice();
+  TaskTimeline.DIRECT_GAP_MS = DIRECT_GAP;
+  TaskTimeline.SECOND_MS = SECOND;
+  global.TaskTimeline = TaskTimeline;
+})(window);

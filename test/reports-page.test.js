@@ -77,3 +77,11 @@ test('recoverable queued entry-edit conflicts keep the background retry alarm al
   assert.match(worker, /function hasRunnablePending\(queue\) \{[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
 });
+
+
+test('reports mounts the shared running status directly below the tabs', () => {
+  assert.match(html, /<\/nav>\s*<\/div>\s*<div id="running-status"/);
+  assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
+  assert.match(js, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);
+  assert.match(js, /mountRunningStatus\(\$\('running-status'\), \{ send \}\)/);
+});

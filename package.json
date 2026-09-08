@@ -10,9 +10,9 @@
   "scripts": {
     "test": "npm run test:clockoli && npm run test:timeline",
     "test:clockoli": "node --test test/*.test.js",
-    "test:timeline": "npm run test:all --workspace elastic-timeline-editor && npm run build:timeline && git diff --exit-code -- src/content/elastic-timeline-editor.css src/content/elastic-timeline-editor.js",
-    "build:timeline": "npm run build:content-script --workspace elastic-timeline-editor",
-    "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/elastic-timeline-editor.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
+    "test:timeline": "npm run test:all --workspace task-timeline-component-clockoli && npm run build:timeline && git diff --exit-code -- src/content/task-timeline-component.js",
+    "build:timeline": "npm run build --workspace task-timeline-component-clockoli",
+    "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/task-timeline-component.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
     "package": "python3 scripts/build-release.py"
   },
   "engines": {

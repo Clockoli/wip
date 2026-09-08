@@ -76,6 +76,11 @@ test('project facets classify URL substrings, cross-filter, and retain unmatched
     { value: 'personal', count: 1, seconds: 1800 },
     { value: 'work', count: 2, seconds: 14400 },
   ]);
+  assert.deepEqual(buildFacets(projectRecords, { people: ['bob'], projectDefinitions: projects, otherProjectName: 'General' }).projects, [
+    { value: 'General', count: 1, seconds: 900 },
+    { value: 'work', count: 1, seconds: 7200 },
+  ]);
+  assert.equal(filterReportRecords(projectRecords, { projects: ['General'], projectDefinitions: projects, otherProjectName: 'General' }).length, 1);
 });
 
 test('analytics independently selects total-time horizontal and stack dimensions', () => {
