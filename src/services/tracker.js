@@ -1,5 +1,5 @@
 import { activeRecordPath, assertUserMonthlyRecordsPath, localTimestamp, monthlyRecordsPath, normalizePlainTitle, parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../domain/work-records.js';
-import { applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
+import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
 import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
@@ -129,7 +129,10 @@ function compactSupersededQueue(pendingWrites, recentCache = []) {
       if (!targetId) { latestByTarget.clear(); continue; }
       const key = `active\u0000${targetId}`, laterIndex = latestByTarget.get(key);
       if (laterIndex === undefined) { latestByTarget.set(key, index); continue; }
-      queue[laterIndex].original = structuredClone(operation.original);
+      const later = queue[laterIndex];
+      later.original = structuredClone(operation.original);
+      if (later.startedAt === undefined && operation.startedAt !== undefined) later.startedAt = operation.startedAt;
+      if (later.description === undefined && operation.description !== undefined) later.description = operation.description;
       removed.add(index);
       continue;
     }
@@ -871,7 +874,10 @@ export class TrackerService {
           continue;
         }
         if (operation.operation === 'editActiveStart') {
-          const saved = await this.editActiveStart({ original: operation.original, startedAt: operation.startedAt });
+          const saved = await this.editActiveStart(
+            { original: operation.original, startedAt: operation.startedAt, description: operation.description },
+            { updateCache: false },
+          );
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
           await this.persistQueueOperation(operation, { remove: true, patch: { activeCache: saved } });
@@ -1251,20 +1257,25 @@ export class TrackerService {
     }).then(state => ({ operationId: state.pendingWrites.at(-1)?.operation === 'editEntries' ? state.pendingWrites.at(-1).id : null, pending: true }));
   }
 
-  async queueActiveStartEdit({ original, startedAt }) {
+  async queueActiveStartEdit({ original, startedAt, description }) {
     const queuedAt = this.clock();
     return this.mutateState(state => {
       const active = state.activeCache;
       if (!active || active.id !== original?.id || active.startedAt !== original?.startedAt) throw new TrackerConflictError('The active timer changed before its edit was queued. Reload before trying again.');
-      const updated = applyActiveStartEdit(active, startedAt, queuedAt);
+      const edits = {
+        ...(startedAt !== undefined ? { startedAt } : {}),
+        ...(description !== undefined ? { description } : {}),
+      };
+      const updated = applyActiveEdits(active, edits, queuedAt);
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editActiveStart'
         && operation.original?.id === active.id);
       const operation = existing ?? {
         operation: 'editActiveStart', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
-        stage: 'editActiveStart', original: { id: active.id, startedAt: active.startedAt }, startedAt, queuedAt: queuedAt.toISOString(), lastError: '',
+        stage: 'editActiveStart', original: { id: active.id, startedAt: active.startedAt }, startedAt: updated.startedAt, description: updated.description, queuedAt: queuedAt.toISOString(), lastError: '',
       };
-      operation.startedAt = startedAt;
+      operation.startedAt = updated.startedAt;
+      operation.description = updated.description;
       if (!existing) pendingWrites.push(operation);
       return { pendingWrites, activeCache: { ...updated, _path: active._path, _sha: active._sha, _pending: true } };
     }).then(state => ({
@@ -1317,17 +1328,17 @@ export class TrackerService {
   }
 
 
-  async editActiveStart({ original, startedAt }) {
+  async editActiveStart({ original, startedAt, description }, { updateCache = true } = {}) {
     const active = await this.readRemoteActive();
     if (!active) throw new TrackerConflictError('The running timer is no longer active. Reload before saving.');
     if (!matchesOriginal(active, original) || active.startedAt !== original?.startedAt) {
       throw new TrackerConflictError('The running timer changed after the timeline loaded. Reload before saving.');
     }
-    const updated = applyActiveStartEdit(active, startedAt, this.clock());
+    const updated = applyActiveEdits(active, { startedAt, description }, this.clock());
     try {
       const result = await this.github.putText(activeRecordPath(this.user), serializeActiveRecord(updated), `timer: edit start ${this.user}`, active._sha);
       const cached = { ...updated, _path: activeRecordPath(this.user), _sha: result.sha };
-      await this.store.patchState({ activeCache: cached });
+      if (updateCache) await this.store.patchState({ activeCache: cached });
       return cached;
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('The running timer changed while you were saving. Reload before saving.');

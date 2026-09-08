@@ -1,4 +1,4 @@
-import { normalizeBillingSettings, normalizeProjects, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
+import { normalizeBillingSettings, normalizeOtherProjectName, normalizeProjects, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
@@ -11,9 +11,11 @@ const BILLING_SETTINGS = 'billingSettings';
 const EXCHANGE_RATE_CACHE = 'exchangeRateCache';
 const LOCAL_RECENT_DAYS = 'localRecentDays';
 const PROJECTS = 'projects';
+const OTHER_PROJECT_NAME = 'otherProjectName';
+const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
-const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
+const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
 const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
 
 function generationValue(value) {
@@ -355,7 +357,9 @@ export class ChromeStore {
     const exportedRevision = Number.isSafeInteger(values[SETTINGS_EXPORTED_REVISION]) && values[SETTINGS_EXPORTED_REVISION] >= 0 ? values[SETTINGS_EXPORTED_REVISION] : 0;
     const recentDays = Number(values.config?.recentDays ?? values[LOCAL_RECENT_DAYS] ?? 7);
     const projects = normalizeProjects(values[PROJECTS] || []);
-    return { recentDays, projects, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision };
+    const otherProjectName = normalizeOtherProjectName(values[OTHER_PROJECT_NAME]);
+    const showQueueDiagnostics = values[SHOW_QUEUE_DIAGNOSTICS] === true;
+    return { recentDays, projects, otherProjectName, showQueueDiagnostics, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision };
   }
 
   async saveBillingSettings(value) {
@@ -366,19 +370,21 @@ export class ChromeStore {
     });
   }
 
-  async updateDisplayPreferences({ recentDays, projects = [] }) {
+  async updateDisplayPreferences({ recentDays, projects = [], otherProjectName, showQueueDiagnostics = false }) {
     const normalized = Number(recentDays);
     const normalizedProjects = normalizeProjects(projects);
+    const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
+    if (normalizedProjects.some(project => project.name.toLowerCase() === normalizedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
     if (!Number.isInteger(normalized) || normalized < 1 || normalized > 31) {
       throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
     }
-    return this.backend.mutateMany(['config', PROJECTS, CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
+    return this.backend.mutateMany(['config', PROJECTS, OTHER_PROJECT_NAME, SHOW_QUEUE_DIAGNOSTICS, CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
       if (!values.config) throw new Error('Connect a repository before saving display settings');
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0
         ? values[CONFIGURATION_GENERATION] : 0) + 1;
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       return {
-        set: { config: { ...values.config, recentDays: normalized }, [LOCAL_RECENT_DAYS]: normalized, [PROJECTS]: normalizedProjects, [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision },
+        set: { config: { ...values.config, recentDays: normalized }, [LOCAL_RECENT_DAYS]: normalized, [PROJECTS]: normalizedProjects, [OTHER_PROJECT_NAME]: normalizedOtherProjectName, [SHOW_QUEUE_DIAGNOSTICS]: showQueueDiagnostics === true, [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision },
         result: generation,
       };
     });
@@ -390,7 +396,7 @@ export class ChromeStore {
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0 ? values[CONFIGURATION_GENERATION] : 0) + 1;
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       const set = {
-        [BILLING_SETTINGS]: imported.billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects,
+        [BILLING_SETTINGS]: imported.billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects, [OTHER_PROJECT_NAME]: imported.otherProjectName, [SHOW_QUEUE_DIAGNOSTICS]: imported.showQueueDiagnostics,
         [SETTINGS_REVISION]: revision, [SETTINGS_EXPORTED_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
       };
       if (values.config) set.config = { ...values.config, recentDays: imported.recentDays };
@@ -399,10 +405,10 @@ export class ChromeStore {
   }
 
   async exportSettings() {
-    const values = await this.backend.getMany(['config', BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, SETTINGS_REVISION]);
+    const values = await this.backend.getMany(['config', BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
     const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
     return {
-      text: settingsExportText({ config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [] }),
+      text: settingsExportText({ config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME], showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS] }),
       revision: Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0,
     };
   }

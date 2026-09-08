@@ -11,7 +11,7 @@ const $ = id => document.getElementById(id);
 const state = {
   records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', billing: { rates: {} }, loading: false, requestId: 0, analytics: null,
   people: new Set(), projects: new Set(), repositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '',
-  allSelected: { people: false, projects: true, repositories: true },
+  allSelected: { people: false, projects: true, repositories: true }, otherProjectName: 'Other',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
 };
 
@@ -93,11 +93,11 @@ function setDownloadsAvailable(available) {
 }
 
 function selectedFilters() {
-  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, emptyMeansNone: true };
+  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, emptyMeansNone: true };
 }
 
 function updateSelectionIntent(key) {
-  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions })[key];
+  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName })[key];
   state.allSelected[key] = values.length > 0 && values.every(option => state[key].has(option.value));
   render();
 }
@@ -368,7 +368,8 @@ async function loadRange(range) {
     state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {} };
     state.projectDefinitions = result.billing?.projects || [];
-    const available = buildFacets(result.records, { projectDefinitions: state.projectDefinitions });
+    state.otherProjectName = result.billing?.otherProjectName || 'Other';
+    const available = buildFacets(result.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName });
     if (firstLoad) {
       state.allSelected = { people: false, projects: true, repositories: true };
       state.people = new Set(result.currentUser ? [result.currentUser] : []);
@@ -419,7 +420,7 @@ $('people-all').addEventListener('click', () => {
   state.people = values.length && values.every(value => state.people.has(value)) ? new Set() : new Set(values); updateSelectionIntent('people');
 });
 $('projects-all').addEventListener('click', () => {
-  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions }).projects.map(project => project.value);
+  const values = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }).projects.map(project => project.value);
   state.projects = values.length && values.every(value => state.projects.has(value)) ? new Set() : new Set(values); updateSelectionIntent('projects');
 });
 $('repositories-all').addEventListener('click', () => {
@@ -427,7 +428,7 @@ $('repositories-all').addEventListener('click', () => {
   state.repositories = values.length && values.every(value => state.repositories.has(value)) ? new Set() : new Set(values); updateSelectionIntent('repositories');
 });
 $('reset-filters').addEventListener('click', () => {
-  const facets = buildFacets(state.records, { projectDefinitions: state.projectDefinitions });
+  const facets = buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName });
   for (const key of FACET_KEYS) {
     state.allSelected[key] = true;
     state[key] = new Set(facets[key].map(option => option.value));
@@ -465,7 +466,8 @@ $('download-pdf').addEventListener('click', event => {
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
   state.projectDefinitions = preferences.projects || [];
-  reconcileSelections(buildFacets(state.records, { projectDefinitions: state.projectDefinitions }), ['projects']);
+  state.otherProjectName = preferences.otherProjectName || 'Other';
+  reconcileSelections(buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }), ['projects']);
   render();
 }
 

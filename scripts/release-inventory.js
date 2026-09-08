@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const MANIFEST = 'manifest.json';
+const VIRTUAL_RESOURCES = new Set(['_favicon/*']);
 const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
 const SECRET_PATTERNS = [
@@ -41,7 +42,7 @@ function manifestEntries(manifest) {
     ...(manifest.content_scripts || []).flatMap(item => [...(item.js || []), ...(item.css || [])]),
     ...(manifest.web_accessible_resources || []).flatMap(item => item.resources || []),
   ];
-  return entries.filter(Boolean);
+  return entries.filter(entry => entry && !VIRTUAL_RESOURCES.has(entry));
 }
 
 function assertRuntimePath(file) {

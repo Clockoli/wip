@@ -6,6 +6,7 @@
   "permissions": [
     "alarms",
     "activeTab",
+    "favicon",
     "scripting"
   ],
   "host_permissions": [
@@ -37,7 +38,7 @@
       ],
       "js": [
         "src/domain/recovery-actions.js",
-        "src/content/elastic-timeline-editor.js",
+        "src/content/task-timeline-component.js",
         "src/content/github.js"
       ],
       "run_at": "document_idle"
@@ -47,8 +48,8 @@
     {
       "matches": ["<all_urls>"],
       "resources": [
-        "src/assets/clockoli-16.png", "src/assets/clockoli-32.png",
-        "src/content/elastic-timeline-editor.css",
+        "_favicon/*",
+        "src/assets/clockoli-16.png", "src/assets/clockoli-32.png", "src/assets/clockoli-with-text.svg",
         "src/assets/action-spin/clockoli-16-0.png", "src/assets/action-spin/clockoli-32-0.png",
         "src/assets/action-spin/clockoli-16-1.png", "src/assets/action-spin/clockoli-32-1.png",
         "src/assets/action-spin/clockoli-16-2.png", "src/assets/action-spin/clockoli-32-2.png",

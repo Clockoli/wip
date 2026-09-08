@@ -7,8 +7,9 @@ const SECOND_MS = 1_000;
 const PERIODS = new Set(['two-weeks', 'one-month', 'three-months', 'six-months', 'one-year']);
 const ISSUE_OPEN_PATH = 'M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Z';
 const PULL_OPEN_PATH = 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z';
+const TASK_COLORS = ['#e76f51','#2a9d8f','#b8860b','#5f8f52','#d66b2c','#477ca8','#8f4fc7','#d94c78','#27866a','#c76f0a','#659344','#4c6f8c','#d52f33','#0087a3','#806b99','#b88400','#2886a8','#914657','#55766e','#c95e43'];
 const $ = id => document.getElementById(id);
-const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', range: null };
+const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null };
 let tick = null;
 let pendingRefresh = null;
 let pendingRender = false;
@@ -29,6 +30,12 @@ function localDateValue(date = new Date()) {
 
 function taskUrlOf(value) { return value?.taskUrl || value?.issue?.url || ''; }
 function sameTask(a, b) { return Boolean(taskUrlOf(a) && taskUrlOf(a) === taskUrlOf(b)); }
+
+function taskColor(value) {
+  let hash = 2166136261;
+  for (const char of taskUrlOf(value)) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return TASK_COLORS[(hash >>> 0) % TASK_COLORS.length];
+}
 
 
 function formatDuration(seconds, { current = false } = {}) {
@@ -55,6 +62,16 @@ function setError(error = '') {
 }
 
 function taskIcon(task) {
+  if (!task.issue) {
+    const image = document.createElement('img');
+    image.className = 'task-icon task-favicon'; image.alt = ''; image.width = 16; image.height = 16; image.referrerPolicy = 'no-referrer';
+    try {
+      const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
+      favicon.searchParams.set('pageUrl', taskUrlOf(task)); favicon.searchParams.set('size', '32'); image.setAttribute('src', favicon.href);
+    } catch { image.hidden = true; }
+    image.addEventListener('error', () => { image.hidden = true; }, { once: true });
+    return image;
+  }
   const type = task.issue?.type || 'url';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
@@ -136,6 +153,13 @@ function hasRunnablePending(queue = state.pendingWrites) {
     && first.conflictReason !== 'queued_entry_missing';
 }
 
+function updateRefreshControl() {
+  const busy = state.loading || hasRunnablePending();
+  const refresh = $('refresh-tasks');
+  refresh.disabled = busy;
+  refresh.classList.toggle('syncing', busy);
+}
+
 function isInteracting() {
   return Boolean(state.busyUrl) || [...$('task-list').children].some(row => row.matches(':hover') || row.contains(document.activeElement));
 }
@@ -162,8 +186,7 @@ function render({ force = false } = {}) {
   const tasks = visibleTasks(), list = $('task-list');
   $('task-controls').hidden = !state.configured;
   $('tasks-content').hidden = !state.configured; $('setup').hidden = state.configured;
-  const syncing = hasRunnablePending();
-  const refresh = $('refresh-tasks'); refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
+  updateRefreshControl();
   if (!force && isInteracting()) {
     pendingRender = true;
   } else {
@@ -197,13 +220,15 @@ function rebuildList(tasks) {
   $('clear-filter').hidden = !filtered;
   for (const task of tasks) {
     const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
+    row.setAttribute('style', `--task-color:${taskColor(task)}`);
     row.addEventListener('pointerleave', reconcileList);
-    const main = document.createElement('div'); main.className = 'task-main'; main.append(taskIcon(task));
+    const main = document.createElement('div'); main.className = 'task-main';
+    const taskIdentityIcon = taskIcon(task); taskIdentityIcon.setAttribute('style', `color:${taskColor(task)}`); main.append(taskIdentityIcon);
     const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
     const url = document.createElement(task.title ? 'div' : 'a'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
     if (!task.title) { url.href = task.taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
     if (task.title) {
-      const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; copy.append(title);
+      const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
     }
     copy.append(url);
     main.append(copy);
@@ -247,7 +272,8 @@ async function reconcileTaskState(previousActive) {
 
 async function load() {
   const requestId = ++state.requestId, range = taskPeriodRange($('period').value, localDateValue()); state.range = range;
-  setError(); $('loading').hidden = false; $('setup').hidden = true;
+  const keepResults = state.configured && !$('tasks-content').hidden;
+  state.loading = true; setError(); $('loading').hidden = keepResults; $('setup').hidden = true; updateRefreshControl();
   try {
     const result = await send({ type: 'LOAD_TASKS', payload: range });
     if (requestId !== state.requestId) return;
@@ -263,7 +289,9 @@ async function load() {
       if (document.activeElement === document.body) $('task-filter').focus({ preventScroll: true });
     }
   } catch (error) { if (requestId === state.requestId) setError(error); }
-  finally { if (requestId === state.requestId) $('loading').hidden = true; }
+  finally {
+    if (requestId === state.requestId) { state.loading = false; $('loading').hidden = true; updateRefreshControl(); }
+  }
 }
 
 $('refresh-tasks').addEventListener('click', async () => {

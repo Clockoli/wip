@@ -534,6 +534,8 @@ function projectsPayload() {
 
 function renderLocalPreferences(preferences) {
   localPreferences = preferences;
+  $('other-project-name').value = preferences.otherProjectName || 'Other';
+  $('show-queue-diagnostics').checked = preferences.showQueueDiagnostics === true;
   $('projects-list').replaceChildren();
   for (const project of preferences.projects || []) addProjectRow(project);
   $('rates-list').replaceChildren();
@@ -801,6 +803,8 @@ $('display-form').addEventListener('submit', async event => {
     const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
       recentDays: Number($('recent-days').value),
       projects: projectsPayload(),
+      otherProjectName: $('other-project-name').value,
+      showQueueDiagnostics: $('show-queue-diagnostics').checked,
     } });
     state.config = result.config;
     $('recent-days').value = result.config.recentDays;

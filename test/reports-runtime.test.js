@@ -7,6 +7,7 @@ import * as billing from '../src/domain/local-settings.js';
 
 const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
+const styles = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
 const oldRange = { startDate: '2026-08-17', endDate: '2026-08-23' };
 const newRange = { startDate: '2026-08-24', endDate: '2026-08-30' };
 const record = (user, host = 'example.com', date = oldRange.startDate) => ({
@@ -74,14 +75,18 @@ async function loaded(data = result()) {
   return page;
 }
 
-test('exports sit beside the period and chart options start closed', () => {
+test('period, exports, and chart controls use the compact always-visible layout', () => {
   const period = html.match(/<section\b[^>]*class="card period-card"[\s\S]*?<\/section>/)?.[0] || '';
   for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.ok(period.includes(`id="${id}"`), id);
   assert.doesNotMatch(html, /export-card|summary-grid|summary-card/);
-  const disclosure = html.match(/<details id="chart-options"([^>]*)>([\s\S]*?)<\/details>/);
-  assert.ok(disclosure); assert.doesNotMatch(disclosure[1], /\bopen\b/);
-  assert.match(disclosure[2], /<summary>Chart options<\/summary>/);
-  for (const id of ['metric', 'horizontal-axis', 'stack-by']) assert.ok(disclosure[2].includes(`id="${id}"`));
+  assert.doesNotMatch(html, /<h2[^>]*>Analytics<\/h2>|<summary>Chart options<\/summary>|Tracked time/);
+  assert.match(html, /class="period-select"[\s\S]*?<span>Period<\/span>[\s\S]*?id="period"/);
+  assert.ok(period.indexOf('id="period"') < period.indexOf('id="report-range"'));
+  const chart = html.match(/<section id="analytics-card"[\s\S]*?<\/section>/)?.[0] || '';
+  assert.ok(chart.indexOf('id="metric"') < chart.indexOf('id="analytics-chart"'));
+  assert.ok(chart.indexOf('id="stack-by"') < chart.indexOf('id="analytics-chart"'));
+  assert.ok(chart.indexOf('id="horizontal-axis"') > chart.indexOf('id="analytics-chart"'));
+  assert.match(styles, /@media\(max-width:640px\)[\s\S]*\.chart-top-controls\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
 });
 
 test('first load defaults to current user, shows one time figure and hides unconfigured billing', async () => {
@@ -90,7 +95,7 @@ test('first load defaults to current user, shows one time figure and hides uncon
   assert.equal(page.nodes.get('summary-time').textContent, '1h 0m');
   assert.equal(page.nodes.get('summary-billable')?.hidden, true);
   assert.equal(page.nodes.get('summary-counts')?.textContent, '1 entry · 1 person · 1 source');
-  assert.equal(page.nodes.get('chart-options')?.open, false);
+  assert.ok(page.nodes.get('chart-options'));
   const chart = page.nodes.get('analytics-chart').children[0];
   assert.ok(chart.children.some(node => node.tagName === 'rect' && node.attributes.tabindex === '0'));
   assert.ok(page.nodes.get('print-detail-table').children[1].children.length);
@@ -137,6 +142,26 @@ test('widening a period expands all-selected facets in totals and exports', asyn
   assert.match(exported, /https:\/\/example.com\/task/);
   assert.match(exported, /https:\/\/other.com\/task/);
   assert.equal(page.nodes.get('print-detail-table').children[1].children.length, 2);
+});
+
+test('renamed main project survives Projects all and Reset filters', async () => {
+  const data = {
+    ...result(),
+    billing: { rates: {}, projects: [{ name: 'Main', substrings: ['https://example.com/'] }], otherProjectName: 'General' },
+  };
+  const page = await loaded(data);
+  assert.equal(page.selection('projects'), 'General,Main');
+  page.fire('reset-filters');
+  assert.equal(page.selection('projects'), 'General,Main');
+  page.fire('projects-all');
+  assert.equal(page.selection('projects'), '');
+  page.fire('projects-all');
+  assert.equal(page.selection('projects'), 'General,Main');
+  page.select('projects', 'General', false);
+  assert.equal(page.nodes.get('summary-time').textContent, '1h 0m');
+  page.fire('reset-filters');
+  assert.equal(page.selection('projects'), 'General,Main');
+  assert.equal(page.nodes.get('summary-time').textContent, '2h 0m');
 });
 
 for (const [key, excluded, retained] of [

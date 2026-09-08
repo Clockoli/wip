@@ -59,8 +59,8 @@
       const { headline, ...detail } = describeConnectionError({ ...state.error, message: state.error.message, recovery: 'mutation-recovery' });
       return { label: headline, ...detail };
     }
-    if (state?.saving) return { label: 'Saving on this device' };
-    if (pending) return { label: 'Saved on this device · waiting for GitHub', pending };
+    if (state?.saving) return { label: 'Saving…' };
+    if (pending) return { label: 'Saving…', pending };
     if (state?.remoteWriteConfirmed === true) return { label: 'Saved to GitHub' };
     return { label: 'Save to GitHub not confirmed', code: 'unconfirmed' };
   }

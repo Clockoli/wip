@@ -14,7 +14,7 @@ if (manifest.manifest_version !== 3) fail('Manifest V3 is required');
 if (Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
 if (manifest.background?.type !== 'module') fail('Background worker must be an ES module');
 if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*', 'https://github.com/login/*', 'https://api.frankfurter.dev/*'])) fail('Host permissions must be limited to the GitHub API, OAuth login, and Frankfurter exchange-rate endpoints');
-for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab', 'scripting'].includes(permission)) fail(`Unexpected permission: ${permission}`);
+for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab', 'favicon', 'scripting'].includes(permission)) fail(`Unexpected permission: ${permission}`);
 if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 
 const actionPopup = manifest.action?.default_popup;
@@ -33,7 +33,7 @@ for (const file of htmlFiles) {
   if (/https?:\/\//i.test(withoutSafeLinks)) fail(`Remote resource is forbidden: ${file}`);
 }
 
-const generatedBundles = new Set(['src/content/elastic-timeline-editor.js']);
+const generatedBundles = new Set(['src/content/task-timeline-component.js']);
 const jsFiles = [];
 function walk(directory) {
   for (const entry of fs.readdirSync(path.join(root, directory), { withFileTypes: true })) {

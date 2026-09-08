@@ -15,7 +15,7 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
 
   assert.match(worker, /async function toggleActionSurface\(tab\)/);
   assert.match(worker, /chrome\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \}[\s\S]*globalThis\.__CLOCKOLI_ACTION_SURFACE__ = true/);
-  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/content\/elastic-timeline-editor\.js', 'src\/content\/github\.js'\]/);
+  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/content\/task-timeline-component\.js', 'src\/content\/github\.js'\]/);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.doesNotMatch(worker, /restoreActionPopup|REGISTER_GITHUB_ACTION_SURFACE/);
 
@@ -85,17 +85,17 @@ test('action panel opens from local state and lets handled Escape stay inside th
   assert.doesNotMatch(content, /#ff2d55|summaryFrames|summaryIndex|displayMs/);
 });
 
-test('shadow chrome uses host-first light and dark tokens without bare theme colors', () => {
+test('shadow chrome defines local light and dark tokens without bare theme colors in selectors', () => {
   const start = content.indexOf("    const style = el('style', `", content.indexOf('  function renderUi()'));
   const end = content.indexOf('    if (fullWidthPopupOpen) {', start);
   const stylesheet = content.slice(start, end);
-  assert.match(stylesheet, /@media \(prefers-color-scheme: dark\) \{\s*:host \{/);
+  assert.match(stylesheet, /@media \(prefers-color-scheme: dark\) \{\s*:host, :where\(:host > :not\(style\)\) \{/);
   const definitions = [...stylesheet.matchAll(/--ck-[\w-]+:\s*var\(--[^;]+;/g)].map(match => match[0]);
   assert.ok(definitions.includes('--ck-bg: var(--bgColor-default,#fff);'));
   assert.ok(definitions.includes('--ck-bg: var(--bgColor-default,#0d1117);'));
   assert.ok(definitions.includes('--ck-fg: var(--fgColor-default,#1f2328);'));
   assert.ok(definitions.includes('--ck-fg: var(--fgColor-default,#f0f6fc);'));
-  const uses = stylesheet.replace(/--ck-[\w-]+:\s*var\(--[^;]+;/g, '');
+  const uses = stylesheet.replace(/--[\w-]+:\s*[^;]+;/g, '');
   assert.doesNotMatch(uses, /#[\da-f]{3,8}\b/i, 'all theme colors belong to token definitions');
   for (const name of new Set([...uses.matchAll(/var\((--ck-[\w-]+)\)/g)].map(match => match[1]))) {
     assert.equal(definitions.filter(value => value.startsWith(`${name}:`)).length, 2, `${name} has both light and dark host-first definitions`);

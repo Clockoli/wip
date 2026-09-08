@@ -37,7 +37,7 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
   const [manifest, optionsHtml, options, content, tasksHtml, tasks, reportsHtml, reports] = files;
   assert.deepEqual(JSON.parse(manifest).content_scripts[0].js, [
     'src/domain/recovery-actions.js',
-    'src/content/elastic-timeline-editor.js',
+    'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);
   for (const html of [optionsHtml, tasksHtml, reportsHtml]) assert.match(html, /\.\.\/domain\/recovery-actions\.js/);
@@ -51,8 +51,8 @@ const describeSave = state => JSON.parse(JSON.stringify(context.ClockoliRecovery
 const describeError = error => JSON.parse(JSON.stringify(context.ClockoliRecovery.describeConnectionError(error)));
 
 test('save status requires remote evidence and gives pending work, errors, and conflicts precedence', () => {
-  assert.deepEqual(describeSave({ saving: true }), { label: 'Saving on this device' });
-  assert.deepEqual(describeSave({ pendingCount: 2, remoteWriteConfirmed: true }), { label: 'Saved on this device · waiting for GitHub', pending: 2 });
+  assert.deepEqual(describeSave({ saving: true }), { label: 'Saving…' });
+  assert.deepEqual(describeSave({ pendingCount: 2, remoteWriteConfirmed: true }), { label: 'Saving…', pending: 2 });
   assert.deepEqual(describeSave({ remoteWriteConfirmed: true }), { label: 'Saved to GitHub' });
   assert.notEqual(describeSave({ pendingCount: 0 }).label, 'Saved to GitHub');
   assert.notEqual(describeSave({}).label, 'Saved to GitHub');

@@ -365,6 +365,54 @@ test('sync keeps only the latest queued start adjustment for one active timer', 
   assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt, '2026-08-18T09:30:00.000Z');
 });
 
+test('queued running start and description edits coalesce and persist together', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt }, startedAt: '2026-08-18T09:00:00.000Z' });
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: '2026-08-18T09:00:00.000Z' }, description: 'Saved on blur' });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(store.value.pendingWrites[0].description, 'Saved on blur');
+
+  await tracker.syncPending();
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(saved.startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(saved.description, 'Saved on blur');
+});
+
+test('restart compaction preserves active fields changed by separate persisted edits', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueActiveStartEdit({
+    original: { id: original.id, startedAt: original.startedAt },
+    startedAt: '2026-08-18T09:00:00.000Z',
+  });
+  const later = {
+    ...structuredClone(store.value.pendingWrites[0]),
+    id: deterministicRecordId('2026-08-18T12:00:01.000Z'),
+    queuedAt: '2026-08-18T12:00:01.000Z',
+    original: { id: original.id, startedAt: '2026-08-18T09:00:00.000Z' },
+    description: 'Saved after restart',
+  };
+  delete later.startedAt;
+  store.value.pendingWrites.push(later);
+
+  await tracker.syncPending();
+
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(github.writes.filter(write => write.path === 'active/alice.json').length, 1);
+  assert.equal(saved.startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(saved.description, 'Saved after restart');
+});
+
 test('queue compaction never crosses a timer lifecycle barrier', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
@@ -1471,6 +1519,41 @@ test('a local Stop is accepted while an earlier Start is still writing to GitHub
   releaseStart(); await firstSync;
   assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['completeTimer']);
   assert.equal(store.value.activeCache, null, 'the completed older Start cannot overwrite a newer local Stop');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('a local Stop stays stopped when an earlier active edit finishes remotely', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const timer = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(timer), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, {
+    user: 'alice', path: 'active/alice.json', sha: 'active-sha',
+  });
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T10:00:00.000Z') });
+  await tracker.queueActiveStartEdit({
+    original: { id: timer.id, startedAt: timer.startedAt },
+    startedAt: '2026-08-18T08:30:00.000Z', description: 'Edited while running',
+  });
+
+  let releaseEdit, editWriteBegan;
+  const began = new Promise(resolve => { editWriteBegan = resolve; });
+  const release = new Promise(resolve => { releaseEdit = resolve; });
+  const originalPut = github.putText.bind(github);
+  github.putText = async (...args) => {
+    if (args[2] === 'timer: edit start alice') { editWriteBegan(); await release; }
+    return originalPut(...args);
+  };
+
+  const editSync = tracker.syncPending();
+  await began;
+  const stopped = await tracker.stop('Stopped during active edit', { background: true });
+  assert.equal(stopped.pending, true);
+  assert.equal(store.value.activeCache, null, 'Stop is projected immediately while the edit write is pending');
+  releaseEdit(); await editSync;
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['completeTimer']);
+  assert.equal(store.value.activeCache, null, 'the older edit completion cannot resurrect the stopped timer');
   await tracker.syncPending();
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(github.files.has('active/alice.json'), false);

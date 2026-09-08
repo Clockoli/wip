@@ -23,11 +23,14 @@ test('every standalone page exposes one shared branded same-window navigation ro
     assert.ok(nav, `${current} must render page tabs`);
     assert.match(nav, /aria-label="Clockoli pages"/);
     assert.match(nav, /class="page-brand"[^>]*>[\s\S]*clockoli-with-text\.svg/, `${current} must use the combined Clockoli logo and product name asset`);
+    assert.match(nav, /<div class="page-tab-list">[\s\S]*<\/div>/, `${current} must keep page actions in one centered group`);
     assert.doesNotMatch(nav, /<span>CLOCKOLI<\/span>|clockoli\.svg/, `${current} must not reconstruct the combined brand from separate mark and text elements`);
     for (const [label, href] of Object.entries(hrefs)) {
-      assert.match(nav, new RegExp(`<a class="page-tab" href="${href.replaceAll('.', '\\.') }"${label === current ? ' aria-current="page"' : ''}>${label}<\\/a>`), `${current} must link to ${label}`);
+      assert.match(nav, new RegExp(`<a class="page-tab" href="${href.replaceAll('.', '\\.') }"${label === current ? ' aria-current="page"' : ''}>[\\s\\S]*?${label}<\\/a>`), `${current} must link to ${label}`);
     }
     assert.equal((nav.match(/aria-current="page"/g) || []).length, 1, `${current} must have one active tab`);
+    assert.equal((nav.match(/<svg viewBox="0 0 16 16" aria-hidden="true">/g) || []).length, 4, `${current} must reuse the four tracking-panel navigation icons`);
+    assert.match(nav, /Top tasks<\/a>[\s\S]*Reports<\/a>[\s\S]*Activity<\/a>[\s\S]*Settings<\/a>/, `${current} must match the tracking-panel action order`);
     assert.doesNotMatch(nav, /target\s*=/i, `${current} navigation must open in the same window`);
     assert.doesNotMatch(html, /class="hero"|class="app-header"|class="brand-logo"|class="mark"/, `${current} must not duplicate page branding below the navigation`);
   }
@@ -42,7 +45,10 @@ test('shared navigation styles distinguish the brand from page tabs and remain r
   assert.match(css, /\.page-brand img/);
   assert.match(css, /\.page-tab\[aria-current="page"\]/);
   assert.match(css, /overflow-x:auto/);
-  assert.match(css, /@media\(max-width:640px\)\{\.page-tabs\{padding:0 4px\}\.page-brand\{margin-right:4px\}\.page-brand img\{width:auto;height:20px\}\.page-tab\{padding-inline:4px;font-size:12px\}\}/);
+  assert.match(css, /\.page-tabs\{display:grid;grid-template-columns:minmax\(0,1fr\) auto minmax\(0,1fr\);align-items:center;width:100%;min-height:48px/);
+  assert.match(css, /\.page-tab-list\{display:flex;grid-column:2;align-items:center;gap:2px;margin:0\}/);
+  assert.match(css, /@media\(max-width:640px\)\{\.page-tabs\{display:flex;flex-wrap:wrap;padding:8px 12px;gap:6px\}/);
+  assert.match(css, /\.page-brand img\{height:24px\}/);
 });
 
 test('Activity does not duplicate standalone navigation inside its renderer', () => {

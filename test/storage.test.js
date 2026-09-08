@@ -111,12 +111,16 @@ test('display preference updates recentDays and local projects without touching 
   const config = { owner: 'acme', repo: 'time', branch: 'main', recentDays: 7, repoId: 77 };
   await store.saveConfiguration(config, 'token-one', { recentCache: [{ id: 'accepted' }], pendingWrites: [{ id: 'pending' }] });
   const projects = [{ name: 'work', substrings: ['github.com/acme/'] }];
-  const generation = await store.updateDisplayPreferences({ recentDays: 14, projects });
+  const generation = await store.updateDisplayPreferences({ recentDays: 14, projects, otherProjectName: 'General' });
   assert.equal(generation, 2);
   assert.deepEqual((await store.getConfigurationSnapshot()).config, { ...config, recentDays: 14 });
   assert.deepEqual((await store.getState()).recentCache, [{ id: 'accepted' }]);
   assert.deepEqual((await store.getState()).pendingWrites, [{ id: 'pending' }]);
   assert.deepEqual((await store.getLocalPreferences()).projects, projects);
+  assert.equal((await store.getLocalPreferences()).otherProjectName, 'General');
+  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'General' });
+  assert.deepEqual((await store.getLocalPreferences()).projects, [{ name: 'Other', substrings: ['example.com'] }]);
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'Other' }), /must differ/i);
   await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 0 }), /between 1 and 31/i);
 });
 
@@ -404,7 +408,7 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], otherProjectName: 'Other', showQueueDiagnostics: false, rates: {}, revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);

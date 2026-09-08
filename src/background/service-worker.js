@@ -568,7 +568,8 @@ async function handle(message, sender) {
         _pending: Boolean(state.active._pending),
       } : null;
       return {
-        configured: true, active, recent: state.recent, projects: preferences.projects,
+        configured: true, active, recent: state.recent, projects: preferences.projects, otherProjectName: preferences.otherProjectName,
+        showQueueDiagnostics: preferences.showQueueDiagnostics,
         ...summary,
         pendingCount: state.pendingWrites.length,
         pendingWrites: state.pendingWrites.map(({ id, operation, status, stage, conflictReason, queuedAt, retryCount, lastError }) => ({
@@ -666,7 +667,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type);
-    const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE'].includes(message?.type);
+    const acceptsLocally = [
+      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE',
+      'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
+    ].includes(message?.type);
     const attempt = () => direct ? handle(message, sender)
       : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))
         : executor.run(() => handle(message, sender));
@@ -737,7 +741,7 @@ async function toggleActionSurface(tab) {
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/content/elastic-timeline-editor.js', 'src/content/github.js'],
+      files: ['src/domain/recovery-actions.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
     });
   } catch {
     return openTimesPage();

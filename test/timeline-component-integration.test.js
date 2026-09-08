@@ -5,42 +5,43 @@ import fs from 'node:fs';
 const root = new URL('../', import.meta.url);
 const read = relative => fs.readFileSync(new URL(relative, root), 'utf8');
 
-test('Elastic Timeline source and complete test harness live inside Clockoli', () => {
+test('TaskTimeline source and adapter live inside Clockoli', () => {
   const clockoliPackage = JSON.parse(read('package.json'));
-  const timelinePackage = JSON.parse(read('packages/elastic-timeline-editor/package.json'));
+  const timelinePackage = JSON.parse(read('packages/task-timeline-component/package.json'));
 
-  assert.equal(timelinePackage.name, 'elastic-timeline-editor');
+  assert.equal(timelinePackage.name, 'task-timeline-component-clockoli');
   assert.equal(clockoliPackage.engines.node, '>=20.19.0');
-  assert.equal(timelinePackage.engines.node, '>=20.19.0');
   assert.deepEqual(clockoliPackage.workspaces, ['packages/*']);
   assert.equal(clockoliPackage.scripts['test:clockoli'], 'node --test test/*.test.js');
-  assert.equal(clockoliPackage.scripts['test:timeline'], 'npm run test:all --workspace elastic-timeline-editor && npm run build:timeline && git diff --exit-code -- src/content/elastic-timeline-editor.css src/content/elastic-timeline-editor.js');
+  assert.equal(clockoliPackage.scripts['test:timeline'], 'npm run test:all --workspace task-timeline-component-clockoli && npm run build:timeline && git diff --exit-code -- src/content/task-timeline-component.js');
   assert.doesNotMatch(clockoliPackage.scripts.test, /run-elastic-timeline-suite|\.\.\/timeline/);
   assert.equal(timelinePackage.scripts['test:all'], 'npm test && npm run test:e2e && npm run test:package');
   for (const relative of [
-    'packages/elastic-timeline-editor/src/timeline/editor.js',
-    'packages/elastic-timeline-editor/tests/constraints.test.js',
-    'packages/elastic-timeline-editor/e2e/editor.spec.js',
-    'packages/elastic-timeline-editor/scripts/package-smoke.mjs',
+    'packages/task-timeline-component/vendor/timeline-component.js',
+    'packages/task-timeline-component/src/clockoli-adapter.js',
+    'packages/task-timeline-component/tests/adapter.test.js',
+    'packages/task-timeline-component/e2e/adapter.spec.js',
+    'packages/task-timeline-component/scripts/build.mjs',
   ]) {
     assert.equal(fs.existsSync(new URL(relative, root)), true, `${relative} must be part of Clockoli`);
   }
 });
 
-test('GitHub panel uses the standalone Elastic Timeline Editor and has no legacy timeline experiment', () => {
+test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy timeline experiment', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const content = read('src/content/github.js');
 
   assert.deepEqual(manifest.content_scripts[0].js, [
     'src/domain/recovery-actions.js',
-    'src/content/elastic-timeline-editor.js',
+    'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);
-  assert.ok(manifest.web_accessible_resources[0].resources.includes('src/content/elastic-timeline-editor.css'));
-  assert.match(content, /globalThis\.ElasticTimelineEditor\?\.createElasticTimeline/);
-  assert.match(content, /items,\s*rows,\s*now,\s*[\s\S]*?snapMs: 1_000,\s*view: timelineView/);
-  assert.match(read('src/content/elastic-timeline-editor.js'), /var ElasticTimelineEditor/);
-  assert.doesNotMatch(read('src/content/elastic-timeline-editor.js'), /\bexport\s*\{/);
+  assert.ok(!manifest.web_accessible_resources[0].resources.includes('src/content/elastic-timeline-editor.css'));
+  assert.match(content, /globalThis\.ClockoliTaskTimeline\?\.createTimeline/);
+  assert.match(content, /items,\s*rows,\s*now,\s*view: timelineView,\s*viewMode: timelineGraphicViewMode/);
+  assert.match(read('src/content/task-timeline-component.js'), /global\.TaskTimeline = TaskTimeline/);
+  assert.match(read('src/content/task-timeline-component.js'), /global\.ClockoliTaskTimeline = Object\.freeze/);
+  assert.doesNotMatch(read('src/content/task-timeline-component.js'), /\bexport\s*\{/);
   assert.doesNotMatch(content, /ClockoliElasticTimeline/);
   assert.doesNotMatch(content, /elastic-timeline-core/);
   assert.doesNotMatch(content, /onMove: async/);
@@ -67,7 +68,9 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.doesNotMatch(content, /timeline-queue-count/);
   assert.match(content, /recordTimelineQueueDiagnostic\('Edit time entry: accepted locally and queued for GitHub\.'/);
   assert.match(content, /recent\.filter\(entry => entry\._path && \(entry\._sha \|\| entry\._pending\)/);
-  assert.match(content, /applyTimelineOptimisticEntry\(entry, \{ startedAt: entry\.startedAt, endedAt: entry\.endedAt \}\)/);
+  assert.match(content, /const previousEntry = recent\.find/);
+  assert.match(content, /recent = recent\.map\(item => item\.id === entry\.id[\s\S]*?restore\.previousEntry/);
+  assert.match(content, /function rollbackTimelineOptimisticEdit[\s\S]*?previousState\?\.rejected[\s\S]*?timelineOptimisticEdits\.set\(entry\.id, restore\.previousOptimisticEdit\)[\s\S]*?timelineOptimisticEdits\.delete\(entry\.id\)/);
   assert.match(content, /function timelineQueueSize\(\) \{ return Math\.max\(Number\(pageState\.pendingCount\) \|\| 0, timelineQueuedOperationIds\.size \+ timelineQueueAcceptances\.size\); \}/);
   assert.match(content, /finishTimelineQueueAcceptance\(acceptanceId\);\s*refreshTimelineQueueIndicator\(\);\s*if \(!refreshMountedTimeline\(\)\) renderUi\(\);/);
   assert.match(content, /type: 'QUEUE_ENTRY_EDIT'/);
@@ -76,6 +79,7 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.match(content, /describeSaveStatus/);
   assert.doesNotMatch(content, /async function saveCalendarEntry/);
   assert.doesNotMatch(content, /timelineSaving = true; suppressRecentRender = true/);
+  assert.doesNotMatch(content, /timelineShell\.inert|timeline-saving-spinner|timeline-shell\.is-saving/);
 });
 
 test('timeline task switching is optimistic and keeps the queued completion visible', () => {
@@ -85,7 +89,9 @@ test('timeline task switching is optimistic and keeps the queued completion visi
   assert.match(content, /const acceptedActive = \{[\s\S]*?_pending: true/);
   assert.match(content, /function refreshMountedTimelineAtRightEdge\(startedAt\)/);
   assert.match(content, /function acceptTimelineStartImmediately[\s\S]*?pageState = \{ \.\.\.pageState, active: acceptedActive \};[\s\S]*?if \(!refreshMountedTimelineAtRightEdge\(startedAt\)\) renderUi\(\);/);
-  assert.match(content, /function refreshMountedTimelineAtRightEdge[\s\S]*?timelineWindow = \{ \.\.\.timelineWindow, now \};[\s\S]*?timelineView = \{ start: now - span, end: now, focusedAt: now \};[\s\S]*?timelineInstance\.update\(\{ items, rows, now, view: timelineView \}\)/);
+  assert.match(content, /function refreshMountedTimelineAtRightEdge[\s\S]*?timelineView = \{ start: now - span, end: now, focusedAt: now \}/);
+  assert.doesNotMatch(content, /endPadding|end: now \+ /);
+  assert.match(content, /if \(timelineGraphicViewMode === 'calendar'\) \{\s*timelineInstance\.update\(\{ items, rows, now \}\)/);
   assert.match(content, /type: 'SWITCH_TASK', timelineTask: true/);
   assert.match(content, /const timelineOptimisticCompletions = new Map\(\)/);
   assert.match(content, /function mergeTimelineCompletedEntries\(completed, optimisticCompletions\)/);
@@ -105,19 +111,18 @@ test('timeline task switching is optimistic and keeps the queued completion visi
   assert.match(content, /Timeline \$\{phase\}/);
 });
 
-test('timeline switch advances the right edge to the worker start timestamp before refreshing', () => {
+test('timeline switch adopts the worker timestamp without overriding later manual scroll', () => {
   const content = read('src/content/github.js');
   const start = content.indexOf('  async function restartTimelineEntry(entry)');
   const end = content.indexOf('\n        onEditCommit:', start);
   assert.ok(start >= 0 && end > start);
   const handler = content.slice(start, end);
   const adopt = handler.indexOf('timelineAcceptedActive = { ...result.active');
-  const advance = handler.indexOf('refreshMountedTimelineAtRightEdge(result.active.startedAt || startContext.startedAt)');
-  const ordinaryRefresh = handler.indexOf('if (!refreshMountedTimeline()) renderUi()', adopt);
+  const preserveScroll = handler.indexOf('if (!refreshMountedTimeline()) renderUi()', adopt);
 
   assert.ok(adopt >= 0, 'worker active response is adopted');
-  assert.ok(advance > adopt, 'worker timestamp must advance the mounted timeline');
-  assert.ok(ordinaryRefresh < 0 || advance < ordinaryRefresh, 'right-edge refresh must happen before any ordinary refresh');
+  assert.ok(preserveScroll > adopt, 'worker timestamp must refresh without another right-edge scroll');
+  assert.equal(handler.indexOf('refreshMountedTimelineAtRightEdge(', adopt), -1, 'worker acceptance must not override manual scroll');
 });
 
 test('running entry with a worker timestamp beyond the old edge is included after advancing now', () => {
@@ -153,7 +158,8 @@ test('ordinary Start tracking projects the running block and right-edge scroll b
   assert.ok(optimistic >= 0, 'ordinary Start must project an optimistic running block');
   assert.ok(worker > optimistic, 'the optimistic block must render before waiting for the worker');
   assert.match(handler, /if \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight\) return;\s*timelineStartInFlight = true/);
-  assert.match(handler, /refreshMountedTimelineAtRightEdge/);
+  assert.match(handler, /if \(!refreshMountedTimeline\(\)\) renderUi\(\)/);
+  assert.equal(handler.indexOf('refreshMountedTimelineAtRightEdge(', worker), -1, 'worker acceptance must preserve any manual scroll');
   assert.match(handler, /rollbackTimelineStart/);
   assert.match(handler, /finally \{\s*timelineStartInFlight = false;\s*refreshMountedTimeline\(\);/);
 });
@@ -167,7 +173,9 @@ test('optimistic start helper updates the mounted timeline and scrolls before an
     let pageState = { active: null };
     let timelineWindow = { historyStart: 0, now: Date.now() - 1000 };
     let timelineView = { start: Date.now() - 86_400_000, end: Date.now() - 1000, focusedAt: Date.now() - 1000 };
+    let timelineGraphicViewMode = 'timeline';
     let timelineAcceptedActive = null;
+    let descriptionDraft = null;
     let timelineScrollToRightPending = false;
     let recentLoadId = 0;
     let recentLoad = Promise.resolve();
@@ -294,7 +302,9 @@ test('optimistic start acceptance rolls back internal state if rendering throws'
     let pageState = { active: previousActive };
     let timelineWindow = { historyStart: 0, now: Date.now() - 1000 };
     let timelineView = { start: Date.now() - 86_400_000, end: Date.now() - 1000, focusedAt: Date.now() - 1000 };
+    let timelineGraphicViewMode = 'timeline';
     let timelineAcceptedActive = null;
+    let descriptionDraft = null;
     let timelineScrollToRightPending = false;
     let recentLoadId = 0, recentLoad = Promise.resolve(), loadingRecent = true, finished = 0;
     const timelineOptimisticCompletions = new Map();
@@ -353,16 +363,16 @@ test('timeline block identity stays stable when edits change chronological order
 });
 
 
-test('tracking timeline renders one row per configured project and Other for unmatched tasks', () => {
+test('tracking timeline renders named rows and the configurable main project for unmatched tasks', () => {
   const content = read('src/content/github.js');
   assert.match(content, /function popupTimelineRows\(entries\)/);
-  assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\)/);
-  assert.match(content, /rowId: pageState\.projects\?\.length \? projectRowId\(projectName\) : 'tracked'/);
-  assert.match(content, /entries\.some\(entry => projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects\) === 'Other'\)/);
+  assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects, pageState\.otherProjectName\)/);
+  assert.match(content, /rowId: projectRowId\(projectName\)/);
+  assert.match(content, /const otherProjectName = String\(pageState\.otherProjectName \|\| 'Other'\)/);
   assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now \}\)/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
-  assert.match(content, /projects: state\?\.projects \?\? \[\]/);
-  assert.match(read('src/background/service-worker.js'), /configured: true, active, recent: state\.recent, projects: preferences\.projects/);
+  assert.match(content, /otherProjectName/);
+  assert.match(read('src/background/service-worker.js'), /projects: preferences\.projects, otherProjectName: preferences\.otherProjectName/);
 });
 
 
@@ -407,9 +417,18 @@ test('timeline STOP keeps the completed block and its connectors visible through
 test('full-width timeline places branded navigation above the editor and Stop inside running task details', () => {
   const content = read('src/content/github.js');
   const worker = read('src/background/service-worker.js');
-  const timeline = read('src/content/elastic-timeline-editor.js');
+  const timeline = read('src/content/task-timeline-component.js');
 
   assert.match(content, /timeline-brand/);
+  assert.match(content, /timeline-view-modes/);
+  assert.match(content, /modeButton\('timeline', 'Timeline'\)/);
+  assert.match(content, /modeButton\('calendar', 'Calendar'\)/);
+  assert.match(content, /modeButton\('list', 'List'\)/);
+  assert.match(content, /timelineInstance\?\.setViewMode\(mode\)/);
+  assert.match(content, /compactSurface\.today\.hidden = !list/);
+  assert.doesNotMatch(content, /'Not tracking', 'strip-idle'/);
+  assert.match(content, /timelineQueueIndicator\.hidden = false/);
+  assert.match(content, /timelineQueueIndicator\.classList\.toggle\('empty', empty\)/);
   assert.match(content, /popup-timeline-track/);
   assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
   assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
@@ -417,14 +436,16 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
-  assert.match(content, /onStop: async item =>/);
-  assert.match(content, /type: 'STOP', description: activeEntry\?\.description \|\| ''/);
-  assert.match(timeline, /Stop /);
+  assert.match(content, /onStop: item => stopTimelineEntry/);
+  assert.match(content, /type: 'STOP', description: activeDescriptionValue\(activeEntry\)/);
+  assert.match(timeline, /Stop \$\{formatClockDuration/);
   assert.doesNotMatch(timeline, /STOP /);
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);
   assert.match(content, /timeline-queue-spinner[\s\S]*?section\.append\(spinner\)/);
-  assert.match(content, /\.timeline-queue-spinner \{ padding:0 0 10px/);
+  assert.match(content, /timelineInstance = createTimeline[\s\S]*?timelineInstance\.scrollToEnd\(\)/);
+  assert.match(content, /\.timeline-queue-spinner \{ min-height:25px; padding:0 0 10px/);
+  assert.match(content, /\.timeline-queue-spinner\.empty \{ visibility:hidden \}/);
   assert.doesNotMatch(content, /trailingActionGutterPx/);
   assert.doesNotMatch(content, /renderItemTrailingAction/);
 });
@@ -432,15 +453,19 @@ test('full-width timeline places branded navigation above the editor and Stop in
 test('timeline exposes Delete and current-page tracking through durable handlers', () => {
   const content = read('src/content/github.js');
   const worker = read('src/background/service-worker.js');
-  const timeline = read('src/content/elastic-timeline-editor.js');
+  const timeline = read('src/content/task-timeline-component.js');
 
-  assert.match(timeline, /timeline-delete/);
+  assert.match(timeline, /clockoli-timeline-action danger/);
   assert.match(content, /popup-timeline-track/);
   assert.match(content, /await trackCurrentTimelineTask\(\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(content, /onDelete: async item =>/);
+  assert.match(content, /return queueTimelineEntryDelete\(entry\)/);
+  assert.match(content, /if \(!confirm\(`Delete this[\s\S]*?\) return false/);
+  assert.match(content, /onStart: item => restartTimelineEntry/);
+  assert.match(content, /if \(!confirmLongEntry\(\)\) return false/);
   assert.match(content, /type: 'DISCARD_ACTIVE'/);
-  assert.match(content, /await queueTimelineEntryDelete\(entry\)/);
+  assert.match(content, /return queueTimelineEntryDelete\(entry\)/);
   assert.match(content, /popupMode && task \? \{ taskUrl: task\.taskUrl, taskTitle: task\.taskTitle \} : \{\}/,
     'content-panel timeline refreshes must not submit a page-bound task URL after editing another task');
   assert.match(content, /recent = recent\.filter[\s\S]*?beginTimelineQueueAcceptance\(\)[\s\S]*?type: 'QUEUE_ENTRY_DELETE'/,
@@ -455,6 +480,7 @@ test('timeline exposes Delete and current-page tracking through durable handlers
   assert.match(content, /\} else if \(!compact\) \{\s*const startButton = button\(current \? 'Start tracking this task'/,
     'the legacy bottom start button is absent from the full-width compact panel');
   assert.doesNotMatch(content, /if \(!items\.length\).*No tracked time in the last 24 hours/);
+  assert.match(content, /Timeline cannot display invalid overlapping entries\. Fix them in Activity/);
 });
 
 test('tracking panel exposes a safe, bounded queue diagnostics log', () => {
@@ -474,7 +500,7 @@ test('tracking panel exposes a safe, bounded queue diagnostics log', () => {
 
 test('daily panel consumes the bundle palette and overlap flags without remounting on refresh', () => {
   const content = read('src/content/github.js');
-  assert.match(content, /ElasticTimelineEditor\?\.createColorResolver/);
+  assert.match(content, /ClockoliTaskTimeline\?\.createColorResolver/);
   assert.match(content, /data-overlap="true"/);
   assert.match(content, /Fix in Activity/);
   const start = content.indexOf('  function refreshMountedTimeline()');

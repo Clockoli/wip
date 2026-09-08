@@ -109,6 +109,8 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.match(worker, /const acceptanceExecutor = new SerialExecutor\(\)/);
   assert.match(worker, /acceptsLocally[\s\S]*acceptanceExecutor\.run/,
     'timer acceptance must not wait behind the remote synchronization executor');
+  assert.match(worker, /acceptsLocally = \[[\s\S]*QUEUE_ENTRY_EDIT[\s\S]*QUEUE_ENTRY_DELETE[\s\S]*QUEUE_ENTRIES_EDIT[\s\S]*QUEUE_ACTIVE_START_EDIT[\s\S]*\]\.includes/,
+    'queued timeline edits must be durably accepted without waiting behind remote synchronization');
   assert.match(worker, /chrome\.alarms\.create\('sync-pending-now'/,
     'accepted mutations schedule a durable one-shot alarm that wakes the MV3 worker');
   assert.match(worker, /function requestPendingSync\(\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 250 \}\);\s*\}/,
@@ -120,10 +122,10 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\)[\s\S]*sync-pending-now/,
     'MV3 retry alarms must continue for safely rebased entry edits and stop only for a missing record or an unsafe conflict');
   assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
-  assert.match(js, /const syncing = hasRunnablePending\(\)/);
+  assert.match(js, /const busy = state\.loading \|\| hasRunnablePending\(\)/);
   assert.match(js, /hadPending[\s\S]*!hasRunnablePending\(\)[\s\S]*await load\(\)/,
     'pending completion or transition to a blocking conflict must reload task aggregates');
-  assert.match(js, /refresh-tasks[\s\S]*disabled = syncing/);
+  assert.match(js, /function updateRefreshControl\(\)[\s\S]*state\.loading \|\| hasRunnablePending\(\)[\s\S]*refresh\.disabled = busy/);
   assert.match(css, /\.icon-button\.syncing svg\{[^}]*animation:/);
   assert.match(content, /refresh\.disabled = syncing/);
   assert.match(content, /refresh\.classList\.toggle\('syncing', syncing\)/);
@@ -136,6 +138,24 @@ test('Top tasks keeps existing results visible while a spinner-only refresh runs
   assert.match(html, /id="loading"[^>]*aria-label="Loading tracked tasks"[\s\S]*loading-spinner/);
   assert.match(css, /\.loading-spinner[^}]*animation:/);
   assert.doesNotMatch(js, /setError\(\); \$\('loading'\)\.hidden = false;[^\n]*tasks-content/);
+});
+
+test('Top tasks reuses the result-header refresh spinner while existing results reload', async () => {
+  let loads = 0, finishReload;
+  const page = await tasksHarness({ respond: message => {
+    if (message.type !== 'LOAD_TASKS') return undefined;
+    loads += 1;
+    if (loads === 1) return { configured: true, tasks: [taskA], active: null, pendingWrites: [] };
+    return new Promise(resolve => { finishReload = resolve; });
+  } });
+  const reloading = page.load(); await page.settle();
+  assert.equal(page.nodes.loading.hidden, true, 'the standalone loader row stays hidden with existing results');
+  assert.equal(page.nodes['refresh-tasks'].classList.contains('syncing'), true);
+  assert.equal(page.nodes['refresh-tasks'].disabled, true);
+  finishReload({ configured: true, tasks: [taskA], active: null, pendingWrites: [] });
+  await reloading;
+  assert.equal(page.nodes['refresh-tasks'].classList.contains('syncing'), false);
+  assert.equal(page.nodes['refresh-tasks'].disabled, false);
 });
 
 test('Top tasks Stop button shows seconds only during the first minute', () => {
@@ -190,13 +210,13 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.getElementById = id => nodes[id]; document.querySelector = selector => document.body.querySelector(selector);
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-  const context = vm.createContext({ document, Date: FixedDate, console, queueMicrotask,
+  const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
     effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, localDateParts, entryDateValue, mountRunningStatus() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; }, clearInterval: id => intervals.delete(id),
     setTimeout: callback => { timeouts.set(++timerId, callback); return timerId; }, clearTimeout: id => timeouts.delete(id),
-    chrome: { runtime: { sendMessage(message, callback) {
+    chrome: { runtime: { getURL: path => `chrome-extension://clockoli${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       Promise.resolve().then(() => respond?.(message) ?? (message.type === 'LOAD_TASKS' || message.type === 'GET_PAGE_STATE'
         ? { configured, tasks: structuredClone(tasks), active, pendingWrites } : { taskUrl: message.taskUrl, startedAt: new Date(now).toISOString() }))
@@ -216,9 +236,22 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   };
 }
 
-const taskA = { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Fix search', totalSeconds: 100 };
+const taskA = { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Fix search', totalSeconds: 100, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' } };
 const taskB = { taskUrl: 'https://example.org/tasks/2', title: 'Review launch', totalSeconds: 50 };
 const activeB = { taskUrl: taskB.taskUrl, startedAt: '2026-09-05T10:00:00Z' };
+
+test('Top tasks keeps GitHub issue icons, uses favicons for other sites, and colors every title', async () => {
+  const page = await tasksHarness({ tasks: [taskA, taskB] });
+  const [github, external] = page.rows();
+  assert.equal(github.querySelector('.task-main').children[0].tag, 'svg');
+  const favicon = external.querySelector('.task-main').children[0];
+  assert.equal(favicon.tag, 'img');
+  assert.match(favicon.src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  for (const row of [github, external]) {
+    assert.match(row.style, /^--task-color:#[0-9a-f]{6}$/i);
+    assert.match(row.querySelector('.task-title').style, /^color:#[0-9a-f]{6}$/i);
+  }
+});
 
 for (const pending of [false, true]) test(`shared strip Stop reconciles Top tasks with pending writes ${pending}`, async () => {
   const active = { taskUrl: taskA.taskUrl, startedAt: '2026-09-05T09:00:00Z' };
@@ -345,6 +378,7 @@ test('blocking conflicts reject keyboard launches and rows put title before mute
   assert.equal(actions.children[0].className, 'tracked-time'); assert.ok(row.classList.contains('running'));
   assert.match(css, /\.tracked-time\{[^}]*font:[^}]*var\(--fontStack-monospace\)[^}]*text-align:right/);
   assert.match(css, /\.task-row\.running\{[^}]*var\(--borderColor-accent-emphasis\)/);
+  assert.match(css, /\.task-row\.running\{[^}]*background:color-mix\(in srgb,var\(--task-color\) 12%,var\(--bgColor-default\)\)/);
   assert.doesNotMatch(css, /\.task-row\.running\{[^}]*animation/);
   await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.rows()[0].querySelector('.timer-button').click();
   assert.equal(page.messages.length, 1);

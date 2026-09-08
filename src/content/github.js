@@ -34,12 +34,16 @@
   let fullWidthPopupOpen = false;
   let timelineWindowTimer = null;
   let timelineView = null;
+  let timelineViewMode = 'timeline';
+  let timelineGraphicViewMode = 'timeline';
   let timelineInstance = null;
   let timelineWindow = null;
   let timelineEntriesById = new Map();
   let timelineQueueIndicator = null;
-  let timelineSaving = false;
+
   let timelineOptimisticEdits = new Map();
+  const timelineOptimisticEditGenerations = new Map();
+  const timelineOptimisticEditStates = new WeakMap();
   const timelineQueuedOperationIds = new Map();
   const timelineQueueAcceptances = new Set();
   let timelineQueueAcceptanceSequence = 0;
@@ -55,6 +59,7 @@
   let menuOpen = false, menuScrollTop = 0;
   let navigationOpen = false;
   let descriptionDraft = null;
+  const timelineDescriptionDrafts = new Map();
   let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
   let recent = [];
   let recentLoaded = false;
@@ -78,6 +83,7 @@
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
   const inlineBoundaryLinks = new Map();
+  const inlineGroupSaves = new Map();
   let errorText = '';
   let errorCode = '';
   let todayReportDate = '';
@@ -87,11 +93,11 @@
   let compactSurface = null;
   let popupReturnFocus = null;
   let popupFocusPending = false;
-  let popupPageHint = false;
+
   const LONG_ENTRY_HOURS = 12;
   const HOUR_MS = 3_600_000;
   const PANEL_TICK_MS = 1_000;
-  const resolveTaskColor = globalThis.ElasticTimelineEditor?.createColorResolver?.();
+  const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
   const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
 
@@ -128,18 +134,65 @@
     }
     return result;
   }
+
+  function siteFavicon(value, className = '') {
+    const image = el('img');
+    image.className = `site-favicon${className ? ` ${className}` : ''}`;
+    image.alt = '';
+    image.width = 20;
+    image.height = 20;
+    image.referrerPolicy = 'no-referrer';
+    try {
+      image.src = siteFaviconUrl(value);
+    }
+    catch { image.hidden = true; }
+    image.addEventListener('error', () => { image.hidden = true; }, { once: true });
+    return image;
+  }
+
+  function siteFaviconUrl(value) {
+    const base = extensionResourceUrl('/_favicon/');
+    const pageUrl = taskUrlOf(value);
+    if (!base || !pageUrl) return '';
+    try {
+      const favicon = new URL(base);
+      favicon.searchParams.set('pageUrl', pageUrl);
+      favicon.searchParams.set('size', '32');
+      return favicon.href;
+    } catch { return ''; }
+  }
   function taskFromUrl(value, title = '') {
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
   function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
-  function projectNameForUrl(url, projects = []) {
+  function activeDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    const id = active.id || active.startedAt;
+    return descriptionDraft && descriptionDraft.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+      ? descriptionDraft.value
+      : timelineOptimisticEdits.get(id)?.description ?? active.description ?? '';
+  }
+
+  function savedActiveDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    return timelineOptimisticEdits.get(active.id || active.startedAt)?.description ?? active.description ?? '';
+  }
+  function normalizedDescription(value) {
+    return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+  }
+  function retireActiveDescriptionDraft(active, value) {
+    const id = active?.id || active?.startedAt;
+    if (descriptionDraft?.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+        && normalizedDescription(descriptionDraft.value) === value) descriptionDraft = null;
+  }
+  function projectNameForUrl(url, projects = [], otherProjectName = 'Other') {
     const candidate = String(url || '').toLowerCase();
     for (const project of projects || []) {
       if ((project.substrings || []).some(substring => candidate.includes(String(substring).toLowerCase()))) return project.name;
     }
-    return 'Other';
+    return String(otherProjectName || 'Other');
   }
   function projectRowId(name) { return `project:${String(name).toLowerCase()}`; }
 
@@ -548,6 +601,14 @@
     return svg;
   }
 
+  function clockoliWordmark() {
+    const image = el('img');
+    image.className = 'clockoli-wordmark';
+    image.src = extensionResourceUrl('src/assets/clockoli-with-text.svg') || '';
+    image.alt = 'Clockoli';
+    return image;
+  }
+
   function formatElapsed(startedAt) {
     const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
     return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
@@ -612,6 +673,36 @@
     if (completed) void refreshRecent(true).catch(setError);
   }
 
+  function trackTimelineQueuedOperation(operationId, entryId, generation = null) {
+    if (!operationId) return;
+    const tracked = timelineQueuedOperationIds.get(operationId);
+    if (generation && tracked && typeof tracked !== 'string' && tracked.entryId === entryId) {
+      tracked.generations.add(generation);
+      return;
+    }
+    timelineQueuedOperationIds.set(operationId, generation
+      ? { entryId, generations: new Set([generation]) }
+      : entryId);
+  }
+
+  function reconcileTimelineQueuedOperations(pendingIds) {
+    for (const [id, tracked] of timelineQueuedOperationIds) {
+      if (pendingIds.has(id)) continue;
+      timelineQueuedOperationIds.delete(id);
+      const entryId = typeof tracked === 'string' ? tracked : tracked.entryId;
+      const generations = typeof tracked === 'string' ? null : tracked.generations;
+      for (const generation of generations || []) {
+        const generationState = timelineOptimisticEditStates.get(generation);
+        if (generationState) generationState.settled = true;
+      }
+      const currentGeneration = timelineOptimisticEditGenerations.get(entryId);
+      if (!generations || generations.has(currentGeneration)) {
+        timelineOptimisticEdits.delete(entryId);
+        timelineOptimisticEditGenerations.delete(entryId);
+      }
+    }
+  }
+
 
   function reconcileTimelineAcceptedActive(incomingState) {
     const accepted = timelineAcceptedActive;
@@ -636,10 +727,7 @@
       applyTrackedTotals(data);
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
-      for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
-        timelineQueuedOperationIds.delete(id);
-        timelineOptimisticEdits.delete(entryId);
-      }
+      reconcileTimelineQueuedOperations(pendingIds);
     }
     for (const [entryId] of timelineOptimisticCompletions) {
       if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
@@ -657,10 +745,7 @@
     applyTrackedTotals(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
-    for (const [id, entryId] of timelineQueuedOperationIds) if (!pendingIds.has(id)) {
-      timelineQueuedOperationIds.delete(id);
-      timelineOptimisticEdits.delete(entryId);
-    }
+    reconcileTimelineQueuedOperations(pendingIds);
     if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
@@ -749,6 +834,7 @@
       pendingCount: state?.pendingCount ?? 0,
       pending,
       projects: state?.projects ?? [],
+      showQueueDiagnostics: state?.showQueueDiagnostics === true,
       remoteWriteConfirmed: state?.remoteWriteConfirmed, summaryError: state?.summaryError,
     });
   }
@@ -887,10 +973,23 @@
     return null;
   }
 
+  function isolateShadowHost(node, { fullWidth = false } = {}) {
+    const set = (property, value) => node.style?.setProperty?.(property, value, 'important');
+    set('all', 'initial');
+    set('box-sizing', 'border-box');
+    set('position', fullWidth ? 'fixed' : 'relative');
+    set('display', fullWidth ? 'block' : 'inline-flex');
+    if (fullWidth) {
+      set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
+      set('width', '100vw'); set('pointer-events', 'none');
+    } else set('align-items', 'center');
+  }
+
   function mountInHeader() {
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
+      isolateShadowHost(root);
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
@@ -899,6 +998,7 @@
     if (!target) return false;
     if (!root) {
       root = el('div'); root.id = ROOT_ID;
+      isolateShadowHost(root);
       shadow = root.attachShadow({ mode: 'closed' });
     }
     if (root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) target.actions.insertBefore(root, target.anchor);
@@ -913,6 +1013,18 @@
       await handler(event, node);
     });
     return node;
+  }
+
+  function saveCheckButton(label, handler) {
+    const save = button('✓', 'save-check', async (_event, node) => {
+      node.disabled = true;
+      try { await handler(); }
+      catch (error) { setError(error); }
+      finally { node.disabled = false; }
+    });
+    save.title = label; save.setAttribute('aria-label', label);
+    save.addEventListener('mousedown', event => event.preventDefault());
+    return save;
   }
 
   function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
@@ -1286,10 +1398,11 @@
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
       compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: () => activateTimeInput(key),
     });
-    const saveGroup = async () => {
-      const group = inlineDrafts.get(key)?.group || key;
+    const saveGroupOnce = async group => {
       try {
-        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey, value]) => {
+        const submittedDrafts = new Map([...inlineDrafts.entries()].filter(([, value]) => value.group === group)
+          .map(([draftKey, value]) => [draftKey, JSON.parse(JSON.stringify(value))]));
+        const entries = [...submittedDrafts.entries()].map(([draftKey, value]) => {
           const editor = inlineEditors.get(draftKey), target = editor?.entry;
           if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
           const task = value.metadataActive ? taskFromUrl(value.taskUrl, value.taskTitle) : taskFromUrl(taskUrlOf(target), taskTitleOf(target));
@@ -1299,22 +1412,42 @@
           const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
           return changed ? { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
-        const savedKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+        const savedKeys = new Set(submittedDrafts.keys());
         if (!entries.length) {
           clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
         const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { entries } });
         if (queued?.operationId) inlineQueuedOperationIds.add(queued.operationId);
         applyQueuedInlineEntries(entries);
-        clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
-        activeInlineKey = null; renderUi();
+        const acceptedKeys = new Set();
+        for (const draftKey of savedKeys) {
+          const current = inlineDrafts.get(draftKey), submitted = submittedDrafts.get(draftKey);
+          if (current && JSON.stringify(current) === JSON.stringify(submitted)) { inlineDrafts.delete(draftKey); acceptedKeys.add(draftKey); }
+        }
+        clearBoundaryLinks(acceptedKeys);
+        activeInlineKey = inlineDrafts.has(key) ? key : null; renderUi();
         void refreshState(false, false).catch(setError);
       } catch (error) { setError(error); }
+    };
+    const saveGroup = () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      const pending = inlineGroupSaves.get(group);
+      if (pending) return pending;
+      let operation;
+      operation = saveGroupOnce(group).finally(() => {
+        if (inlineGroupSaves.get(group) === operation) {
+          inlineGroupSaves.delete(group);
+          renderUi();
+        }
+      });
+      inlineGroupSaves.set(group, operation);
+      return operation;
     };
     const cancelGroup = async () => { clearInlineGroup(key); activeInlineKey = null; renderUi(); };
     save = button('Save time', 'link-button inline-save', saveGroup);
     cancel = button('Cancel', 'link-button inline-cancel', cancelGroup);
     save.hidden = !draft; cancel.hidden = !draft;
+    save.disabled = inlineGroupSaves.has(draft?.group || key);
     const onEnter = event => {
       if (event.key !== 'Enter' || !event.isTrusted) return;
       event.preventDefault(); void saveGroup();
@@ -1351,7 +1484,9 @@
       if (active && !warning.parentElement) record.prepend(warning); else if (!active) warning.remove();
     };
     setOverlap(overlapping);
-    record.append(taskResult(entry, 'entry-record-task-result'));
+    const identity = el('div', undefined, 'entry-record-task-identity');
+    identity.append(siteFavicon(entry, 'entry-record-favicon'), taskResult(entry, 'entry-record-task-result'));
+    record.append(identity);
     const title = record.querySelector('.task-title');
     if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
     const timeRow = el('div', undefined, 'entry-time-row'); let day;
@@ -1366,7 +1501,8 @@
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(loadingRecent || !recentFresh);
-      for (const control of [inline.save, inline.cancel, remove]) control.disabled = disabled;
+      inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
+      for (const control of [inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
       if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
       timeRow.append(inline.unsaved);
@@ -1375,9 +1511,18 @@
         const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = 'url'; urlField.required = true; urlField.value = draft.taskUrl;
         const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
         const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
-        const field = (labelText, input) => { const label = el('label', labelText); label.append(input); return label; };
-        metadata.append(field('Task URL', urlField), field('Task title (optional)', titleField), field('Description', descriptionField));
         const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
+        const field = (labelText, input, saveLabel) => {
+          const label = el('label', labelText), control = el('span', undefined, 'save-field');
+          const save = saveCheckButton(saveLabel, async () => { updateMetadata(); await inline.saveGroup(); });
+          save.disabled = disabled || inlineGroupSaves.has(draft.group || key);
+          control.append(input, save); label.append(control); return label;
+        };
+        metadata.append(
+          field('Task URL', urlField, 'Save task URL'),
+          field('Task title (optional)', titleField, 'Save task title'),
+          field('Description', descriptionField, 'Save description'),
+        );
         for (const input of [urlField, titleField, descriptionField]) {
           input.disabled = disabled; input.addEventListener('input', updateMetadata);
           input.addEventListener('keydown', event => { if (event.key === 'Enter' && event.isTrusted) { event.preventDefault(); updateMetadata(); void inline.saveGroup(); } });
@@ -1573,7 +1718,7 @@
       && new Date(entry.startedAt).getTime() < now && new Date(entry.endedAt).getTime() > windowStart)
       .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
     const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
-    if (pageState.active && new Date(pageState.active.startedAt).getTime() < now) {
+    if (pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
       entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
     }
     return entries.map(entry => {
@@ -1590,13 +1735,16 @@
     const items = entries.map((entry) => {
       const stableId = entry.id || `${entry._path}:${entry._index}`;
       const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
-      const projectName = pageState.projects?.length ? projectNameForUrl(taskUrlOf(entry), pageState.projects) : '';
+      const projectName = projectNameForUrl(taskUrlOf(entry), pageState.projects, pageState.otherProjectName);
       byId.set(id, entry);
       return {
         id,
-        rowId: pageState.projects?.length ? projectRowId(projectName) : 'tracked',
+        rowId: projectRowId(projectName),
         url: taskUrlOf(entry),
         title: taskTitleOf(entry) || taskUrlOf(entry) || 'Untitled task',
+        faviconUrl: siteFaviconUrl(entry),
+        description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
+        savedDescription: entry.description || '',
         startedAt: Math.max(historyStart, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
@@ -1614,13 +1762,22 @@
     return { items, rows, byId };
   }
 
-  function popupTimelineRows(entries) {
-    if (!pageState.projects?.length) return [{ id: 'tracked', title: '' }];
-    const rows = pageState.projects.map(project => ({ id: projectRowId(project.name), title: project.name }));
-    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects) === 'Other')) {
-      rows.push({ id: projectRowId('Other'), title: 'Other' });
+  function rememberTimelineDescription(entry, value) {
+    if (entry._active) {
+      descriptionDraft = { id: entry.id || entry.startedAt, taskUrl: taskUrlOf(entry), value };
+      return;
     }
-    return rows;
+    if (normalizedDescription(value) === normalizedDescription(entry.description)) timelineDescriptionDrafts.delete(entry.id);
+    else timelineDescriptionDrafts.set(entry.id, value);
+  }
+
+  function popupTimelineRows(entries) {
+    const rows = (pageState.projects || []).map(project => ({ id: projectRowId(project.name), title: project.name }));
+    const otherProjectName = String(pageState.otherProjectName || 'Other');
+    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects, otherProjectName) === otherProjectName)) {
+      rows.push({ id: projectRowId(otherProjectName), title: otherProjectName });
+    }
+    return rows.length ? rows : [{ id: projectRowId(otherProjectName), title: otherProjectName }];
   }
 
   function timelineTrackActionDisabled() {
@@ -1631,7 +1788,7 @@
 
   function timelineNow() {
     const activeStart = new Date(pageState.active?.startedAt).getTime();
-    return Number.isFinite(activeStart) ? Math.max(Date.now(), activeStart + 1) : Date.now();
+    return Number.isFinite(activeStart) ? Math.max(Date.now(), activeStart) : Date.now();
   }
 
   function refreshMountedTimeline() {
@@ -1661,28 +1818,33 @@
     if (!Number.isFinite(startedAtMs)) return false;
     timelineScrollToRightPending = true;
     if (!timelineInstance || !timelineWindow || !timelineView) return false;
-    const now = Math.max(Date.now(), startedAtMs + 1);
-    const span = Math.max(1, timelineView.end - timelineView.start);
+    const now = Math.max(Date.now(), startedAtMs);
     timelineWindow = { ...timelineWindow, now };
-    timelineView = { start: now - span, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows, now, view: timelineView });
+    if (timelineGraphicViewMode === 'calendar') {
+      timelineInstance.update({ items, rows, now });
+    } else {
+      const span = Math.max(1, timelineView.end - timelineView.start);
+      timelineView = { start: now - span, end: now, focusedAt: now };
+      timelineInstance.update({ items, rows, now, view: timelineView });
+    }
     timelineInstance.scrollToEnd();
     refreshCompactSurface();
     timelineScrollToRightPending = false;
     return true;
   }
 
-  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '' } = {}) {
+  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '', previousDescription } = {}) {
     const startedAt = new Date().toISOString();
     const previousActive = pageState.active;
     const acceptanceId = beginTimelineQueueAcceptance();
-    const context = { acceptanceId, acceptedActive: null, previousActive, startedAt };
+    const previousDescriptionDraft = descriptionDraft ? { ...descriptionDraft } : null;
+    const context = { acceptanceId, acceptedActive: null, previousActive, previousDescriptionDraft, startedAt };
     try {
       if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
         timelineOptimisticCompletions.set(previousActive.id, {
-          ...previousActive, endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt, _pending: true, _optimisticCompletion: true,
         });
       }
       const acceptedActive = {
@@ -1701,6 +1863,7 @@
       timelineAcceptedActive = null;
       if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
       pageState = { ...pageState, active: previousActive };
+      descriptionDraft = previousDescriptionDraft;
       finishTimelineQueueAcceptance(acceptanceId);
       throw error;
     }
@@ -1710,6 +1873,7 @@
     timelineAcceptedActive = null;
     if (context.previousActive?.id) timelineOptimisticCompletions.delete(context.previousActive.id);
     pageState = { ...pageState, active: context.previousActive };
+    descriptionDraft = context.previousDescriptionDraft;
     if (!refreshMountedTimeline()) renderUi();
   }
 
@@ -1724,15 +1888,16 @@
       if (sameTask(task, pageState.active)) return;
       const switching = Boolean(pageState.active);
       if (switching && !confirmLongEntry()) return;
-      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task' });
+      const previousDescription = activeDescriptionValue();
+      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task', previousDescription });
       const result = await send(switching
-        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' }
+        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '', description: previousDescription }
         : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
       const active = switching ? result?.active : result;
       if (active?.id) {
         timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+        if (!refreshMountedTimeline()) renderUi();
       }
       void refreshMountedTimelineState().catch(setError);
     } catch (error) {
@@ -1760,8 +1925,11 @@
   function refreshTimelineQueueIndicator() {
     if (!timelineQueueIndicator) return;
     const status = globalThis.ClockoliRecovery.describeSaveStatus({ ...pageState, pendingCount: timelineQueueSize(),
-      saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight || timelineSaving });
+      saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight });
+    const empty = status.label === 'Saved to GitHub';
     timelineQueueIndicator.hidden = false;
+    timelineQueueIndicator.classList.toggle('empty', empty);
+    timelineQueueIndicator.setAttribute('aria-hidden', String(empty));
     timelineQueueIndicator.textContent = status.label;
   }
 
@@ -1777,7 +1945,45 @@
     });
   }
 
+  function rollbackTimelineOptimisticEdit(entry, generation, restoreRecent) {
+    const state = timelineOptimisticEditStates.get(generation);
+    if (!state) return;
+    state.rejected = true;
+    if (timelineOptimisticEditGenerations.get(entry.id) !== generation) return;
+    let restore = state;
+    while (restore.previousGeneration) {
+      const previousState = timelineOptimisticEditStates.get(restore.previousGeneration);
+      if (previousState?.settled) {
+        if (restoreRecent && restore.previousEntry) {
+          recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+        }
+        timelineOptimisticEdits.delete(entry.id);
+        timelineOptimisticEditGenerations.delete(entry.id);
+        return;
+      }
+      if (!previousState?.rejected) break;
+      restore = previousState;
+    }
+    if (restoreRecent && restore.previousEntry) {
+      recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+    }
+    if (restore.hadPreviousOptimisticEdit) timelineOptimisticEdits.set(entry.id, restore.previousOptimisticEdit);
+    else timelineOptimisticEdits.delete(entry.id);
+    if (restore.previousGeneration) timelineOptimisticEditGenerations.set(entry.id, restore.previousGeneration);
+    else timelineOptimisticEditGenerations.delete(entry.id);
+  }
+
   async function queueCalendarEntry(entry, edits) {
+    const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path);
+    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
+    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
+    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+    const optimisticEditGeneration = {};
+    timelineOptimisticEditStates.set(optimisticEditGeneration, {
+      previousEntry, hadPreviousOptimisticEdit, previousOptimisticEdit,
+      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+    });
+    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
     timelineOptimisticEdits.set(entry.id, edits);
     applyTimelineOptimisticEntry(entry, edits);
     refreshMountedTimeline();
@@ -1790,8 +1996,9 @@
         path: entry._path, originalSha: entry._sha, index: entry._index,
         original: originalRecord(entry), edits,
       } });
-      if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
     } catch (error) {
+      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, true);
       recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
       throw error;
     } finally {
@@ -1802,8 +2009,53 @@
     void refreshMountedTimelineState().catch(setError);
   }
 
+  async function queueActiveEdit(entry, requestedEdits, diagnostic = 'Edit running timer') {
+    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
+    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
+    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+    const optimisticEditGeneration = {};
+    timelineOptimisticEditStates.set(optimisticEditGeneration, {
+      previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
+      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+    });
+    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+    const edits = { ...(previousOptimisticEdit || {}), ...requestedEdits };
+    timelineOptimisticEdits.set(entry.id, edits);
+    refreshMountedTimeline();
+    const acceptanceId = beginTimelineQueueAcceptance();
+    refreshTimelineQueueIndicator();
+    recordTimelineQueueDiagnostic(`${diagnostic}: accepted locally and queued for GitHub.`);
+    if (!timelineInstance) renderUi();
+    try {
+      const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+        original: { id: entry.id, startedAt: entry.startedAt },
+        ...(edits.startedAt !== undefined ? { startedAt: edits.startedAt } : {}),
+        ...(edits.description !== undefined ? { description: edits.description } : {}),
+      } });
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+    } catch (error) {
+      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, false);
+      recordTimelineQueueDiagnostic(`${diagnostic}: local queue rejected the change.`);
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
+  function queueActiveStartEdit(entry, startedAt) {
+    return queueActiveEdit(entry, { startedAt: new Date(startedAt).toISOString() }, 'Adjust timer start');
+  }
+
+  async function queueActiveDescriptionEdit(entry, description) {
+    await queueActiveEdit(entry, { description }, 'Edit running timer description');
+    retireActiveDescriptionDraft(entry, description);
+  }
+
   async function queueTimelineEntryDelete(entry) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
+    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
     const previousRecent = recent;
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path));
@@ -1829,13 +2081,14 @@
       if (!refreshMountedTimeline()) renderUi();
     }
     void refreshMountedTimelineState().catch(setError);
+    return true;
   }
 
   async function stopTimelineEntry(activeEntry) {
-    if (!activeEntry || timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return;
+    if (!activeEntry || timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return false;
     try {
-      if (!confirmLongEntry(activeEntry)) return;
-      const result = await send({ type: 'STOP', description: activeEntry?.description || '' });
+      if (!confirmLongEntry(activeEntry)) return false;
+      const result = await send({ type: 'STOP', description: activeDescriptionValue(activeEntry) });
       if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
       if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
       timelineOptimisticCompletions.set(result.entry.id, {
@@ -1846,23 +2099,25 @@
       pageState = { ...pageState, active: null };
       refreshMountedTimeline();
       await refreshState(false, false);
+      return true;
     } catch (error) { setError(error); throw error; }
     finally { finishTimelineStop(); }
   }
 
   async function restartTimelineEntry(entry) {
-    if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return;
-    if (!confirmLongEntry()) return;
+    if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!confirmLongEntry()) return false;
     timelineStartInFlight = true;
     refreshMountedTimeline();
     try {
-    const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id });
+    const previousDescription = activeDescriptionValue();
+    const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
     try {
-      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '' });
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        refreshMountedTimelineAtRightEdge(result.active.startedAt || startContext.startedAt);
+        if (!refreshMountedTimeline()) renderUi();
       }
     } catch (error) {
       rollbackTimelineStart(startContext);
@@ -1877,6 +2132,7 @@
       timelineStartInFlight = false;
       refreshMountedTimeline();
     }
+    return true;
   }
 
   function renderPopupTimeline() {
@@ -1886,7 +2142,7 @@
     timelineQueueIndicator = spinner;
     section.append(spinner);
     refreshTimelineQueueIndicator();
-    const createTimeline = globalThis.ElasticTimelineEditor?.createElasticTimeline;
+    const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
     if (!createTimeline) {
       section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
       return section;
@@ -1897,40 +2153,31 @@
     timelineView ||= { start: defaultStart, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
-    const timelineShell = el('div', undefined, `timeline-shell${timelineSaving ? ' is-saving' : ''}`);
-    timelineShell.setAttribute('aria-busy', String(timelineSaving));
-    timelineShell.inert = timelineSaving;
-    const host = el('div', undefined, 'elastic-timeline-host'); timelineShell.append(host);
+    const timelineShell = el('div', undefined, 'timeline-shell');
+    const host = el('div', undefined, 'task-timeline-host'); timelineShell.append(host);
     if (compactSurface) compactSurface.host = host;
-    if (timelineSaving) {
-      const spinner = el('div', undefined, 'timeline-saving-spinner');
-      spinner.setAttribute('role', 'status'); spinner.setAttribute('aria-label', 'Saving timeline changes');
-      spinner.append(el('span', undefined, 'timeline-saving-wheel'));
-      timelineShell.append(spinner);
-    }
     section.append(timelineShell);
     globalThis.requestAnimationFrame(() => {
       if (!host.isConnected) return;
-      timelineInstance = createTimeline(host, {
+      try {
+        timelineInstance = createTimeline(host, {
         items,
         rows,
         now,
-        // Clockoli records timestamps to the second. A one-second snap also
-        // defines the exact gap retained when neighbouring blocks touch.
-        snapMs: 1_000,
         view: timelineView,
+        viewMode: timelineGraphicViewMode,
+        onViewModeChange: mode => { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; },
         onViewChange: view => { timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
-        onStop: async item => { await stopTimelineEntry(timelineEntriesById.get(item.id)); },
+        onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
-          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return;
+          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
           if (!entry._active) {
-            if (entry._pending) return;
-            await queueTimelineEntryDelete(entry);
-            return;
+            if (entry._pending) return false;
+            return queueTimelineEntryDelete(entry);
           }
-          if (!confirm('Delete this running timer without saving its tracked time?')) return;
+          if (!confirm('Delete this running timer without saving its tracked time?')) return false;
           timelineDeleteInFlight = true;
           const acceptanceId = beginTimelineQueueAcceptance();
           refreshTimelineQueueIndicator();
@@ -1949,35 +2196,34 @@
             timelineDeleteInFlight = false;
             refreshMountedTimeline();
           }
+          return true;
         },
-        onStart: async item => { await restartTimelineEntry(timelineEntriesById.get(item.id)); },
+        onStart: item => restartTimelineEntry(timelineEntriesById.get(item.id)),
+        onDescriptionInput: (item, value) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return;
+          rememberTimelineDescription(entry, value);
+        },
+        onDescriptionCommit: async (item, value) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return false;
+          const description = normalizedDescription(value);
+          if (description === String(entry._active ? savedActiveDescriptionValue(entry) : entry.description || '').trim()) {
+            if (entry._active && description === normalizedDescription(entry.description)) retireActiveDescriptionDraft(entry, description);
+            return true;
+          }
+          if (entry._active) await queueActiveDescriptionEdit(entry, description);
+          else await queueCalendarEntry(entry, { description });
+          if (normalizedDescription(timelineDescriptionDrafts.get(entry.id)) === description) timelineDescriptionDrafts.delete(entry.id);
+          return true;
+        },
         onEditCommit: async edit => {
           const entry = timelineEntriesById.get(edit.id);
           if (!entry) return;
           if (entry._active) {
             if (edit.kind !== 'resize-left') return;
             try {
-              timelineOptimisticEdits.set(entry.id, { startedAt: new Date(edit.startedAt).toISOString() });
-              refreshMountedTimeline();
-              const acceptanceId = beginTimelineQueueAcceptance();
-              refreshTimelineQueueIndicator();
-              recordTimelineQueueDiagnostic('Adjust timer start: accepted locally and queued for GitHub.');
-              if (!timelineInstance) renderUi();
-              try {
-                const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
-                  original: { id: entry.id, startedAt: entry.startedAt },
-                  startedAt: new Date(edit.startedAt).toISOString(),
-                } });
-                if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
-              } catch (error) {
-                recordTimelineQueueDiagnostic('Adjust timer start: local queue rejected the change.');
-                throw error;
-              } finally {
-                finishTimelineQueueAcceptance(acceptanceId);
-                refreshTimelineQueueIndicator();
-                if (!refreshMountedTimeline()) renderUi();
-              }
-              void refreshMountedTimelineState().catch(setError);
+              await queueActiveStartEdit(entry, edit.startedAt);
             } catch (error) { setError(error); throw error; }
             return;
           }
@@ -1987,13 +2233,16 @@
               ? { startedAt: new Date(edit.startedAt).toISOString() }
               : { endedAt: new Date(edit.endedAt).toISOString() };
           try { await queueCalendarEntry(entry, edits); }
-          catch (error) {
-            timelineOptimisticEdits.delete(entry.id);
-            applyTimelineOptimisticEntry(entry, { startedAt: entry.startedAt, endedAt: entry.endedAt });
-            renderUi(); setError(error); throw error;
-          }
+          catch (error) { setError(error); throw error; }
         },
-      });
+        });
+        timelineInstance.scrollToEnd();
+      } catch (error) {
+        timelineInstance = null;
+        const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
+        timelineShell.replaceChildren(el('div', `Timeline cannot display invalid overlapping entries. Fix them in Activity. ${message}`, 'error'));
+        return;
+      }
       refreshTimelineOverlaps();
       if (timelineScrollToRightPending) {
         timelineInstance.scrollToEnd();
@@ -2004,6 +2253,7 @@
   }
 
   function renderQueueDiagnostics() {
+    if (pageState.showQueueDiagnostics !== true) return null;
     if (!queueDiagnostics.length && !pageState.pendingWrites?.length) return null;
     const diagnostics = el('details', undefined, 'queue-diagnostics');
     diagnostics.open = false;
@@ -2093,6 +2343,27 @@
     });
   }
 
+  function applyCompactViewMode() {
+    if (!compactSurface) return;
+    const list = timelineViewMode === 'list';
+    compactSurface.timeline.hidden = list;
+    compactSurface.overlaps.hidden = list;
+    compactSurface.today.hidden = !list;
+    for (const control of fullWidthPopupShadow?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+      control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
+    }
+  }
+
+  function setTimelineViewMode(mode) {
+    if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+    timelineViewMode = mode;
+    if (mode !== 'list') {
+      timelineGraphicViewMode = mode;
+      timelineInstance?.setViewMode(mode);
+    }
+    applyCompactViewMode();
+  }
+
   function refreshCompactSurface() {
     if (!compactSurface) return;
     const { strip, today, feedback } = compactSurface;
@@ -2101,16 +2372,55 @@
     const scroll = fullWidthPopupShadow?.querySelector?.('.full-width-popup');
     const scrollTop = scroll?.scrollTop;
     const diagnosticsOpen = feedback.querySelector?.('details')?.open;
-    strip.replaceChildren(clockoliMark(22));
     const active = pageState.active, current = taskFromLocation();
-    if (active) {
-      strip.append(taskResult(active, 'strip-task'), el('span', formatElapsed(active.startedAt), 'running-elapsed'));
-      const stop = button('Stop and save', 'danger', async () => { try { await stopTimelineEntry(pageState.active); } catch {} });
+    const activeIdentity = active ? String(active.id || active.startedAt) : '';
+    const preserveActiveDescription = Boolean(active && activeElement?.classList?.contains('strip-description')
+      && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
+    if (!preserveActiveDescription) {
+      strip.replaceChildren();
+      strip.setAttribute('data-active-id', activeIdentity); strip.setAttribute('data-active-url', active ? taskUrlOf(active) : '');
+    }
+    if (active && !preserveActiveDescription) {
+      strip.append(siteFavicon(active, 'strip-favicon'));
+      const copy = el('div', undefined, 'strip-task-copy');
+      copy.append(taskResult(active, 'strip-task'));
+      const description = el('input');
+      description.className = 'strip-description';
+      description.maxLength = 2000;
+      description.placeholder = 'Description (optional)';
+      description.value = activeDescriptionValue(active);
+      const descriptionField = el('div', undefined, 'save-field strip-description-field');
+      const saveDescription = saveCheckButton('Save description', async () => {
+        const value = normalizedDescription(description.value);
+        if (value === String(savedActiveDescriptionValue(active)).trim()) return;
+        await queueActiveDescriptionEdit(active, value);
+        updateDescriptionSave();
+      });
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === String(savedActiveDescriptionValue(active)).trim(); };
+      updateDescriptionSave();
+      description.addEventListener('input', () => {
+        descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+        updateDescriptionSave();
+      });
+      description.addEventListener('blur', async () => {
+        const value = normalizedDescription(description.value);
+        if (value === String(savedActiveDescriptionValue(active)).trim()) {
+          if (value === normalizedDescription(active.description)) retireActiveDescriptionDraft(active, value);
+          return;
+        }
+        try { await queueActiveDescriptionEdit(active, value); updateDescriptionSave(); }
+        catch (error) { setError(error); }
+      });
+      descriptionField.append(description, saveDescription); copy.append(descriptionField);
+      strip.append(copy, el('span', formatElapsed(active.startedAt), 'running-elapsed'));
+      const stop = button('Stop and save', 'danger', async () => {
+        try { await stopTimelineEntry({ ...pageState.active, description: description.value }); } catch {}
+      });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
       strip.append(stop);
-    } else strip.append(el('span', 'Not tracking', 'strip-idle'));
-    if (!active || (current && !sameTask(current, active))) {
+    }
+    if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
       const track = button('Track this task', 'primary popup-timeline-track', async () => {
         if (timelineTrackActionDisabled()) return;
         try { await trackCurrentTimelineTask(); } catch {}
@@ -2120,6 +2430,12 @@
       track.setAttribute('data-testid', 'popup-timeline-track'); track.setAttribute('data-panel-action', 'track');
       track.disabled = timelineTrackActionDisabled(); strip.append(track);
     }
+    if (preserveActiveDescription) {
+      const elapsed = strip.querySelector('.running-elapsed'); if (elapsed) elapsed.textContent = formatElapsed(active.startedAt);
+      const stop = strip.querySelector('[data-panel-action="stop"]');
+      if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      const track = strip.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
+    }
     today.replaceChildren();
     const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
     const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
@@ -2127,15 +2443,42 @@
       .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
     for (const entry of entries) {
       const row = el('div', undefined, 'entry-record today-record');
+      const identity = el('div', undefined, 'today-task-identity');
       const task = taskResult(entry, 'today-task');
       const title = task.querySelector?.('a') || task.children[task.children.length - 1];
       if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
+      const description = el('input');
+      description.className = 'today-description';
+      description.maxLength = 2000;
+      description.placeholder = 'Add description';
+      description.value = timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? '';
+      const descriptionField = el('span', undefined, 'save-field today-description-field');
+      const saveDescription = saveCheckButton('Save description', async () => commitDescription());
+      const savedDescription = () => normalizedDescription(timelineOptimisticEdits.get(entry.id)?.description ?? entry.description);
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === savedDescription(); };
+      const commitDescription = async () => {
+        const value = normalizedDescription(description.value);
+        if (value === savedDescription()) { timelineDescriptionDrafts.delete(entry.id); updateDescriptionSave(); return; }
+        try {
+          await queueCalendarEntry(entry, { description: value });
+          if (normalizedDescription(timelineDescriptionDrafts.get(entry.id)) === value) timelineDescriptionDrafts.delete(entry.id);
+          updateDescriptionSave();
+        } catch (error) { setError(error); }
+      };
+      description.addEventListener('input', () => { timelineDescriptionDrafts.set(entry.id, description.value); updateDescriptionSave(); });
+      description.addEventListener('change', commitDescription);
+      description.addEventListener('keydown', event => {
+        if (event.key === 'Enter') { event.preventDefault(); description.blur(); }
+      });
+      updateDescriptionSave(); descriptionField.append(description, saveDescription);
+      identity.append(siteFavicon(entry, 'today-favicon'), task);
+      task.append(descriptionField);
       const range = el('span', `${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${wallTime(timestampParts(entry.endedAt, entry.timezone))}`, 'entry-time-range');
       const duration = el('span', formatDuration(Math.max(0, new Date(entry.endedAt) - new Date(entry.startedAt)) / 1000), 'inline-duration');
       const resume = button('▶ Continue', 'secondary', async () => { try { await restartTimelineEntry(entry); } catch {} });
       resume.setAttribute('data-panel-action', `continue:${entry.id}`);
       resume.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      row.append(task, range, duration);
+      row.append(identity, range, duration);
       if (entry._pending || timelineOptimisticEdits.has(entry.id)) {
         const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; row.append(pending);
       }
@@ -2144,7 +2487,7 @@
     if (!entries.length) today.append(el('div', recentLoaded ? 'No completed entries today.' : 'Loading today’s entries…', 'muted'));
     feedback.replaceChildren(); renderPanelFeedback(feedback);
     const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
-    refreshTimelineQueueIndicator(); refreshTimelineOverlaps();
+    refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();
     if (actionKey) {
       const replacement = [...strip.querySelectorAll?.('[data-panel-action]') ?? [], ...today.querySelectorAll?.('[data-panel-action]') ?? []]
         .find(node => node.getAttribute('data-panel-action') === actionKey);
@@ -2178,12 +2521,31 @@
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
-    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliMark(22), el('strong', 'Clockoli'));
+    const pageNavigation = el('nav', undefined, 'header-navigation');
+    pageNavigation.setAttribute('aria-label', 'Clockoli pages');
+    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliWordmark());
     const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks'; tasks.prepend(icon('checklist', TASKS_PATH));
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
     const activity = button('Activity', 'reports-button', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); }); activity.title = 'Open activity'; activity.prepend(icon('history', ACTIVITY_PATH));
-    const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
-    headerActions.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    const settings = button('Settings', 'reports-button settings-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Open settings'; settings.prepend(icon('gear', GEAR_PATH));
+    pageNavigation.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    headerActions.append(pageNavigation);
+    if (compact && onClose) {
+      const modeButton = (mode, label) => {
+        const control = button(label, 'reports-button timeline-view-button', () => setTimelineViewMode(mode));
+        control.setAttribute('data-timeline-view-mode', mode);
+        control.setAttribute('aria-pressed', String(timelineViewMode === mode));
+        return control;
+      };
+      const timelineMode = modeButton('timeline', 'Timeline');
+      const calendarMode = modeButton('calendar', 'Calendar');
+      const listMode = modeButton('list', 'List');
+      const viewModes = el('div', undefined, 'timeline-view-modes');
+      viewModes.setAttribute('role', 'group');
+      viewModes.setAttribute('aria-label', 'Timeline view');
+      viewModes.append(timelineMode, calendarMode, listMode);
+      headerActions.prepend(viewModes);
+    }
     if (compact) {
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
@@ -2206,10 +2568,11 @@
       if (compact) {
         const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list');
         const feedback = el('div', undefined, 'panel-feedback'), overlaps = el('div', undefined, 'timeline-overlaps');
-        compactSurface = { strip, today, feedback, overlaps, body, host: null };
+        compactSurface = { strip, today, feedback, overlaps, timeline: null, body, host: null };
+        const timeline = renderPopupTimeline();
+        compactSurface.timeline = timeline;
         body.append(strip);
-        if (popupPageHint) body.append(el('p', 'Clockoli can track this page. Time is saved to your private GitHub repository.', 'page-tracking-hint muted'));
-        body.append(renderPopupTimeline(), overlaps, today, feedback);
+        body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
       }
       const current = taskFromLocation();
@@ -2221,7 +2584,7 @@
         body.append(tracking);
         body.append(taskResult(active, 'active-task-result'));
         body.append(el('div', formatElapsed(active.startedAt), 'elapsed running-elapsed'));
-        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = descriptionDraft?.value ?? active.description ?? ''; label.append(description); body.append(label);
+        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = activeDescriptionValue(active); label.append(description); body.append(label);
         description.addEventListener('input', () => { descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value }; });
         const switchToCurrent = Boolean(!same && current);
         const makeStop = switchToCurrent => {
@@ -2274,7 +2637,7 @@
             if (active?.id) {
               timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
               pageState = { ...pageState, active: timelineAcceptedActive };
-              refreshMountedTimelineAtRightEdge(active.startedAt || startContext.startedAt);
+              if (!refreshMountedTimeline()) renderUi();
             }
             await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
@@ -2318,19 +2681,11 @@
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
-  function timelineEditorStylesheet() {
-    const href = extensionResourceUrl('src/content/elastic-timeline-editor.css');
-    if (!href) return null;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    return link;
-  }
-
   function mountFullWidthPopup() {
     if (fullWidthPopupRoot?.isConnected) return;
     fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
     fullWidthPopupRoot.className = 'full-width-popup-surface';
+    isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
     fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
     (document.body || document.documentElement).append(fullWidthPopupRoot);
   }
@@ -2353,10 +2708,8 @@
     compactSurface = null;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     const surface = el('section', undefined, 'full-width-popup');
-    const timelineStylesheet = timelineEditorStylesheet();
-    if (!timelineStylesheet) return;
     surface.append(renderMenu({ compact: true, onClose: () => closeFullWidthPopup() }));
-    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), timelineStylesheet, surface);
+    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
     focusPopupAction();
   }
 
@@ -2364,7 +2717,6 @@
     fullWidthPopupOpen = !fullWidthPopupOpen;
     if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
     popupReturnFocus = shadow?.activeElement || document.activeElement; popupFocusPending = true;
-    popupPageHint = false;
     mountFullWidthPopup(); renderUi();
     clearInterval(timelineWindowTimer);
     timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
@@ -2372,7 +2724,6 @@
     try {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
       if (!fullWidthPopupOpen) return false;
-      popupPageHint = location.hostname !== 'github.com' && !pageState.active;
       renderUi();
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
       if (!fullWidthPopupOpen) return false;
@@ -2395,7 +2746,7 @@
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
     const style = el('style', `
-      :host {
+      :host, :where(:host > :not(style)) {
         /* One side gutter for every full-width panel row, so they stay aligned as the viewport grows. */
         --clockoli-gutter: clamp(16px, 2.5vw, 32px);
         --ck-fg: var(--fgColor-default,#1f2328);
@@ -2415,6 +2766,7 @@
         --ck-bg-muted: var(--bgColor-muted,#f6f8fa);
         --ck-bg-attention: var(--bgColor-attention-muted,#fff8c5);
         --ck-accent: var(--fgColor-accent,#0969da);
+        --ck-success: var(--fgColor-success,#1f883d);
         --ck-button-default-border-rest: var(--button-default-borderColor-rest,#d1d9e0);
         --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#25292e);
         --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#818b981a);
@@ -2462,9 +2814,33 @@
         --ck-control-fg-disabled: var(--control-fgColor-disabled,#818b98);
         --ck-shadow-overlay: var(--shadow-floating-small,0 12px 30px #1f23284d);
         --ck-transparent: var(--button-invisible-bgColor-rest,#fff0);
+        /* Shadow DOM blocks selectors, but inherited custom properties still cross
+           the host boundary. Pin every Primer-compatible style value locally so a site
+           such as vc.ru cannot restyle Clockoli. */
+        --fgColor-default:#1f2328; --fgColor-muted:#59636e; --fgColor-accent:#0969da; --fgColor-danger:#d1242f;
+        --bgColor-default:#fff; --bgColor-muted:#f6f8fa; --bgColor-inset:#f6f8fa; --bgColor-attention-muted:#fff8c5; --bgColor-danger-muted:#ffebe9;
+        --borderColor-default:#d1d9e0; --borderColor-muted:#d1d9e0b3; --borderColor-danger-muted:#ff818266; --focus-outlineColor:#0969da;
+        --button-default-borderColor-rest:#d1d9e0; --button-default-bgColor-rest:#f6f8fa; --button-default-fgColor-rest:#25292e;
+        --button-default-bgColor-hover:#eff2f5; --button-default-bgColor-active:#e6eaef; --button-default-bgColor-selected:#e6eaef;
+        --button-default-borderColor-disabled:#818b981a; --button-default-bgColor-disabled:#eff2f5; --button-default-fgColor-disabled:#818b98;
+        --button-primary-borderColor-rest:#1f232826; --button-primary-bgColor-rest:#1f883d; --button-primary-fgColor-rest:#fff;
+        --button-primary-bgColor-hover:#1c8139; --button-primary-bgColor-active:#197935; --button-primary-borderColor-disabled:#95d8a6; --button-primary-bgColor-disabled:#95d8a6; --button-primary-fgColor-disabled:#fffc;
+        --button-danger-borderColor-rest:#d1d9e0; --button-danger-bgColor-rest:#f6f8fa; --button-danger-fgColor-rest:#d1242f;
+        --button-danger-borderColor-hover:#1f232826; --button-danger-bgColor-hover:#cf222e; --button-danger-fgColor-hover:#fff;
+        --button-danger-borderColor-active:#1f232826; --button-danger-bgColor-active:#a40e26; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#eff2f5; --button-danger-fgColor-disabled:#d1242f80;
+        --button-invisible-borderColor-rest:#fff0; --button-invisible-bgColor-rest:#fff0; --button-invisible-iconColor-rest:#59636e; --button-invisible-fgColor-rest:#25292e;
+        --button-invisible-borderColor-hover:#fff0; --button-invisible-bgColor-hover:#818b981a; --button-invisible-iconColor-hover:#59636e; --button-invisible-bgColor-active:#818b9826;
+        --button-invisible-borderColor-disabled:#fff0; --button-invisible-bgColor-disabled:#fff0; --button-invisible-fgColor-disabled:#818b98;
+        --control-borderColor-rest:#d1d9e0; --control-bgColor-rest:#f6f8fa; --control-fgColor-rest:#25292e; --control-fgColor-placeholder:#59636e;
+        --control-bgColor-hover:#eff2f5; --control-bgColor-active:#e6eaef; --control-borderColor-disabled:#818b981a; --control-bgColor-disabled:#eff2f5; --control-fgColor-disabled:#818b98;
+        --shadow-floating-small:0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f;
+        --fontStack-sansSerif:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+        --fontStack-monospace:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+        --text-body-shorthand-medium:400 14px/1.5 var(--fontStack-sansSerif);
+        --text-caption-shorthand:400 12px/1.25 var(--fontStack-sansSerif);
       }
       @media (prefers-color-scheme: dark) {
-        :host {
+        :host, :where(:host > :not(style)) {
           --ck-fg: var(--fgColor-default,#f0f6fc);
           --ck-border: var(--borderColor-default,#3d444d);
           --ck-button-default-bg-rest: var(--button-default-bgColor-rest,#212830);
@@ -2482,6 +2858,7 @@
           --ck-bg-muted: var(--bgColor-muted,#151b23);
           --ck-bg-attention: var(--bgColor-attention-muted,#151b23);
           --ck-accent: var(--fgColor-accent,#4493f8);
+          --ck-success: var(--fgColor-success,#3fb950);
           --ck-button-default-border-rest: var(--button-default-borderColor-rest,#3d444d);
           --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#f0f6fc);
           --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#656c761a);
@@ -2529,20 +2906,42 @@
           --ck-control-fg-disabled: var(--control-fgColor-disabled,#656c76);
           --ck-shadow-overlay: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
           --ck-transparent: var(--button-invisible-bgColor-rest,#0000);
+          --fgColor-default:#f0f6fc; --fgColor-muted:#9198a1; --fgColor-accent:#4493f8; --fgColor-danger:#fa5e55;
+          --bgColor-default:#0d1117; --bgColor-muted:#151b23; --bgColor-inset:#010409; --bgColor-attention-muted:#151b23; --bgColor-danger-muted:#f851491a;
+          --borderColor-default:#3d444d; --borderColor-muted:#3d444db3; --borderColor-danger-muted:#f8514966; --focus-outlineColor:#1f6feb;
+          --button-default-borderColor-rest:#3d444d; --button-default-bgColor-rest:#212830; --button-default-fgColor-rest:#f0f6fc;
+          --button-default-bgColor-hover:#262c36; --button-default-bgColor-active:#2a313c; --button-default-bgColor-selected:#2a313c;
+          --button-default-borderColor-disabled:#656c761a; --button-default-bgColor-disabled:#212830; --button-default-fgColor-disabled:#656c76;
+          --button-primary-borderColor-rest:#ffffff26; --button-primary-bgColor-rest:#238636; --button-primary-fgColor-rest:#fff;
+          --button-primary-bgColor-hover:#29903b; --button-primary-bgColor-active:#2e9a40; --button-primary-borderColor-disabled:#105823; --button-primary-bgColor-disabled:#105823; --button-primary-fgColor-disabled:#fff6;
+          --button-danger-borderColor-rest:#3d444d; --button-danger-bgColor-rest:#212830; --button-danger-fgColor-rest:#fa5e55;
+          --button-danger-borderColor-hover:#ffffff26; --button-danger-bgColor-hover:#b62324; --button-danger-fgColor-hover:#fff;
+          --button-danger-borderColor-active:#ffffff26; --button-danger-bgColor-active:#da3633; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#212830; --button-danger-fgColor-disabled:#f8514980;
+          --button-invisible-borderColor-rest:#0000; --button-invisible-bgColor-rest:#0000; --button-invisible-iconColor-rest:#9198a1; --button-invisible-fgColor-rest:#f0f6fc;
+          --button-invisible-borderColor-hover:#0000; --button-invisible-bgColor-hover:#656c7633; --button-invisible-iconColor-hover:#9198a1; --button-invisible-bgColor-active:#656c7640;
+          --button-invisible-borderColor-disabled:#0000; --button-invisible-bgColor-disabled:#0000; --button-invisible-fgColor-disabled:#656c76;
+          --control-borderColor-rest:#3d444d; --control-bgColor-rest:#212830; --control-fgColor-rest:#f0f6fc; --control-fgColor-placeholder:#9198a1;
+          --control-bgColor-hover:#262c36; --control-bgColor-active:#2a313c; --control-borderColor-disabled:#656c761a; --control-bgColor-disabled:#212830; --control-fgColor-disabled:#656c76;
+          --shadow-floating-small:0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966;
         }
+        :host(.full-width-popup-surface) .clockoli-wordmark { filter:saturate(1.4) brightness(2.1) }
       }
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
+      :where(:host > :not(style)) { all:revert; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
       .trigger:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) } .clockoli-mark { display:block; width:22px; height:22px; flex:none; transform-origin:center } @media(prefers-reduced-motion: no-preference) { .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px }
       .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,var(--ck-fg-muted)),var(--shadow-floating-small,var(--ck-shadow)) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,var(--ck-fg-muted)); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
       header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,var(--ck-fg-muted)); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,var(--ck-fg-muted)); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-muted,var(--ck-fg-muted)) }
       a { color:var(--fgColor-accent,var(--ck-accent)); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
-      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
+      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px }
+      .save-field { position:relative; display:block; width:100% } .save-field input { padding-right:34px }
+      .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:5px; background:transparent; color:var(--ck-success); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
+      .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
       .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,var(--ck-button-invisible-fg-rest)); text-align:left }
-      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap }
+      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
       .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
  .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
@@ -2551,6 +2950,7 @@
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
       :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-bottom:0 }
       :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
       :host(.popup-surface) .reports-button svg { width:14px; height:14px }
       :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
@@ -2558,35 +2958,42 @@
       :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
       :host(.full-width-popup-surface) .menu-body { padding:0 }
       :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; gap:8px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px }
+      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
+      :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
+      :host(.full-width-popup-surface) .timeline-view-modes { display:inline-flex; align-items:center; margin-right:8px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; overflow:hidden }
+      :host(.full-width-popup-surface) .timeline-view-button { border:0; border-radius:0; padding:5px 8px }
+      :host(.full-width-popup-surface) .timeline-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)); color:var(--fgColor-default,var(--ck-fg)) }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
       :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
       @media(max-width:520px) {
         :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
         :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
+        :host(.full-width-popup-surface) .clockoli-wordmark { height:24px }
         :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
         :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:start; flex-wrap:wrap }
+        :host(.full-width-popup-surface) .header-navigation { flex:1 1 100%; max-width:100%; overflow-x:auto }
       }
       :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
-      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
-      .timeline-queue-spinner { padding:0 0 10px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
+      .timeline-queue-spinner { min-height:25px; padding:0 0 10px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      .timeline-queue-spinner.empty { visibility:hidden }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .strip-task,.strip-idle { flex:1; min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
+      .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
+      .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
       .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
       .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
       .today-record { display:flex; align-items:center; gap:12px; margin-top:8px }
-      .today-task { flex:1; min-width:0 } .today-task .task-url { display:none } .today-task.task-result-untitled .task-url { display:block }
-      @media(max-width:520px) { .active-task-strip,.today-record { flex-wrap:wrap } .strip-task,.strip-idle,.today-task { flex-basis:70% } }
-      :host(.full-width-popup-surface) .timeline-shell.is-saving .elastic-timeline-host { opacity:.56 }
-      :host(.full-width-popup-surface) .timeline-saving-spinner { position:absolute; inset:0; z-index:2; display:grid; place-items:center; pointer-events:auto; background:color-mix(in srgb,var(--bgColor-default,var(--ck-bg)) 24%,var(--button-invisible-bgColor-rest,var(--ck-transparent))) }
-      :host(.full-width-popup-surface) .timeline-saving-wheel { width:28px; height:28px; border:3px solid var(--borderColor-default,var(--ck-border)); border-top-color:var(--fgColor-accent,var(--ck-accent)); border-radius:50% }
-      @keyframes clockoli-timeline-spin { to { transform:rotate(360deg) } }
-      @media(prefers-reduced-motion: no-preference) { :host(.full-width-popup-surface) .timeline-saving-wheel { animation:clockoli-timeline-spin .75s linear infinite } }
-      :host(.full-width-popup-surface) .elastic-timeline-host { width:100%; min-height:108px }
+      .today-task-identity { display:flex; align-items:flex-start; gap:10px; flex:1; min-width:0 } .today-task { flex:1; min-width:0 } .today-task .task-url { display:none } .today-task.task-result-untitled .task-url { display:block }
+      @media(max-width:520px) { .active-task-strip,.today-record { flex-wrap:wrap } .strip-task-copy,.strip-idle,.today-task-identity { flex-basis:70% } }
+
+      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
     `;
     if (fullWidthPopupOpen) {
       if (preserveFullWidthTimeline) refreshMountedTimeline();
@@ -2595,7 +3002,7 @@
     if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
     if (timesMode) { shadow.append(style, renderTimesPage()); return; }
-    if (popupMode) { shadow.append(style, timelineEditorStylesheet(), renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
+    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
