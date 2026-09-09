@@ -1,3 +1,4 @@
+const CLIENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CURRENCY_CODE_RE = /^[A-Za-z]{2,12}$/;
@@ -18,6 +19,11 @@ export function normalizeOtherProjectName(value = OTHER_PROJECT) {
   return name;
 }
 
+export function normalizeOtherProjectClient(value = '') {
+  if (typeof value !== 'string' || (value !== '' && !CLIENT_ID_RE.test(value))) throw new Error('Invalid project client id');
+  return value;
+}
+
 function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -28,7 +34,7 @@ export function normalizeProjects(value = []) {
   const names = new Set();
   let totalSubstrings = 0, totalSubstringLength = 0;
   const projects = value.map((raw, index) => {
-    if (!plainObject(raw) || Object.keys(raw).sort().join(',') !== 'name,substrings') throw new Error(`Project ${index + 1} has unexpected fields`);
+    if (!plainObject(raw) || !['name,substrings', 'client,name,substrings'].includes(Object.keys(raw).sort().join(','))) throw new Error(`Project ${index + 1} has unexpected fields`);
     const name = String(raw.name ?? '').trim();
     if (!name || name.length > MAX_PROJECT_NAME || /[\u0000-\u001f\u007f]/.test(name)) throw new Error(`Project ${index + 1} must have a valid name`);
     const foldedName = name.toLowerCase();
@@ -39,7 +45,8 @@ export function normalizeProjects(value = []) {
     if (substrings.some(item => !item || item.length > MAX_PROJECT_SUBSTRING || /[\u0000-\u001f\u007f]/.test(item))) throw new Error(`Project ${name} has an invalid substring`);
     totalSubstrings += substrings.length;
     totalSubstringLength += substrings.reduce((total, substring) => total + substring.length, 0);
-    return { name, substrings };
+    // Client existence is outside this normalizer because clients live in billing settings.
+    return { name, substrings, client: normalizeOtherProjectClient(raw.client) };
   });
   if (totalSubstrings > MAX_TOTAL_PROJECT_SUBSTRINGS || totalSubstringLength > MAX_TOTAL_PROJECT_SUBSTRING_LENGTH) throw new Error('Project substring list is too large');
   if (new TextEncoder().encode(JSON.stringify(projects)).byteLength > MAX_PROJECTS_UTF8_BYTES) throw new Error('Project substring list is too large');
@@ -121,56 +128,76 @@ function normalizeRatePeriods(raw, login, legacyCurrency = 'USD') {
   return periods;
 }
 
-function invoicingText(value, label, limit) {
-  if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(value) || value.trim().length > limit) throw new Error(`Invalid invoicing ${label}`);
+function invoicingText(value, label, limit, multiline = false) {
+  if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(multiline ? value.replace(/\n/g, '') : value) || value.trim().length > limit) throw new Error(`Invalid invoicing ${label}`);
   return value.trim();
 }
 
 function invoicingParty(value, client = false) {
-  const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency', 'projects'] : [])];
+  const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency'] : [])];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing party has unexpected fields');
   return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200)]));
 }
 
 export function normalizeInvoicingSettings(value = {}) {
-  const allowed = ['seller', 'clients', 'nextNumber', 'numberFormat', 'paymentTerms', 'taxPercent', 'notes'];
+  const allowed = ['seller', 'clients', 'nextNumber', 'numberFormat', 'paymentTermsDays', 'paymentTerms', 'taxPercent', 'notes'];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing settings have unexpected fields');
   const seller = invoicingParty(value.seller ?? {}), source = value.clients ?? [];
   if (!Array.isArray(source) || source.length > 50) throw new Error('Invoicing clients must be a list of at most 50 entries');
-  const ids = new Set(), claimedProjects = new Set();
+  const ids = new Set();
   const clients = source.map(raw => {
-    const party = invoicingParty(raw, true), id = invoicingText(raw.id ?? '', 'client id', 64);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) throw new Error('Invalid invoicing client id');
+    const party = invoicingParty(plainObject(raw) ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'projects')) : raw, true), id = invoicingText(raw.id ?? '', 'client id', 64);
+    if (!CLIENT_ID_RE.test(id)) throw new Error('Invalid invoicing client id');
     if (ids.has(id)) throw new Error(`Duplicate invoicing client id: ${id}`);
     ids.add(id);
     const currency = invoicingText(raw.defaultCurrency ?? '', 'client currency', 200);
-    // Project existence is checked by Options because display preferences are outside this normalizer.
-    const projectSource = raw.projects ?? [];
-    if (!Array.isArray(projectSource) || projectSource.length > MAX_PROJECTS) throw new Error(`Client ${party.name || id} projects must be a list of at most ${MAX_PROJECTS} entries`);
-    const ownProjects = new Set(), projects = [];
-    for (const value of projectSource) {
-      const name = invoicingText(value, 'client project', MAX_PROJECT_NAME), foldedName = name.toLowerCase();
-      if (!name) throw new Error('Invalid invoicing client project');
-      if (ownProjects.has(foldedName)) continue;
-      if (claimedProjects.has(foldedName)) throw new Error(`Project ${name} is already assigned to another client.`);
-      ownProjects.add(foldedName); claimedProjects.add(foldedName); projects.push(name);
-    }
-    return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '', projects };
+    return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '' };
   });
   const nextNumber = value.nextNumber ?? 1, taxPercent = value.taxPercent ?? 0;
   if (!Number.isSafeInteger(nextNumber) || nextNumber < 1 || nextNumber > 1e9) throw new Error('Invoice next number must be a positive integer no greater than 1000000000');
   if (typeof taxPercent !== 'number' || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100 || !/^\d+(?:\.\d{1,2})?$/.test(String(taxPercent))) throw new Error('Invoice tax percent must be 0–100 with at most two decimal places');
   const numberFormat = invoicingText(value.numberFormat ?? 'INV-{YYYY}-{NNNN}', 'number format', 64);
   if (!numberFormat.includes('{NNNN}') || /[{}]/.test(numberFormat.replace(/\{(?:YYYY|MM|NNNN)\}/g, ''))) throw new Error('Invoice number format must contain {NNNN} and only {YYYY}, {MM}, {NNNN} tokens');
-  return { seller, clients, nextNumber, numberFormat, paymentTerms: invoicingText(value.paymentTerms ?? 'Net 30', 'payment terms', 1000), taxPercent, notes: invoicingText(value.notes ?? '', 'notes', 1000) };
+  const legacyTerms = typeof value.paymentTerms === 'string' ? value.paymentTerms : '';
+  const onReceipt = /^(?:due\s+)?on\s+receipt$/i.test(legacyTerms.trim()), numbers = legacyTerms.match(/-?\d+/g) || [];
+  const legacyDays = onReceipt ? 0 : Number(legacyTerms.match(/\bnet\s*(-?\d+)/i)?.[1] ?? (numbers.length === 1 ? numbers[0] : 30));
+  const paymentTermsDays = Object.hasOwn(value, 'paymentTermsDays') ? value.paymentTermsDays : Math.max(0, Math.min(365, legacyDays));
+  if (!Number.isInteger(paymentTermsDays) || paymentTermsDays < 0 || paymentTermsDays > 365) throw new Error('Invoice payment terms must be an integer from 0 to 365 days');
+  let notes = invoicingText(value.notes ?? '', 'notes', 1000, true);
+  if (legacyTerms.trim() && legacyTerms !== `Net ${paymentTermsDays}` && !onReceipt) {
+    const line = `Payment terms: ${legacyTerms}`, appended = notes ? `${notes}\n${line}` : line;
+    if (!notes.split('\n').includes(line) && appended.length <= 1000) notes = invoicingText(appended, 'notes', 1000, true);
+  }
+  return { seller, clients, nextNumber, numberFormat, paymentTermsDays, taxPercent, notes };
 }
 
 export function invoicingSettings(billing = {}) { return normalizeInvoicingSettings(billing?.invoicing ?? {}); }
 
-export function clientForProject(projectName, invoicing) {
+export function clientForProject(projectName, invoicing, { projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient = '' }) {
   const foldedName = String(projectName ?? '').trim().toLowerCase();
   if (!foldedName) return null;
-  return (invoicing?.clients ?? []).find(client => (client.projects ?? []).some(name => String(name).trim().toLowerCase() === foldedName)) ?? null;
+  const id = foldedName === String(otherProjectName).trim().toLowerCase() ? otherProjectClient
+    : projects.find(project => String(project.name).trim().toLowerCase() === foldedName)?.client;
+  return id ? (invoicing?.clients ?? []).find(client => client.id === id) ?? null : null;
+}
+
+export function projectClientPreferences({ projects = [], billing = {}, otherProjectName = OTHER_PROJECT, otherProjectClient } = {}) {
+  const normalized = normalizeProjects(projects);
+  let mainClient = normalizeOtherProjectClient(otherProjectClient);
+  const clients = billing.invoicing?.clients ?? [];
+  // Explicit project links are authoritative; legacy lists are projected without changing their source.
+  if (!projects.some(project => Object.hasOwn(project, 'client')) && clients.some(client => Array.isArray(client.projects) && client.projects.length)) {
+    for (const client of clients) {
+      for (const name of Array.isArray(client.projects) ? client.projects : []) {
+        const foldedName = String(name).trim().toLowerCase();
+        const id = normalizeOtherProjectClient(String(client.id).trim());
+        if (foldedName === otherProjectName.toLowerCase() && otherProjectClient === undefined) mainClient = id;
+        const project = normalized.find(project => project.name.toLowerCase() === foldedName);
+        if (project) project.client = id;
+      }
+    }
+  }
+  return { projects: normalized, otherProjectClient: mainClient };
 }
 
 export function formatInvoiceNumber(numberFormat, sequence, issueDate) {
@@ -275,10 +302,10 @@ export function billableMinorTotal(records, rates = {}) {
   return totals[0]?.amountMinor ?? 0;
 }
 
-export function settingsExportText({ config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, showQueueDiagnostics = false, exportedAt = new Date().toISOString() } = {}) {
+export function settingsExportText({ config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient, showQueueDiagnostics = false, exportedAt = new Date().toISOString() } = {}) {
   const normalized = normalizeBillingSettings(billing);
-  const normalizedProjects = normalizeProjects(projects);
   const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
+  const { projects: normalizedProjects, otherProjectClient: normalizedOtherProjectClient } = projectClientPreferences({ projects, billing, otherProjectName: normalizedOtherProjectName, otherProjectClient });
   if (normalizedProjects.some(project => project.name.toLowerCase() === normalizedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
   const repository = config?.owner && config?.repo && config?.branch ? {
     owner: String(config.owner), repo: String(config.repo), branch: String(config.branch),
@@ -287,8 +314,8 @@ export function settingsExportText({ config = null, billing = {}, projects = [],
   const recentDays = Number(config?.recentDays ?? 7);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
   return `${JSON.stringify({
-    format: 'clockoli-settings', version: 6, exportedAt,
-    display: { recentDays, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
+    format: 'clockoli-settings', version: 7, exportedAt,
+    display: { recentDays, otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
 }
@@ -296,15 +323,15 @@ export function settingsExportText({ config = null, billing = {}, projects = [],
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
-  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5, 6].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
+  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5, 6, 7].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
   const expectedKeys = value.version >= 3
     ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
     : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
-  if ((value.version >= 5 && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
+  if ((value.version === 7 && displayKeys !== 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics') || ([5, 6].includes(value.version) && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates') || (value.version === 6 && billingKeys !== 'invoicing,rates')) throw new Error('Settings file has unexpected billing fields');
+  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates') || (value.version >= 6 && billingKeys !== 'invoicing,rates')) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
       || Number.isNaN(Date.parse(value.exportedAt))) throw new Error('Settings file has an invalid export timestamp');
@@ -318,13 +345,14 @@ export function parseSettingsImport(text) {
   const recentDays = Number(value.display.recentDays);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent entries must be between 1 and 31 days');
   if (value.version >= 5 && typeof value.display.showQueueDiagnostics !== 'boolean') throw new Error('Queue diagnostics setting must be true or false');
-  const projects = value.version >= 3 ? normalizeProjects(value.projects) : [];
   const resolvedOtherProjectName = value.version >= 4 ? normalizeOtherProjectName(value.display.otherProjectName) : OTHER_PROJECT;
+  const { projects, otherProjectClient } = projectClientPreferences({ projects: value.version >= 3 ? value.projects : [], billing: value.version <= 6 ? value.billing : {}, otherProjectName: resolvedOtherProjectName, otherProjectClient: value.version >= 7 ? normalizeOtherProjectClient(value.display.otherProjectClient) : undefined });
   if (projects.some(project => project.name.toLowerCase() === resolvedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
   return {
     recentDays,
     projects,
     otherProjectName: resolvedOtherProjectName,
+    otherProjectClient,
     showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
     billing: { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) },
   };

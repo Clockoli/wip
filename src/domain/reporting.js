@@ -211,7 +211,7 @@ export function buildAnalytics(records, options = {}) {
 }
 
 function sortedRecords(records) { return [...(records ?? [])].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt) || a.user.localeCompare(b.user)); }
-export function csvCell(value) {
+function csvCell(value) {
   let text = String(value ?? '');
   if (/^[=+@-]/.test(text) || text.startsWith('\t') || text.startsWith('\r')) text = `'${text}`;
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;

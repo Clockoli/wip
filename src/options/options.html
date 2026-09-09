@@ -165,14 +165,15 @@
     <div class="card-heading">
       <div><h2 id="display-title">Activity</h2><p>Choose how much recent activity appears in the main tracking panel.</p></div>
     </div>
-    <form id="display-form">
+    <form id="display-form" novalidate>
       <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
       <p class="help">This changes only the recent entries shown in the main panel. It does not limit tracking or reports.</p>
       <p class="help">Track any HTTP(S) task URL. A task title is optional.</p>
       <fieldset class="projects-fieldset">
         <legend>Projects</legend>
         <p class="help">Each project gets its own tracking timeline row and Reports filter. URLs are matched top to bottom, ignoring case. Enter one substring per line.</p>
-        <label class="main-project-name">Main project name<input id="other-project-name" maxlength="80" value="Other" required autocomplete="off"><span class="help">Tasks that do not match a named project appear here.</span></label>
+        <div class="main-project-fields"><label class="main-project-name">Main project name<input id="other-project-name" maxlength="80" value="Other" required autocomplete="off"><span class="help">Tasks that do not match a named project appear here.</span></label>
+        <label>Client<select id="other-project-client"><option value="">— No client —</option></select></label></div>
         <div id="projects-list" class="projects-list"></div>
         <button id="add-project" type="button" class="secondary">Add project</button>
       </fieldset>
@@ -221,7 +222,7 @@
         <div class="invoicing-defaults-grid">
           <label>Next invoice number<input id="invoice-next-number" type="number" min="1" max="1000000000" required></label>
           <label>Number format<input id="invoice-number-format" maxlength="64" required autocomplete="off"><span class="help">Available tokens: {YYYY} {MM} {NNNN}. The format must include {NNNN}.</span></label>
-          <label>Payment terms<textarea id="invoice-payment-terms" maxlength="1000" rows="2"></textarea></label>
+          <label>Payment terms (days)<input id="invoice-payment-terms" type="number" min="0" max="365" step="1" required aria-describedby="invoice-payment-terms-help"><span id="invoice-payment-terms-help" class="help">Due date is the issue date plus this many days.</span></label>
           <label>Tax percent<input id="invoice-tax-percent" type="number" min="0" max="100" step="0.01" required></label>
           <label class="wide-field">Footer notes<textarea id="invoice-notes" maxlength="1000" rows="3"></textarea></label>
         </div>

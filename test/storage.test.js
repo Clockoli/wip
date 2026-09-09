@@ -111,7 +111,7 @@ test('display preference updates recentDays and local projects without touching 
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const config = { owner: 'acme', repo: 'time', branch: 'main', recentDays: 7, repoId: 77 };
   await store.saveConfiguration(config, 'token-one', { recentCache: [{ id: 'accepted' }], pendingWrites: [{ id: 'pending' }] });
-  const projects = [{ name: 'work', substrings: ['github.com/acme/'] }];
+  const projects = [{ name: 'work', substrings: ['github.com/acme/'], client: '' }];
   const generation = await store.updateDisplayPreferences({ recentDays: 14, projects, otherProjectName: 'General' });
   assert.equal(generation, 2);
   assert.deepEqual((await store.getConfigurationSnapshot()).config, { ...config, recentDays: 14 });
@@ -120,7 +120,7 @@ test('display preference updates recentDays and local projects without touching 
   assert.deepEqual((await store.getLocalPreferences()).projects, projects);
   assert.equal((await store.getLocalPreferences()).otherProjectName, 'General');
   await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'General' });
-  assert.deepEqual((await store.getLocalPreferences()).projects, [{ name: 'Other', substrings: ['example.com'] }]);
+  assert.deepEqual((await store.getLocalPreferences()).projects, [{ name: 'Other', substrings: ['example.com'], client: '' }]);
   await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'Other' }), /must differ/i);
   await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 0 }), /between 1 and 31/i);
 });
@@ -409,7 +409,7 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], otherProjectName: 'Other', showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], otherProjectName: 'Other', otherProjectClient: '', showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);
@@ -498,4 +498,42 @@ test('legacy branch promotion is atomic and refuses to redirect accepted work', 
   assert.equal(snapshot.config.defaultBranch, 'main');
   assert.equal(snapshot.config.storageBranchVersion, 1);
   assert.deepEqual((await store.getState()).recentCache, []);
+});
+
+for (const operation of ['read', 'export', 'save', 'reserve']) test(`legacy client links survive ${operation} and worker restart`, async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const initial = { projects: [{ name: 'Web', substrings: ['web/'] }], otherProjectName: 'Work', billingSettings: { invoicing: { clients: [{ id: 'acme', projects: [' WEB ', 'work'] }] } } };
+  await backend.setMany(initial);
+  if (operation === 'save') await store.saveBillingSettings({ invoicing: (await store.getLocalPreferences()).invoicing });
+  if (operation === 'reserve') await store.reserveInvoiceNumber();
+  if (operation === 'export') {
+    const exported = JSON.parse((await store.exportSettings()).text);
+    assert.equal(exported.projects[0].client, 'acme'); assert.equal(exported.display.otherProjectClient, 'acme');
+  }
+  const preferences = await new ChromeStore(backend).getLocalPreferences();
+  assert.equal(preferences.projects[0].client, 'acme'); assert.equal(preferences.otherProjectClient, 'acme');
+  assert.equal(Object.hasOwn(preferences.invoicing.clients[0], 'projects'), false);
+  if (['read', 'export'].includes(operation)) assert.deepEqual(await backend.getMany(Object.keys(initial)), initial);
+});
+
+test('explicit project links suppress legacy projection and catch-all links persist across export and import', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await backend.setMany({ config: { recentDays: 7 }, projects: [{ name: 'Web', substrings: ['web/'], client: '' }], billingSettings: { invoicing: { clients: [{ id: 'a', projects: ['Web', 'Other'] }] } } });
+  assert.equal((await store.getLocalPreferences()).projects[0].client, '');
+  assert.equal((await store.getLocalPreferences()).otherProjectClient, '');
+  await store.updateDisplayPreferences({ recentDays: 7, projects: [], otherProjectName: 'Work', otherProjectClient: 'missing' });
+  const text = (await store.exportSettings()).text;
+  const restored = new ChromeStore(new MemoryBackend()); await restored.importSettings(text);
+  assert.equal((await restored.getLocalPreferences()).otherProjectClient, 'missing');
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 7, otherProjectClient: 'bad/id' }), /client/i);
+});
+
+test('a catch-all-only legacy assignment is projected without resurrecting an explicit unassignment', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await backend.setMany({ projects: [], otherProjectName: 'Work', billingSettings: { invoicing: { clients: [{ id: 'a', projects: [' work '] }] } } });
+  assert.equal((await store.getLocalPreferences()).otherProjectClient, 'a');
+  await backend.setMany({ otherProjectClient: '' });
+  assert.equal((await store.getLocalPreferences()).otherProjectClient, '');
+  await store.reserveInvoiceNumber();
+  assert.equal((await new ChromeStore(backend).getLocalPreferences()).otherProjectClient, '');
 });

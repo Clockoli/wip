@@ -164,9 +164,13 @@ Create an invoice from the current filtered report, so the selected period, peop
 
 Clients can own projects, and picking a client narrows the invoice to that client's work without changing the report filters. Clockoli warns when an invoice also includes projects owned by another client.
 
-The invoice is generated locally as a preview and can be printed or saved as PDF, downloaded as CSV, or downloaded as JSON. Unrated time remains visible as not billed. Invoice numbers are reserved only on the first export of a preview and are never committed to the time-data repository. The counter only ever moves forward: neither a settings save nor restoring an older settings backup can lower it below a number that has already been issued.
+Saving rates or invoicing keeps stored clients even when their metadata is empty. New client cards are omitted only while empty and untouched, and only if neither a named project nor the main project selects them.
 
-Version 1 does not support retainers, recurring invoices, reminders, payment links, per-line editing, sent or paid status, an invoice archive, or emailing invoices.
+The invoice dialog names the billing period from the Reports From/To range. Presets select This month, Last month, Last 7 days, or Last 30 days using local calendar dates. The invoice is generated locally as a preview and can be printed or saved as PDF; CSV and JSON timesheets remain available on Reports. Unrated time remains visible as not billed. Invoice numbers are reserved only on the first Print / Save as PDF action for a preview and are never committed to the time-data repository. The counter only ever moves forward: neither a settings save nor restoring an older settings backup can lower it below a number that has already been issued.
+
+Add up to 20 additional lines for charges or discounts in the invoice currency. These amounts are included in the subtotal and taxed, without exchange-rate conversion. Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt. Older text terms recognize “due on receipt” and “on receipt” without regard to case as zero days, then prefer the number following “net” (so “2% 10, Net 30” means 30 days). Otherwise they use a sole number or default to 30, clamped to 0–365. Unless the original text is exactly “Net {N}” for the resulting days or a due-on-receipt phrase, it is preserved as a separate “Payment terms: ” line in Notes without duplicating an existing exact line. If adding it would exceed the 1,000-character notes limit, existing notes remain unchanged. Notes supports line breaks. These settings and invoice details stay in the browser.
+
+Version 1 does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.
 
 ## Data repository and personal branches
 

@@ -113,7 +113,7 @@ for (const [form, requestType, success] of [
   });
 }
 
-for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoice counter errors and refreshes the stored number after success`, async () => {
+for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoice counter errors and refreshes only its own fields after success`, async () => {
   let fail = true;
   const message = 'Next invoice number cannot go below 8; invoice 7 has already been issued.';
   const page = harness({ reply(request) {
@@ -131,7 +131,7 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   fail = false; page.nodes.get('invoice-next-number').value = '8';
   await page.submit(`${form}-form`);
   assert.equal(page.requests.at(-1).type, 'GET_LOCAL_PREFERENCES');
-  assert.equal(page.nodes.get('invoice-next-number').value, '9');
+  assert.equal(page.nodes.get('invoice-next-number').value, form === 'invoicing' ? '9' : '8');
   assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
 });
 
@@ -162,31 +162,169 @@ test('both billing saves carry rates and invoicing so neither half is erased', a
   }
 });
 
-test('undefined client projects report inline without sending or throwing', async () => {
-  const page = harness(); page.context.renderLocalPreferences(preferences);
-  page.nodes.get('clients-list').querySelector('.client-projects').value = 'Missing project';
-  await page.submit('invoicing-form');
-  assert.equal(page.nodes.get('invoicing-feedback').textContent, 'Project Missing project is not defined. Add it under Projects, or remove it from Client.');
-  assert.equal(page.requests.length, 0);
-  assert.equal(page.nodes.get('save-invoicing').disabled, false);
-});
-
-test('valid client projects save with both billing halves intact', async () => {
-  const linked = {
-    ...preferences,
-    projects: [{ name: 'Acme web', substrings: ['example.com/acme/'] }],
-    invoicing: { ...preferences.invoicing, clients: [{ ...preferences.invoicing.clients[0], projects: ['Acme web'] }] },
-  };
+test('successful display save preserves an unsaved client row and other forms while refreshing project client names', async () => {
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return linked;
+    if (request.type === 'UPDATE_DISPLAY_PREFERENCES') return {
+      config: { ...connectedState.config, recentDays: request.payload.recentDays }, preferences: { ...preferences, ...request.payload },
+    };
     throw new Error(`Unexpected message: ${request.type}`);
   } });
-  page.context.renderLocalPreferences(linked);
-  await page.submit('invoicing-form');
+  page.render(connectedState); page.context.renderLocalPreferences(preferences);
+  page.context.addClientRow();
+  const client = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  client.querySelector('.client-name').value = 'Typed client';
+  client.querySelector('.client-email').value = 'typed@example.com';
+  page.nodes.get('seller-name').value = 'Draft seller'; page.nodes.get('invoice-notes').value = 'Draft notes';
+  const rate = page.nodes.get('rates-list').querySelector('.rate-row'); rate.querySelector('.rate-value').value = '150';
+  page.context.addProjectRow({ name: 'Work', substrings: ['work/'], client: client.dataset.clientId });
+  page.nodes.get('projects-list').querySelector('.project-name').value = 'Renamed';
+  page.nodes.get('other-project-client').value = client.dataset.clientId;
+  await page.submit('display-form');
+  assert.equal(page.nodes.get('display-feedback').textContent, 'Display settings saved.');
+  assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1), client);
+  assert.equal(client.querySelector('.client-name').value, 'Typed client');
+  assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
+  assert.equal(page.nodes.get('seller-name').value, 'Draft seller'); assert.equal(page.nodes.get('invoice-notes').value, 'Draft notes');
+  assert.equal(page.nodes.get('rates-list').querySelector('.rate-row'), rate); assert.equal(rate.querySelector('.rate-value').value, '150');
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-name').value, 'Renamed');
+  client.querySelector('.client-name').value = 'Edited after save'; client.querySelector('.client-name').listeners.input();
+  for (const select of [page.nodes.get('other-project-client'), page.nodes.get('projects-list').querySelector('.project-client')]) {
+    assert.equal(select.value, client.dataset.clientId);
+    assert.equal(select.children.find(option => option.value === client.dataset.clientId).textContent, 'Edited after save');
+  }
+});
+
+for (const form of ['billing', 'invoicing']) test(`${form} successful save preserves unsaved display settings and the other form`, async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  page.context.addProjectRow({ name: 'Draft', substrings: ['draft/'], client: 'client-1' });
+  const project = page.nodes.get('projects-list').querySelector('.project-row');
+  page.nodes.get('other-project-name').value = 'Draft main'; page.nodes.get('other-project-client').value = 'client-1';
+  page.nodes.get('recent-days').value = '14'; page.nodes.get('show-queue-diagnostics').checked = true;
+  const client = page.nodes.get('clients-list').querySelector('.client-row'); client.querySelector('.client-name').value = 'Draft client';
+  page.nodes.get('seller-name').value = 'Draft seller'; page.nodes.get('invoice-notes').value = 'Draft notes';
+  const rate = page.nodes.get('rates-list').querySelector('.rate-row'); rate.querySelector('.rate-value').value = '150';
+  await page.submit(`${form}-form`);
+  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-row'), project);
+  assert.equal(project.querySelector('.project-name').value, 'Draft'); assert.equal(project.querySelector('.project-substrings').value, 'draft/');
+  assert.equal(project.querySelector('.project-client').value, 'client-1');
+  assert.equal(page.nodes.get('other-project-name').value, 'Draft main'); assert.equal(page.nodes.get('other-project-client').value, 'client-1');
+  assert.equal(page.nodes.get('recent-days').value, '14'); assert.equal(page.nodes.get('show-queue-diagnostics').checked, true);
+  if (form === 'billing') {
+    assert.equal(page.nodes.get('clients-list').querySelector('.client-row'), client); assert.equal(client.querySelector('.client-name').value, 'Draft client');
+    assert.equal(page.nodes.get('seller-name').value, 'Draft seller'); assert.equal(page.nodes.get('invoice-notes').value, 'Draft notes');
+    assert.equal(page.nodes.get('rates-list').querySelector('.rate-value').value, '125');
+  } else {
+    assert.equal(page.nodes.get('rates-list').querySelector('.rate-row'), rate); assert.equal(rate.querySelector('.rate-value').value, '150');
+    assert.equal(page.nodes.get('clients-list').querySelector('.client-name').value, 'Client');
+    assert.equal(project.querySelector('.project-client').children.find(option => option.value === 'client-1').textContent, 'Client');
+  }
+});
+
+for (const form of ['billing', 'invoicing']) test(`${form} saves a typed client without validating incomplete projects`, async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  page.context.addProjectRow({ name: 'Work', substrings: [] });
+  page.context.addClientRow();
+  const client = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  client.querySelector('.client-name').value = 'Typed client';
+  client.querySelector('.client-email').value = 'typed@example.com';
+  await page.submit(`${form}-form`);
+  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
-  assert.equal(save.payload.rates.octocat[0].amountMinorPerHour, 12500);
-  assert.deepEqual(save.payload.invoicing.clients[0].projects, ['Acme web']);
+  assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
+  assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
+  assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
+});
+
+test('project and main client options refresh on add, name input and removal without losing missing ids', () => {
+  const page = harness();
+  page.context.renderLocalPreferences({ ...preferences, projects: [{ name: 'Web', substrings: ['web/'], client: 'missing' }], otherProjectClient: 'client-1' });
+  const project = page.nodes.get('projects-list').querySelector('.project-client'), main = page.nodes.get('other-project-client');
+  assert.equal(project.value, 'missing'); assert.equal(main.value, 'client-1');
+  assert.equal(project.children.at(-1).textContent, 'missing (missing)');
+  assert.equal(project.children[0].textContent, '— No client —');
+  const first = page.nodes.get('clients-list').querySelector('.client-row');
+  first.querySelector('.client-name').value = 'Renamed'; first.querySelector('.client-name').listeners.input();
+  assert.equal(main.children.find(option => option.value === 'client-1').textContent, 'Renamed');
+  page.context.addClientRow();
+  assert.equal(main.children.find(option => option.value === 'client-2').textContent, 'client-2');
+  first.querySelector('.remove-client').listeners.click();
+  assert.equal(main.value, 'client-1');
+  assert.equal(main.children.at(-1).textContent, 'client-1 (missing)');
+  assert.equal(project.value, 'missing');
+  assert.equal(page.context.projectsPayload()[0].client, 'missing');
+});
+
+for (const form of ['billing', 'invoicing']) test(`${form} save retains stored clients without metadata and their project links`, async () => {
+  let stored = { ...preferences, projects: [{ name: 'Work', substrings: ['work/'], client: 'empty' }], otherProjectClient: 'empty', invoicing: { ...preferences.invoicing, clients: [{ id: 'empty' }, { id: 'unlinked' }] } };
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') { stored = { ...stored, ...request.payload }; return {}; }
+    if (request.type === 'GET_LOCAL_PREFERENCES') return stored;
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(stored);
+  await page.submit(`${form}-form`);
+  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.deepEqual(Array.from(stored.invoicing.clients, client => client.id), ['empty', 'unlinked']);
+  assert.equal(stored.projects[0].client, stored.invoicing.clients[0].id);
+  assert.equal(stored.otherProjectClient, stored.invoicing.clients[0].id);
+  page.context.renderLocalPreferences(stored);
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-client').value, 'empty');
+  assert.equal(page.nodes.get('other-project-client').value, 'empty');
+  assert.equal(page.context.invoicingPayload().clients.length, 2);
+});
+
+for (const target of ['project', 'main']) test(`empty new client selected by ${target} survives serialization`, () => {
+  const page = harness(); page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] } });
+  page.context.addClientRow();
+  const id = page.nodes.get('clients-list').querySelector('.client-row').dataset.clientId;
+  if (target === 'project') page.context.addProjectRow({ name: 'Work', substrings: ['work/'], client: id });
+  else page.nodes.get('other-project-client').value = id;
+  assert.deepEqual(Array.from(page.context.invoicingPayload().clients, client => client.id), [id]);
+});
+
+test('new client edited and then cleared is no longer untouched', () => {
+  const page = harness(); page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] } });
+  page.context.addClientRow();
+  const input = page.nodes.get('clients-list').querySelector('.client-email');
+  input.value = 'client@example.com'; input.listeners.input?.();
+  input.value = ''; input.listeners.input?.();
+  assert.equal(page.context.invoicingPayload().clients.length, 1);
+});
+
+test('fresh preferences create no client and completely empty client cards are omitted', () => {
+  const page = harness(); page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] } });
+  assert.equal(page.nodes.get('clients-list').children.length, 0);
+  page.context.addClientRow();
+  assert.equal(page.context.invoicingPayload().clients.length, 0);
+  page.nodes.get('clients-list').querySelector('.client-email').value = 'only@example.com';
+  assert.equal(page.context.invoicingPayload().clients.length, 1);
+  assert.equal(page.nodes.get('clients-list').querySelector('.client-projects'), null);
+  assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Save');
+  assert.equal(page.nodes.get('clients-list').querySelector('.remove-client').textContent, '✕');
+});
+
+for (const form of ['billing', 'invoicing', 'display']) test(`${form} rejected save preserves every draft and never refreshes storage`, async () => {
+  const page = harness({ reply: () => new Error('Save rejected') }); page.render(connectedState); page.context.renderLocalPreferences(preferences);
+  page.context.addProjectRow({ name: 'Draft', substrings: ['draft/'], client: 'client-1' });
+  page.nodes.get('clients-list').querySelector('.client-name').value = 'Unsaved';
+  page.nodes.get('other-project-client').value = 'client-1';
+  await page.submit(`${form}-form`);
+  assert.equal(page.nodes.get('clients-list').querySelector('.client-name').value, 'Unsaved');
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-name').value, 'Draft');
+  assert.equal(page.nodes.get('other-project-client').value, 'client-1');
+  assert.equal(page.requests.length, 1);
+  if (form === 'display') assert.equal(page.requests[0].payload.otherProjectClient, 'client-1');
 });
 
 for (const [field, value, message] of [
@@ -258,4 +396,25 @@ test('sole eligible repository still auto-connects and reveals completion after 
   assert.equal(page.nodes.get('connected').hidden, false);
   assert.equal(page.nodes.get('onboarding').hidden, true);
   assert.equal(page.nodes.get('connected-storage').textContent.includes('Write verified'), true);
+});
+
+test('adding a client cannot reuse an id still assigned to a project or the main bucket', () => {
+  const page = harness();
+  page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] }, projects: [{ name: 'Web', substrings: ['web/'], client: 'client-1' }], otherProjectClient: 'client-2' });
+  page.context.addClientRow();
+  assert.equal(page.nodes.get('clients-list').querySelector('.client-row').dataset.clientId, 'client-3');
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-client').children.at(-1).textContent, 'client-1 (missing)');
+  assert.equal(page.nodes.get('other-project-client').children.at(-1).textContent, 'client-2 (missing)');
+});
+
+test('payment terms days load and save one numeric setting with explanatory help', async () => {
+  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? preferences : {} });
+  await page.context.refreshLocalPreferences();
+  assert.equal(page.nodes.get('invoice-payment-terms').value, '30');
+  assert.match(html, /Payment terms \(days\)<input id="invoice-payment-terms" type="number" min="0" max="365"/);
+  assert.match(html, /Due date is the issue date plus this many days\./);
+  page.nodes.get('invoice-payment-terms').value = '45';
+  await page.submit('invoicing-form');
+  const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(save.payload.invoicing.paymentTermsDays, 45); assert.equal(Object.hasOwn(save.payload.invoicing, 'paymentTerms'), false);
 });

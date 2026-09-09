@@ -90,8 +90,8 @@ test('reports mounts the shared running status directly below the tabs', () => {
 test('reports exposes local invoice preview, export, numbering and print contracts', () => {
   for (const id of [
     'create-invoice', 'invoice-dialog', 'invoice-client', 'invoice-currency', 'invoice-group-by',
-    'invoice-issue-date', 'invoice-due-days', 'invoice-preview', 'invoice-feedback', 'invoice-print',
-    'invoice-download-csv', 'invoice-download-json', 'invoice-close', 'print-invoice',
+    'invoice-issue-date', 'invoice-billing-period', 'invoice-preview', 'invoice-feedback', 'invoice-print',
+    'invoice-extra-lines', 'invoice-add-line', 'invoice-close', 'print-invoice',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(js, /buildInvoice\(/);
   assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
@@ -100,4 +100,16 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(styles, /body\.printing-invoice \.print-timesheet\{display:none!important\}/);
   assert.match(styles, /body\.printing-invoice \.print-invoice\{display:block\}/);
   assert.match(styles, /dialog\{display:none!important\}/);
+});
+
+test('invoice controls name the billing period and keep only print exports', () => {
+  assert.match(html, /<label>From <input id="start-date"/); assert.match(html, /<label>To <input id="end-date"/);
+  for (const id of ['this-month', 'last-month', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${id}"`));
+  assert.doesNotMatch(html + js, /invoice-download-csv|invoice-download-json|invoice-due-days|invoiceCsv|invoiceJson|invoiceFilename/);
+});
+
+test('invoice print paper overrides the app theme even when later stylesheets load dark tokens', () => {
+  assert.match(styles, /@media print\{[\s\S]*body\.printing-invoice,body\.printing-invoice main\{color-scheme:light;background:#fff;color:#000\}/);
+  assert.match(styles, /\.invoice-dates,\.invoice-period,\.invoice-date-cell\{font-variant-numeric:tabular-nums\}/);
+  assert.match(styles, /\.invoice-notes,\.invoice-terms\{max-width:68ch\}/);
 });

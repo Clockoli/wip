@@ -497,14 +497,29 @@ function addRateRow(login = '', period = null) {
 
 function nextClientId() {
   const used = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  // Missing links must not silently attach to a newly created client.
+  for (const select of [$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')]) used.add(select.value);
   let index = 1;
   while (used.has(`client-${index}`)) index += 1;
   return `client-${index}`;
 }
 
+function refreshProjectClients() {
+  const clients = [...$('clients-list').querySelectorAll('.client-row')].map(row => ({ id: row.dataset.clientId, name: row.querySelector('.client-name').value.trim() }));
+  for (const select of [$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')]) {
+    const selected = select.value;
+    select.replaceChildren();
+    for (const client of [{ id: '', name: '— No client —' }, ...clients, ...(selected && !clients.some(client => client.id === selected) ? [{ id: selected, name: `${selected} (missing)` }] : [])]) {
+      const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option);
+    }
+    select.value = selected;
+  }
+}
+
 function addClientRow(client = null) {
-  const value = client || { id: nextClientId(), name: '', address: '', email: '', taxId: '', defaultCurrency: '', projects: [] };
+  const value = client || { id: nextClientId(), name: '', address: '', email: '', taxId: '', defaultCurrency: '' };
   const row = document.createElement('div'); row.className = 'client-row'; row.dataset.clientId = value.id || nextClientId();
+  if (client) row.dataset.persisted = 'true';
   const fields = [
     ['Name', 'client-name', 'text', 'Acme Ltd', value.name],
     ['Email', 'client-email', 'email', 'billing@example.com', value.email],
@@ -515,28 +530,29 @@ function addClientRow(client = null) {
   for (const [labelText, className, type, placeholder, fieldValue] of fields) {
     const label = document.createElement('label'); label.textContent = labelText;
     const input = document.createElement('input'); input.className = className; input.type = type; input.maxLength = className === 'client-address' ? 1000 : 200; input.autocomplete = 'off'; input.placeholder = placeholder; input.value = fieldValue || '';
+    input.addEventListener('input', () => { row.dataset.touched = 'true'; if (className === 'client-name') refreshProjectClients(); });
     label.append(input); row.append(label);
   }
-  const projectsLabel = document.createElement('label'); projectsLabel.className = 'client-projects-field'; projectsLabel.textContent = 'Projects billed to this client';
-  const projects = document.createElement('textarea'); projects.className = 'client-projects'; projects.rows = 3; projects.maxLength = 5000; projects.placeholder = 'Acme web\nAcme API'; projects.value = (value.projects || []).join('\n');
-  const projectsHelp = document.createElement('span'); projectsHelp.className = 'help'; projectsHelp.textContent = 'Work in these projects is what an invoice for this client bills.';
-  projectsLabel.append(projects, projectsHelp); row.append(projectsLabel);
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
-  remove.addEventListener('click', () => row.remove()); row.append(remove); $('clients-list').append(row);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = '✕'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
+  const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary save-client'; save.textContent = 'Save';
+  remove.addEventListener('click', () => { row.remove(); refreshProjectClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients();
 }
 
-function addProjectRow(project = { name: '', substrings: [] }) {
+function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const row = document.createElement('div'); row.className = 'project-row';
   const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
   const name = document.createElement('input'); name.className = 'project-name'; name.required = true; name.maxLength = 80; name.autocomplete = 'off'; name.placeholder = 'work'; name.value = project.name || ''; nameLabel.append(name);
   const substringsLabel = document.createElement('label'); substringsLabel.textContent = 'URL substrings';
   const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = 3; substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
+  const clientLabel = document.createElement('label'); clientLabel.textContent = 'Client';
+  const client = document.createElement('select'); client.className = 'project-client';
+  const selected = document.createElement('option'); selected.value = project.client || ''; client.append(selected); client.value = selected.value; clientLabel.append(client);
   const actions = document.createElement('div'); actions.className = 'project-actions';
   const up = document.createElement('button'); up.type = 'button'; up.className = 'secondary move-project-up'; up.textContent = '↑'; up.setAttribute('aria-label', `Move project ${project.name || 'row'} up`); up.addEventListener('click', () => moveProjectRow(row, -1));
   const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '✕'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
   remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
-  actions.append(up, down, remove); row.append(nameLabel, substringsLabel, actions); $('projects-list').append(row); refreshProjectOrderControls();
+  actions.append(up, down); row.append(nameLabel, substringsLabel, clientLabel, actions, remove); $('projects-list').append(row); refreshProjectOrderControls(); refreshProjectClients();
 }
 
 function refreshProjectOrderControls() {
@@ -558,16 +574,22 @@ function moveProjectRow(row, direction) {
 function projectsPayload() {
   return normalizeProjects([...$('projects-list').querySelectorAll('.project-row')].map(row => ({
     name: row.querySelector('.project-name').value,
+    client: row.querySelector('.project-client').value,
     substrings: row.querySelector('.project-substrings').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
   })));
 }
 
-function renderLocalPreferences(preferences) {
-  localPreferences = preferences;
+function renderDisplayPreferences(preferences) {
+  $('recent-days').value = state?.config?.recentDays || preferences.recentDays || 7;
   $('other-project-name').value = preferences.otherProjectName || 'Other';
   $('show-queue-diagnostics').checked = preferences.showQueueDiagnostics === true;
   $('projects-list').replaceChildren();
   for (const project of preferences.projects || []) addProjectRow(project);
+  const selected = document.createElement('option'); selected.value = preferences.otherProjectClient || ''; $('other-project-client').append(selected); $('other-project-client').value = selected.value;
+  refreshProjectClients();
+}
+
+function renderBillingPreferences(preferences) {
   $('rates-list').replaceChildren();
   for (const [login, periods] of Object.entries(preferences.rates || {})) {
     for (const period of (Array.isArray(periods) ? periods : [{ amountMinorPerHour: periods, startDate: '', endDate: '' }])) {
@@ -575,14 +597,24 @@ function renderLocalPreferences(preferences) {
     }
   }
   if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
+}
+
+function renderInvoicingPreferences(preferences) {
   const invoicing = invoicingSettings(preferences);
   $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
   $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
   $('clients-list').replaceChildren();
   for (const client of invoicing.clients) addClientRow(client);
+  refreshProjectClients();
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
-  $('invoice-payment-terms').value = invoicing.paymentTerms; $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
-  if (!state?.config) $('recent-days').value = preferences.recentDays || 7;
+  $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
+}
+
+function renderLocalPreferences(preferences) {
+  localPreferences = preferences;
+  renderDisplayPreferences(preferences);
+  renderBillingPreferences(preferences);
+  renderInvoicingPreferences(preferences);
   if (!preferences.exportRecommended) $('settings-export-reminder').hidden = true;
   else if (!backupReminderShown) {
     $('settings-export-reminder').hidden = false;
@@ -612,26 +644,21 @@ function billingPayload() {
 }
 
 function invoicingPayload() {
+  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
   const invoicing = normalizeInvoicingSettings({
     seller: {
       name: $('seller-name').value, address: $('seller-address').value,
       email: $('seller-email').value, taxId: $('seller-tax-id').value,
     },
-    clients: [...$('clients-list').querySelectorAll('.client-row')].map(row => ({
+    clients: [...$('clients-list').querySelectorAll('.client-row')].filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
+      || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(row => ({
       id: row.dataset.clientId, name: row.querySelector('.client-name').value,
       address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
       taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
-      projects: row.querySelector('.client-projects').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
     })),
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
-    paymentTerms: $('invoice-payment-terms').value, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
+    paymentTermsDays: $('invoice-payment-terms').value.trim() ? Number($('invoice-payment-terms').value) : NaN, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
-  const definedProjects = new Set(projectsPayload().map(project => project.name.toLowerCase()));
-  for (const client of invoicing.clients) {
-    for (const project of client.projects) {
-      if (!definedProjects.has(project.toLowerCase())) throw new Error(`Project ${project} is not defined. Add it under Projects, or remove it from ${client.name || client.id}.`);
-    }
-  }
   return invoicing;
 }
 
@@ -865,11 +892,11 @@ $('display-form').addEventListener('submit', async event => {
       recentDays: Number($('recent-days').value),
       projects: projectsPayload(),
       otherProjectName: $('other-project-name').value,
+      otherProjectClient: $('other-project-client').value,
       showQueueDiagnostics: $('show-queue-diagnostics').checked,
     } });
     state.config = result.config;
-    $('recent-days').value = result.config.recentDays;
-    renderLocalPreferences(result.preferences);
+    renderDisplayPreferences(result.preferences);
     formFeedback('display-feedback', 'Display settings saved.', 'success');
   } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); }
   finally { $('save-display').disabled = !state?.config; }
@@ -882,19 +909,21 @@ $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); $('save-billing').disabled = true; formFeedback('billing-feedback', 'Saving billable rates…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
-    await refreshLocalPreferences();
+    renderBillingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
     formFeedback('billing-feedback', 'Billable rates saved locally.', 'success');
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); }
   finally { $('save-billing').disabled = false; }
 });
 $('invoicing-form').addEventListener('submit', async event => {
-  event.preventDefault(); $('save-invoicing').disabled = true; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
+  event.preventDefault();
+  if ($('save-invoicing').disabled) return;
+  for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
-    await refreshLocalPreferences();
+    renderInvoicingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
     formFeedback('invoicing-feedback', 'Invoicing settings saved locally.', 'success');
   } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); }
-  finally { $('save-invoicing').disabled = false; }
+  finally { for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = false; }
 });
 $('export-settings').addEventListener('click', async () => {
   $('export-settings').disabled = true;

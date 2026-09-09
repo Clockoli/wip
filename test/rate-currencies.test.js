@@ -80,7 +80,7 @@ test('mixed-currency totals remain separate and billable analytics selects one c
   }), /load RUB to USD exchange rates/i);
 });
 
-test('timesheet exports each record rate currency and settings v6 has local invoicing with no global currency', () => {
+test('timesheet exports each record rate currency and settings v7 has local invoicing with no global currency', () => {
   const rates = {
     alice: [{ ...parseRateFields('20.15', '$'), startDate: '', endDate: '' }],
     bob: [{ ...parseRateFields('750', 'RUB'), startDate: '', endDate: '' }],
@@ -96,10 +96,10 @@ test('timesheet exports each record rate currency and settings v6 has local invo
 
   const text = settingsExportText({ billing: { rates }, config: { recentDays: 7 }, exportedAt: '2026-08-23T12:00:00.000Z' });
   const saved = JSON.parse(text);
-  assert.equal(saved.version, 6);
+  assert.equal(saved.version, 7);
   assert.deepEqual(Object.keys(saved.billing).sort(), ['invoicing', 'rates']);
   assert.deepEqual(parseSettingsImport(text).billing, {
-    invoicing: { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTerms: 'Net 30', taxPercent: 0, notes: '' },
+    invoicing: { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' },
     rates,
   });
 });

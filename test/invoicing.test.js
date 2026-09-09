@@ -1,25 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInvoice, invoiceCsv, invoiceJson, invoiceFilename } from '../src/domain/invoicing.js';
+import { buildInvoice } from '../src/domain/invoicing.js';
 import { billableTotalsByCurrency, formatInvoiceNumber, invoicingSettings } from '../src/domain/local-settings.js';
 
 const record = { user: 'alice', taskUrl: 'https://example.com/task', taskTitle: 'Task', entryDate: '2026-08-14', durationSeconds: 3600 };
 const options = { rates: { alice: 12345 }, startDate: '2026-08-01', endDate: '2026-08-31', issueDate: '2026-09-01' };
 
 test('invoice assembles seller, selected client, period, whole-cent tax, terms and UTC due date without mutation', () => {
-  const invoicing = invoicingSettings({ invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'c', name: 'Client', defaultCurrency: 'USD' }], taxPercent: 7.25, paymentTerms: 'Net 14', notes: 'Thanks' } });
+  const invoicing = invoicingSettings({ invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'c', name: 'Client', defaultCurrency: 'USD' }], taxPercent: 7.25, paymentTermsDays: 14, notes: 'Thanks' } });
   const input = structuredClone(invoicing), records = [structuredClone(record)];
-  const invoice = buildInvoice(records, { ...options, invoicing, clientId: 'c', dueDays: 14, sequence: 7 });
+  const invoice = buildInvoice(records, { ...options, invoicing, clientId: 'c', sequence: 7 });
   assert.deepEqual(invoice, {
     number: 'INV-2026-0007', sequence: 7, issueDate: '2026-09-01', dueDate: '2026-09-15', seller: invoicing.seller, client: invoicing.clients[0],
     period: { startDate: '2026-08-01', endDate: '2026-08-31' }, groupBy: 'task',
     lines: [{ key: JSON.stringify([record.taskUrl, 'alice', 12345, 'USD']), taskUrl: record.taskUrl, taskTitle: 'Task', person: 'alice', description: 'Task', seconds: 3600, hours: 1, rateMinorPerHour: 12345, effectiveRateMinorPerHour: 12345, rateCurrency: 'USD', amountMinor: 12345 }],
-    unbilled: [], subtotalMinor: 12345, taxMinor: 895, totalMinor: 13240, taxPercent: 7.25, currency: 'USD', currencyPosition: 'suffix', paymentTerms: 'Net 14', notes: 'Thanks', converted: false,
+    unbilled: [], subtotalMinor: 12345, taxMinor: 895, totalMinor: 13240, taxPercent: 7.25, currency: 'USD', currencyPosition: 'suffix', paymentTermsDays: 14, notes: 'Thanks', converted: false,
   });
   assert.deepEqual(invoicing, input);
   assert.deepEqual(records, [record]);
-  assert.equal(buildInvoice(records, { ...options, issueDate: '2028-02-28', dueDays: 2 }).dueDate, '2028-03-01');
-  assert.equal(buildInvoice(records, { ...options, issueDate: '2026-12-31', dueDays: 1 }).dueDate, '2027-01-01');
+  assert.equal(buildInvoice(records, { ...options, issueDate: '2028-02-28', invoicing: { paymentTermsDays: 2 } }).dueDate, '2028-03-01');
+  assert.equal(buildInvoice(records, { ...options, issueDate: '2026-12-31', invoicing: { paymentTermsDays: 1 } }).dueDate, '2027-01-01');
 });
 
 test('uncovered records remain visible but only billed people determine description suffixes', () => {
@@ -58,7 +58,7 @@ test('invoice target currency follows explicit, client, then covered-rate preced
   assert.equal(buildInvoice(records, { ...mixed, invoicing, clientId: 'c', exchangeRates, currency: 'usd' }).currency, 'USD');
   assert.equal(buildInvoice([record], { ...options, currency: '$' }).currencyPosition, 'prefix');
   assert.throws(() => buildInvoice([record], { ...options, clientId: 'missing' }), /client/i);
-  for (const override of [{ groupBy: 'person' }, { issueDate: '2026-02-30' }, { endDate: '2026-07-01' }, { dueDays: -1 }, { dueDays: 1.5 }]) assert.throws(() => buildInvoice([record], { ...options, ...override }));
+  for (const override of [{ groupBy: 'person' }, { issueDate: '2026-02-30' }, { endDate: '2026-07-01' }, { invoicing: { paymentTermsDays: -1 } }, { invoicing: { paymentTermsDays: 1.5 } }]) assert.throws(() => buildInvoice([record], { ...options, ...override }));
 });
 
 test('invoice numbers validate dates and formats, pad short sequences and retain long ones', () => {
@@ -76,11 +76,6 @@ test('short entries accumulate exact contributions then round once per completed
   assert.equal(Math.round(invoice.totalMinor), Math.round(expected));
   assert.notEqual(Math.round(invoice.totalMinor), records.reduce((sum, entry) => sum + Math.round(12345 * entry.durationSeconds / 3600), 0));
   assert.equal(invoice.subtotalMinor, invoice.lines.reduce((sum, line) => sum + line.amountMinor, 0));
-  assert.equal(invoiceCsv(invoice), [
-    'Description,Person,Task URL,Hours,Hourly rate,Amount,Currency',
-    'Task,alice,https://example.com/task,0.82,123.45,100.82,USD',
-    '', 'Subtotal,100.82,USD', 'Total,100.82,USD', '',
-  ].join('\r\n'));
 });
 
 test('separate fractional-cent lines foot to their rounded sum before tax', () => {
@@ -91,10 +86,9 @@ test('separate fractional-cent lines foot to their rounded sum before tax', () =
   assert.equal(invoice.taxMinor, 36);
   assert.equal(invoice.totalMinor, 537);
   assert.ok([...invoice.lines.map(line => line.amountMinor), invoice.subtotalMinor, invoice.taxMinor, invoice.totalMinor].every(Number.isInteger));
-  assert.match(invoiceCsv(invoice), /Subtotal,5.01,USD\r\nTax 7.25%,0.36,USD\r\nTotal,5.37,USD/);
 });
 
-test('converted lines split by exchange factor and expose the effective rate used by CSV', () => {
+test('converted lines split by exchange factor and expose the effective target-currency rate', () => {
   const records = [record, { ...record, entryDate: '2026-08-15' }, { ...record, entryDate: '2026-08-16' }];
   const invoice = buildInvoice(records, { ...options, rates: { alice: 10000 }, currency: 'EUR', exchangeRates: {
     '2026-08-14': { USD: 0.9 }, '2026-08-15': { USD: 0.8 }, '2026-08-16': { USD: 0.9 },
@@ -102,34 +96,40 @@ test('converted lines split by exchange factor and expose the effective rate use
   assert.equal(invoice.lines.length, 2);
   assert.deepEqual(invoice.lines.map(line => [line.hours, line.rateMinorPerHour, line.effectiveRateMinorPerHour, line.amountMinor]), [[2, 10000, 9000, 18000], [1, 10000, 8000, 8000]]);
   assert.equal(invoice.subtotalMinor, 26000);
-  assert.match(invoiceCsv(invoice), /,2.00,90.00,180.00,EUR\r\n/);
-  assert.match(invoiceCsv(invoice), /,1.00,80.00,80.00,EUR\r\n/);
   const short = buildInvoice([{ ...record, durationSeconds: 60 }], { ...options, rates: { alice: 10000 } });
   assert.equal(short.lines[0].effectiveRateMinorPerHour, short.lines[0].amountMinor / short.lines[0].hours);
   const zero = buildInvoice([{ ...record, durationSeconds: 0 }], options);
   assert.equal(zero.lines[0].effectiveRateMinorPerHour, 0);
 });
 
-test('invoice CSV reuses safe quoting, JSON preserves the document and filenames sanitize numbers', () => {
-  const invoice = buildInvoice([{ ...record, taskTitle: '=SUM(1,2)"' }], { ...options, sequence: 7 });
-  const csv = invoiceCsv(invoice);
-  assert.ok(csv.startsWith('Description,Person,Task URL,Hours,Hourly rate,Amount,Currency\r\n'));
-  assert.ok(csv.includes('"\'=SUM(1,2)"""'));
-  assert.ok(csv.includes(',1.00,123.45,123.45,USD\r\n'));
-  assert.deepEqual(JSON.parse(invoiceJson(invoice)), invoice);
-  assert.equal(invoiceFilename('csv', invoice), 'invoice-INV-2026-0007.csv');
-  assert.equal(invoiceFilename('json', { ...invoice, number: '../../bad / number' }), 'invoice-.._.._bad___number.json');
-  assert.equal(invoiceFilename('json', { ...invoice, number: '' }), 'invoice-preview.json');
-  assert.throws(() => invoiceFilename('../csv', invoice), /format/i);
+test('extra lines append after time, remain in target currency, and affect tax without mutating input', () => {
+  const extraLines = [{ description: '  Materials  ', amountMinor: 2500 }, { description: 'Discount', amountMinor: -500 }], before = structuredClone(extraLines);
+  const invoice = buildInvoice([record], { ...options, currency: 'EUR', exchangeRates: { '2026-08-14': { USD: 2 } }, invoicing: { taxPercent: 20 }, extraLines });
+  assert.deepEqual(invoice.lines.slice(1), [{ description: 'Materials', amountMinor: 2500 }, { description: 'Discount', amountMinor: -500 }]);
+  assert.equal(invoice.subtotalMinor, 26690); assert.equal(invoice.taxMinor, 5338); assert.equal(invoice.totalMinor, 32028);
+  assert.deepEqual(extraLines, before);
+  assert.equal(buildInvoice([], { ...options, currency: 'EUR', extraLines }).totalMinor, 2000);
 });
 
-test('day invoice CSV formats major amounts, tax and unbilled hours for the recipient', () => {
-  const invoice = buildInvoice([record, { ...record, user: 'bob', durationSeconds: 420 }], { ...options, groupBy: 'day', invoicing: { taxPercent: 7.25 } });
-  const before = structuredClone(invoice);
-  assert.equal(invoiceCsv(invoice), [
-    'Date,Description,Person,Task URL,Hours,Hourly rate,Amount,Currency',
-    '2026-08-14,Task,alice,https://example.com/task,1.00,123.45,123.45,USD',
-    '', 'Subtotal,123.45,USD', 'Tax 7.25%,8.95,USD', 'Total,132.40,USD', 'Not billed,bob,0.12', '',
-  ].join('\r\n'));
-  assert.deepEqual(invoice, before);
+test('extra lines validate descriptions, signed safe integer amounts and the twenty-line limit', () => {
+  const line = { description: 'x'.repeat(200), amountMinor: 0 };
+  assert.equal(buildInvoice([record], { ...options, extraLines: Array(20).fill(line) }).lines.length, 21);
+  for (const extraLines of [null, {}, Array(21).fill(line), [null], [{ ...line, description: ' ' }], [{ ...line, description: 'x'.repeat(201) }],
+    ...['x\n', '\tx', 'x\u007f', 'x\u0085', 12].map(description => [{ ...line, description }]),
+    ...[1.1, NaN, Infinity, '100', Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1].map(amountMinor => [{ ...line, amountMinor }])]) {
+    assert.throws(() => buildInvoice([record], { ...options, extraLines }), /extra line/i);
+  }
+  assert.throws(() => buildInvoice([record], { ...options, extraLines: [{ ...line, amountMinor: Number.MAX_SAFE_INTEGER }] }), /safe integer/i);
+});
+
+test('payment terms are the sole due-date source, including receipt, legacy text and rollover', () => {
+  for (const [invoicing, dueDate, paymentTermsDays] of [[{ paymentTermsDays: 45 }, '2026-10-16', 45], [{ paymentTermsDays: 0 }, '2026-09-01', 0], [{ paymentTerms: 'Net 45' }, '2026-10-16', 45], [{}, '2026-10-01', 30]]) {
+    const invoice = buildInvoice([record], { ...options, invoicing });
+    assert.equal(invoice.dueDate, dueDate); assert.equal(invoice.paymentTermsDays, paymentTermsDays);
+  }
+});
+
+test('signed extra lines cannot hide unsafe intermediate money sums through cancellation', () => {
+  const extraLines = [Number.MAX_SAFE_INTEGER, 2, -2].map(amountMinor => ({ description: 'Adjustment', amountMinor }));
+  assert.throws(() => buildInvoice([], { ...options, currency: 'EUR', extraLines }), /safe integer/i);
 });

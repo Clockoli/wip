@@ -1,5 +1,5 @@
 import { exchangeCurrencyCode, formatInvoiceNumber, invoicingSettings, parseRateFields, rateForUser } from './local-settings.js';
-import { csvCell, validateDateRange } from './reporting.js';
+import { validateDateRange } from './reporting.js';
 import { taskUrlOf } from './values.js';
 
 function recordDate(record) { return String(record?.entryDate || record?.startedAt || '').slice(0, 10); }
@@ -20,14 +20,13 @@ export function invoiceExchangeRequest(records, rates, targetCurrency) {
 
 export function buildInvoice(records, {
   rates = {}, invoicing, clientId = '', currency = '', exchangeRates = null,
-  groupBy = 'task', startDate, endDate, issueDate, dueDays = 30, sequence = null,
+  groupBy = 'task', startDate, endDate, issueDate, extraLines = [], sequence = null,
 }) {
   const settings = invoicingSettings({ invoicing }), period = validateDateRange(startDate, endDate);
   validateDateRange(issueDate, issueDate);
   if (!['task', 'day'].includes(groupBy)) throw new Error('Invoice grouping must be task or day');
-  if (!Number.isSafeInteger(dueDays) || dueDays < 0) throw new Error('Invoice due days must be a non-negative safe integer');
   const due = new Date(`${issueDate}T00:00:00Z`);
-  due.setUTCDate(due.getUTCDate() + dueDays);
+  due.setUTCDate(due.getUTCDate() + settings.paymentTermsDays);
   if (!Number.isFinite(due.getTime()) || due.getUTCFullYear() > 9999) throw new Error('Invoice due date is out of range');
   const client = settings.clients.find(item => item.id === clientId) ?? null;
   if (clientId && !client) throw new Error('Invoice client was not found');
@@ -63,31 +62,23 @@ export function buildInvoice(records, {
     line.amountMinor = Math.round(line.amountMinor);
     line.effectiveRateMinorPerHour = line.hours ? line.amountMinor / line.hours : 0;
   }
-  const subtotalMinor = lines.reduce((sum, line) => sum + line.amountMinor, 0), taxMinor = Math.round(subtotalMinor * settings.taxPercent / 100);
+  if (!Array.isArray(extraLines) || extraLines.length > 20) throw new Error('Invoice extra lines must be a list of at most 20 entries');
+  for (const line of extraLines) {
+    if (typeof line?.description !== 'string' || /[\u0000-\u001f\u007f-\u009f]/.test(line.description) || !line.description.trim() || line.description.trim().length > 200) throw new Error('Invoice extra line description must contain 1–200 characters without control characters');
+    if (!Number.isSafeInteger(line.amountMinor)) throw new Error('Invoice extra line amount must be a safe integer in minor units');
+    lines.push({ description: line.description.trim(), amountMinor: line.amountMinor });
+  }
+  const subtotalMinor = lines.reduce((sum, line) => {
+    const next = sum + line.amountMinor;
+    if (!Number.isSafeInteger(next)) throw new Error('Invoice subtotal must remain a safe integer in minor units');
+    return next;
+  }, 0), taxMinor = Math.round(subtotalMinor * settings.taxPercent / 100);
+  if (![...lines.map(line => line.amountMinor), subtotalMinor, taxMinor, subtotalMinor + taxMinor].every(Number.isSafeInteger)) throw new Error('Invoice amounts must remain safe integers in minor units');
   return {
     number: sequence === null ? '' : formatInvoiceNumber(settings.numberFormat, sequence, issueDate), sequence,
     issueDate, dueDate: due.toISOString().slice(0, 10), seller: settings.seller, client, period, groupBy, lines,
     unbilled: [...uncovered].map(([person, seconds]) => ({ person, seconds })).sort((a, b) => a.person.localeCompare(b.person)),
     subtotalMinor, taxMinor, totalMinor: subtotalMinor + taxMinor, taxPercent: settings.taxPercent,
-    currency: targetCurrency, currencyPosition, paymentTerms: settings.paymentTerms, notes: settings.notes, converted,
+    currency: targetCurrency, currencyPosition, paymentTermsDays: settings.paymentTermsDays, notes: settings.notes, converted,
   };
-}
-
-// Invoices and rates are browser-only exports; nothing invoice-related is written to the Git time-data repository.
-export function invoiceCsv(invoice) {
-  const byDay = invoice.groupBy === 'day', rows = [[...(byDay ? ['Date'] : []), 'Description', 'Person', 'Task URL', 'Hours', 'Hourly rate', 'Amount', 'Currency']];
-  for (const line of invoice.lines) rows.push([...(byDay ? [line.date ?? ''] : []), line.description, line.person, line.taskUrl, line.hours.toFixed(2), (line.effectiveRateMinorPerHour / 100).toFixed(2), (line.amountMinor / 100).toFixed(2), invoice.currency]);
-  rows.push([], ['Subtotal', (invoice.subtotalMinor / 100).toFixed(2), invoice.currency]);
-  if (invoice.taxPercent !== 0) rows.push([`Tax ${invoice.taxPercent}%`, (invoice.taxMinor / 100).toFixed(2), invoice.currency]);
-  rows.push(['Total', (invoice.totalMinor / 100).toFixed(2), invoice.currency]);
-  for (const item of invoice.unbilled) rows.push(['Not billed', item.person, (item.seconds / 3600).toFixed(2)]);
-  return `${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
-}
-
-export function invoiceJson(invoice) { return `${JSON.stringify(invoice, null, 2)}\n`; }
-
-export function invoiceFilename(format, invoice) {
-  if (!['csv', 'json', 'pdf'].includes(format)) throw new Error('Unknown invoice format');
-  const number = String(invoice.number || 'preview').replace(/[^A-Za-z0-9._-]/g, '_');
-  return `invoice-${number}.${format}`;
 }

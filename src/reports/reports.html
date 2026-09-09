@@ -43,9 +43,15 @@
         </label>
         <p id="report-range" class="muted" role="status" aria-live="polite"></p>
         <div id="custom-period" class="custom-period" hidden>
-          <label>Start <input id="start-date" type="date" required></label>
-          <label>End <input id="end-date" type="date" required></label>
+          <label>From <input id="start-date" type="date" required></label>
+          <label>To <input id="end-date" type="date" required></label>
           <button id="apply-period" class="button secondary" type="button">Apply</button>
+        </div>
+        <div class="period-presets" role="group" aria-label="Date range presets">
+          <button id="preset-this-month" class="button secondary" type="button">This month</button>
+          <button id="preset-last-month" class="button secondary" type="button">Last month</button>
+          <button id="preset-last-7-days" class="button secondary" type="button">Last 7 days</button>
+          <button id="preset-last-30-days" class="button secondary" type="button">Last 30 days</button>
         </div>
       </div>
       <div class="export-controls" aria-label="Timesheet downloads">
@@ -69,25 +75,28 @@
     </section>
 
     <dialog id="invoice-dialog" aria-labelledby="invoice-dialog-title">
-      <div class="invoice-dialog-heading"><div><h2 id="invoice-dialog-title">Create invoice</h2><p class="muted">Preview and export an invoice from the current report filters.</p></div><button id="invoice-close" class="button secondary" type="button">Close</button></div>
+      <div class="invoice-dialog-heading"><div><h2 id="invoice-dialog-title">Create invoice</h2><p class="muted">Preview and print an invoice from the current report filters.</p></div><button id="invoice-close" class="button secondary" type="button">Close</button></div>
       <div class="invoice-controls">
+        <p id="invoice-billing-period" class="invoice-billing-period" role="status" aria-live="polite"></p>
         <label>Client<select id="invoice-client"><option value="">No client</option></select></label>
         <label>Currency<select id="invoice-currency"></select></label>
         <label>Group lines by<select id="invoice-group-by"><option value="task" selected>Task</option><option value="day">Day and task</option></select></label>
         <label>Issue date<input id="invoice-issue-date" type="date" required></label>
-        <label>Due in days<input id="invoice-due-days" type="number" min="0" max="365" value="30" required></label>
         <div class="invoice-projects-control">
           <div class="section-heading"><span>Projects</span><span id="invoice-project-count" class="muted"></span></div>
           <div id="invoice-projects" class="facet-list" role="group" aria-label="Projects billed by this invoice"></div>
           <p id="invoice-project-warning" class="notice" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
+      <div class="invoice-additional-control" role="group" aria-labelledby="invoice-additional-label">
+        <div class="section-heading"><span id="invoice-additional-label">Additional lines</span><button id="invoice-add-line" class="button secondary" type="button">Add line</button></div>
+        <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
+        <div id="invoice-extra-lines"></div>
+      </div>
       <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
       <div id="invoice-preview" class="invoice-preview" aria-live="polite"></div>
       <div class="invoice-actions">
         <button id="invoice-print" class="button primary" type="button" disabled>Print / Save as PDF</button>
-        <button id="invoice-download-csv" class="button secondary" type="button" disabled>Download CSV</button>
-        <button id="invoice-download-json" class="button secondary" type="button" disabled>Download JSON</button>
       </div>
     </dialog>
 

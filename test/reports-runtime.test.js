@@ -23,7 +23,7 @@ const invoiceSettings = {
 };
 const result = (records = [record('alice'), record('bob', 'other.com')], rates = {}, invoicingSettings = invoiceSettings) => ({
   configured: true, currentUser: 'alice', records,
-  billing: { rates, invoicing: invoicingSettings, projects: [{ name: 'Main', substrings: ['https://example.com/'] }, { name: 'Other', substrings: ['https://other.com/'] }] },
+  billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
 function harness() {
@@ -87,7 +87,7 @@ function harness() {
 async function loaded(data = result()) {
   const page = harness();
   await page.reply(data);
-  const load = page.load(oldRange); await page.reply(data); await load;
+  const load = page.load({ ...oldRange }); await page.reply(data); await load;
   return page;
 }
 
@@ -277,30 +277,33 @@ test('invoice entry point explains empty and unrated filtered sets', async () =>
   assert.equal(unrated.nodes.get('create-invoice').attributes.title, 'No hourly rate covers these entries. Add rates in Settings.');
 });
 
-test('invoice dialog renders the filtered records and reserves one number across repeated exports', async () => {
+test('invoice dialog renders the filtered records and reserves one number across repeated prints', async () => {
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
   const page = await loaded(result([record('alice')], rates));
   await page.fire('create-invoice'); await page.settle();
   assert.equal(page.nodes.get('invoice-dialog').open, true);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /INV-2026-0007/);
-  const csv = page.fire('invoice-download-csv');
+  const print = page.fire('invoice-print');
   const reserve = page.requests.at(-1);
   assert.equal(reserve.message.type, 'RESERVE_INVOICE_NUMBER');
-  await page.reply({ sequence: 7 }, reserve); await csv;
+  await page.reply({ sequence: 7 }, reserve); await print;
   const before = page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length;
-  await page.fire('invoice-download-json'); await page.settle();
+  await page.fire('create-invoice'); await page.settle();
+  await page.fire('invoice-print'); await page.settle();
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, before);
-  assert.equal(page.downloads.length, 2);
+  assert.deepEqual(page.prints, ['invoice-INV-2026-0007', 'invoice-INV-2026-0007']);
+  assert.equal(page.downloads.length, 0);
 });
 
 test('changing an invoice control invalidates its reserved sequence', async () => {
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
   const page = await loaded(result([record('alice')], rates));
   await page.fire('create-invoice'); await page.settle();
-  const first = page.fire('invoice-download-json'); await page.reply({ sequence: 7 }); await first;
+  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  await page.fire('create-invoice'); await page.settle();
   page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); await page.settle();
-  const second = page.fire('invoice-download-json');
+  const second = page.fire('invoice-print');
   assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 8 }); await second;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
@@ -309,8 +312,8 @@ test('changing an invoice control invalidates its reserved sequence', async () =
 test('invoice client projects select independently from the report project facet', async () => {
   const records = [record('alice'), record('alice', 'other.com')];
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
-  const settings = { ...invoiceSettings, clients: [{ ...invoiceSettings.clients[0], projects: ['Main'] }] };
-  const page = await loaded(result(records, rates, settings));
+  const response = result(records, rates); response.billing.projects[1].client = '';
+  const page = await loaded(response);
   assert.equal(page.selection('projects'), 'Main,Other');
   await page.fire('create-invoice'); await page.settle();
   page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
@@ -329,13 +332,14 @@ test('invoice project changes rebuild the preview and reset the reserved number'
   await page.fire('create-invoice'); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
-  const first = page.fire('invoice-download-json'); await page.reply({ sequence: 7 }); await first;
+  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  await page.fire('create-invoice'); await page.settle();
   const other = page.nodes.get('invoice-projects').children.flatMap(label => label.children).find(node => node.value === 'Other');
   other.checked = false; await other.listeners.change(); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
   assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
   assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 1 of 2 projects');
-  const second = page.fire('invoice-download-json');
+  const second = page.fire('invoice-print');
   assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 8 }); await second;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
@@ -345,28 +349,49 @@ test('foreign project warnings are non-blocking and clear with the selection', a
   const records = [record('alice'), record('alice', 'other.com')];
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
   const settings = { ...invoiceSettings, clients: [
-    { ...invoiceSettings.clients[0], name: 'Acme Inc', projects: ['Main'] },
-    { ...invoiceSettings.clients[0], id: 'globex', name: 'Globex GmbH', projects: ['Other'] },
+    { ...invoiceSettings.clients[0], name: 'Acme Inc' },
+    { ...invoiceSettings.clients[0], id: 'globex', name: 'Globex GmbH' },
   ] };
-  const page = await loaded(result(records, rates, settings));
+  const response = result(records, rates, settings); response.billing.projects[0].client = 'client-1'; response.billing.projects[1].client = 'globex';
+  const page = await loaded(response);
   await page.fire('create-invoice'); await page.settle();
   page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
   const other = page.nodes.get('invoice-projects').children.flatMap(label => label.children).find(node => node.value === 'Other');
   other.checked = true; await other.listeners.change(); await page.settle();
   assert.equal(page.nodes.get('invoice-project-warning').textContent, 'This invoice includes work from projects assigned to Globex GmbH: Other.');
   assert.equal(page.nodes.get('invoice-feedback').textContent, '');
-  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
+  for (const id of ['invoice-print']) assert.equal(page.nodes.get(id).disabled, false);
   other.checked = false; await other.listeners.change(); await page.settle();
   assert.equal(page.nodes.get('invoice-project-warning').textContent, '');
 });
 
-test('stale client project links are shown beside the invoice project control', async () => {
+test('unassigned and missing client projects stay unchecked and do not warn', async () => {
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
-  const settings = { ...invoiceSettings, clients: [{ ...invoiceSettings.clients[0], projects: ['Deleted project'] }] };
-  const page = await loaded(result([record('alice')], rates, settings));
+  const response = result([record('alice'), record('alice', 'other.com')], rates); response.billing.projects[0].client = ''; response.billing.projects[1].client = 'missing';
+  const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
+  assert.equal(page.invoiceSelection(), '');
+  assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 0 of 2 projects');
+  for (const input of page.nodes.get('invoice-projects').children.flatMap(label => label.children).filter(node => node.type === 'checkbox')) {
+    input.checked = true; await input.listeners.change(); await page.settle();
+  }
+  assert.equal(page.nodes.get('invoice-project-warning').textContent, '');
+});
+
+test('a renamed catch-all is selected for its client', async () => {
+  const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
+  const response = result([record('alice')], rates); response.billing.projects = []; response.billing.otherProjectName = 'Work'; response.billing.otherProjectClient = 'client-1';
+  const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-client').value = 'client-1'; await page.fire('invoice-client', 'change'); await page.settle();
+  assert.equal(page.invoiceSelection(), 'Work');
+  assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 1 of 1 projects');
+  assert.equal(page.nodes.get('invoice-project-warning').textContent, '');
+  page.nodes.get('invoice-dialog').close();
+  const refresh = page.context.refreshProjectDefinitions();
+  await page.reply({ ...response.billing, otherProjectClient: '' }); await refresh;
   await page.fire('create-invoice'); await page.settle();
-  assert.equal(page.nodes.get('invoice-project-warning').textContent, 'Client Client One lists a project that no longer exists: Deleted project.');
-  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
+  assert.equal(page.invoiceSelection(), '');
+  assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 0 of 1 projects');
 });
 
 test('invoice exchange failure is blocking and never leaves a partial preview', async () => {
@@ -383,7 +408,7 @@ test('invoice exchange failure is blocking and never leaves a partial preview', 
   await page.reply(new Error('Exchange service unavailable')); await opening;
   assert.equal(page.nodes.get('invoice-feedback').textContent, 'Exchange service unavailable');
   assert.equal(page.nodes.get('invoice-preview').children.length, 0);
-  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, true);
+  for (const id of ['invoice-print']) assert.equal(page.nodes.get(id).disabled, true);
 });
 
 test('a sole invoice client defaults once and an explicit No client survives reopening', async () => {
@@ -410,26 +435,26 @@ test('a single source currency fetches exchange rates for the selected client cu
   await page.reply({ rates: { [oldRange.startDate]: { USD: 0.9 } } }, request);
   assert.equal(page.nodes.get('invoice-feedback').textContent, '');
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /90.00 EUR90.00 EUR/);
-  for (const id of ['invoice-print', 'invoice-download-csv', 'invoice-download-json']) assert.equal(page.nodes.get(id).disabled, false);
+  for (const id of ['invoice-print']) assert.equal(page.nodes.get(id).disabled, false);
 });
 
-for (const change of ['close', 'composition']) test(`a reservation response after ${change} survives the failed export and is reused`, async () => {
+for (const change of ['close', 'composition']) test(`a reservation response after ${change} survives the failed print and is reused`, async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
-  await page.fire('invoice-download-json');
+  const first = page.fire('invoice-print');
   const reserve = page.requests.at(-1);
   if (change === 'close') await page.fire('invoice-close');
   else { page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); }
-  await page.reply({ sequence: 9 }, reserve);
-  assert.equal(page.downloads.length, 0);
+  await page.reply({ sequence: 9 }, reserve); await first;
+  assert.equal(page.prints.length, 0);
   assert.match(page.nodes.get('invoice-feedback').textContent, /Invoice changed/);
   if (change === 'close') await page.fire('create-invoice');
-  await page.settle(); await page.fire('invoice-download-json'); await page.settle();
+  await page.settle(); await page.fire('invoice-print'); await page.settle();
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1);
-  assert.equal(page.downloads.length, 1);
-  assert.equal(JSON.parse(await page.blobs.at(-1).text()).sequence, 9);
-  page.nodes.get('invoice-due-days').value = '14'; await page.fire('invoice-due-days', 'change'); await page.settle();
-  await page.fire('invoice-download-json'); await page.reply({ sequence: 10 });
+  assert.deepEqual(page.prints, ['invoice-INV-2026-0009']);
+  await page.fire('create-invoice'); await page.settle();
+  page.nodes.get('invoice-issue-date').value = '2026-09-14'; await page.fire('invoice-issue-date', 'change'); await page.settle();
+  const next = page.fire('invoice-print'); await page.reply({ sequence: 10 }); await next;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
 });
 
@@ -437,9 +462,10 @@ test('invoice composition projects billing inputs without serializing record met
   const entry = { ...record('alice'), id: 'record-1', metadata: { toJSON() { assert.fail('invoice composition must not serialize metadata'); } } };
   const page = await loaded(result([entry], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
-  await page.fire('invoice-download-json'); await page.reply({ sequence: 7 });
+  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  await page.fire('create-invoice'); await page.settle();
   page.nodes.get('people-search').value = 'ali'; await page.fire('people-search', 'input'); await page.settle();
-  await page.fire('invoice-download-json'); await page.settle();
+  await page.fire('invoice-print'); await page.settle();
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1);
   const original = page.context.invoiceCompositionKey([entry]);
   for (const patch of [{ id: 'record-2' }, { user: 'bob' }, { entryDate: '2026-08-18' }, { durationSeconds: 60 }]) {
@@ -450,4 +476,80 @@ test('invoice composition projects billing inputs without serializing record met
     const before = page.context.invoiceCompositionKey([entry]); vm.runInContext(update, page.context);
     assert.notEqual(page.context.invoiceCompositionKey([entry]), before);
   }
+});
+
+test('invoice names the billed range and uses refreshed payment days on the next preview', async () => {
+  const response = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
+  const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-17 to 2026-08-23');
+  page.nodes.get('invoice-issue-date').value = '2026-09-01'; await page.fire('invoice-issue-date', 'change'); await page.settle();
+  const refresh = page.context.refreshProjectDefinitions(); await page.reply({ ...response.billing, invoicing: { ...invoiceSettings, paymentTermsDays: 45 } }); await refresh; await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Due2026-10-16/);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Payment terms: Net 45/);
+  const pending = page.load(newRange); await page.reply(response); await pending; await page.settle();
+  assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-24 to 2026-08-30');
+});
+
+test('date presets use local calendar boundaries and reload like manual date changes', async () => {
+  const page = await loaded();
+  vm.runInContext(`const NativeDate = Date; Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [2028, 2, 1, 0, 30])); } };`, page.context);
+  for (const [preset, startDate, endDate] of [['this-month', '2028-03-01', '2028-03-31'], ['last-month', '2028-02-01', '2028-02-29'], ['last-7-days', '2028-02-24', '2028-03-01'], ['last-30-days', '2028-02-01', '2028-03-01']]) {
+    page.fire(`preset-${preset}`); await page.settle();
+    assert.equal(page.nodes.get('start-date').value, startDate); assert.equal(page.nodes.get('end-date').value, endDate);
+    assert.equal(page.nodes.get('custom-period').hidden, false);
+    const request = page.requests.at(-1).message; assert.equal(request.type, 'LOAD_REPORT');
+    assert.equal(request.payload.startDate, startDate); assert.equal(request.payload.endDate, endDate);
+    await page.reply(result());
+  }
+  page.nodes.get('start-date').value = '2028-02-02'; page.fire('start-date', 'change'); await page.settle();
+  assert.equal(page.requests.at(-1).message.payload.startDate, '2028-02-02');
+  await page.reply(result());
+});
+
+test('additional line controls rebuild totals, reject invalid amounts, remove rows and enforce the limit', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle(); await page.fire('invoice-add-line'); await page.settle();
+  const rows = page.nodes.get('invoice-extra-lines');
+  const [descriptionLabel, amountLabel, remove] = rows.children[0].children, description = descriptionLabel.children[0], amount = amountLabel.children[0];
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  description.value = ' Materials '; await description.listeners.change(); amount.value = '25.50'; await amount.listeners.change(); await page.settle();
+  const document = page.nodes.get('invoice-preview').children[0], table = document.children.find(node => node.tagName === 'table');
+  assert.equal(page.textOf(table.children[1].children[1]), 'Materials25.50 EUR');
+  assert.equal(table.children[1].children[1].children[1].textContent, '');
+  assert.equal(table.children[1].children[1].children[2].textContent, '');
+  assert.match(page.textOf(table), /Subtotal145.50 EURVAT 20%29.10 EURTotal174.60 EUR/);
+  amount.value = '-5.25'; await amount.listeners.change(); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal114.75 EURVAT 20%22.95 EURTotal137.70 EUR/);
+  amount.value = '1.001'; await amount.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-preview').children.length, 0);
+  await remove.listeners.click(); await page.settle();
+  assert.equal(rows.children.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, false);
+  for (let index = 0; index < 21; index++) await page.fire('invoice-add-line');
+  assert.equal(rows.children.length, 20); assert.equal(page.nodes.get('invoice-add-line').disabled, true);
+});
+
+test('extra lines stay in the target currency when time is converted and survive reopening', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle(); await page.fire('invoice-add-line');
+  const row = page.nodes.get('invoice-extra-lines').children[0], description = row.children[0].children[0], amount = row.children[1].children[0];
+  description.value = 'Charge'; description.listeners.change(); amount.value = '25.50'; amount.listeners.change(); await page.settle();
+  page.nodes.get('invoice-currency').value = 'USD'; await page.fire('invoice-currency', 'change'); await page.settle();
+  assert.equal(page.requests.at(-1).message.type, 'GET_EXCHANGE_RATES');
+  await page.reply({ rates: { [oldRange.startDate]: { EUR: 2 } } });
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Charge25.50 USDSubtotal265.50 USDVAT 20%53.10 USDTotal318.60 USD/);
+  await page.fire('invoice-close'); await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-extra-lines').children[0].children[1].children[0].value, '25.50');
+});
+
+test('an open invoice blocks printing during a period reload and ignores stale reservations', async () => {
+  const response = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
+  const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
+  const printing = page.fire('invoice-print'), reserve = page.requests.at(-1), loading = page.load(newRange), load = page.requests.at(-1);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  await page.reply({ sequence: 7 }, reserve); await printing;
+  assert.equal(page.prints.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, true);
+  await page.reply(response, load); await loading; await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-24 to 2026-08-30');
 });
