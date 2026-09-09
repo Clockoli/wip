@@ -225,3 +225,11 @@ test('legacy payment notes append once as an exact line and respect the notes li
   assert.throws(() => normalizeInvoicingSettings({ notes: 'a\n' + 'b'.repeat(999) }), /notes/);
   assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'a\nb' } }), /name/);
 });
+
+test('an invoicing address keeps its line breaks while other party fields reject control characters', () => {
+  const address = '12 Karaiskaki\nNicosia, Cyprus';
+  const invoicing = normalizeInvoicingSettings({ seller: { name: 'Manticore Software LTD', address } });
+  assert.equal(invoicing.seller.address, address);
+  assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'Bad\nName' } }), /Invalid invoicing name/);
+  assert.throws(() => normalizeInvoicingSettings({ seller: { address: 'Tabbed\taddress' } }), /Invalid invoicing address/);
+});

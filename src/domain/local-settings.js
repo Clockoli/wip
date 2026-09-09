@@ -136,7 +136,8 @@ function invoicingText(value, label, limit, multiline = false) {
 function invoicingParty(value, client = false) {
   const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency'] : [])];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing party has unexpected fields');
-  return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200)]));
+  // The address is captured in a textarea and rendered with white-space:pre-line, so it keeps its line breaks.
+  return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200, key === 'address')]));
 }
 
 export function normalizeInvoicingSettings(value = {}) {
