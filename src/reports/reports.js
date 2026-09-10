@@ -310,12 +310,16 @@ function renderInvoiceExtraLines() {
 
 function prospectiveInvoiceSequence() { return state.invoiceReservedSequence ?? state.billing.invoicing.nextNumber; }
 
+function showInvoiceEmpty() {
+  $('invoice-preview').replaceChildren(invoiceNode('p', 'invoice-preview-empty', 'Choose a client and currency to preview the invoice.'));
+}
+
 function showInvoiceLoading() {
   $('invoice-feedback').textContent = ''; $('invoice-preview').replaceChildren(invoiceNode('p', 'invoice-loading', 'Loading exchange rates…')); setInvoiceActionsAvailable(false);
 }
 
 function showInvoiceError(error) {
-  state.invoice = null; state.invoiceExchangeRates = null; $('invoice-preview').replaceChildren();
+  state.invoice = null; state.invoiceExchangeRates = null; showInvoiceEmpty();
   $('invoice-feedback').textContent = error?.message || String(error || 'Could not build invoice.'); setInvoiceActionsAvailable(false);
 }
 
@@ -323,7 +327,7 @@ async function rebuildInvoicePreview() {
   if (!state.range || state.loading) return;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
-  $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null;
+  $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null; showInvoiceEmpty();
   try {
     let exchangeRates = null;
     const targetCurrency = $('invoice-currency').value;

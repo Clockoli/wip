@@ -284,6 +284,8 @@ test('settings exposes browser-only invoicing parties, numbering and terms', () 
   assert.match(script, /function addClientRow\(/);
   assert.match(script, /function invoicingPayload\(\)/);
   assert.match(script, /return \{ rates, invoicing: invoicingPayload\(\) \}/);
+  for (const id of ['seller-address', 'invoice-notes']) assert.match(source, new RegExp(`id="${id}"[^>]*rows="1"`));
+  assert.match(styles, /#seller-address,#invoice-notes\{[^}]*max-height:calc\(/);
 });
 
 test('setup docs describe the shipped three-step flow and current settings actions', async () => {

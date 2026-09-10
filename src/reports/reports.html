@@ -89,12 +89,16 @@
         </div>
       </div>
       <div class="invoice-additional-control" role="group" aria-labelledby="invoice-additional-label">
-        <div class="section-heading"><span id="invoice-additional-label">Additional lines</span><button id="invoice-add-line" class="button secondary" type="button">Add line</button></div>
+        <div class="section-heading"><span id="invoice-additional-label">Additional lines</span></div>
         <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
         <div id="invoice-extra-lines"></div>
+        <button id="invoice-add-line" class="button secondary" type="button">Add line</button>
       </div>
       <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
-      <div id="invoice-preview" class="invoice-preview" aria-live="polite"></div>
+      <section class="invoice-preview-region" aria-labelledby="invoice-preview-title">
+        <div class="section-heading invoice-preview-heading"><h3 id="invoice-preview-title">Preview</h3></div>
+        <div id="invoice-preview" class="invoice-preview" aria-live="polite"><p class="invoice-preview-empty">Choose a client and currency to preview the invoice.</p></div>
+      </section>
       <div class="invoice-actions">
         <button id="invoice-print" class="button primary" type="button" disabled>Print / Save as PDF</button>
       </div>

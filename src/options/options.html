@@ -210,7 +210,7 @@
         <div class="invoicing-party-grid">
           <label>Name<input id="seller-name" maxlength="200" autocomplete="organization"></label>
           <label>Email<input id="seller-email" type="email" maxlength="200" autocomplete="email"></label>
-          <label class="wide-field">Address<textarea id="seller-address" maxlength="1000" rows="3" autocomplete="street-address"></textarea></label>
+          <label class="wide-field">Address<textarea id="seller-address" maxlength="1000" rows="1" autocomplete="street-address"></textarea></label>
           <label>Tax ID<input id="seller-tax-id" maxlength="200" autocomplete="off"></label>
         </div>
       </fieldset>
@@ -224,7 +224,7 @@
           <label>Number format<input id="invoice-number-format" maxlength="64" required autocomplete="off"><span class="help">Available tokens: {YYYY} {MM} {NNNN}. The format must include {NNNN}.</span></label>
           <label>Payment terms (days)<input id="invoice-payment-terms" type="number" min="0" max="365" step="1" required aria-describedby="invoice-payment-terms-help"><span id="invoice-payment-terms-help" class="help">Due date is the issue date plus this many days.</span></label>
           <label>Tax percent<input id="invoice-tax-percent" type="number" min="0" max="100" step="0.01" required></label>
-          <label class="wide-field">Footer notes<textarea id="invoice-notes" maxlength="1000" rows="3"></textarea></label>
+          <label class="wide-field">Footer notes<textarea id="invoice-notes" maxlength="1000" rows="1"></textarea></label>
         </div>
       </fieldset>
       <div class="actions">

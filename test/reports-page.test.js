@@ -100,6 +100,11 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(styles, /body\.printing-invoice \.print-timesheet\{display:none!important\}/);
   assert.match(styles, /body\.printing-invoice \.print-invoice\{display:block\}/);
   assert.match(styles, /dialog\{display:none!important\}/);
+  const additional = html.slice(html.indexOf('class="invoice-additional-control"'), html.indexOf('id="invoice-feedback"'));
+  assert.ok(additional.indexOf('Additional lines') < additional.indexOf('id="invoice-extra-lines"'));
+  assert.ok(additional.indexOf('id="invoice-extra-lines"') < additional.indexOf('id="invoice-add-line"'));
+  assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
+  assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
 });
 
 test('invoice controls name the billing period and keep only print exports', () => {

@@ -3,6 +3,8 @@ import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } fr
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 
 const $ = id => document.getElementById(id);
+const SAVE_CONFIRMATION_MS = 2000;
+const saveButtonStates = new WeakMap();
 let state = null;
 let repositories = [];
 let selectedRepository = null;
@@ -28,6 +30,7 @@ let localPreferences = null;
 let recoveryAction = null;
 let settingsConnected = null;
 let backupReminderShown = false;
+let invoicingSaveInFlight = false;
 
 function message(text, kind = '') {
   $('message').textContent = text;
@@ -37,6 +40,34 @@ function message(text, kind = '') {
 function formFeedback(id, text, kind = '') {
   $(id).textContent = text;
   $(id).className = `form-feedback ${kind}`.trim();
+}
+
+function saveButtonFeedback(button, outcome = 'saving', operation = null) {
+  if (outcome === 'saving') {
+    const previous = saveButtonStates.get(button);
+    if (previous) { clearTimeout(previous.timer); button.textContent = previous.label; button.disabled = previous.disabled; saveButtonStates.delete(button); }
+    const next = { button, label: button.textContent, disabled: button.disabled, timer: null };
+    button.disabled = true; saveButtonStates.set(button, next); return next;
+  }
+  if (!operation || saveButtonStates.get(operation.button) !== operation) return;
+  saveButtonStates.delete(operation.button); clearTimeout(operation.timer);
+  operation.button.textContent = operation.label; operation.button.disabled = operation.disabled;
+  if (outcome !== 'saved') return;
+  const next = { button, label: button.textContent, disabled: button.disabled, timer: null };
+  button.textContent = 'Saved'; button.disabled = true; saveButtonStates.set(button, next);
+  next.timer = setTimeout(() => {
+    if (saveButtonStates.get(button) !== next) return;
+    button.textContent = next.label; button.disabled = next.disabled; saveButtonStates.delete(button);
+  }, SAVE_CONFIRMATION_MS);
+}
+
+function autoGrowTextarea(textarea) {
+  if (!textarea.scrollHeight) return;
+  textarea.style.height = 'auto'; textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
+function wireAutoGrow(textarea) {
+  textarea.addEventListener('input', () => autoGrowTextarea(textarea)); autoGrowTextarea(textarea);
 }
 
 function send(request) {
@@ -543,7 +574,7 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
   const name = document.createElement('input'); name.className = 'project-name'; name.required = true; name.maxLength = 80; name.autocomplete = 'off'; name.placeholder = 'work'; name.value = project.name || ''; nameLabel.append(name);
   const substringsLabel = document.createElement('label'); substringsLabel.textContent = 'URL substrings';
-  const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = 3; substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
+  const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = 1; substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
   const clientLabel = document.createElement('label'); clientLabel.textContent = 'Client';
   const client = document.createElement('select'); client.className = 'project-client';
   const selected = document.createElement('option'); selected.value = project.client || ''; client.append(selected); client.value = selected.value; clientLabel.append(client);
@@ -552,7 +583,7 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '✕'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
   remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
-  actions.append(up, down); row.append(nameLabel, substringsLabel, clientLabel, actions, remove); $('projects-list').append(row); refreshProjectOrderControls(); refreshProjectClients();
+  actions.append(up, down); row.append(nameLabel, substringsLabel, clientLabel, actions, remove); $('projects-list').append(row); wireAutoGrow(substrings); refreshProjectOrderControls(); refreshProjectClients();
 }
 
 function refreshProjectOrderControls() {
@@ -608,6 +639,7 @@ function renderInvoicingPreferences(preferences) {
   refreshProjectClients();
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
   $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
+  autoGrowTextarea($('seller-address')); autoGrowTextarea($('invoice-notes'));
 }
 
 function renderLocalPreferences(preferences) {
@@ -885,7 +917,7 @@ $('recovery-action').addEventListener('click', () => {
 $('display-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!state?.config) return;
-  $('save-display').disabled = true;
+  const button = $('save-display'), operation = saveButtonFeedback(button);
   formFeedback('display-feedback', 'Saving display settings…');
   try {
     const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
@@ -897,34 +929,44 @@ $('display-form').addEventListener('submit', async event => {
     } });
     state.config = result.config;
     renderDisplayPreferences(result.preferences);
-    formFeedback('display-feedback', 'Display settings saved.', 'success');
-  } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); }
-  finally { $('save-display').disabled = !state?.config; }
+    formFeedback('display-feedback', ''); saveButtonFeedback(button, 'saved', operation);
+  } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
 
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
 $('add-client').addEventListener('click', () => addClientRow());
 $('billing-form').addEventListener('submit', async event => {
-  event.preventDefault(); $('save-billing').disabled = true; formFeedback('billing-feedback', 'Saving billable rates…');
+  event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
     renderBillingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
-    formFeedback('billing-feedback', 'Billable rates saved locally.', 'success');
-  } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); }
-  finally { $('save-billing').disabled = false; }
+    formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
+  } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
 $('invoicing-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if ($('save-invoicing').disabled) return;
-  for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
+  if (invoicingSaveInFlight) return;
+  const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : $('save-invoicing');
+  const clientId = clicked.className.split(' ').includes('save-client') ? clicked.parentNode.dataset.clientId : '';
+  const operation = saveButtonFeedback(clicked); invoicingSaveInFlight = true;
+  for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
+  let confirmationButton = null; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
     renderInvoicingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
-    formFeedback('invoicing-feedback', 'Invoicing settings saved locally.', 'success');
-  } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); }
-  finally { for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = false; }
+    confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
+    formFeedback('invoicing-feedback', ''); saveButtonFeedback(confirmationButton, 'saved', operation);
+  } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }
+  finally {
+    invoicingSaveInFlight = false;
+    for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) if (button !== confirmationButton && !saveButtonStates.has(button)) button.disabled = false;
+  }
 });
+for (const [form, feedback] of [['display-form', 'display-feedback'], ['billing-form', 'billing-feedback'], ['invoicing-form', 'invoicing-feedback']]) {
+  $(form).addEventListener('input', () => formFeedback(feedback, ''));
+}
+for (const id of ['seller-address', 'invoice-notes']) wireAutoGrow($(id));
 $('export-settings').addEventListener('click', async () => {
   $('export-settings').disabled = true;
   try {

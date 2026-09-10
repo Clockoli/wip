@@ -407,7 +407,7 @@ test('invoice exchange failure is blocking and never leaves a partial preview', 
   assert.equal(page.requests.at(-1).message.type, 'GET_EXCHANGE_RATES');
   await page.reply(new Error('Exchange service unavailable')); await opening;
   assert.equal(page.nodes.get('invoice-feedback').textContent, 'Exchange service unavailable');
-  assert.equal(page.nodes.get('invoice-preview').children.length, 0);
+  assert.equal(page.textOf(page.nodes.get('invoice-preview')), 'Choose a client and currency to preview the invoice.');
   for (const id of ['invoice-print']) assert.equal(page.nodes.get(id).disabled, true);
 });
 
@@ -522,7 +522,7 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal114.75 EURVAT 20%22.95 EURTotal137.70 EUR/);
   amount.value = '1.001'; await amount.listeners.change(); await page.settle();
   assert.equal(page.nodes.get('invoice-print').disabled, true);
-  assert.equal(page.nodes.get('invoice-preview').children.length, 0);
+  assert.equal(page.textOf(page.nodes.get('invoice-preview')), 'Choose a client and currency to preview the invoice.');
   await remove.listeners.click(); await page.settle();
   assert.equal(rows.children.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, false);
   for (let index = 0; index < 21; index++) await page.fire('invoice-add-line');

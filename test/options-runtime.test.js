@@ -44,24 +44,26 @@ function element(tagName = 'div') {
 
 function harness({ reply = () => ({}), confirm = () => false } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
-  const requests = [];
+  for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
+  const requests = [], timers = [];
   const context = vm.createContext({
     document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
-    setTimeout: () => 1, clearTimeout() {}, queueMicrotask: callback => callback(),
+    setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings,
     ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { sendMessage(request, callback) {
       requests.push(request);
       const result = reply(request);
+      if (result && typeof result.then === 'function') { result.then(value => callback({ ok: true, data: value }), error => callback({ ok: false, error: { message: error.message } })); return; }
       callback(result instanceof Error ? { ok: false, error: { message: result.message } } : { ok: true, data: result });
     } } },
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
   return {
-    nodes, requests, context,
+    nodes, requests, timers, context,
     render(state) { context.nextState = state; vm.runInContext('state = nextState; renderState();', context); },
-    submit(id) { return nodes.get(id).listeners.submit({ preventDefault() {} }); },
+    submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
   };
 }
 
@@ -82,12 +84,12 @@ test('secondary settings collapse only on disconnect and remain reachable across
   assert.equal(page.nodes.get('connected').hidden, true);
 });
 
-for (const [form, requestType, success] of [
-  ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Display settings saved.'],
-  ['billing', 'SAVE_BILLING_SETTINGS', 'Billable rates saved locally.'],
-  ['invoicing', 'SAVE_BILLING_SETTINGS', 'Invoicing settings saved locally.'],
+for (const [form, requestType, originalLabel] of [
+  ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Save display settings'],
+  ['billing', 'SAVE_BILLING_SETTINGS', 'Save billable rates'],
+  ['invoicing', 'SAVE_BILLING_SETTINGS', 'Save invoicing settings'],
 ]) {
-  test(`${form} save confirms beside its button, reports errors there and restores the button`, async () => {
+  test(`${form} save confirms on its button for two seconds and keeps errors beside it`, async () => {
     let fail = false;
     const page = harness({ reply(request) {
       if (request.type === requestType) {
@@ -100,18 +102,101 @@ for (const [form, requestType, success] of [
     page.context.renderLocalPreferences(preferences);
     page.render(connectedState);
     await page.submit(`${form}-form`);
-    assert.equal(page.nodes.get(`${form}-feedback`)?.textContent, success);
-    assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+    assert.equal(page.nodes.get(`${form}-feedback`)?.textContent, '');
     assert.equal(page.nodes.get('message').textContent, '');
+    assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
+    assert.equal(page.nodes.get(`save-${form}`).disabled, true);
+    assert.equal(page.timers.at(-1).delay, 2000);
+    page.timers.at(-1).callback();
+    assert.equal(page.nodes.get(`save-${form}`).textContent, originalLabel);
     assert.equal(page.nodes.get(`save-${form}`).disabled, false);
     fail = true;
+    const timerCount = page.timers.length;
     await page.submit(`${form}-form`);
     assert.equal(page.nodes.get(`${form}-feedback`).textContent, 'Save rejected');
     assert.match(page.nodes.get(`${form}-feedback`).className, /error/);
     assert.equal(page.nodes.get('message').textContent, '');
+    assert.equal(page.nodes.get(`save-${form}`).textContent, originalLabel);
     assert.equal(page.nodes.get(`save-${form}`).disabled, false);
+    assert.equal(page.timers.length, timerCount);
   });
 }
+
+test('client-card save confirms on the clicked replacement button and stale timers cannot restore a newer save', async () => {
+  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? preferences : {} });
+  page.context.renderLocalPreferences(preferences);
+  const first = page.nodes.get('clients-list').querySelector('.save-client');
+  await page.submit('invoicing-form', first);
+  const replacement = page.nodes.get('clients-list').querySelector('.save-client');
+  assert.notEqual(replacement, first);
+  assert.equal(replacement.textContent, 'Saved'); assert.equal(replacement.disabled, true);
+  const stale = page.timers.at(-1);
+  replacement.disabled = false;
+  await page.submit('invoicing-form', replacement);
+  const newest = page.nodes.get('clients-list').querySelector('.save-client'), current = page.timers.at(-1);
+  stale.callback();
+  assert.equal(newest.textContent, 'Saved'); assert.equal(newest.disabled, true);
+  current.callback();
+  assert.equal(newest.textContent, 'Save'); assert.equal(newest.disabled, false);
+});
+
+test('invoicing save blocks every section save button and ignores concurrent submits until completion', async () => {
+  const clients = [preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Second client' }];
+  const saved = { ...preferences, invoicing: { ...preferences.invoicing, clients } };
+  let finishSave;
+  const pendingSave = new Promise(resolve => { finishSave = resolve; });
+  const page = harness({ reply: request => request.type === 'SAVE_BILLING_SETTINGS' ? pendingSave : saved });
+  page.context.renderLocalPreferences(saved);
+  const buttons = page.nodes.get('clients-list').querySelectorAll('.save-client'), clicked = buttons[0];
+  const first = page.submit('invoicing-form', clicked);
+  assert.equal(page.nodes.get('save-invoicing').disabled, true);
+  for (const button of buttons) assert.equal(button.disabled, true);
+  await page.submit('invoicing-form', buttons[1]);
+  assert.equal(page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').length, 1);
+  finishSave({}); await first;
+  const replacements = page.nodes.get('clients-list').querySelectorAll('.save-client');
+  assert.equal(page.nodes.get('save-invoicing').disabled, false);
+  assert.equal(replacements[0].textContent, 'Saved'); assert.equal(replacements[0].disabled, true);
+  assert.equal(replacements[1].textContent, 'Save'); assert.equal(replacements[1].disabled, false);
+});
+
+test('restoring invoicing siblings does not clobber another active Saved confirmation', async () => {
+  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? preferences : {} });
+  page.context.renderLocalPreferences(preferences);
+  await page.submit('invoicing-form');
+  const sectionButton = page.nodes.get('save-invoicing'), sectionTimer = page.timers.at(-1);
+  assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
+  await page.submit('invoicing-form', page.nodes.get('clients-list').querySelector('.save-client'));
+  const clientButton = page.nodes.get('clients-list').querySelector('.save-client');
+  assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
+  assert.equal(clientButton.textContent, 'Saved'); assert.equal(clientButton.disabled, true);
+  sectionTimer.callback();
+  assert.equal(sectionButton.textContent, 'Save invoicing settings'); assert.equal(sectionButton.disabled, false);
+  assert.equal(clientButton.textContent, 'Saved'); assert.equal(clientButton.disabled, true);
+});
+
+test('editing any settings section clears persistent feedback and stored textarea content is auto-sized again on render', () => {
+  const page = harness();
+  for (const form of ['display', 'billing', 'invoicing']) {
+    page.nodes.get(`${form}-feedback`).textContent = 'Old feedback';
+    page.nodes.get(`${form}-form`).listeners.input();
+    assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
+  }
+  const address = page.nodes.get('seller-address'), notes = page.nodes.get('invoice-notes');
+  address.scrollHeight = 48; notes.scrollHeight = 72;
+  page.context.renderInvoicingPreferences(preferences);
+  assert.equal(address.style.height, '48px'); assert.equal(notes.style.height, '72px');
+  address.scrollHeight = 96; address.listeners.input();
+  assert.equal(address.style.height, '96px');
+});
+
+test('hidden invoicing textareas keep their height when layout reports zero scroll height', () => {
+  const page = harness(), address = page.nodes.get('seller-address'), notes = page.nodes.get('invoice-notes');
+  address.style.height = '48px'; notes.style.height = '';
+  address.scrollHeight = 0; notes.scrollHeight = 0;
+  page.context.renderInvoicingPreferences(preferences);
+  assert.equal(address.style.height, '48px'); assert.equal(notes.style.height, '');
+});
 
 for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoice counter errors and refreshes only its own fields after success`, async () => {
   let fail = true;
@@ -132,7 +217,8 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   await page.submit(`${form}-form`);
   assert.equal(page.requests.at(-1).type, 'GET_LOCAL_PREFERENCES');
   assert.equal(page.nodes.get('invoice-next-number').value, form === 'invoicing' ? '9' : '8');
-  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
+  assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
 });
 
 test('invalid billable input reports inline without sending a mutation', async () => {
@@ -180,7 +266,8 @@ test('successful display save preserves an unsaved client row and other forms wh
   page.nodes.get('projects-list').querySelector('.project-name').value = 'Renamed';
   page.nodes.get('other-project-client').value = client.dataset.clientId;
   await page.submit('display-form');
-  assert.equal(page.nodes.get('display-feedback').textContent, 'Display settings saved.');
+  assert.equal(page.nodes.get('display-feedback').textContent, '');
+  assert.equal(page.nodes.get('save-display').textContent, 'Saved');
   assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1), client);
   assert.equal(client.querySelector('.client-name').value, 'Typed client');
   assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
@@ -209,7 +296,8 @@ for (const form of ['billing', 'invoicing']) test(`${form} successful save prese
   page.nodes.get('seller-name').value = 'Draft seller'; page.nodes.get('invoice-notes').value = 'Draft notes';
   const rate = page.nodes.get('rates-list').querySelector('.rate-row'); rate.querySelector('.rate-value').value = '150';
   await page.submit(`${form}-form`);
-  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
+  assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   assert.equal(page.nodes.get('projects-list').querySelector('.project-row'), project);
   assert.equal(project.querySelector('.project-name').value, 'Draft'); assert.equal(project.querySelector('.project-substrings').value, 'draft/');
   assert.equal(project.querySelector('.project-client').value, 'client-1');
@@ -239,7 +327,8 @@ for (const form of ['billing', 'invoicing']) test(`${form} saves a typed client 
   client.querySelector('.client-name').value = 'Typed client';
   client.querySelector('.client-email').value = 'typed@example.com';
   await page.submit(`${form}-form`);
-  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
+  assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
   assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
@@ -274,7 +363,8 @@ for (const form of ['billing', 'invoicing']) test(`${form} save retains stored c
   } });
   page.context.renderLocalPreferences(stored);
   await page.submit(`${form}-form`);
-  assert.match(page.nodes.get(`${form}-feedback`).className, /success/);
+  assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
+  assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   assert.deepEqual(Array.from(stored.invoicing.clients, client => client.id), ['empty', 'unlinked']);
   assert.equal(stored.projects[0].client, stored.invoicing.clients[0].id);
   assert.equal(stored.otherProjectClient, stored.invoicing.clients[0].id);
