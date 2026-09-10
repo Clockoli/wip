@@ -24,6 +24,11 @@ export function normalizeOtherProjectClient(value = '') {
   return value;
 }
 
+export function normalizeReportingUtc(value = false) {
+  if (typeof value !== 'boolean') throw new Error('UTC reporting setting must be true or false');
+  return value;
+}
+
 function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -276,8 +281,7 @@ export function rateMinorForUser(user, rates = {}, date = '') {
   return rateForUser(user, rates, date)?.amountMinorPerHour ?? null;
 }
 
-export function billableMinorForRecord(record, rates = {}) {
-  const date = String(record?.entryDate || record?.startedAt || '').slice(0, 10);
+export function billableMinorForRecord(record, rates = {}, date = String(record?.entryDate || record?.startedAt || '').slice(0, 10)) {
   const rate = rateForUser(record?.user, rates, date);
   if (!rate) return 0;
   const seconds = Math.max(0, Number(record?.durationSeconds) || 0);
@@ -303,7 +307,7 @@ export function billableMinorTotal(records, rates = {}) {
   return totals[0]?.amountMinor ?? 0;
 }
 
-export function settingsExportText({ config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient, showQueueDiagnostics = false, exportedAt = new Date().toISOString() } = {}) {
+export function settingsExportText({ config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient, reportingUtc = false, showQueueDiagnostics = false, exportedAt = new Date().toISOString() } = {}) {
   const normalized = normalizeBillingSettings(billing);
   const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
   const { projects: normalizedProjects, otherProjectClient: normalizedOtherProjectClient } = projectClientPreferences({ projects, billing, otherProjectName: normalizedOtherProjectName, otherProjectClient });
@@ -316,7 +320,7 @@ export function settingsExportText({ config = null, billing = {}, projects = [],
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
   return `${JSON.stringify({
     format: 'clockoli-settings', version: 7, exportedAt,
-    display: { recentDays, otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
+    display: { recentDays, reportingUtc: normalizeReportingUtc(reportingUtc), otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
 }
@@ -330,7 +334,7 @@ export function parseSettingsImport(text) {
     : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
-  if ((value.version === 7 && displayKeys !== 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics') || ([5, 6].includes(value.version) && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
+  if ((value.version === 7 && !['otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics'].includes(displayKeys)) || ([5, 6].includes(value.version) && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
   if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates') || (value.version >= 6 && billingKeys !== 'invoicing,rates')) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
@@ -354,6 +358,7 @@ export function parseSettingsImport(text) {
     projects,
     otherProjectName: resolvedOtherProjectName,
     otherProjectClient,
+    reportingUtc: normalizeReportingUtc(value.display.reportingUtc),
     showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
     billing: { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) },
   };

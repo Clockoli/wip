@@ -350,3 +350,26 @@ test('repository task loading aborts and settles sibling index reads before reje
   assert.equal(saves, 0, 'task-index reads do not persist partial report caches');
   assert.equal(workAfterReject, false, 'no sibling work may continue after the parent rejects');
 });
+
+
+test('UTC ranges fetch both adjacent local months and filter candidates by UTC date', async () => {
+  const github = new FakeGitHub(); github.files.clear();
+  for (const [month, start, zone, sha, issue] of [
+    ['2026-07', '2026-08-01T01:00:00Z', 'America/New_York', A, 1],
+    ['2026-08', '2026-07-31T22:00:00Z', 'Europe/Berlin', B, 2],
+    ['2026-09', '2026-08-31T22:30:00Z', 'Europe/Berlin', C, 3],
+  ]) {
+    const value = JSON.parse(block(`https://github.com/acme/app/issues/${issue}`, start, new Date(Date.parse(start) + 3600000).toISOString()));
+    value.activity.local_date = month + (month === '2026-07' ? '-31' : '-01'); value.activity.timezone = zone;
+    github.files.set(`times/${month}/alice.jsonl`, { sha, text: monthly(JSON.stringify(value)) });
+  }
+  const service = new ReportService({ github });
+  const utc = await service.loadRepositoryRange({ startDate: '2026-08-01', endDate: '2026-08-31', reportingUtc: true });
+  assert.deepEqual(github.reads.sort(), ['times/2026-07/alice.jsonl', 'times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl']);
+  assert.deepEqual(utc.map(record => record.issue.number), [1, 3]);
+  assert.deepEqual(utc.map(record => record.entryDate), ['2026-07-31', '2026-09-01']);
+  github.reads = [];
+  const local = await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });
+  assert.deepEqual(local.map(record => record.issue.number), [2]);
+  assert.deepEqual(github.reads, ['times/2026-08/alice.jsonl']);
+});

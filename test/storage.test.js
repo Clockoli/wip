@@ -409,7 +409,7 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], otherProjectName: 'Other', otherProjectClient: '', showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);
@@ -536,4 +536,25 @@ test('a catch-all-only legacy assignment is projected without resurrecting an ex
   assert.equal((await store.getLocalPreferences()).otherProjectClient, '');
   await store.reserveInvoiceNumber();
   assert.equal((await new ChromeStore(backend).getLocalPreferences()).otherProjectClient, '');
+});
+
+
+test('UTC display preference survives restart and v7 export without overwriting other display settings', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveConfig({ owner: 'acme', repo: 'time-data', recentDays: 14 });
+  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Work', substrings: ['example.com'] }], otherProjectName: 'General', showQueueDiagnostics: true });
+  await store.updateDisplayPreferences({ reportingUtc: true });
+  const restarted = new ChromeStore(backend), preferences = await restarted.getLocalPreferences();
+  assert.equal(preferences.reportingUtc, true); assert.equal(preferences.recentDays, 14);
+  assert.equal(preferences.projects[0].name, 'Work'); assert.equal(preferences.otherProjectName, 'General'); assert.equal(preferences.showQueueDiagnostics, true);
+  const exported = await restarted.exportSettings(), parsed = JSON.parse(exported.text);
+  assert.equal(parsed.version, 7); assert.equal(parsed.display.reportingUtc, true);
+  const restored = new ChromeStore(new MemoryBackend()); await restored.importSettings(exported.text);
+  assert.equal((await restored.getLocalPreferences()).reportingUtc, true);
+  delete parsed.display.reportingUtc; await restored.importSettings(JSON.stringify(parsed));
+  assert.equal((await restored.getLocalPreferences()).reportingUtc, false);
+  await restarted.updateDisplayPreferences({ recentDays: 7 });
+  assert.equal((await restarted.getLocalPreferences()).reportingUtc, true);
+  await assert.rejects(() => restarted.updateDisplayPreferences({ reportingUtc: 'true' }), /true or false/);
+  assert.equal((await restarted.getLocalPreferences()).reportingUtc, true);
 });

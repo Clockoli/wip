@@ -102,11 +102,19 @@ Reports includes records whose Start date falls in the selected inclusive range.
 
 ### Periods
 
+Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the chosen preset name or the formatted date range.
+
+- Today and Yesterday
+- Last 7 days and Last 30 days
 - This week and Last week
 - This month and Last month
 - This quarter and Last quarter
 - This year and Last year
 - Custom Start and End dates
+
+Presets apply immediately. In the calendar, select a Start day and then an End day; choosing an earlier second day starts a new range. You can also edit the native Start and End date fields. Month navigation leaves the selection unchanged. Arrow keys move between days, Enter or Space selects, and Escape closes the picker and returns focus to the button. Clicking outside also closes it.
+
+The footer names the local time zone. Turn on UTC to include and group entries by their UTC Start date, using that same date for effective rates, exchange rates, exports, and invoices. With UTC off, reporting uses each entry's recorded local date. UTC reporting also reads the adjacent monthly files so records near a month boundary are included correctly. The switch is saved locally across reloads and is included in v7 settings exports; settings files without it use the local basis. Reporting preferences and invoices are never written to the time-data repository.
 
 ### Summary and facets
 

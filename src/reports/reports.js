@@ -1,7 +1,7 @@
 import { mountRunningStatus } from '../ui/running-status.js';
 import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
-  periodRange, reportFilename, reportPdfTitle, taskSource,
+  periodRange, recordDate, reportFilename, reportPdfTitle, taskSource,
 } from '../domain/reporting.js';
 import { buildInvoice, invoiceExchangeRequest } from '../domain/invoicing.js';
 import { billableTotalsByCurrency, clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForUser, rateMajorToMinor } from '../domain/local-settings.js';
@@ -16,6 +16,7 @@ const state = {
   allSelected: { people: false, projects: true, repositories: true }, otherProjectName: 'Other', otherProjectClient: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
   invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
+  preset: 'last-week', reportingUtc: false, calendarMonth: '', focusedDay: '', savingBasis: false,
   invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [],
 };
 
@@ -168,7 +169,7 @@ function selectedFilters() {
 function currentFilteredRecords() { return filterReportRecords(state.records, selectedFilters()); }
 
 function invoiceCompositionKey(filtered) {
-  const records = filtered.map(record => [record.id || record.taskUrl || record.issue?.url || record.url, record.user, String(record.entryDate || record.startedAt || '').slice(0, 10), record.durationSeconds]);
+  const records = filtered.map(record => [record.id || record.taskUrl || record.issue?.url || record.url, record.user, recordDate(record), record.durationSeconds]);
   return JSON.stringify({ range: state.range, filters: selectedFilters(), records, rates: state.billing.rates, invoicing: state.billing.invoicing });
 }
 
@@ -187,7 +188,7 @@ function setInvoiceAvailable(filtered) {
   const control = $('create-invoice');
   let reason = '';
   if (!filtered.length) reason = 'No entries in this period to invoice';
-  else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
+  else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, recordDate(record)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
   if (reason) control.setAttribute('title', reason); else control.removeAttribute('title');
@@ -198,7 +199,7 @@ function setInvoiceActionsAvailable(available) {
 }
 
 function invoiceCurrencies(filtered) {
-  return [...new Set(filtered.map(record => rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10))?.currency).filter(Boolean))].sort();
+  return [...new Set(filtered.map(record => rateForUser(record.user, state.billing.rates, recordDate(record))?.currency).filter(Boolean))].sort();
 }
 
 function selectedInvoiceClient() {
@@ -439,7 +440,7 @@ function renderSummary(filtered, totals) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   $('summary-time').textContent = formatClockDuration(total);
   $('summary-billable').hidden = !Object.keys(state.billing.rates).some(user => rateForUser(user, state.billing.rates));
-  const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, record.entryDate || record.startedAt.slice(0, 10))).map(record => record.user))];
+  const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, recordDate(record))).map(record => record.user))];
   $('summary-money').textContent = `${billableSummary(totals)}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
   const people = new Set(filtered.map(record => record.user)).size;
   const sources = new Set(filtered.map(record => taskSource(record))).size;
@@ -448,9 +449,84 @@ function renderSummary(filtered, totals) {
 
 function rangeLabel(range) { return `${range.startDate} — ${range.endDate}`; }
 
+const PERIOD_PRESETS = ['today', 'yesterday', 'last-7-days', 'last-30-days', 'this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year'];
+const RANGE_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const CALENDAR_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+function reportToday() { return state.reportingUtc ? new Date().toISOString().slice(0, 10) : localDateValue(); }
 function renderRangeContext() {
-  $('report-range').textContent = state.range
-    ? `Showing ${rangeLabel(state.range)}${state.pendingRange ? ` · loading ${rangeLabel(state.pendingRange)}…` : ''}` : '';
+  const range = state.range;
+  if (range) $('period-label').textContent = range.preset && range.preset !== 'custom' ? range.label
+    : `${RANGE_FORMATTER.format(new Date(`${range.startDate}T00:00:00Z`))} – ${RANGE_FORMATTER.format(new Date(`${range.endDate}T00:00:00Z`))}`;
+  $('period-trigger').setAttribute('aria-busy', String(state.loading));
+  for (const preset of PERIOD_PRESETS) {
+    if (range?.preset === preset) $(`preset-${preset}`).setAttribute('aria-current', 'true');
+    else $(`preset-${preset}`).removeAttribute('aria-current');
+  }
+}
+
+function renderReportingBasis() {
+  const zone = new Intl.DateTimeFormat(undefined, { timeZoneName: 'long' }).formatToParts(new Date()).find(part => part.type === 'timeZoneName')?.value || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  $('period-timezone').textContent = `Showing ${state.reportingUtc ? 'UTC' : zone}`;
+  $('reporting-utc').checked = state.reportingUtc;
+}
+
+function closePeriod() {
+  $('period-popover').hidden = true; $('period-trigger').setAttribute('aria-expanded', 'false'); $('period-trigger').focus();
+}
+
+function calendarDate(value, days = 0) {
+  const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10);
+}
+
+function renderCalendar(focus = false) {
+  const start = $('start-date').value, end = $('end-date').value;
+  const month = state.calendarMonth || (start || reportToday()).slice(0, 7), first = `${month}-01`;
+  state.calendarMonth = month;
+  $('calendar-month').textContent = CALENDAR_FORMATTER.format(new Date(`${first}T00:00:00Z`));
+  const offset = (new Date(`${first}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const dates = Array.from({ length: 42 }, (_, index) => calendarDate(first, index - offset));
+  if (!dates.includes(state.focusedDay)) state.focusedDay = dates.includes(start) ? start : first;
+  const grid = $('calendar-grid'); grid.replaceChildren();
+  for (let week = 0; week < 6; week++) {
+    const row = document.createElement('div'); row.className = 'calendar-row'; row.setAttribute('role', 'row');
+    for (const date of dates.slice(week * 7, week * 7 + 7)) {
+      const cell = document.createElement('div'), day = document.createElement('button');
+      cell.setAttribute('role', 'gridcell'); cell.setAttribute('aria-selected', String(date === start || date === end || Boolean(start && end && date > start && date < end)));
+      day.type = 'button'; day.className = 'calendar-day'; day.dataset.date = date; day.textContent = String(Number(date.slice(8)));
+      day.tabIndex = date === state.focusedDay ? 0 : -1; day.setAttribute('aria-label', RANGE_FORMATTER.format(new Date(`${date}T00:00:00Z`)));
+      day.classList.toggle('adjacent', date.slice(0, 7) !== month); day.classList.toggle('endpoint', date === start || date === end);
+      day.classList.toggle('in-range', Boolean(start && end && date > start && date < end));
+      day.addEventListener('click', () => selectCalendarDay(date));
+      day.addEventListener('keydown', event => {
+        const offset = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[event.key];
+        if (offset) {
+          event.preventDefault(); state.focusedDay = calendarDate(date, offset); state.calendarMonth = state.focusedDay.slice(0, 7); renderCalendar(true);
+        } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectCalendarDay(date); }
+      });
+      cell.append(day); row.append(cell);
+    }
+    grid.append(row);
+  }
+  if (focus) for (const row of grid.children) for (const cell of row.children) if (cell.children[0].tabIndex === 0) cell.children[0].focus();
+}
+
+function cancelPendingPeriod() {
+  if (!state.loading) return;
+  state.requestId += 1; state.analyticsRequestId += 1; state.loading = false; state.pendingRange = null; state.progressRequestId = null;
+  void send({ type: 'CANCEL_REPORT' }).catch(() => {});
+  hideProgress(); renderRangeContext();
+  setDownloadsAvailable(Boolean(state.range && filterReportRecords(state.records, selectedFilters()).length));
+  setInvoiceAvailable(state.range ? currentFilteredRecords() : []);
+}
+
+function selectCalendarDay(date) {
+  cancelPendingPeriod(); state.preset = 'custom'; state.focusedDay = date;
+  const start = $('start-date').value, end = $('end-date').value;
+  if (!start || end || date < start) { $('start-date').value = date; $('end-date').value = ''; }
+  else $('end-date').value = date;
+  renderCalendar(true);
+  if ($('end-date').value) void applyPeriod();
 }
 
 function renderEmptyState(filtered) {
@@ -556,8 +632,8 @@ function renderPrintableTimesheet(filtered) {
 
 function exchangeRequest(filtered, targetCurrency) {
   const datedRates = filtered.map(record => ({
-    date: record.entryDate || String(record.startedAt || '').slice(0, 10),
-    rate: rateForUser(record.user, state.billing.rates, record.entryDate || String(record.startedAt || '').slice(0, 10)),
+    date: recordDate(record),
+    rate: rateForUser(record.user, state.billing.rates, recordDate(record)),
   })).filter(item => item.rate);
   const dates = [...new Set(datedRates.map(item => item.date))].sort();
   const sourceCurrencies = [...new Set(datedRates.map(item => item.rate.currency))].sort();
@@ -623,13 +699,13 @@ function render() {
 }
 
 async function loadRange(range) {
-  const requestId = ++state.requestId;
+  const requestId = ++state.requestId, reportingUtc = state.reportingUtc;
   resetInvoiceReservation(); state.invoiceCompositionKey = '';
   state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.analyticsRequestId += 1; setError();
   setDownloadsAvailable(false); setInvoiceActionsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
   showProgress('Connecting to GitHub…', 10); $('setup').hidden = true;
   try {
-    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, requestId } });
+    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, reportingUtc, requestId } });
     if (requestId !== state.requestId) return;
     if (!result.configured) {
       $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
@@ -638,7 +714,8 @@ async function loadRange(range) {
     showProgress('Preparing report…', 80);
     const firstLoad = !state.range;
     state.range = range; state.pendingRange = null; state.loading = false; state.exchangeRates = null; state.exchangeKey = '';
-    state.records = result.records; state.sourceRepository = result.sourceRepository; state.branch = result.branch;
+    // Project the reporting date once so billing and invoice consumers share the report basis.
+    state.records = result.records.map(record => ({ ...record, entryDate: recordDate(record, reportingUtc) })); state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.billing = { rates: result.billing?.rates || {}, invoicing: invoicingSettings(result.billing) };
     state.projectDefinitions = result.billing?.projects || [];
     state.otherProjectName = result.billing?.otherProjectName || 'Other';
@@ -666,38 +743,53 @@ async function loadRange(range) {
 }
 
 function currentRange() {
-  const preset = $('period').value;
-  return periodRange(preset, localDateValue(), { startDate: $('start-date').value, endDate: $('end-date').value });
+  return { ...periodRange(state.preset, reportToday(), { startDate: $('start-date').value, endDate: $('end-date').value }), preset: state.preset };
 }
 
-async function applyPeriod() {
-  try { await loadRange(currentRange()); }
-  catch (error) { setError(error); }
+async function applyPeriod(preserveDraft = false) {
+  try {
+    if (preserveDraft && state.range && state.preset === 'custom' && (!$('start-date').value || !$('end-date').value || $('end-date').value < $('start-date').value)) {
+      const preset = state.range.preset;
+      await loadRange(preset && preset !== 'custom' ? { ...periodRange(preset, reportToday()), preset } : state.range); return;
+    }
+    const range = currentRange();
+    $('start-date').value = range.startDate; $('end-date').value = range.endDate;
+    closePeriod(); await loadRange(range);
+  } catch (error) { setError(error); }
 }
 
-$('period').addEventListener('change', () => {
-  resetInvoiceReservation(); state.invoiceCompositionKey = '';
-  const custom = $('period').value === 'custom'; $('custom-period').hidden = !custom;
-  if (custom) {
-    state.requestId += 1; state.analyticsRequestId += 1; state.loading = false; state.pendingRange = null; state.progressRequestId = null;
-    void send({ type: 'CANCEL_REPORT' }).catch(() => {});
-    hideProgress(); renderRangeContext();
-    setDownloadsAvailable(Boolean(state.range && filterReportRecords(state.records, selectedFilters()).length));
-  } else void applyPeriod();
+$('period-trigger').addEventListener('click', () => {
+  if (!$('period-popover').hidden) { closePeriod(); return; }
+  if (state.range) { $('start-date').value = state.range.startDate; $('end-date').value = state.range.endDate; state.preset = state.range.preset || 'custom'; }
+  state.calendarMonth = ($('start-date').value || reportToday()).slice(0, 7); state.focusedDay = $('start-date').value;
+  $('period-popover').hidden = false; $('period-trigger').setAttribute('aria-expanded', 'true'); renderReportingBasis(); renderCalendar(true);
 });
-$('apply-period').addEventListener('click', () => void applyPeriod());
-for (const id of ['start-date', 'end-date']) $(id).addEventListener('change', () => void applyPeriod());
-for (const preset of ['this-month', 'last-month', 'last-7-days', 'last-30-days']) {
-  $(`preset-${preset}`).addEventListener('click', () => {
-    const today = new Date(), start = new Date(today), end = new Date(today);
-    if (preset === 'this-month' || preset === 'last-month') {
-      start.setDate(1); start.setMonth(start.getMonth() - (preset === 'last-month' ? 1 : 0));
-      end.setFullYear(start.getFullYear(), start.getMonth() + 1, 0);
-    } else start.setDate(start.getDate() - (preset === 'last-7-days' ? 6 : 29));
-    $('start-date').value = localDateValue(start); $('end-date').value = localDateValue(end);
-    $('period').value = 'custom'; $('custom-period').hidden = false; void applyPeriod();
-  });
-}
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('period-popover').hidden) { event.preventDefault(); closePeriod(); }
+});
+document.addEventListener('click', event => {
+  if (!$('period-popover').hidden && !$('period-popover').contains(event.target) && !event.composedPath?.().includes($('period-popover')) && !$('period-trigger').contains(event.target)) closePeriod();
+});
+for (const [id, offset] of [['calendar-previous', -1], ['calendar-next', 1]]) $(id).addEventListener('click', () => {
+  const month = new Date(`${state.calendarMonth}-01T00:00:00Z`); month.setUTCMonth(month.getUTCMonth() + offset);
+  state.calendarMonth = month.toISOString().slice(0, 7); renderCalendar();
+});
+for (const id of ['start-date', 'end-date']) $(id).addEventListener('change', () => {
+  cancelPendingPeriod(); state.preset = 'custom';
+  if ($(id).value) { state.calendarMonth = $(id).value.slice(0, 7); state.focusedDay = $(id).value; }
+  renderCalendar();
+  if ($('start-date').value && $('end-date').value) void applyPeriod();
+});
+for (const preset of PERIOD_PRESETS) $(`preset-${preset}`).addEventListener('click', () => { state.preset = preset; void applyPeriod(); });
+$('reporting-utc').addEventListener('change', async () => {
+  const reportingUtc = $('reporting-utc').checked;
+  state.savingBasis = true; $('reporting-utc').disabled = true; cancelPendingPeriod();
+  try {
+    await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: { reportingUtc } });
+    state.reportingUtc = reportingUtc; renderReportingBasis(); await applyPeriod(true);
+  } catch (error) { renderReportingBasis(); setError(error); }
+  finally { state.savingBasis = false; $('reporting-utc').disabled = false; }
+});
 for (const id of ['metric', 'billable-currency', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
@@ -787,6 +879,9 @@ async function refreshProjectDefinitions() {
   state.projectDefinitions = preferences.projects || [];
   state.otherProjectName = preferences.otherProjectName || 'Other';
   state.otherProjectClient = preferences.otherProjectClient || '';
+  if (!state.savingBasis && state.reportingUtc !== (preferences.reportingUtc === true)) {
+    state.reportingUtc = preferences.reportingUtc === true; renderReportingBasis(); await applyPeriod(true); return;
+  }
   reconcileSelections(buildFacets(state.records, { projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName }), ['projects']);
   render();
 }
@@ -805,8 +900,15 @@ colorScheme.addEventListener('change', () => {
   if (state.range && !state.loading && !$('report-content').hidden) render();
 });
 
-const initial = periodRange('last-week', localDateValue());
-$('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
-void loadRange(initial);
+async function initializePeriod() {
+  try {
+    const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    state.reportingUtc = preferences.reportingUtc === true; renderReportingBasis();
+    const initial = { ...periodRange('last-week', reportToday()), preset: 'last-week' };
+    $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
+    await loadRange(initial);
+  } catch (error) { setError(error); }
+}
+void initializePeriod();
 
 mountRunningStatus($('running-status'), { send });

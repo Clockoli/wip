@@ -1,4 +1,4 @@
-import { invoicingSettings, normalizeBillingSettings, normalizeOtherProjectName, normalizeOtherProjectClient, normalizeProjects, projectClientPreferences, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
+import { normalizeReportingUtc, invoicingSettings, normalizeBillingSettings, normalizeOtherProjectName, normalizeOtherProjectClient, normalizeProjects, projectClientPreferences, parseSettingsImport, settingsExportText } from '../domain/local-settings.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
@@ -13,10 +13,11 @@ const LOCAL_RECENT_DAYS = 'localRecentDays';
 const PROJECTS = 'projects';
 const OTHER_PROJECT_NAME = 'otherProjectName';
 const OTHER_PROJECT_CLIENT = 'otherProjectClient';
+const REPORTING_UTC = 'reportingUtc';
 const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
-const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
+const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
 const ALL_KEYS = ['config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE)];
 
 function preservedProjectClients(values) {
@@ -366,7 +367,7 @@ export class ChromeStore {
     const otherProjectName = normalizeOtherProjectName(values[OTHER_PROJECT_NAME]);
     const { projects, otherProjectClient } = projectClientPreferences({ projects: values[PROJECTS] || [], billing: values[BILLING_SETTINGS] || {}, otherProjectName, otherProjectClient: values[OTHER_PROJECT_CLIENT] });
     const showQueueDiagnostics = values[SHOW_QUEUE_DIAGNOSTICS] === true;
-    return { recentDays, projects, otherProjectName, otherProjectClient, showQueueDiagnostics, ...billing, invoicing: invoicingSettings(billing), revision, exportedRevision, exportRecommended: revision > exportedRevision };
+    return { recentDays, projects, otherProjectName, otherProjectClient, reportingUtc: normalizeReportingUtc(values[REPORTING_UTC]), showQueueDiagnostics, ...billing, invoicing: invoicingSettings(billing), revision, exportedRevision, exportRecommended: revision > exportedRevision };
   }
 
   async saveBillingSettings(value) {
@@ -389,7 +390,17 @@ export class ChromeStore {
     });
   }
 
-  async updateDisplayPreferences({ recentDays, projects = [], otherProjectName, otherProjectClient, showQueueDiagnostics = false }) {
+  async updateDisplayPreferences(preferences) {
+    const { recentDays, projects = [], otherProjectName, otherProjectClient, reportingUtc, showQueueDiagnostics = false } = preferences;
+    if (reportingUtc !== undefined) normalizeReportingUtc(reportingUtc);
+    if (Object.keys(preferences).length === 1 && reportingUtc !== undefined) {
+      return this.backend.mutateMany(['config', REPORTING_UTC, CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
+        if (!values.config) throw new Error('Connect a repository before saving display settings');
+        const generation = generationValue(values[CONFIGURATION_GENERATION]) + 1;
+        const revision = generationValue(values[SETTINGS_REVISION]) + 1;
+        return { set: { [REPORTING_UTC]: reportingUtc, [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision }, result: generation };
+      });
+    }
     const normalized = Number(recentDays);
     const normalizedProjects = normalizeProjects(projects);
     const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
@@ -398,13 +409,13 @@ export class ChromeStore {
     if (!Number.isInteger(normalized) || normalized < 1 || normalized > 31) {
       throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
     }
-    return this.backend.mutateMany(['config', PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SHOW_QUEUE_DIAGNOSTICS, CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
+    return this.backend.mutateMany(['config', PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, CONFIGURATION_GENERATION, SETTINGS_REVISION], values => {
       if (!values.config) throw new Error('Connect a repository before saving display settings');
       const generation = (Number.isSafeInteger(values[CONFIGURATION_GENERATION]) && values[CONFIGURATION_GENERATION] >= 0
         ? values[CONFIGURATION_GENERATION] : 0) + 1;
       const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
       return {
-        set: { config: { ...values.config, recentDays: normalized }, [LOCAL_RECENT_DAYS]: normalized, [PROJECTS]: normalizedProjects, [OTHER_PROJECT_NAME]: normalizedOtherProjectName, [OTHER_PROJECT_CLIENT]: normalizedOtherProjectClient, [SHOW_QUEUE_DIAGNOSTICS]: showQueueDiagnostics === true, [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision },
+        set: { config: { ...values.config, recentDays: normalized }, [LOCAL_RECENT_DAYS]: normalized, [PROJECTS]: normalizedProjects, [OTHER_PROJECT_NAME]: normalizedOtherProjectName, [OTHER_PROJECT_CLIENT]: normalizedOtherProjectClient, [SHOW_QUEUE_DIAGNOSTICS]: showQueueDiagnostics === true, [REPORTING_UTC]: normalizeReportingUtc(reportingUtc ?? values[REPORTING_UTC]), [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision },
         result: generation,
       };
     });
@@ -419,7 +430,7 @@ export class ChromeStore {
       const storedNextNumber = invoicingSettings(values[BILLING_SETTINGS] || {}).nextNumber;
       const billing = { ...imported.billing, invoicing: { ...invoicingSettings(imported.billing), nextNumber: Math.max(invoicingSettings(imported.billing).nextNumber, storedNextNumber) } };
       const set = {
-        [BILLING_SETTINGS]: billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects, [OTHER_PROJECT_NAME]: imported.otherProjectName, [OTHER_PROJECT_CLIENT]: imported.otherProjectClient, [SHOW_QUEUE_DIAGNOSTICS]: imported.showQueueDiagnostics,
+        [BILLING_SETTINGS]: billing, [LOCAL_RECENT_DAYS]: imported.recentDays, [PROJECTS]: imported.projects, [OTHER_PROJECT_NAME]: imported.otherProjectName, [OTHER_PROJECT_CLIENT]: imported.otherProjectClient, [SHOW_QUEUE_DIAGNOSTICS]: imported.showQueueDiagnostics, [REPORTING_UTC]: imported.reportingUtc,
         [SETTINGS_REVISION]: revision, [SETTINGS_EXPORTED_REVISION]: revision, [CONFIGURATION_GENERATION]: generation,
       };
       if (values.config) set.config = { ...values.config, recentDays: imported.recentDays };
@@ -428,10 +439,10 @@ export class ChromeStore {
   }
 
   async exportSettings() {
-    const values = await this.backend.getMany(['config', BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
+    const values = await this.backend.getMany(['config', BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
     const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
     return {
-      text: settingsExportText({ config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient: values[OTHER_PROJECT_CLIENT], showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS] }),
+      text: settingsExportText({ config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient: values[OTHER_PROJECT_CLIENT], showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS], reportingUtc: values[REPORTING_UTC] }),
       revision: Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0,
     };
   }

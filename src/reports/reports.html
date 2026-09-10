@@ -23,35 +23,48 @@
   <div id="running-status"></div>
   <main>
     <section id="period-card" class="card period-card" hidden aria-labelledby="period-heading">
-      <div>
+      <div class="period-picker">
         <h2 id="period-heading">Reporting period</h2>
-        <p class="muted">Entries are included by their start date.</p>
-      </div>
-      <div class="period-controls">
-        <label class="period-select"><span>Period</span>
-          <select id="period" aria-label="Reporting period">
-            <option value="this-week">This week</option>
-            <option value="last-week" selected>Last week</option>
-            <option value="this-month">This month</option>
-            <option value="last-month">Last month</option>
-            <option value="this-quarter">This quarter</option>
-            <option value="last-quarter">Last quarter</option>
-            <option value="this-year">This year</option>
-            <option value="last-year">Last year</option>
-            <option value="custom">Custom period</option>
-          </select>
-        </label>
-        <p id="report-range" class="muted" role="status" aria-live="polite"></p>
-        <div id="custom-period" class="custom-period" hidden>
-          <label>From <input id="start-date" type="date" required></label>
-          <label>To <input id="end-date" type="date" required></label>
-          <button id="apply-period" class="button secondary" type="button">Apply</button>
-        </div>
-        <div class="period-presets" role="group" aria-label="Date range presets">
-          <button id="preset-this-month" class="button secondary" type="button">This month</button>
-          <button id="preset-last-month" class="button secondary" type="button">Last month</button>
-          <button id="preset-last-7-days" class="button secondary" type="button">Last 7 days</button>
-          <button id="preset-last-30-days" class="button secondary" type="button">Last 30 days</button>
+        <button id="period-trigger" class="button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-popover">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 0v2H2a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1h-2V0h-1v2H5V0H4ZM2 6h12v8H2V6Zm0-3h12v2H2V3Z"/></svg>
+          <span id="period-label">Last week</span>
+        </button>
+        <div id="period-popover" role="dialog" aria-labelledby="period-heading" hidden>
+          <div class="period-shortcuts" role="group" aria-label="Date range presets">
+            <button id="preset-today" class="text-button" type="button">Today</button>
+            <button id="preset-yesterday" class="text-button" type="button">Yesterday</button>
+            <button id="preset-last-7-days" class="text-button" type="button">Last 7 days</button>
+            <button id="preset-last-30-days" class="text-button" type="button">Last 30 days</button>
+            <button id="preset-this-week" class="text-button" type="button">This week</button>
+            <button id="preset-last-week" class="text-button" type="button" aria-current="true">Last week</button>
+            <button id="preset-this-month" class="text-button" type="button">This month</button>
+            <button id="preset-last-month" class="text-button" type="button">Last month</button>
+            <button id="preset-this-quarter" class="text-button" type="button">This quarter</button>
+            <button id="preset-last-quarter" class="text-button" type="button">Last quarter</button>
+            <button id="preset-this-year" class="text-button" type="button">This year</button>
+            <button id="preset-last-year" class="text-button" type="button">Last year</button>
+          </div>
+          <div class="period-calendar">
+            <div class="period-fields">
+              <label>Start <input id="start-date" type="date" required></label>
+              <label>End <input id="end-date" type="date" required></label>
+            </div>
+            <div class="calendar-heading">
+              <button id="calendar-previous" class="text-button" type="button" aria-label="Previous month">‹</button>
+              <span id="calendar-month" aria-live="polite"></span>
+              <button id="calendar-next" class="text-button" type="button" aria-label="Next month">›</button>
+            </div>
+            <div role="grid" aria-labelledby="calendar-month">
+              <div class="calendar-weekdays" role="row">
+                <span role="columnheader" aria-label="Monday">M</span><span role="columnheader" aria-label="Tuesday">T</span><span role="columnheader" aria-label="Wednesday">W</span><span role="columnheader" aria-label="Thursday">T</span><span role="columnheader" aria-label="Friday">F</span><span role="columnheader" aria-label="Saturday">S</span><span role="columnheader" aria-label="Sunday">S</span>
+              </div>
+              <div id="calendar-grid" role="rowgroup"></div>
+            </div>
+          </div>
+          <div class="period-footer">
+            <span id="period-timezone"></span>
+            <label class="period-utc"><input id="reporting-utc" type="checkbox" role="switch">UTC</label>
+          </div>
         </div>
       </div>
       <div class="export-controls" aria-label="Timesheet downloads">

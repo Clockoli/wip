@@ -1,3 +1,5 @@
+import { recordDate } from '../domain/reporting.js';
+import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { entryDateParts, normalizeTaskUrl, validatePathSegment } from '../domain/values.js';
@@ -215,10 +217,11 @@ export class ReportService {
     });
   }
 
-  async loadRange({ startDate, endDate }, {
+  async loadRange({ startDate, endDate, reportingUtc = false }, {
     signal, user = null, taskUrl = null, maxFiles = Infinity, maxBytes = Infinity,
     maxRecords = Infinity, includeStorageMetadata = false, resourceBudget = null,
   } = {}) {
+    normalizeReportingUtc(reportingUtc);
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
     const canonicalTaskUrl = taskUrl === null ? null : normalizeTaskUrl(taskUrl);
@@ -251,7 +254,14 @@ export class ReportService {
       if (!resourceBudget) await this.saveCache(cache);
     }
 
-    const startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
+    let startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
+    if (reportingUtc) {
+      // Files are partitioned by local date, so UTC boundary records can live in either adjacent month.
+      const start = new Date(`${startDate}T00:00:00Z`), end = new Date(`${endDate}T00:00:00Z`);
+      start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - 1);
+      end.setUTCDate(1); end.setUTCMonth(end.getUTCMonth() + 1);
+      startMonth = start.toISOString().slice(0, 7); endMonth = end.toISOString().slice(0, 7);
+    }
     const files = cache.files.map(file => {
       try { return { ...file, ...parseMonthlyRecordsPath(file.path) }; }
       catch { return null; }
@@ -294,7 +304,7 @@ export class ReportService {
         });
         consumeTaskScanBudget(resourceBudget, 'records', parsed.length);
         records.push(...parsed
-          .filter(record => record.entryDate >= startDate && record.entryDate <= endDate
+          .filter(record => recordDate(record, reportingUtc) >= startDate && recordDate(record, reportingUtc) <= endDate
             && (!canonicalTaskUrl || record.taskUrl === canonicalTaskUrl))
           .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record)));
       } catch (error) {

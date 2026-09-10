@@ -43,6 +43,10 @@ export function periodRange(preset, today, custom = {}) {
   let range, label;
   if (preset === 'custom') {
     range = validateDateRange(custom.startDate, custom.endDate); label = 'Custom period';
+  } else if (['today', 'yesterday', 'last-7-days', 'last-30-days'].includes(preset)) {
+    const days = { today: 0, yesterday: 1, 'last-7-days': 6, 'last-30-days': 29 };
+    range = { startDate: addDays(today, -days[preset]), endDate: preset === 'yesterday' ? addDays(today, -1) : today };
+    label = { today: 'Today', yesterday: 'Yesterday', 'last-7-days': 'Last 7 days', 'last-30-days': 'Last 30 days' }[preset];
   } else if (preset === 'this-week' || preset === 'last-week') {
     const mondayOffset = (date.getUTCDay() + 6) % 7;
     const monday = addDays(today, -mondayOffset + (preset === 'last-week' ? -7 : 0));
@@ -72,9 +76,9 @@ export function formatClockDuration(seconds, { zeroPadMinutes = false } = {}) {
   return `${hours}h ${zeroPadMinutes ? String(minutes).padStart(2, '0') : minutes}m`;
 }
 
-export function todayTrackedSeconds(records, active, now = new Date(), today = null) {
-  const current = today ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  let total = (records ?? []).filter(record => (record.entryDate || record.startedAt?.slice(0, 10)) === current)
+export function todayTrackedSeconds(records, active, now = new Date(), today = null, reportingUtc = false) {
+  const current = today ?? (reportingUtc ? now.toISOString().slice(0, 10) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`);
+  let total = (records ?? []).filter(record => recordDate(record, reportingUtc) === current)
     .reduce((sum, record) => sum + Math.max(0, Number(record.durationSeconds) || 0), 0);
   if (active?.startedAt?.slice(0, 10) === current) total += Math.max(0, Math.floor((now.getTime() - new Date(active.startedAt).getTime()) / 1000));
   return total;
@@ -117,15 +121,15 @@ export function buildFacets(records, filters = {}) {
   };
 }
 
-function recordDate(record) { return record.entryDate || record.startedAt.slice(0, 10); }
+export function recordDate(record, reportingUtc = false) { return reportingUtc ? record.startedAt.slice(0, 10) : record.entryDate || record.startedAt?.slice(0, 10) || ''; }
 
 function taskPart(record) {
   const taskUrl = taskUrlOf(record), title = String(record.taskTitle ?? record.issueTitle ?? '').trim();
   return { key: taskUrl, label: title ? `${taskUrl} · ${title}` : taskUrl };
 }
 
-function axisPart(record, axis) {
-  const date = recordDate(record);
+function axisPart(record, axis, reportingUtc) {
+  const date = recordDate(record, reportingUtc);
   if (axis === 'day') return { key: date, label: date };
   if (axis === 'week') {
     const { date: parsed } = dateParts(date), offset = (parsed.getUTCDay() + 6) % 7, key = addDays(date, -offset);
@@ -166,23 +170,23 @@ export function buildAnalytics(records, options = {}) {
   const buckets = new Map(), series = new Map();
   let billableCurrency = options.currency || '', billableCurrencyCode = billableCurrency ? exchangeCurrencyCode(billableCurrency) : '';
   for (const record of records ?? []) {
-    const recordDate = record.entryDate || String(record.startedAt || '').slice(0, 10);
-    const recordRate = rateForUser(record.user, options.rates || {}, recordDate);
+    const date = recordDate(record, options.reportingUtc);
+    const recordRate = rateForUser(record.user, options.rates || {}, date);
     let convertedBillableMinor = 0;
     if (metric === 'billable-amount') {
       if (!recordRate) continue;
       if (!billableCurrency) { billableCurrency = recordRate.currency; billableCurrencyCode = exchangeCurrencyCode(recordRate.currency); }
       const sourceCode = exchangeCurrencyCode(recordRate.currency);
-      const factor = sourceCode === billableCurrencyCode ? 1 : Number(options.exchangeRates?.[recordDate]?.[sourceCode]);
+      const factor = sourceCode === billableCurrencyCode ? 1 : Number(options.exchangeRates?.[date]?.[sourceCode]);
       if (!(factor > 0)) throw new Error(`Load ${sourceCode} to ${billableCurrencyCode} exchange rates before building billable analytics`);
-      convertedBillableMinor = billableMinorForRecord(record, options.rates || {}) * factor;
+      convertedBillableMinor = billableMinorForRecord(record, options.rates || {}, date) * factor;
     }
-    const bucketPart = axisPart(record, horizontalAxis), seriesPart = axisPart(record, stackBy);
+    const bucketPart = axisPart(record, horizontalAxis, options.reportingUtc), seriesPart = axisPart(record, stackBy, options.reportingUtc);
     series.set(seriesPart.key, seriesPart);
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
     const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, billableMinor: 0, tasks: new Set() };
     cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1;
-    cell.billableMinor += metric === 'billable-amount' ? convertedBillableMinor : billableMinorForRecord(record, options.rates || {}); cell.tasks.add(taskUrlOf(record));
+    cell.billableMinor += metric === 'billable-amount' ? convertedBillableMinor : billableMinorForRecord(record, options.rates || {}, date); cell.tasks.add(taskUrlOf(record));
     bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -221,10 +225,10 @@ function hms(seconds) {
   return [Math.floor(value / 3600), Math.floor(value % 3600 / 60), value % 60].map(item => String(item).padStart(2, '0')).join(':');
 }
 
-export function buildPrintableTimesheet(records) {
+export function buildPrintableTimesheet(records, { reportingUtc = false } = {}) {
   const detail = new Map(), tasks = new Map();
   for (const record of records ?? []) {
-    const date = recordDate(record), person = String(record.user || ''), taskUrl = taskUrlOf(record);
+    const date = recordDate(record, reportingUtc), person = String(record.user || ''), taskUrl = taskUrlOf(record);
     const taskTitle = String(record.taskTitle ?? record.issueTitle ?? '').trim();
     const seconds = Math.max(0, Number(record.durationSeconds) || 0);
     const detailKey = JSON.stringify([date, person, taskUrl]);
@@ -240,11 +244,11 @@ export function buildPrintableTimesheet(records) {
   return { byDate, byTask, totalSeconds: byDate.reduce((sum, row) => sum + row.seconds, 0) };
 }
 
-export function exportTimesheet(records, { format, startDate, endDate, rates = null }) {
+export function exportTimesheet(records, { format, startDate, endDate, rates = null, reportingUtc = false }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   const entries = ordered.map(record => {
-    const rate = rates ? rateForUser(record.user, rates, record.entryDate || record.startedAt.slice(0, 10)) : null;
+    const date = recordDate(record, reportingUtc), rate = rates ? rateForUser(record.user, rates, date) : null;
     return {
       person: record.user,
       taskUrl: taskUrlOf(record),
@@ -255,7 +259,7 @@ export function exportTimesheet(records, { format, startDate, endDate, rates = n
       durationSeconds: record.durationSeconds,
       ...(rates ? {
         hourlyRate: rate ? (rate.amountMinorPerHour / 100).toFixed(2) : '',
-        billableAmount: rate ? (billableMinorForRecord(record, rates) / 100).toFixed(2) : '',
+        billableAmount: rate ? (billableMinorForRecord(record, rates, date) / 100).toFixed(2) : '',
         currency: rate?.currency || '',
       } : {}),
       description: record.description || '',

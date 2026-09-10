@@ -26,7 +26,7 @@ const result = (records = [record('alice'), record('bob', 'other.com')], rates =
   billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
-function harness() {
+function harness(preferences = {}) {
   const classList = owner => ({
     toggle(name, force) { const classes = new Set(owner.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); owner.className = [...classes].join(' '); },
     contains: name => owner.className.split(' ').includes(name),
@@ -56,8 +56,8 @@ function harness() {
   for (const [id, node] of [...html.matchAll(/<([\w-]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([, tag, attrs, id]) => {
     const node = new Node(tag); node.hidden = /\bhidden\b/.test(attrs); node.className = attrs.match(/\bclass="([^"]*)"/)?.[1] || ''; return [id, node];
   })) nodes.set(id, node);
-  for (const [id, value] of Object.entries({ period: 'last-week', metric: 'total-time', 'horizontal-axis': 'day', 'stack-by': 'person' })) nodes.get(id).value = value;
-  document.body = new Node('body');
+  for (const [id, value] of Object.entries({ metric: 'total-time', 'horizontal-axis': 'day', 'stack-by': 'person' })) nodes.get(id).value = value;
+  document.body = new Node('body'); document.listeners = {}; document.addEventListener = (type, handler) => { document.listeners[type] = handler; };
   document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => new Node(tag);
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
   const requests = [], downloads = [], prints = [], listeners = [], blobs = [], windowListeners = {};
@@ -65,14 +65,14 @@ function harness() {
     ...reporting, ...billing, ...invoicing, ...values, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
-    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { requests.push({ message, callback }); } } },
+    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
   });
   vm.runInContext(source.replace(/^import[\s\S]*?from '[^']+';\n/gm, ''), context);
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   const reply = async (data, request = requests.at(-1)) => { request.callback(data instanceof Error ? { ok: false, error: { message: data.message } } : { ok: true, data }); await settle(); };
   const fire = (id, type = 'click') => nodes.get(id).listeners[type]({ preventDefault() {}, target: nodes.get(id) });
   const textOf = node => `${node?.textContent || ''}${(node?.children || []).map(textOf).join('')}`;
-  return { nodes, context, requests, downloads, prints, listeners, blobs, reply, settle, fire, textOf,
+  return { nodes, document, context, requests, downloads, prints, listeners, blobs, reply, settle, fire, textOf,
     select: (key, value, checked) => {
       const input = nodes.get(`${key}-facet`).children.flatMap(label => label.children).find(node => node.value === value);
       assert.ok(input, `visible ${key} checkbox ${value}`);
@@ -86,7 +86,7 @@ function harness() {
 
 async function loaded(data = result()) {
   const page = harness();
-  await page.reply(data);
+  await page.settle(); await page.reply(data);
   const load = page.load({ ...oldRange }); await page.reply(data); await load;
   return page;
 }
@@ -96,8 +96,8 @@ test('period, exports, and chart controls use the compact always-visible layout'
   for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.ok(period.includes(`id="${id}"`), id);
   assert.doesNotMatch(html, /export-card|summary-grid|summary-card/);
   assert.doesNotMatch(html, /<h2[^>]*>Analytics<\/h2>|<summary>Chart options<\/summary>|Tracked time/);
-  assert.match(html, /class="period-select"[\s\S]*?<span>Period<\/span>[\s\S]*?id="period"/);
-  assert.ok(period.indexOf('id="period"') < period.indexOf('id="report-range"'));
+  assert.match(html, /id="period-trigger"/);
+  assert.ok(period.indexOf('id="period-trigger"') < period.indexOf('class="export-controls"'));
   const chart = html.match(/<section id="analytics-card"[\s\S]*?<\/section>/)?.[0] || '';
   assert.ok(chart.indexOf('id="metric"') < chart.indexOf('id="analytics-chart"'));
   assert.ok(chart.indexOf('id="stack-by"') < chart.indexOf('id="analytics-chart"'));
@@ -129,7 +129,7 @@ test('pending period keeps the actual report and filters visible while every exp
   const pending = page.load(newRange);
   assert.equal(page.nodes.get('report-content').hidden, false);
   assert.equal(page.nodes.get('analytics-chart').children[0], chart);
-  assert.equal(page.nodes.get('report-range')?.textContent, 'Showing 2026-08-17 — 2026-08-23 · loading 2026-08-24 — 2026-08-30…');
+  assert.equal(page.nodes.get('period-label')?.textContent, 'Aug 17, 2026 – Aug 23, 2026');
   assert.equal(page.nodes.get('print-period').textContent, '2026-08-17 — 2026-08-23');
   for (const id of ['download-csv', 'download-json', 'download-pdf']) {
     assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true'); page.fire(id);
@@ -140,7 +140,7 @@ test('pending period keeps the actual report and filters visible while every exp
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
   await page.reply(result([record('alice', 'example.com', newRange.startDate)])); await pending;
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'false');
-  assert.equal(page.nodes.get('report-range').textContent, 'Showing 2026-08-24 — 2026-08-30');
+  assert.equal(page.nodes.get('period-label').textContent, 'Aug 24, 2026 – Aug 30, 2026');
   page.fire('download-json'); assert.equal(page.downloads.length, 1);
   assert.match(page.downloads[0].download, /2026-08-24.*2026-08-30/);
 });
@@ -238,7 +238,7 @@ test('empty periods and excluded records each offer exactly their relevant actio
 });
 
 test('unconfigured reports hide the period card and keep the existing setup action', async () => {
-  const page = harness(); await page.reply({ configured: false });
+  const page = harness(); await page.settle(); await page.reply({ configured: false });
   assert.equal(page.nodes.get('period-card')?.hidden, true);
   assert.equal(page.nodes.get('setup').hidden, false);
   assert.equal(page.nodes.get('report-content').hidden, true);
@@ -252,7 +252,7 @@ test('failed and out-of-order requests preserve the last successful report', asy
   await page.reply(new Error('Offline')); await second;
   await page.reply(result([record('alice', 'example.com', newRange.startDate)]), stale); await first;
   assert.equal(page.nodes.get('report-content').hidden, false);
-  assert.equal(page.nodes.get('report-range')?.textContent, 'Showing 2026-08-17 — 2026-08-23');
+  assert.equal(page.nodes.get('period-label')?.textContent, 'Aug 17, 2026 – Aug 23, 2026');
   assert.equal(page.nodes.get('print-period').textContent, '2026-08-17 — 2026-08-23');
   assert.equal(page.nodes.get('error').children[0].textContent, 'Offline');
 });
@@ -260,10 +260,10 @@ test('failed and out-of-order requests preserve the last successful report', asy
 test('custom-period editing cancels pending work without clearing the displayed report', async () => {
   const page = await loaded();
   const pending = page.load(newRange), stale = page.requests.at(-1);
-  page.nodes.get('period').value = 'custom'; page.fire('period', 'change');
+  page.fire('period-trigger'); page.context.selectCalendarDay('2026-08-18');
   assert.equal(page.requests.at(-1).message.type, 'CANCEL_REPORT');
   assert.equal(page.nodes.get('report-content').hidden, false);
-  assert.equal(page.nodes.get('report-range')?.textContent, 'Showing 2026-08-17 — 2026-08-23');
+  assert.equal(page.nodes.get('period-label')?.textContent, 'Aug 17, 2026 – Aug 23, 2026');
   await page.reply(result(), stale); await pending;
   assert.equal(page.nodes.get('print-period').textContent, '2026-08-17 — 2026-08-23');
 });
@@ -496,7 +496,7 @@ test('date presets use local calendar boundaries and reload like manual date cha
   for (const [preset, startDate, endDate] of [['this-month', '2028-03-01', '2028-03-31'], ['last-month', '2028-02-01', '2028-02-29'], ['last-7-days', '2028-02-24', '2028-03-01'], ['last-30-days', '2028-02-01', '2028-03-01']]) {
     page.fire(`preset-${preset}`); await page.settle();
     assert.equal(page.nodes.get('start-date').value, startDate); assert.equal(page.nodes.get('end-date').value, endDate);
-    assert.equal(page.nodes.get('custom-period').hidden, false);
+    assert.equal(page.nodes.get('period-popover').hidden, true);
     const request = page.requests.at(-1).message; assert.equal(request.type, 'LOAD_REPORT');
     assert.equal(request.payload.startDate, startDate); assert.equal(request.payload.endDate, endDate);
     await page.reply(result());
@@ -552,4 +552,86 @@ test('an open invoice blocks printing during a period reload and ignores stale r
   await page.reply(response, load); await loading; await page.settle();
   assert.equal(page.nodes.get('invoice-print').disabled, false);
   assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-24 to 2026-08-30');
+});
+
+
+test('calendar range uses inputs, rolls earlier ends into starts and applies only a complete range', async () => {
+  const page = await loaded(); page.fire('period-trigger');
+  assert.equal(page.nodes.get('period-trigger').attributes['aria-expanded'], 'true');
+  const pendingCount = page.requests.length;
+  page.context.selectCalendarDay('2026-08-20');
+  assert.equal(page.nodes.get('start-date').value, '2026-08-20'); assert.equal(page.nodes.get('end-date').value, '');
+  assert.equal(page.requests.slice(pendingCount).some(request => request.message.type === 'LOAD_REPORT'), false);
+  page.context.selectCalendarDay('2026-08-18');
+  assert.equal(page.nodes.get('start-date').value, '2026-08-18'); assert.equal(page.nodes.get('end-date').value, '');
+  page.context.selectCalendarDay('2026-08-22'); await page.settle();
+  assert.equal(page.nodes.get('end-date').value, '2026-08-22'); assert.equal(page.nodes.get('period-popover').hidden, true);
+  assert.equal(page.requests.at(-1).message.payload.endDate, '2026-08-22'); await page.reply(result());
+  assert.equal(page.nodes.get('period-label').textContent, 'Aug 18, 2026 – Aug 22, 2026');
+  page.fire('period-trigger');
+  const days = () => page.nodes.get('calendar-grid').children.flatMap(row => row.children).map(cell => cell.children[0]);
+  assert.equal(days().filter(day => day.tabIndex === 0).length, 1);
+  assert.equal(days().find(day => day.dataset.date === '2026-08-19').classList.contains('in-range'), true);
+  const start = page.nodes.get('start-date').value, end = page.nodes.get('end-date').value;
+  page.fire('calendar-next'); assert.equal(page.nodes.get('calendar-month').textContent, 'September 2026');
+  assert.equal(page.nodes.get('start-date').value, start); assert.equal(page.nodes.get('end-date').value, end);
+  const last = days().find(day => day.dataset.date === '2026-09-30');
+  last.listeners.keydown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(page.document.activeElement.dataset.date, '2026-10-01');
+  assert.equal(days().filter(day => day.tabIndex === 0).length, 1);
+  page.document.activeElement.listeners.keydown({ key: ' ', preventDefault() {} });
+  assert.equal(page.nodes.get('start-date').value, '2026-10-01'); assert.equal(page.nodes.get('end-date').value, '');
+  page.nodes.get('end-date').value = '2026-10-04'; page.fire('end-date', 'change'); await page.settle();
+  assert.equal(page.requests.at(-1).message.payload.endDate, '2026-10-04');
+});
+
+test('picker closes on Escape and outside clicks, retains inside clicks and marks every preset', async () => {
+  const page = await loaded(); page.fire('period-trigger');
+  page.document.listeners.click({ target: page.nodes.get('period-popover') }); assert.equal(page.nodes.get('period-popover').hidden, false);
+  page.document.listeners.keydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(page.nodes.get('period-popover').hidden, true); assert.equal(page.document.activeElement, page.nodes.get('period-trigger'));
+  page.fire('period-trigger'); page.document.listeners.click({ target: page.document.body });
+  assert.equal(page.nodes.get('period-trigger').attributes['aria-expanded'], 'false');
+  for (const preset of ['today', 'yesterday', 'last-7-days', 'last-30-days', 'this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year']) {
+    page.fire('period-trigger'); page.fire(`preset-${preset}`); await page.settle(); await page.reply(result());
+    assert.equal(page.nodes.get('period-popover').hidden, true);
+    assert.equal(page.nodes.get(`preset-${preset}`).attributes['aria-current'], 'true');
+    assert.equal(page.nodes.get('period-label').textContent, reporting.periodRange(preset, '2026-08-18').label);
+  }
+});
+
+test('UTC preference loads before reports, projects dates for billing and persists switch changes', async () => {
+  const page = harness({ reportingUtc: true }); await page.settle();
+  assert.equal(page.requests.at(-1).message.payload.reportingUtc, true);
+  const data = result([{ ...record('alice'), entryDate: '2026-09-01', startedAt: '2026-08-31T22:30:00Z' }]);
+  await page.reply(data);
+  assert.equal(page.nodes.get('reporting-utc').checked, true);
+  assert.match(page.textOf(page.nodes.get('print-detail-table')), /2026-08-31/);
+  page.nodes.get('reporting-utc').checked = false; page.fire('reporting-utc', 'change'); await page.settle();
+  assert.equal(page.requests.at(-1).message.type, 'UPDATE_DISPLAY_PREFERENCES');
+  assert.equal(page.requests.at(-1).message.payload.reportingUtc, false);
+  await page.reply({ preferences: { reportingUtc: false } });
+  assert.equal(page.requests.at(-1).message.type, 'LOAD_REPORT'); assert.equal(page.requests.at(-1).message.payload.reportingUtc, false);
+});
+
+
+test('failed UTC persistence preserves the current report and restores the switch', async () => {
+  const page = await loaded(); page.fire('period-trigger');
+  page.nodes.get('reporting-utc').checked = true; page.fire('reporting-utc', 'change'); await page.settle();
+  const requestCount = page.requests.length; await page.reply(new Error('Storage unavailable'));
+  assert.equal(page.nodes.get('reporting-utc').checked, false); assert.equal(page.nodes.get('reporting-utc').disabled, false);
+  assert.equal(page.nodes.get('summary-time').textContent, '1h 0m'); assert.equal(page.requests.length, requestCount);
+  assert.equal(page.nodes.get('error').children[0].textContent, 'Storage unavailable');
+});
+
+test('UTC changes reload the applied report while an incomplete calendar range remains editable', async () => {
+  const page = await loaded(); page.fire('period-trigger'); page.context.selectCalendarDay('2026-08-20');
+  page.nodes.get('reporting-utc').checked = true; page.fire('reporting-utc', 'change'); await page.settle();
+  await page.reply({ preferences: { reportingUtc: true } });
+  assert.equal(page.requests.at(-1).message.type, 'LOAD_REPORT');
+  assert.equal(page.requests.at(-1).message.payload.startDate, oldRange.startDate);
+  assert.equal(page.requests.at(-1).message.payload.reportingUtc, true);
+  await page.reply(result());
+  assert.equal(page.nodes.get('period-popover').hidden, false);
+  assert.equal(page.nodes.get('start-date').value, '2026-08-20'); assert.equal(page.nodes.get('end-date').value, '');
 });

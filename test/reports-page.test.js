@@ -9,7 +9,7 @@ const worker = fs.readFileSync(new URL('../src/background/service-worker.js', im
 const styles = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
 
 test('reports page exposes periods, independent chart axes, facets, and direct export links', () => {
-  for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'custom']) assert.match(html, new RegExp(`value="${value}"`));
+  for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'today', 'yesterday', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${value}"`));
   for (const id of ['metric', 'horizontal-axis', 'stack-by']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['total-time', 'avg-time', 'task-count']) assert.match(html, new RegExp(`value="${value}"`));
   for (const value of ['day', 'week', 'month', 'person', 'repository', 'task']) {
@@ -62,12 +62,12 @@ test('high-cardinality analytics stays sparse in aggregation and the collapsed d
 
 
 test('reports use requested defaults, monotonic progress and task identity labels', () => {
-  assert.match(html, /<option value="last-week" selected>Last week<\/option>/);
+  assert.match(html, /id="preset-last-week"[^>]*aria-current="true">Last week<\/button>/);
   assert.match(html, /<option value="day" selected>Day<\/option>/);
   assert.match(html, /<option value="person" selected>Person<\/option>/);
   assert.match(html, /<option value="total-time" selected>Total time<\/option>/);
   assert.doesNotMatch(html, /<option value="week" selected>/);
-  assert.match(js, /const initial = periodRange\('last-week'/);
+  assert.match(js, /const initial = \{ \.\.\.periodRange\('last-week'/);
   assert.match(js, /state\.people = new Set\(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
   assert.match(js, /state\.progressValue = Math\.max\(state\.progressValue/);
   assert.match(js, /Task URL \/ title/);
@@ -108,7 +108,7 @@ test('reports exposes local invoice preview, export, numbering and print contrac
 });
 
 test('invoice controls name the billing period and keep only print exports', () => {
-  assert.match(html, /<label>From <input id="start-date"/); assert.match(html, /<label>To <input id="end-date"/);
+  assert.match(html, /<label>Start <input id="start-date"/); assert.match(html, /<label>End <input id="end-date"/);
   for (const id of ['this-month', 'last-month', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${id}"`));
   assert.doesNotMatch(html + js, /invoice-download-csv|invoice-download-json|invoice-due-days|invoiceCsv|invoiceJson|invoiceFilename/);
 });
@@ -117,4 +117,13 @@ test('invoice print paper overrides the app theme even when later stylesheets lo
   assert.match(styles, /@media print\{[\s\S]*body\.printing-invoice,body\.printing-invoice main\{color-scheme:light;background:#fff;color:#000\}/);
   assert.match(styles, /\.invoice-dates,\.invoice-period,\.invoice-date-cell\{font-variant-numeric:tabular-nums\}/);
   assert.match(styles, /\.invoice-notes,\.invoice-terms\{max-width:68ch\}/);
+});
+
+
+test('date range picker replaces the old controls with one accessible trigger and dialog', () => {
+  assert.match(html, /id="period-trigger"[^>]*aria-haspopup="dialog"[^>]*aria-expanded="false"/);
+  assert.match(html, /id="period-popover"[^>]*role="dialog"[^>]*hidden/);
+  for (const id of ['period', 'custom-period', 'apply-period', 'report-range']) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(styles, /\.period-presets|\.period-select|\.custom-period|#report-range/);
+  assert.match(html, /id="reporting-utc"[^>]*role="switch"/);
 });

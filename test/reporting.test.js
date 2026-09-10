@@ -211,3 +211,32 @@ test('timesheet exports use task URL and title without repository or provider ty
   const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-18', endDate: '2026-08-19' }));
   assert.deepEqual(Object.keys(json.entries[0]), ['person', 'taskUrl', 'taskTitle', 'start', 'end', 'duration', 'durationSeconds', 'description']);
 });
+
+
+test('short presets include today and cross leap days and year boundaries', () => {
+  for (const [preset, today, startDate, endDate, label] of [
+    ['today', '2028-03-01', '2028-03-01', '2028-03-01', 'Today'],
+    ['yesterday', '2028-03-01', '2028-02-29', '2028-02-29', 'Yesterday'],
+    ['last-7-days', '2026-01-03', '2025-12-28', '2026-01-03', 'Last 7 days'],
+    ['last-30-days', '2028-03-01', '2028-02-01', '2028-03-01', 'Last 30 days'],
+  ]) assert.deepEqual(periodRange(preset, today), { startDate, endDate, label });
+});
+
+test('UTC grouping, printing and export pricing use the same effective date', () => {
+  const records = [{ user: 'alice', taskUrl: 'https://example.com/task', entryDate: '2026-09-01', startedAt: '2026-08-31T22:30:00Z', endedAt: '2026-08-31T23:30:00Z', durationSeconds: 3600 }];
+  const rates = { alice: [
+    { startDate: '', endDate: '2026-08-31', amountMinorPerHour: 1000, currency: 'EUR' },
+    { startDate: '2026-09-01', endDate: '', amountMinorPerHour: 2000, currency: 'EUR' },
+  ] };
+  for (const reportingUtc of [false, true]) {
+    const date = reportingUtc ? '2026-08-31' : '2026-09-01', amount = reportingUtc ? 1000 : 2000;
+    const analytics = buildAnalytics(records, { horizontalAxis: 'day', stackBy: 'month', metric: 'billable-amount', rates, reportingUtc });
+    assert.equal(analytics.buckets[0].key, date); assert.equal(analytics.buckets[0].segments[0].key, date.slice(0, 7));
+    assert.equal(analytics.buckets[0].totalValue, amount);
+    assert.equal(buildPrintableTimesheet(records, { reportingUtc }).byDate[0].date, date);
+    const exported = JSON.parse(exportTimesheet(records, { format: 'json', startDate: date, endDate: date, rates, reportingUtc }));
+    assert.equal(exported.entries[0].hourlyRate, (amount / 100).toFixed(2));
+    assert.equal(exported.entries[0].billableAmount, (amount / 100).toFixed(2));
+  }
+  assert.equal(records[0].entryDate, '2026-09-01');
+});

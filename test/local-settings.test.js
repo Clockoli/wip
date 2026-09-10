@@ -68,10 +68,10 @@ test('plain-text settings export excludes credentials and imports display plus b
   assert.equal(value.display.otherProjectName, 'General');
   assert.equal(value.display.showQueueDiagnostics, true);
   assert.deepEqual(value.projects, [{ name: 'work', substrings: ['github.com/acme/'], client: '' }]);
-  assert.deepEqual(parseSettingsImport(text), { recentDays: 9, projects: [{ name: 'work', substrings: ['github.com/acme/'], client: '' }], otherProjectName: 'General', otherProjectClient: '', showQueueDiagnostics: true, billing: { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
+  assert.deepEqual(parseSettingsImport(text), { recentDays: 9, projects: [{ name: 'work', substrings: ['github.com/acme/'], client: '' }], otherProjectName: 'General', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: true, billing: { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
   const legacy = JSON.parse(text);
   legacy.version = 1;
-  delete legacy.projects; delete legacy.display.otherProjectClient;
+  delete legacy.projects; delete legacy.display.otherProjectClient; delete legacy.display.reportingUtc;
   delete legacy.display.otherProjectName;
   delete legacy.display.showQueueDiagnostics;
   legacy.billing = { currency: 'gel', rates: { alice: [{ amountMinorPerHour: 88800, startDate: '', endDate: '' }] } };
@@ -80,10 +80,10 @@ test('plain-text settings export excludes credentials and imports display plus b
     rates: { alice: [{ amountMinorPerHour: 88800, currency: 'GEL', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
   });
   assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).projects, []);
-  const version2 = JSON.parse(text); version2.version = 2; delete version2.display.otherProjectClient; delete version2.projects; delete version2.display.otherProjectName; delete version2.display.showQueueDiagnostics;
+  const version2 = JSON.parse(text); version2.version = 2; delete version2.display.otherProjectClient; delete version2.display.reportingUtc; delete version2.projects; delete version2.display.otherProjectName; delete version2.display.showQueueDiagnostics;
   delete version2.billing.invoicing;
   assert.deepEqual(parseSettingsImport(JSON.stringify(version2)).projects, []);
-  const version4 = JSON.parse(text); version4.version = 4; delete version4.display.otherProjectClient; delete version4.display.showQueueDiagnostics;
+  const version4 = JSON.parse(text); version4.version = 4; delete version4.display.otherProjectClient; delete version4.display.reportingUtc; delete version4.display.showQueueDiagnostics;
   delete version4.billing.invoicing;
   assert.equal(parseSettingsImport(JSON.stringify(version4)).showQueueDiagnostics, false);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, showQueueDiagnostics: 'yes' } })), /true or false/);
@@ -133,7 +133,7 @@ test('legacy client project keys are ignored even when malformed or overlapping'
 });
 
 test('v6 imports project and catch-all links without overriding explicit project clients', () => {
-  const value = JSON.parse(settingsExportText()); value.version = 6; delete value.display.otherProjectClient;
+  const value = JSON.parse(settingsExportText()); value.version = 6; delete value.display.otherProjectClient; delete value.display.reportingUtc;
   value.projects = [{ name: 'Web', substrings: ['web/'] }]; value.display.otherProjectName = 'Work';
   value.billing.invoicing.clients = [{ id: 'acme', projects: [' WEB ', 'work'] }];
   const imported = parseSettingsImport(JSON.stringify(value));
@@ -175,7 +175,7 @@ test('settings v7 round-trip invoicing and older files import explicit defaults 
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, billing: { rates: {} } })), /billing fields/);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, extra: true } })), /display/);
   for (const version of [2, 3, 4, 5]) {
-    const older = structuredClone(value); older.version = version; delete older.display.otherProjectClient;
+    const older = structuredClone(value); older.version = version; delete older.display.otherProjectClient; delete older.display.reportingUtc;
     if (version < 3) delete older.projects;
     if (version < 4) delete older.display.otherProjectName;
     if (version < 5) delete older.display.showQueueDiagnostics;
@@ -195,7 +195,7 @@ test('payment days normalize legacy text without throwing and validate the new n
   const exported = JSON.parse(settingsExportText({ billing: { invoicing: { paymentTerms: 'Net 45' } } }));
   assert.equal(exported.version, 7); assert.equal(exported.billing.invoicing.paymentTermsDays, 45);
   assert.equal(Object.hasOwn(exported.billing.invoicing, 'paymentTerms'), false);
-  const legacy = structuredClone(exported); legacy.version = 6; delete legacy.display.otherProjectClient;
+  const legacy = structuredClone(exported); legacy.version = 6; delete legacy.display.otherProjectClient; delete legacy.display.reportingUtc;
   legacy.billing.invoicing.paymentTerms = 'Net 14'; delete legacy.billing.invoicing.paymentTermsDays;
   assert.equal(parseSettingsImport(JSON.stringify(legacy)).billing.invoicing.paymentTermsDays, 14);
 });
@@ -232,4 +232,16 @@ test('an invoicing address keeps its line breaks while other party fields reject
   assert.equal(invoicing.seller.address, address);
   assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'Bad\nName' } }), /Invalid invoicing name/);
   assert.throws(() => normalizeInvoicingSettings({ seller: { address: 'Tabbed\taddress' } }), /Invalid invoicing address/);
+});
+
+
+test('v7 UTC basis defaults locally and rejects invalid values without loosening display fields', () => {
+  const value = JSON.parse(settingsExportText({ reportingUtc: true }));
+  assert.equal(value.version, 7); assert.equal(parseSettingsImport(JSON.stringify(value)).reportingUtc, true);
+  delete value.display.reportingUtc; assert.equal(parseSettingsImport(JSON.stringify(value)).reportingUtc, false);
+  for (const invalid of ['true', 1, null, {}]) {
+    value.display.reportingUtc = invalid;
+    assert.throws(() => parseSettingsImport(JSON.stringify(value)), /true or false/);
+    assert.throws(() => settingsExportText({ reportingUtc: invalid }), /true or false/);
+  }
 });
