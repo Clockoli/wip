@@ -76,6 +76,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
@@ -85,6 +86,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   }
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
@@ -105,7 +107,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
   ];
   for (const type of privileged) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');

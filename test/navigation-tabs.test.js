@@ -49,6 +49,7 @@ test('shared navigation styles distinguish the brand from page tabs and remain r
   assert.match(css, /\.page-tab-list\{display:flex;grid-column:2;align-items:center;gap:2px;margin:0\}/);
   assert.match(css, /@media\(max-width:640px\)\{\.page-tabs\{display:flex;flex-wrap:wrap;padding:8px 12px;gap:6px\}/);
   assert.match(css, /\.page-brand img\{height:24px\}/);
+  assert.match(css, /@media\(max-width:400px\)\{\.page-tab-list\{gap:0\}\.page-tab\{gap:2px;padding-inline:2px;font-size:11px\}\.page-tab svg\{width:13px;height:13px\}\}/);
 });
 
 test('Activity does not duplicate standalone navigation inside its renderer', () => {

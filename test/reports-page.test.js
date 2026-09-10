@@ -12,10 +12,10 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'today', 'yesterday', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${value}"`));
   for (const id of ['metric', 'horizontal-axis', 'stack-by']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['total-time', 'avg-time', 'task-count']) assert.match(html, new RegExp(`value="${value}"`));
-  for (const value of ['day', 'week', 'month', 'person', 'repository', 'task']) {
+  for (const value of ['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task']) {
     assert.match(html, new RegExp(`<option value="${value}"`));
   }
-  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'timeRepositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Time by day, person and task/);
   assert.match(html, /Total time by task/);
   assert.match(js, /buildPrintableTimesheet\(filtered\)/);
@@ -23,6 +23,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Search people"/);
   assert.match(html, /aria-label="Search projects"/);
   assert.match(html, /aria-label="Search sources"/);
+  assert.match(html, /aria-label="Search time repositories"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
   assert.match(html, /aria-label="Print report or save as PDF"/);
@@ -47,8 +48,8 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(worker, /previous\.controller\.abort\(\)/);
   assert.match(worker, /await previous\.promise\.catch/);
   assert.match(worker, /await Promise\.allSettled/);
-  assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(4\)/);
-  assert.match(worker, /function syncPendingNow[\s\S]*ensureDataVersion\(4\)/);
+  assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(5\)/);
+  assert.match(worker, /function syncPendingNow[\s\S]*syncPendingAll\(\{ store, trackerForDestination \}\)/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
   assert.match(js, /Math\.max\(320, analytics\.buckets\.length \* 92 \+ 100\)/);
 });
@@ -68,15 +69,18 @@ test('reports use requested defaults, monotonic progress and task identity label
   assert.match(html, /<option value="total-time" selected>Total time<\/option>/);
   assert.doesNotMatch(html, /<option value="week" selected>/);
   assert.match(js, /const initial = \{ \.\.\.periodRange\('last-week'/);
-  assert.match(js, /state\.people = new Set\(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
+  assert.match(js, /const currentUsers = result\.currentUsers \? Object\.values\(result\.currentUsers\) : \(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
+  assert.match(js, /state\.people = new Set\(currentUsers\.filter\(Boolean\)\)/);
   assert.match(js, /state\.progressValue = Math\.max\(state\.progressValue/);
   assert.match(js, /Task URL \/ title/);
-  assert.doesNotMatch(js, /Repositories:/);
+  assert.doesNotMatch(js, /['"`]Repositories:/);
 });
 
 test('recoverable queued entry-edit conflicts keep the background retry alarm alive', () => {
   assert.match(worker, /function hasRunnablePending\(queue\) \{[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
-  assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+  assert.match(worker, /function shouldContinuePendingSync\(\)[\s\S]*getPendingDestinationIds\(\)[\s\S]*destinationIds\.some\(destinationId => hasRunnablePending\(entries\[destinationId\]\?\.pendingWrites\)\)/);
+  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\.catch\(\(\) => false\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
 });
 
 

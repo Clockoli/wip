@@ -26,7 +26,7 @@
 
   <section class="card connection-card" aria-labelledby="connection-title">
     <div class="card-heading">
-      <div><h2 id="connection-title" tabindex="-1">Connect GitHub</h2><p>Store your Clockoli data in one private GitHub repository that you control.</p></div>
+      <div><h2 id="connection-title" tabindex="-1">Set up Clockoli</h2><p id="connection-description">Connect your GitHub account so Clockoli can find private time repositories that you can use.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
@@ -40,38 +40,25 @@
     </div>
 
     <div id="connected" hidden>
-      <p id="setup-complete" role="status" aria-live="polite">Setup complete. Open a task page, then click the Clockoli icon to start tracking.</p>
-      <details id="repository-verification" class="inline-details">
-        <summary>Repository verification details</summary>
-      <div class="connection-dashboard">
-        <div class="connection-identity">
-          <span class="status-dot" aria-hidden="true"></span>
-          <div><strong>GitHub connected</strong><span id="connected-account">—</span></div>
-        </div>
-        <dl class="connection-summary">
-          <div><dt>Repository</dt><dd id="connected-repository"><a id="connected-repository-link" target="_blank" rel="noreferrer">—</a></dd></div>
-          <div><dt>Branch</dt><dd><a id="connected-branch-link" target="_blank" rel="noreferrer"><span id="connected-branch">—</span></a></dd></div>
-          <div><dt>Status</dt><dd><span id="connected-storage">—</span><small id="connected-last-check" class="status-detail"></small></dd></div>
-        </dl>
+      <div class="account-summary">
+        <div><span class="status-dot" aria-hidden="true"></span><strong id="connected-account">—</strong></div>
+        <span class="badge ready">Connected</span>
       </div>
-      <div class="connected-secondary-actions">
-        <button id="check-access" type="button" class="secondary">Check access</button>
-        <button id="change-connection" type="button" class="secondary" aria-describedby="change-connection-help">Change repository</button>
-        <a id="manage-access" class="button-link secondary-link" target="_blank" rel="noreferrer">Manage GitHub access</a>
+      <div class="connected-secondary-actions account-actions">
+        <a id="manage-authorization" class="button-link secondary-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Manage GitHub authorization</a>
+        <button id="disconnect" type="button" class="secondary">Sign out on this browser</button>
       </div>
-      <p id="change-connection-help" class="help">Changing repository validates a new private destination without deleting data from the current one.</p>
-      </details>
+      <p class="help">Repository access is managed separately below. Signing out does not change repository data or uninstall the GitHub App.</p>
     </div>
 
     <div id="onboarding">
       <div id="onboarding-flow">
         <div class="setup-progress" aria-live="polite">
-          <span>Step <span id="current-step">1</span> of 3</span>
+          <span id="progress-label">Step <span id="current-step">1</span> of 2: <span id="current-step-name">Connect GitHub</span></span>
           <div class="progress-track" aria-hidden="true"><span id="progress-fill"></span></div>
         </div>
         <div id="completed-steps" class="completed-steps">
           <p id="device-complete" hidden><span aria-hidden="true">✓</span> Connected to GitHub<span id="device-account"></span></p>
-          <p id="repository-access-complete" hidden><span aria-hidden="true">✓</span> Private repository access found</p>
         </div>
 
         <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
@@ -82,7 +69,7 @@
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
           <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Connect GitHub</button>
+            <button id="authorize" type="button">Sign in with GitHub</button>
             <p class="help">Clockoli copies the one-time code before opening GitHub so you can paste it.</p>
           </div>
           <details id="connection-details" class="inline-details">
@@ -110,39 +97,44 @@
           </div>
         </section>
 
-        <section id="repository-setup-step" class="onboarding-step" aria-labelledby="repository-setup-step-title" hidden>
-          <h3 id="repository-setup-step-title" tabindex="-1">Choose private data storage</h3>
-          <p>Use a dedicated private repository for Clockoli data. It can be separate from the repositories whose tasks you track.</p>
-          <div class="setup-choice-list">
-            <div id="create-repository-choice" class="setup-choice preferred-choice" data-repository-choice="create">
-              <div><strong>Create a private Clockoli data repository</strong><p>Open GitHub’s prefilled form for <strong>clockoli-data</strong>, created from the Clockoli template.</p></div>
-              <a id="new-repository" class="button-link setup-choice-action" target="_blank" rel="noreferrer">Create private repository</a>
-            </div>
-            <div id="existing-repository-choice" class="setup-choice" data-repository-choice="existing">
-              <div><strong>Use an existing private repository</strong><p>Keep an existing compatible repository and grant Clockoli access to it.</p></div>
-              <button id="skip-repository-creation" type="button" class="secondary setup-choice-action" aria-pressed="false">Use existing repository</button>
-            </div>
-          </div>
-          <div class="grant-access-panel">
-            <p id="repository-access-instruction">After creating or choosing a repository, select <strong>Only select repositories</strong> on GitHub and grant Clockoli access to that private repository.</p>
-            <a id="install-app" class="button-link secondary-link" target="_blank" rel="noreferrer">Grant repository access</a>
-            <p class="help">Clockoli checks automatically when you return from GitHub.</p>
-          </div>
-        </section>
-
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
-          <h3 id="repository-step-title" tabindex="-1">Choose and validate the data repository</h3>
-          <p id="repository-step-instruction">Clockoli detected repository access. Choose the private repository that should store Clockoli data.</p>
+          <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
+          <a id="new-time-repository" class="button-link secondary-link" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
+          <p class="help">Skip this if you already have a time repository you want to connect to.</p>
+          <p id="repository-step-instruction">Ready repositories are available automatically. Choose a default below, or enter a GitHub URL or owner/name to check another repository. Initialization and joining require your confirmation.</p>
+          <form id="repository-target-form">
+            <label>Repository URL or owner/name<input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="acme/time-data" required></label>
+            <div class="actions"><button id="check-repository-target" type="submit" class="secondary">Check repository</button></div>
+          </form>
+          <p id="repository-target-status" class="help" role="status" aria-live="polite"></p>
+          <dialog id="repository-access-panel" class="repository-access-dialog" aria-labelledby="repository-access-title" aria-describedby="repository-access-instruction" hidden>
+            <header class="repository-access-header"><h3 id="repository-access-title">Grant repository access</h3><button id="close-repository-access" type="button" class="secondary" aria-label="Close repository access dialog">×</button></header>
+            <div class="repository-access-content">
+              <p id="repository-access-target" class="repository-access-target"></p>
+              <p id="repository-access-instruction"></p>
+              <p>On GitHub, choose <strong>Only select repositories</strong> and select <strong id="repository-access-name"></strong>.</p>
+              <p class="help">The list updates automatically. Return here to set up the repository, or use Check repository. The owner may need to approve access. Nothing is initialized automatically.</p>
+              <a id="install-app" class="button-link secondary-link" target="_blank" rel="noreferrer">Grant access</a>
+              <p class="help">Need a new time repository? <a id="modal-new-time-repository" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create one on GitHub.</a></p>
+            </div>
+          </dialog>
           <fieldset>
             <legend id="repository-choice-legend">Repositories Clockoli can use for data storage</legend>
-            <p class="help repository-list-help">Unavailable repositories include the reason they cannot be used.</p>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
-          <div class="actions">
-            <button id="connect-repository" type="button" disabled>Validate and connect</button>
-            <button id="change-repository-access" type="button" class="secondary">Change repository access</button>
-          </div>
+          <p class="help privacy-disclosure">Anyone with read access to this repository can see stored task URLs, titles, timestamps, and descriptions. Use a separate repository for each privacy boundary.</p>
+    <p id="setup-ready-summary" class="help" role="status"></p>
+    <label>Default time repository<select id="setup-default-destination"></select></label>
+    <button id="finish-setup" type="button" disabled hidden>Finish setup</button>
+          <dialog id="repository-confirmation" class="repository-confirmation repository-access-dialog" aria-labelledby="repository-confirmation-title" tabindex="-1" hidden>
+            <header class="repository-access-header"><h3 id="repository-confirmation-title"></h3><button id="close-repository-confirmation" type="button" class="secondary" aria-label="Close repository setup dialog">×</button></header>
+            <div class="repository-access-content">
+              <p id="repository-confirmation-body"></p>
+              <div id="repository-write-details" hidden><strong>Repository writes</strong><ul id="repository-write-list"></ul></div>
+              <div class="actions"><button id="confirm-repository-action" type="button"></button><button id="back-to-repository-selection" type="button" class="secondary">Cancel</button></div>
+            </div>
+          </dialog>
         </section>
 
         <div class="setup-footer">
@@ -158,31 +150,38 @@
     </div>
   </section>
 
-  <details id="more-settings" class="more-settings">
-    <summary id="more-settings-toggle">More settings</summary>
+  <section id="time-repositories" class="card" aria-labelledby="time-repositories-title" hidden>
+    <div class="card-heading">
+      <div><h2 id="time-repositories-title" tabindex="-1">Time repositories</h2><p>Clockoli stores time in dedicated private GitHub repositories. Ready repositories are available automatically, regardless of who owns them.</p></div>
+      <button id="add-time-repository" type="button">Add time repository</button>
+    </div>
+    <p id="pat-repository-limitation" class="notice" hidden>Personal access token compatibility mode supports one time repository only. Connect with the Clockoli GitHub App to use multiple repositories.</p>
+    <p id="time-repositories-empty" class="help">No time repositories are connected. Use one that already contains Clockoli data, or set up a new private repository.</p>
+    <div id="time-repository-list" class="time-repository-list"></div>
+
+  </section>
 
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
     <div class="card-heading">
-      <div><h2 id="display-title">Activity</h2><p>Choose how much recent activity appears in the main tracking panel.</p></div>
+      <div><h2 id="display-title">Projects and routing</h2><p>Clockoli matches task URLs from top to bottom. Each project sends new time to its selected time repository.</p></div>
     </div>
     <form id="display-form" novalidate>
-      <label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label>
-      <p class="help">This changes only the recent entries shown in the main panel. It does not limit tracking or reports.</p>
-      <p class="help">Track any HTTP(S) task URL. A task title is optional.</p>
       <fieldset class="projects-fieldset">
-        <legend>Projects</legend>
-        <p class="help">Each project gets its own tracking timeline row and Reports filter. URLs are matched top to bottom, ignoring case. Enter one substring per line.</p>
-        <div class="main-project-fields"><label class="main-project-name">Main project name<input id="other-project-name" maxlength="80" value="Other" required autocomplete="off"><span class="help">Tasks that do not match a named project appear here.</span></label>
-        <label>Client<select id="other-project-client"><option value="">— No client —</option></select></label></div>
+        <legend>Projects and routing</legend>
+        <div class="fallback-route"><label class="main-project-name">Tasks that do not match a named project<input id="other-project-name" maxlength="80" value="Other" required autocomplete="off"></label><label id="default-destination-label">Time repository<select id="default-destination" required></select></label><label>Client<select id="other-project-client"><option value="">— No client —</option></select></label><p class="help">This repository receives new time when no project rule matches.</p><p id="pat-routing-summary" class="help" hidden></p></div>
+        <p class="help">URLs are matched top to bottom, ignoring case. Enter one substring per line.</p>
+
         <div id="projects-list" class="projects-list"></div>
         <button id="add-project" type="button" class="secondary">Add project</button>
       </fieldset>
-      <div class="actions">
-        <button id="save-display" type="submit" disabled>Save display settings</button>
-        <p id="display-feedback" class="form-feedback" role="status" aria-live="polite"></p>
-      </div>
+      <section class="activity-display" aria-labelledby="activity-display-title"><h3 id="activity-display-title">Activity display</h3><label>Recent entries shown in the main panel (days)<input id="recent-days" type="number" min="1" max="31" value="7" required></label><p class="help">This changes only the recent entries shown in the main panel. It does not limit tracking or reports.</p><p class="help">Track any HTTP(S) task URL. A task title is optional.</p></section>
+      <div class="actions"><button id="save-display" type="submit" disabled>Save projects and routing</button><p id="display-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
     </form>
   </section>
+
+  <details id="more-settings" class="more-settings">
+    <summary id="more-settings-toggle">More settings</summary>
+
 
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
@@ -257,17 +256,18 @@
 
     <section class="advanced-section" aria-labelledby="diagnostics-title">
       <h2 id="diagnostics-title">Diagnostics</h2>
-      <label><input id="show-queue-diagnostics" type="checkbox" form="display-form"> Show queue diagnostics in the tracking panel</label>
+      <label class="diagnostics-toggle"><input id="show-queue-diagnostics" type="checkbox"> Show queue diagnostics in the tracking panel</label>
       <p class="help">Shows a local, sanitized operation log for troubleshooting save problems.</p>
+      <p id="diagnostics-feedback" class="form-feedback" role="status" aria-live="polite"></p>
     </section>
 
     <section class="advanced-section" aria-labelledby="pat-title">
       <details id="advanced-pat" class="nested-details">
         <summary id="pat-title">Use a personal access token</summary>
-        <p>This compatibility option is for existing PAT setups or environments where the GitHub App cannot be installed. Clockoli never displays a stored token.</p>
+        <p>This single-repository compatibility option is for existing PAT setups or environments where the GitHub App cannot be installed. Personal access token compatibility mode supports one time repository only. Clockoli never displays a stored token.</p>
         <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
         <form id="settings-form">
-          <fieldset><legend>Private time-data repository</legend>
+          <fieldset><legend>Repository used by this token</legend>
             <div class="grid"><label>Owner<input id="owner" required maxlength="39" autocomplete="off" placeholder="acme"></label><label>Repository<input id="repo" required maxlength="100" autocomplete="off" placeholder="time-data"></label></div>
             <label>Branch<input id="branch" required value="main" maxlength="100" autocomplete="off"></label>
           </fieldset>
@@ -283,10 +283,7 @@
     <section class="advanced-section danger-zone" aria-labelledby="local-data-title">
       <h2 id="local-data-title">Recovery and access</h2>
       <div class="advanced-actions-grid">
-        <div>
-          <button id="disconnect" type="button" class="secondary" aria-describedby="disconnect-help">Sign out on this browser</button>
-          <p id="disconnect-help" class="help">Removes the GitHub sign-in from this browser. Your repository and its data aren’t changed.</p>
-        </div>
+
         <div>
           <button id="clear-local" type="button" class="danger">Clear all local Clockoli data</button>
           <p class="help">Removes local settings, credentials and unsynced local state from this browser. Before clearing, stop any running timer and use Sync until no pending changes remain. Repository data is not deleted.</p>

@@ -8,4 +8,17 @@ export function githubAppInstallationUrl() {
 }
 
 export const GITHUB_AUTHORIZATIONS_URL = 'https://github.com/settings/apps/authorizations';
-export const GITHUB_NEW_REPOSITORY_URL = 'https://github.com/new?owner=%40me&name=clockoli-data&description=Private%20Clockoli%20time%20data&visibility=private&template_owner=Clockoli&template_name=data-template';
+
+export function githubNewRepositoryUrl(owner) {
+  const url = new URL('https://github.com/new');
+  if (owner) url.searchParams.set('owner', owner);
+  url.searchParams.set('name', 'clockoli-data');
+  url.searchParams.set('description', 'Private Clockoli time data');
+  url.searchParams.set('visibility', 'private');
+  url.searchParams.set('template_owner', 'Clockoli');
+  url.searchParams.set('template_name', 'data-template');
+  return url.href;
+}
+
+export const GITHUB_NEW_REPOSITORY_URL = githubNewRepositoryUrl('@me');
+export const GITHUB_NEW_ORGANIZATION_REPOSITORY_URL = githubNewRepositoryUrl();

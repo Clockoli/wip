@@ -11,6 +11,9 @@ const MAX_PROJECT_SUBSTRING = 500;
 const MAX_TOTAL_PROJECT_SUBSTRINGS = 200;
 const MAX_TOTAL_PROJECT_SUBSTRING_LENGTH = 100_000;
 const MAX_PROJECTS_UTF8_BYTES = 120_000;
+const PROJECT_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,79})$/;
+const DESTINATION_ID_RE = /^github:([1-9]\d*)$/;
+const MAX_REPOSITORY_PART = 255;
 export const OTHER_PROJECT = 'Other';
 
 export function normalizeOtherProjectName(value = OTHER_PROJECT) {
@@ -33,29 +36,161 @@ function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function normalizeProjects(value = []) {
+function boundedText(value, label, maximum = MAX_REPOSITORY_PART) {
+  if (typeof value !== 'string' || !value || value.length > maximum || /[\u0000-\u001f\u007f]/.test(value)) throw new Error(`${label} must be a valid non-empty string`);
+  return value;
+}
+
+export function destinationIdForRepoId(repoId) {
+  if (!Number.isSafeInteger(repoId) || repoId <= 0) throw new Error('GitHub repository ID must be a positive safe integer');
+  return `github:${repoId}`;
+}
+
+export const destinationIdFromRepoId = destinationIdForRepoId;
+
+export function normalizeDestinationId(value) {
+  if (typeof value !== 'string') throw new Error('Destination ID must identify a positive GitHub repository ID');
+  const match = value.match(DESTINATION_ID_RE);
+  if (!match || destinationIdForRepoId(Number(match[1])) !== value) throw new Error('Destination ID must identify a positive GitHub repository ID');
+  return value;
+}
+
+const DESTINATION_RUNTIME_FIELDS = new Set([
+  'repoId', 'owner', 'repo', 'branch', 'ownerType', 'defaultBranch', 'branchMode',
+  'storageBranchVersion', 'installationId', 'visibility', 'repositoryFormatVersion',
+  'storageLogin', 'recentDays', 'authMode', 'allowedIssueOwners',
+]);
+
+function positiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be a positive safe integer`);
+  return value;
+}
+
+function normalizeDestination(rawId, raw, { referencesOnly = false } = {}) {
+  const id = normalizeDestinationId(rawId);
+  if (!plainObject(raw)) throw new Error(`Destination ${id} has unexpected fields`);
+  const keys = Object.keys(raw);
+  const referenceKeys = 'branch,owner,repo,repoId';
+  if ((referencesOnly && keys.sort().join(',') !== referenceKeys)
+      || (!referencesOnly && keys.some(key => !DESTINATION_RUNTIME_FIELDS.has(key)))) {
+    throw new Error(`Destination ${id} has unexpected fields`);
+  }
+  if (destinationIdForRepoId(raw.repoId) !== id) throw new Error(`Destination ID ${id} does not match its GitHub repository ID`);
+  const destination = {
+    repoId: raw.repoId,
+    owner: boundedText(raw.owner, `Destination ${id} owner`, 100),
+    repo: boundedText(raw.repo, `Destination ${id} repository`, 100),
+    branch: boundedText(raw.branch, `Destination ${id} branch`),
+  };
+  if (referencesOnly) return destination;
+  if ('ownerType' in raw) destination.ownerType = boundedText(raw.ownerType, `Destination ${id} owner type`, 50);
+  if ('defaultBranch' in raw) destination.defaultBranch = boundedText(raw.defaultBranch, `Destination ${id} default branch`);
+  if ('branchMode' in raw) {
+    if (!['default', 'custom'].includes(raw.branchMode)) throw new Error(`Destination ${id} branch mode is invalid`);
+    destination.branchMode = raw.branchMode;
+  }
+  for (const field of ['storageBranchVersion', 'installationId', 'repositoryFormatVersion']) {
+    if (field in raw) destination[field] = positiveInteger(raw[field], `Destination ${id} ${field}`);
+  }
+  if ('visibility' in raw) {
+    if (raw.visibility !== 'private') throw new Error(`Destination ${id} visibility must be private`);
+    destination.visibility = raw.visibility;
+  }
+  if ('storageLogin' in raw) {
+    if (!LOGIN_RE.test(raw.storageLogin)) throw new Error(`Destination ${id} storage login is invalid`);
+    destination.storageLogin = raw.storageLogin;
+  }
+  if ('recentDays' in raw) {
+    if (!Number.isInteger(raw.recentDays) || raw.recentDays < 1 || raw.recentDays > 31) throw new Error(`Destination ${id} recent entries setting is invalid`);
+    destination.recentDays = raw.recentDays;
+  }
+  if ('authMode' in raw) {
+    if (!['github_app', 'pat'].includes(raw.authMode)) throw new Error(`Destination ${id} authentication mode is invalid`);
+    destination.authMode = raw.authMode;
+  }
+  if ('allowedIssueOwners' in raw) {
+    if (!Array.isArray(raw.allowedIssueOwners) || raw.allowedIssueOwners.some(owner => !LOGIN_RE.test(owner))) throw new Error(`Destination ${id} allowed issue owners are invalid`);
+    destination.allowedIssueOwners = [...raw.allowedIssueOwners];
+  }
+  return destination;
+}
+
+export function normalizeDestinationRegistry(value = {}) {
+  if (!plainObject(value)) throw new Error('Destinations must be an object keyed by destination ID');
+  return Object.fromEntries(Object.entries(value).map(([id, destination]) => [id, normalizeDestination(id, destination)]));
+}
+
+export function normalizeDestinationReferences(value = {}, { strict = false } = {}) {
+  if (!plainObject(value)) throw new Error('Destinations must be an object keyed by destination ID');
+  return Object.fromEntries(Object.entries(value).map(([id, destination]) => {
+    const normalized = normalizeDestination(id, destination, { referencesOnly: strict });
+    return [id, {
+      repoId: normalized.repoId,
+      owner: normalized.owner,
+      repo: normalized.repo,
+      branch: normalized.branch,
+    }];
+  }));
+}
+
+export const normalizeDestinations = normalizeDestinationRegistry;
+
+export function normalizeDefaultDestinationId(value, destinations = {}) {
+  const normalizedDestinations = normalizeDestinationRegistry(destinations);
+  if (value === null || value === undefined || value === '') {
+    if (Object.keys(normalizedDestinations).length) throw new Error('Default destination must reference a configured destination');
+    return null;
+  }
+  const id = normalizeDestinationId(value);
+  if (!Object.hasOwn(normalizedDestinations, id)) throw new Error('Default destination must reference a configured destination');
+  return id;
+}
+
+function normalizeProjectList(value, destinations, requireRouting) {
   if (!Array.isArray(value)) throw new Error('Projects must be a list');
   if (value.length > MAX_PROJECTS) throw new Error(`Projects cannot contain more than ${MAX_PROJECTS} entries`);
-  const names = new Set();
+  const normalizedDestinations = destinations === undefined ? null : normalizeDestinationRegistry(destinations);
+  const ids = new Set(), names = new Set();
   let totalSubstrings = 0, totalSubstringLength = 0;
   const projects = value.map((raw, index) => {
-    if (!plainObject(raw) || !['name,substrings', 'client,name,substrings'].includes(Object.keys(raw).sort().join(','))) throw new Error(`Project ${index + 1} has unexpected fields`);
+    if (!plainObject(raw)) throw new Error(`Project ${index + 1} has unexpected fields`);
+    const routed = Object.hasOwn(raw, 'id') || Object.hasOwn(raw, 'destinationId');
+    const expectedKeys = routed ? ['client,destinationId,id,name,substrings', 'destinationId,id,name,substrings'] : ['client,name,substrings', 'name,substrings'];
+    if (!expectedKeys.includes(Object.keys(raw).sort().join(',')) || (requireRouting && !routed)) throw new Error(`Project ${index + 1} has unexpected fields`);
     const name = String(raw.name ?? '').trim();
     if (!name || name.length > MAX_PROJECT_NAME || /[\u0000-\u001f\u007f]/.test(name)) throw new Error(`Project ${index + 1} must have a valid name`);
     const foldedName = name.toLowerCase();
     if (names.has(foldedName)) throw new Error(`Duplicate project name: ${name}`);
     names.add(foldedName);
+    let id, destinationId;
+    if (routed) {
+      id = String(raw.id ?? '');
+      if (!PROJECT_ID_RE.test(id)) throw new Error(`Project ${name} must have a valid project ID`);
+      if (ids.has(id)) throw new Error(`Duplicate project ID: ${id}`);
+      ids.add(id);
+      destinationId = normalizeDestinationId(raw.destinationId);
+      if (normalizedDestinations && !Object.hasOwn(normalizedDestinations, destinationId)) throw new Error(`Project ${name} references a missing destination`);
+    }
     if (!Array.isArray(raw.substrings) || !raw.substrings.length || raw.substrings.length > MAX_PROJECT_SUBSTRINGS) throw new Error(`Project ${name} must have at least one substring`);
     const substrings = [...new Set(raw.substrings.map(item => String(item ?? '').trim().toLowerCase()))];
     if (substrings.some(item => !item || item.length > MAX_PROJECT_SUBSTRING || /[\u0000-\u001f\u007f]/.test(item))) throw new Error(`Project ${name} has an invalid substring`);
     totalSubstrings += substrings.length;
     totalSubstringLength += substrings.reduce((total, substring) => total + substring.length, 0);
-    // Client existence is outside this normalizer because clients live in billing settings.
-    return { name, substrings, client: normalizeOtherProjectClient(raw.client) };
+    const client = Object.hasOwn(raw, 'client') ? normalizeOtherProjectClient(raw.client) : '';
+    return routed ? { id, name, substrings, destinationId, ...(Object.hasOwn(raw, 'client') ? { client } : {}) }
+      : { name, substrings, client };
   });
   if (totalSubstrings > MAX_TOTAL_PROJECT_SUBSTRINGS || totalSubstringLength > MAX_TOTAL_PROJECT_SUBSTRING_LENGTH) throw new Error('Project substring list is too large');
   if (new TextEncoder().encode(JSON.stringify(projects)).byteLength > MAX_PROJECTS_UTF8_BYTES) throw new Error('Project substring list is too large');
   return projects;
+}
+
+export function normalizeProjects(value = []) {
+  return normalizeProjectList(value, undefined, false);
+}
+
+export function normalizeProjectDefinitions(value = [], destinations = {}) {
+  return normalizeProjectList(value, destinations, true);
 }
 
 export function projectNameForUrl(url, projects = [], otherProjectName = OTHER_PROJECT) {
@@ -65,6 +200,16 @@ export function projectNameForUrl(url, projects = [], otherProjectName = OTHER_P
   }
   return normalizeOtherProjectName(otherProjectName);
 }
+
+export function resolveDestinationIdForUrl(url, projects = [], defaultDestinationId) {
+  const candidate = String(url ?? '').toLowerCase();
+  for (const project of projects ?? []) {
+    if ((project.substrings ?? []).some(substring => candidate.includes(String(substring).toLowerCase()))) return normalizeDestinationId(project.destinationId);
+  }
+  return normalizeDestinationId(defaultDestinationId);
+}
+
+export const destinationIdForUrl = resolveDestinationIdForUrl;
 
 function validDate(value, label) {
   if (value === '') return '';
@@ -307,59 +452,191 @@ export function billableMinorTotal(records, rates = {}) {
   return totals[0]?.amountMinor ?? 0;
 }
 
-export function settingsExportText({ config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient, reportingUtc = false, showQueueDiagnostics = false, exportedAt = new Date().toISOString() } = {}) {
-  const normalized = normalizeBillingSettings(billing);
-  const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
-  const { projects: normalizedProjects, otherProjectClient: normalizedOtherProjectClient } = projectClientPreferences({ projects, billing, otherProjectName: normalizedOtherProjectName, otherProjectClient });
-  if (normalizedProjects.some(project => project.name.toLowerCase() === normalizedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
-  const repository = config?.owner && config?.repo && config?.branch ? {
-    owner: String(config.owner), repo: String(config.repo), branch: String(config.branch),
+function legacyRepositoryReferenceFromConfig(config) {
+  if (!config?.owner || !config?.repo || !config?.branch) return null;
+  return {
+    owner: String(config.owner),
+    repo: String(config.repo),
+    branch: String(config.branch),
     ...(Number.isSafeInteger(config.repoId) && config.repoId > 0 ? { repoId: config.repoId } : {}),
-  } : null;
+  };
+}
+
+function destinationReferenceFromConfig(config) {
+  const repository = legacyRepositoryReferenceFromConfig(config);
+  return repository?.repoId ? repository : null;
+}
+
+function routeLegacyProjects(projects, destinationId) {
+  return projects.map((project, index) => Object.hasOwn(project, 'id') ? project : {
+    id: `legacy-project-${index + 1}`,
+    name: project.name,
+    substrings: project.substrings,
+    destinationId,
+  });
+}
+
+export function settingsExportText({
+  config = null, billing = {}, projects = [], otherProjectName = OTHER_PROJECT, otherProjectClient, reportingUtc = false,
+  showQueueDiagnostics = false, destinations, defaultDestinationId,
+  exportedAt = new Date().toISOString(),
+} = {}) {
+  const normalizedBilling = normalizeBillingSettings(billing);
+  const rawProjects = projects;
+  const normalizedOtherProjectName = normalizeOtherProjectName(otherProjectName);
+  const { projects: normalizedProjects, otherProjectClient: normalizedOtherProjectClient } = projectClientPreferences({ projects: rawProjects, billing, otherProjectName: normalizedOtherProjectName, otherProjectClient });
+  if (normalizedProjects.some(project => project.name.toLowerCase() === normalizedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
   const recentDays = Number(config?.recentDays ?? 7);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Invalid recent-entry setting');
+
+  const hasRouting = destinations !== undefined || defaultDestinationId !== undefined
+    || normalizedProjects.some(project => Object.hasOwn(project, 'id'));
+  if (!hasRouting) {
+    return `${JSON.stringify({
+      format: 'clockoli-settings', version: 7, exportedAt,
+      display: { recentDays, reportingUtc: normalizeReportingUtc(reportingUtc), otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true },
+      projects: normalizedProjects,
+      billing: { invoicing: invoicingSettings(normalizedBilling), rates: normalizedBilling.rates },
+      repository: legacyRepositoryReferenceFromConfig(config),
+      security: { credentialsIncluded: false },
+    }, null, 2)}\n`;
+  }
+
+  let runtimeDestinations;
+  if (destinations === undefined) {
+    const repository = destinationReferenceFromConfig(config);
+    runtimeDestinations = repository ? { [destinationIdForRepoId(repository.repoId)]: repository } : {};
+  } else {
+    runtimeDestinations = normalizeDestinationRegistry(destinations);
+  }
+  const destinationReferences = normalizeDestinationReferences(runtimeDestinations);
+  const destinationIds = Object.keys(destinationReferences);
+  const resolvedDefaultDestinationId = normalizeDefaultDestinationId(
+    defaultDestinationId ?? (destinationIds.length === 1 ? destinationIds[0] : null),
+    destinationReferences,
+  );
+  if (normalizedProjects.some(project => !Object.hasOwn(project, 'id')) && !resolvedDefaultDestinationId) {
+    throw new Error('Projects require a default destination before they can be exported');
+  }
+  const routedProjects = normalizeProjectDefinitions(
+    routeLegacyProjects(normalizedProjects, resolvedDefaultDestinationId),
+    destinationReferences,
+  );
   return `${JSON.stringify({
-    format: 'clockoli-settings', version: 7, exportedAt,
-    display: { recentDays, reportingUtc: normalizeReportingUtc(reportingUtc), otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true }, projects: normalizedProjects, billing: { invoicing: invoicingSettings(normalized), rates: normalized.rates }, repository,
+    format: 'clockoli-settings', version: 6, exportedAt,
+    display: { recentDays, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true },
+    projects: routedProjects,
+    billing: normalizedBilling,
+    destinations: destinationReferences,
+    defaultDestinationId: resolvedDefaultDestinationId,
     security: { credentialsIncluded: false },
   }, null, 2)}\n`;
+}
+
+function validateLegacyRepositoryReference(repository) {
+  if (repository === null) return null;
+  if (!plainObject(repository)) throw new Error('Settings file has invalid repository reference');
+  const keys = Object.keys(repository).sort().join(',');
+  if (keys !== 'branch,owner,repo' && keys !== 'branch,owner,repo,repoId') throw new Error('Settings file has unexpected repository fields');
+  if (typeof repository.owner !== 'string' || typeof repository.repo !== 'string' || typeof repository.branch !== 'string'
+      || ('repoId' in repository && (!Number.isSafeInteger(repository.repoId) || repository.repoId <= 0))) throw new Error('Settings file has invalid repository reference');
+  return {
+    owner: repository.owner,
+    repo: repository.repo,
+    branch: repository.branch,
+    ...(Number.isSafeInteger(repository.repoId) && repository.repoId > 0 ? { repoId: repository.repoId } : {}),
+  };
+}
+
+function withLegacyImportReferences(imported, references) {
+  Object.defineProperties(imported, Object.fromEntries(Object.entries(references).map(([key, value]) => [key, {
+    value,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  }])));
+  return imported;
 }
 
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
   if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5, 6, 7].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
-  const expectedKeys = value.version >= 3
-    ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
-    : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
+  const routedExport = value.version === 6 && Object.hasOwn(value, 'destinations');
+  const expectedKeys = routedExport
+    ? ['billing', 'defaultDestinationId', 'destinations', 'display', 'exportedAt', 'format', 'projects', 'security', 'version']
+    : value.version >= 3
+      ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
+      : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
-  if ((value.version === 7 && !['otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics'].includes(displayKeys)) || ([5, 6].includes(value.version) && displayKeys !== 'otherProjectName,recentDays,showQueueDiagnostics') || (value.version === 4 && displayKeys !== 'otherProjectName,recentDays') || (value.version < 4 && displayKeys !== 'recentDays')) throw new Error('Settings file is missing display settings or has unexpected display fields');
+  const displayKeySets = value.version >= 7
+    ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics']
+    : value.version === 6 && !routedExport
+      ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics', 'otherProjectName,recentDays,showQueueDiagnostics']
+      : value.version >= 5 ? ['otherProjectName,recentDays,showQueueDiagnostics']
+        : value.version === 4 ? ['otherProjectName,recentDays'] : ['recentDays'];
+  if (!displayKeySets.includes(displayKeys)) throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  if ((value.version === 1 && billingKeys !== 'currency,rates') || ([2, 3, 4, 5].includes(value.version) && billingKeys !== 'rates') || (value.version >= 6 && billingKeys !== 'invoicing,rates')) throw new Error('Settings file has unexpected billing fields');
+  const billingKeySets = value.version >= 7 || (value.version === 6 && !routedExport)
+    ? ['invoicing,rates'] : value.version === 1 ? ['currency,rates'] : ['rates'];
+  if (!billingKeySets.includes(billingKeys)) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
       || Number.isNaN(Date.parse(value.exportedAt))) throw new Error('Settings file has an invalid export timestamp');
-  if (value.repository !== null) {
-    if (!plainObject(value.repository)) throw new Error('Settings file has invalid repository reference');
-    const keys = Object.keys(value.repository).sort().join(',');
-    if (keys !== 'branch,owner,repo' && keys !== 'branch,owner,repo,repoId') throw new Error('Settings file has unexpected repository fields');
-    if (typeof value.repository.owner !== 'string' || typeof value.repository.repo !== 'string' || typeof value.repository.branch !== 'string'
-        || ('repoId' in value.repository && (!Number.isSafeInteger(value.repository.repoId) || value.repository.repoId <= 0))) throw new Error('Settings file has invalid repository reference');
-  }
   const recentDays = Number(value.display.recentDays);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent entries must be between 1 and 31 days');
   if (value.version >= 5 && typeof value.display.showQueueDiagnostics !== 'boolean') throw new Error('Queue diagnostics setting must be true or false');
+
+  let repository = null, destinations, defaultDestinationId, projects, projectDefinitions;
+  if (routedExport) {
+    destinations = normalizeDestinationReferences(value.destinations, { strict: true });
+    defaultDestinationId = normalizeDefaultDestinationId(value.defaultDestinationId, destinations);
+    projects = normalizeProjectDefinitions(value.projects, destinations);
+    projectDefinitions = projects;
+  } else {
+    repository = validateLegacyRepositoryReference(value.repository);
+    const hasStableReference = Number.isSafeInteger(repository?.repoId) && repository.repoId > 0;
+    destinations = hasStableReference ? { [destinationIdForRepoId(repository.repoId)]: repository } : {};
+    defaultDestinationId = hasStableReference ? destinationIdForRepoId(repository.repoId) : null;
+    projects = value.version >= 3 ? normalizeProjects(value.projects) : [];
+    projectDefinitions = defaultDestinationId
+      ? normalizeProjectDefinitions(routeLegacyProjects(projects, defaultDestinationId), destinations)
+      : projects;
+  }
   const resolvedOtherProjectName = value.version >= 4 ? normalizeOtherProjectName(value.display.otherProjectName) : OTHER_PROJECT;
-  const { projects, otherProjectClient } = projectClientPreferences({ projects: value.version >= 3 ? value.projects : [], billing: value.version <= 6 ? value.billing : {}, otherProjectName: resolvedOtherProjectName, otherProjectClient: value.version >= 7 ? normalizeOtherProjectClient(value.display.otherProjectClient) : undefined });
-  if (projects.some(project => project.name.toLowerCase() === resolvedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
-  return {
-    recentDays,
-    projects,
-    otherProjectName: resolvedOtherProjectName,
-    otherProjectClient,
-    reportingUtc: normalizeReportingUtc(value.display.reportingUtc),
+  const importedSourceProjects = routedExport ? value.projects : (value.version >= 3 ? value.projects : []);
+  const hasInvoiceFields = Object.hasOwn(value.billing, 'invoicing');
+  const hasClientFields = Object.hasOwn(value.display, 'otherProjectClient') || importedSourceProjects.some(project => Object.hasOwn(project, 'client'))
+    || (value.billing.invoicing?.clients ?? []).some(client => Array.isArray(client?.projects));
+  const hasReportingUtc = value.version >= 7 || Object.hasOwn(value.display, 'reportingUtc');
+  const { projects: importedProjects, otherProjectClient } = projectClientPreferences({
+    projects: importedSourceProjects, billing: value.billing, otherProjectName: resolvedOtherProjectName,
+    otherProjectClient: Object.hasOwn(value.display, 'otherProjectClient') ? normalizeOtherProjectClient(value.display.otherProjectClient) : undefined,
+  });
+  const normalizedImportedProjects = hasClientFields ? importedProjects : importedProjects.map(({ client: _client, ...project }) => project);
+  if (normalizedImportedProjects.some(project => project.name.toLowerCase() === resolvedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
+  const invoiceDefaultsRequired = !routedExport;
+  const imported = {
+    recentDays, projects: normalizedImportedProjects, otherProjectName: resolvedOtherProjectName,
+    ...(hasClientFields ? { otherProjectClient } : {}),
+    ...(hasReportingUtc ? { reportingUtc: normalizeReportingUtc(value.display.reportingUtc) } : {}),
     showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
-    billing: { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) },
+    billing: hasInvoiceFields || invoiceDefaultsRequired
+      ? { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) }
+      : normalizeBillingSettings(value.billing),
   };
+  if (routedExport) return {
+    ...imported,
+    destinations,
+    defaultDestinationId,
+    repositoryReferencesVerified: false,
+  };
+  return withLegacyImportReferences(imported, {
+    repository,
+    destinations,
+    defaultDestinationId,
+    projectDefinitions,
+    repositoryReferencesVerified: false,
+  });
 }

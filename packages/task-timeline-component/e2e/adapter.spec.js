@@ -230,7 +230,7 @@ test('details description remains clickable and editable for a non-movable task 
   });
   for (const mode of ['timeline', 'calendar']) {
     await page.evaluate(nextMode => window.__timeline.setViewMode(nextMode), mode);
-    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="active:locked"]`).click();
+    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="active:locked"]`).first().click();
     const input = page.locator('#timeline .clockoli-timeline-description');
     await input.click();
     expect(await input.evaluate(element => element.getRootNode().activeElement === element)).toBe(true);

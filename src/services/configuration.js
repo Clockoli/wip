@@ -150,6 +150,9 @@ export class ConfigurationService {
       || Boolean(previousConfig?.repoId && previousConfig.repoId !== repoId);
     const changesUser = Boolean(previousIdentity && previousIdentity.id !== identity.id);
     const changesAuthMode = Boolean(authSnapshot.auth && authSnapshot.auth.mode !== 'pat');
+    if (changesAuthMode && Object.keys(configurationSnapshot.registry?.destinations ?? {}).length > 1) {
+      throw new Error('Personal access token compatibility mode supports one time repository only. Remove the other time repositories before switching authentication.');
+    }
     if (changesAuthMode && (!previousIdentity || changesUser)) {
       throw new Error('The GitHub App and personal access token belong to different GitHub accounts or their stable identity could not be verified.');
     }
@@ -180,7 +183,7 @@ export class ConfigurationService {
       activeCache: preservesDataIdentity ? state.activeCache : null,
       recentCache: preservesDataIdentity ? (state.recentCache || []) : [],
       pendingWrites: preservesDataIdentity ? (state.pendingWrites ?? []) : [],
-      dataVersion: 4,
+      dataVersion: 5,
       taskMetadataCache: null,
       ...(!preservesDataIdentity ? { reportCache: null } : {}),
     };

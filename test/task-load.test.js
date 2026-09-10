@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SerialExecutor } from '../src/background/serial-executor.js';
-import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState, saveConfigurationAfterCancelling } from '../src/background/task-load.js';
+import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState, runDestinationLoads, saveConfigurationAfterCancelling } from '../src/background/task-load.js';
 
 const activeA = { issue: { url: 'https://github.com/acme/app/issues/1' }, sha: 'a'.repeat(40) };
 const activeB = { issue: { url: 'https://github.com/acme/app/issues/2' }, sha: 'b'.repeat(40) };
@@ -11,6 +11,28 @@ function deferred() {
   const promise = new Promise(done => { resolve = done; });
   return { promise, resolve };
 }
+
+test('destination runner isolates ordinary failures and settles every started operation', async () => {
+  const finished = [];
+  const results = await runDestinationLoads([{ id: 'one' }, { id: 'two' }], async destination => {
+    await Promise.resolve(); finished.push(destination.id);
+    if (destination.id === 'one') throw new Error('down');
+    return destination.id;
+  });
+  assert.deepEqual(finished.sort(), ['one', 'two']);
+  assert.equal(results[0].status, 'rejected');
+  assert.equal(results[1].status, 'fulfilled');
+});
+
+test('destination runner propagates parent abort to every operation before rejecting', async () => {
+  const controller = new AbortController(); let settled = 0;
+  const loading = runDestinationLoads([{ id: 'one' }, { id: 'two' }], (_destination, signal) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { settled += 1; reject(signal.reason); }, { once: true });
+  }), { signal: controller.signal });
+  controller.abort(new DOMException('superseded', 'AbortError'));
+  await assert.rejects(loading, error => error?.name === 'AbortError');
+  assert.equal(settled, 2);
+});
 
 test('a delayed Tasks refresh cannot resurrect a timer cleared by Stop', async () => {
   const executor = new SerialExecutor(), gate = deferred();

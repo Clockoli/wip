@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { releaseInventory, validateReleaseInventory } from '../scripts/release-inventory.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+test('release manifest does not expose an unused chrome.storage surface', async () => {
+  const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.permissions.includes('storage'), false);
+});
 
 const EXPECTED_RUNTIME_INVENTORY = [
   'manifest.json',
@@ -31,6 +37,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/assets/clockoli-48.png',
   'src/assets/clockoli-with-text.svg',
   'src/auth/github-app-auth.js',
+  'src/background/destination-runtime.js',
   'src/background/message-policy.js',
   'src/background/serial-executor.js',
   'src/background/service-worker.js',

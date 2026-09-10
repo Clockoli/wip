@@ -15,7 +15,7 @@ The toolbar popup supports any HTTP(S) active tab. The injected stopwatch and na
 
 ## Active timer
 
-Clockoli maintains one GitHub-backed active timer per user.
+Clockoli maintains one global GitHub-backed active timer per user across all configured time repositories.
 
 - Start records the canonical URL, optional title, and timezone-bearing Start timestamp.
 - Stop saves an optional description with the completed record.
@@ -23,7 +23,8 @@ Clockoli maintains one GitHub-backed active timer per user.
 - A connected browser can read the active timer written by another connected browser.
 - **Tracking this task** confirms that the current page matches the timer.
 - **Tracking another task** makes a mismatched active URL obvious.
-- A pending completion blocks another Start until it is synchronized or resolved.
+- Starting a different task performs a switch. Across repositories, Clockoli durably queues the source completion before the target Start and resumes that ordering after restart.
+- The active timer and accepted queued writes retain their destination even if routing later changes.
 
 Stopping an entry longer than 12 hours asks for confirmation. The warning does not impose a duration limit.
 
@@ -80,19 +81,20 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 
 ## Top tasks page
 
-**Recently tracked work** aggregates the current user's completed and running sessions by canonical URL.
+**Recently tracked work** aggregates the current user's completed and running sessions by canonical URL across selected time repositories.
 
 - Search by URL or optional title.
 - Periods: last 2 weeks, month, 3 months, 6 months, or year.
 - Completed and running time participate in ordering.
 - The task URL appears as a compact source line, with the optional title as the prominent link below it. Untitled tasks show the URL as the primary link without duplication.
 - Inline direct-input time-range controls use the same serialized timer state as the popup.
+- Each aggregate retains sorted time-repository provenance so identical URLs from different destinations are not misattributed.
 
-The page reads only the current user's monthly paths before hydrating optional GitHub issue/PR titles. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
+The page reads the current user's monthly paths from the selected destinations before hydrating optional GitHub issue/PR titles. Destinations load independently, so available tasks may remain visible with partial-read status. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 
 ## Activity page
 
-Times loads the current user's completed entries for Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range.
+Times loads the current user's completed entries from selected time repositories for Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range. Each edit or delete is sent back to the record's original time repository.
 
 The bulk importer accepts one dated URL task per line with an optional description and a duration. It validates the complete request and existing history before one atomic Git commit, including intervals that cross in from older monthly files and a concurrently started active timer. A failed request writes nothing and keeps the draft available for correction.
 
@@ -126,7 +128,7 @@ The summary shows:
 - people count;
 - source count.
 
-Filter by People and Sources. For a GitHub issue or pull request, the Source is `owner/repository`; for another URL it is the hostname.
+Filter by People, Projects, Task sources, and Time repositories. For a GitHub issue or pull request, the Task source is `owner/repository`; for another URL it is the hostname. The Time repository is the destination that stores the record.
 
 ### Analytics
 
@@ -143,7 +145,8 @@ Choose independent horizontal and stack dimensions:
 - Week
 - Month
 - Person
-- Source
+- Task source
+- Time repository
 - Task
 
 The data table under the chart is loaded only when expanded, which keeps large reports responsive.
@@ -154,7 +157,7 @@ The data table under the chart is loaded only when expanded, which keeps large r
 - JSON timesheet
 - Native browser print or save-to-PDF
 
-CSV and JSON include URL, Start, End, duration, person, description, and available GitHub task fields. When local rates are configured, each exported row also includes its effective hourly rate, billable amount, and that rate's currency.
+CSV and JSON include URL, Start, End, duration, person, description, provenance, and available GitHub task fields. When local rates are configured, each exported row also includes its effective hourly rate, billable amount, and that rate's currency. If any selected time repository fails to load or conflicting copies of a record are omitted, Clockoli shows the partial report but disables CSV, JSON, and print/PDF exports.
 
 ## Local billable rates
 
@@ -180,15 +183,18 @@ Add up to 20 additional lines for charges or discounts in the invoice currency. 
 
 Version 1 does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.
 
-## Data repository and personal branches
+## Time repositories, projects, and personal branches
 
-Clockoli validates one dedicated private GitHub repository. Each user writes routine timer data to a marked branch named:
+
+Clockoli can validate and add several dedicated private personal or organization repositories. Each user writes routine timer data in each destination to a marked branch named:
 
 ```text
 clockoli/users/{stable-github-user-id}
 ```
 
-This keeps users' normal timer commits off the repository's default branch and reduces write conflicts between team members. Reports discovers work records only from marked `clockoli/users/` personal branches; the default branch stores shared repository metadata.
+This keeps users' normal timer commits off each repository's default branch and reduces write conflicts between team members. Reports discovers work records only from marked `clockoli/users/` personal branches; each default branch stores shared repository metadata.
+
+Projects are ordered case-insensitive URL-substring rules. The first match routes a new Start to that project's chosen destination; an explicit default destination handles unmatched URLs. PAT compatibility mode supports exactly one destination.
 
 See [Data, privacy, and security](data-and-privacy.md) for file formats and permissions.
 
@@ -221,11 +227,12 @@ Clockoli checks repository identity, branch routing, file SHA, and original reco
 
 ### Backup
 
-Exported settings contain display preferences, local billing, and reference-only repository coordinates. They exclude all secrets and time data. Import never reconnects GitHub or changes the active destination.
+Version 6 exported settings contain display preferences, local billing, credential-free destination references, the exported default destination, and project routing. They exclude all secrets and time data. Import restores project routes only when all referenced destinations are already configured; references remain unverified, and import does not replace this browser's current default, add destinations, or reconnect repositories.
 
 ### Connection actions
 
-- **Change data repository** validates a new destination and does not delete the old repository.
+- **Time repositories** adds validated destinations without deleting records in existing repositories.
+- **Projects and routing** changes where future Starts go; it does not redirect active or queued work.
 - **Disconnect this browser** removes local sign-in while leaving GitHub authorization and repository data unchanged.
 - **Revoke Clockoli authorization on GitHub** opens GitHub's authorization settings. It does not uninstall the App or delete data.
 - **Clear local configuration** removes local Clockoli credentials and settings. Stop active work and synchronize pending writes first.

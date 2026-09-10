@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
+const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 
 test('content-script favicon URLs are exposed as extension resources', () => {
@@ -19,11 +20,18 @@ test('GitHub page cannot reach or synthesize privileged panel controls', () => {
   assert.match(source, /GET_PAGE_STATE', refresh \}/, 'navigation refresh policy must be explicit rather than always remote');
 });
 
-test('time tracker uses a native-style GitHub header menu instead of a floating corner card', () => {
+test('persistent storage stays behind IndexedDB without a chrome.storage surface', () => {
+  assert.equal(manifest.permissions.includes('storage'), false);
+  assert.doesNotMatch(worker, /chrome\.storage/);
+  assert.doesNotMatch(source, /chrome\.storage/);
+});
+
+test('time tracker uses one native-style GitHub header button without a floating corner card or dropdown', () => {
   assert.match(source, /\.AppHeader-actions/);
   assert.match(source, /img\.avatar/);
   assert.match(source, /clockoli-mark/);
-  assert.match(source, /icon\('triangle-down'/);
+  assert.doesNotMatch(source, /icon\('triangle-down'|trigger-menu|navigation-menu/);
+  assert.match(source, /await toggleFullWidthPopup\(\)/);
   assert.match(source, /aria-expanded/);
   assert.doesNotMatch(source, /position:\s*fixed;\s*right:20px;\s*bottom:20px/);
 });

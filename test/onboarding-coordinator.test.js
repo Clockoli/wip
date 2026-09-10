@@ -6,20 +6,23 @@ const provisionUserBranch = async (_github, user) => ({ branch: `clockoli/users/
 
 const candidate = {
   installationId: 88, repoId: 77, owner: 'acme', repo: 'time-data', fullName: 'acme/time-data',
+  ownerType: 'Organization', ownership: 'organization', state: 'initialized_member',
+  canAdd: true, canJoin: false, canInitialize: false, appPermissions: { contents: 'write' },
   private: true, archived: false, disabled: false, defaultBranch: 'main', eligible: true, reasons: [],
 };
 
 class MemoryStore {
-  constructor({ current = null, pending = null, config = null, state = {} } = {}) {
-    this.current = current; this.pending = pending; this.config = config;
+  constructor({ current = null, pending = null, config = null, registry = null, tracking = null, state = {} } = {}) {
+    this.current = current; this.pending = pending; this.config = config; this.registry = registry; this.tracking = tracking;
     this.currentGeneration = current?.generation || 0; this.pendingGeneration = pending?.generation || 0; this.configurationGeneration = 4;
-    this.state = { activeCache: null, pendingWrites: [], recentCache: [], reportCache: null, taskMetadataCache: null, user: null, dataVersion: 4, ...state };
+    this.state = { activeCache: null, pendingWrites: [], recentCache: [], reportCache: null, taskMetadataCache: null, user: null, dataVersion: 5, ...state };
     this.commits = []; this.saves = []; this.removals = 0; this.clears = 0;
   }
   async getAuthSnapshot() { return { auth: structuredClone(this.current), authGeneration: this.currentGeneration, configurationGeneration: this.configurationGeneration }; }
   async getPendingAuthSnapshot() { return { auth: structuredClone(this.pending), authGeneration: this.pendingGeneration, configurationGeneration: this.configurationGeneration }; }
-  async getConfigurationSnapshot() { return { config: structuredClone(this.config), token: '', generation: this.configurationGeneration }; }
+  async getConfigurationSnapshot() { return { config: structuredClone(this.config), ...(this.registry ? { registry: structuredClone(this.registry) } : {}), token: '', generation: this.configurationGeneration }; }
   async getState() { return structuredClone(this.state); }
+  async getTrackingSnapshot() { return structuredClone(this.tracking ?? { activeTimer: null, destinationStates: { entries: {} }, dataVersion: 5 }); }
   async ensureDataVersion(version) { if (this.state.dataVersion !== version) throw new Error(`unsupported local data version ${this.state.dataVersion}`); return structuredClone(this.state); }
   async commitPendingGitHubAppConfiguration(config, patch, expected) {
     if (expected !== this.pendingGeneration) return false;
@@ -32,6 +35,11 @@ class MemoryStore {
     this.saves.push({ config: structuredClone(config), patch: structuredClone(patch), expected });
     this.configurationGeneration += 1; this.config = structuredClone(config); Object.assign(this.state, structuredClone(patch)); return this.configurationGeneration;
   }
+  async repairGitHubAppRepositoryCoordinates(config, authGeneration, configurationGeneration) {
+    if (this.pending || authGeneration !== this.currentGeneration || configurationGeneration !== this.configurationGeneration) return false;
+    if (JSON.stringify(config) === JSON.stringify(this.config)) return true;
+    return this.saveGitHubAppConfiguration(config, {}, authGeneration);
+  }
   async removeCurrentAuthentication(expected) { if (expected !== this.currentGeneration) return false; this.current = null; this.currentGeneration += 1; this.removals += 1; return true; }
   async clearConfig() { this.clears += 1; this.current = null; this.pending = null; this.config = null; }
 }
@@ -43,7 +51,13 @@ function coordinator(store, overrides = {}) {
     store, userBranchProvisioner: provisionUserBranch,
     currentCredentialProvider: { getAccessToken: async () => 'current' },
     pendingCredentialProvider: { getAccessToken: async () => 'pending' },
-    githubFactory: options => ({ options, getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }) }),
+    githubFactory: options => ({ options, getAuthenticatedIdentity: async () => ({ id: 123, login: 'alice' }),
+      validateRepository: async () => ({ id: 77, private: true, default_branch: options.branch, owner: { type: 'Organization' }, permissions: { push: true } }),
+      getText: async path => ({ text: JSON.stringify(path === '.clockoli/config.json'
+        ? { repositoryFormatVersion: 1, createdAt: '2026-09-01T00:00:00.000Z', createdBy: { id: 123, login: 'alice' }, users: { 123: 'alice' } }
+        : path === '.clockoli/user.json' ? { version: 1, githubUserId: 123, storageLogin: 'alice' }
+          : { version: 1, storageLogin: 'alice', tasks: {} }) }),
+    }),
     discoveryFactory: ({ credentialProvider }) => { assert.ok(credentialProvider); return discovery; },
     initializerFactory: ({ github }) => { assert.ok(github); return initializer; },
     activeProbe: overrides.activeProbe || (async () => false),
@@ -55,6 +69,31 @@ test('repository discovery requires a pending or current GitHub App authorizatio
   await assert.rejects(() => coordinator(store).discover(), error => error.code === 'github_app_auth_required');
 });
 
+test('repository selection requires a valid explicit action and matches inspected state', async () => {
+  const store = new MemoryStore({ pending: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 1 } });
+  for (const action of [undefined, 'join', 'initialize', 'bogus']) {
+    await assert.rejects(
+      () => coordinator(store).selectRepository({ installationId: 88, repoId: 77, ...(action ? { action } : {}) }),
+      error => error.code === (action === undefined || action === 'bogus' ? 'repository_action_required' : 'repository_action_unavailable'),
+    );
+  }
+  assert.equal(store.commits.length, 0);
+});
+
+test('repository selection dispatches explicit add and persists inspected owner type', async () => {
+  const store = new MemoryStore({ pending: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 1 } });
+  const actions = [];
+  const initializer = {
+    execute: async action => {
+      actions.push(action);
+      return { status: 'access_checked', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'main' };
+    },
+  };
+  await coordinator(store, { initializer }).selectRepository({ installationId: 88, repoId: 77, action: 'add' });
+  assert.deepEqual(actions, ['add']);
+  assert.equal(store.config.ownerType, 'Organization');
+});
+
 test('validated repository selection atomically commits pending App auth over the old PAT', async () => {
   const store = new MemoryStore({
     current: { mode: 'pat', accessToken: 'old-pat', generation: 3 },
@@ -62,7 +101,7 @@ test('validated repository selection atomically commits pending App auth over th
     config: { owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'default', repoId: 77, storageLogin: 'alice', recentDays: 7, allowedIssueOwners: ['acme'] },
     state: { user: 'alice', recentCache: [{ id: 'recent' }], reportCache: { repositoryKey: 'acme/time-data@main', snapshot: 'kept' } },
   });
-  const result = await coordinator(store).selectRepository({ installationId: 88, repoId: 77 });
+  const result = await coordinator(store).selectRepository({ installationId: 88, repoId: 77, action: 'add' });
   assert.equal(result.status, 'write_verified');
   assert.equal(store.commits.length, 1);
   assert.equal(store.current.mode, 'github_app');
@@ -72,8 +111,8 @@ test('validated repository selection atomically commits pending App auth over th
   assert.equal(store.state.taskMetadataCache, null);
   assert.deepEqual(store.state.recentCache, [{ id: 'recent' }]);
   assert.deepEqual(store.state.reportCache, { repositoryKey: 'acme/time-data@main', snapshot: 'kept' });
-  assert.equal(store.commits[0].patch.activeCache, null);
-  assert.deepEqual(store.commits[0].patch.pendingWrites, []);
+  assert.equal(Object.hasOwn(store.commits[0].patch, 'activeCache'), false);
+  assert.equal(Object.hasOwn(store.commits[0].patch, 'pendingWrites'), false);
 });
 
 test('repository selection automatically follows a default branch created during setup', async () => {
@@ -97,7 +136,7 @@ test('repository selection automatically follows a default branch created during
       return { status: 'write_verified', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'trunk' };
     } }),
   });
-  const result = await c.selectRepository({ installationId: 88, repoId: 77 });
+  const result = await c.selectRepository({ installationId: 88, repoId: 77, action: 'add' });
   assert.equal(result.config.branch, 'clockoli/users/123');
   assert.equal(result.config.defaultBranch, 'trunk');
   assert.equal(discoveries, 2);
@@ -108,8 +147,27 @@ test('repository selection automatically follows a default branch created during
 
 test('repository selection re-discovers IDs and rejects a caller-supplied inaccessible repository', async () => {
   const store = new MemoryStore({ pending: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 1 } });
-  await assert.rejects(() => coordinator(store).selectRepository({ installationId: 999, repoId: 777 }), error => error.code === 'repository_access_required');
+  await assert.rejects(
+    () => coordinator(store).selectRepository({ installationId: 999, repoId: 777, action: 'add' }),
+    error => error.code === 'repository_access_required',
+  );
   assert.equal(store.commits.length, 0);
+});
+
+test('current GitHub authorization can add another destination while accepted work stays pinned', async () => {
+  const second = { ...candidate, repoId: 78, repo: 'other-time', fullName: 'acme/other-time' };
+  const store = new MemoryStore({
+    current: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 2 },
+    config: { owner: 'acme', repo: 'time-data', branch: 'clockoli/users/123', repoId: 77, storageLogin: 'alice' },
+    state: { activeCache: { id: 'running' }, pendingWrites: [{ id: 'queued' }] },
+  });
+  const discovery = { discover: async () => ({ installations: [], repositories: [second], candidates: [second] }) };
+  const initializer = { execute: async () => ({ status: 'access_checked', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 78, branch: 'main' }) };
+  await coordinator(store, { discovery, initializer }).selectRepository({ installationId: 88, repoId: 78, action: 'add' });
+  assert.equal(store.saves.length, 1);
+  assert.equal(store.saves[0].config.repoId, 78);
+  assert.deepEqual(store.state.activeCache, { id: 'running' });
+  assert.deepEqual(store.state.pendingWrites, [{ id: 'queued' }]);
 });
 
 test('auth or destination transition is blocked by local or remote active work and pending writes', async () => {
@@ -120,7 +178,26 @@ test('auth or destination transition is blocked by local or remote active work a
     { state: {}, activeProbe: async () => true, pattern: /active timer/i },
   ]) {
     const store = new MemoryStore({ current: { mode: 'pat', accessToken: 'old', generation: 2 }, pending: pendingAuth, config: { owner: 'old', repo: 'time', branch: 'main' }, state: setup.state });
-    await assert.rejects(() => coordinator(store, { activeProbe: setup.activeProbe }).selectRepository({ installationId: 88, repoId: 77 }), setup.pattern);
+    await assert.rejects(() => coordinator(store, { activeProbe: setup.activeProbe }).selectRepository({ installationId: 88, repoId: 77, action: 'add' }), setup.pattern);
+    assert.equal(store.commits.length, 0);
+  }
+});
+
+test('pending authorization replacement checks active and pending work in non-default destinations', async () => {
+  const current = { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 2 };
+  const pending = { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 3 };
+  const defaultConfig = { id: 'github:1', owner: 'alice', repo: 'personal-time', branch: 'clockoli/users/123', repoId: 1, storageLogin: 'alice' };
+  const teamConfig = { id: 'github:2', owner: 'acme', repo: 'team-time', branch: 'clockoli/users/123', repoId: 2, storageLogin: 'alice' };
+  const registry = { version: 1, defaultDestinationId: 'github:1', destinations: { 'github:1': defaultConfig, 'github:2': teamConfig } };
+  for (const [tracking, pattern] of [
+    [{ activeTimer: { destinationId: 'github:2', record: { id: 'running' } }, destinationStates: { entries: { 'github:1': { pendingWrites: [] }, 'github:2': { pendingWrites: [] } } }, dataVersion: 5 }, /active timer/i],
+    [{ activeTimer: null, destinationStates: { entries: { 'github:1': { pendingWrites: [] }, 'github:2': { pendingWrites: [{ id: 'queued' }] } } }, dataVersion: 5 }, /pending changes/i],
+  ]) {
+    const store = new MemoryStore({ current, pending, config: defaultConfig, registry, tracking });
+    await assert.rejects(
+      () => coordinator(store).selectRepository({ installationId: 88, repoId: 77, action: 'add' }),
+      pattern,
+    );
     assert.equal(store.commits.length, 0);
   }
 });
@@ -130,6 +207,32 @@ test('blocked transitions explain exactly how to protect running and unsynced wo
   await assert.rejects(() => coordinator(active).clearLocalConfiguration(), /stop the active timer/i);
   const pending = new MemoryStore({ current: { mode: 'github_app', generation: 2 }, config: { owner: 'acme', repo: 'time', branch: 'main' }, state: { pendingWrites: [{ id: 'one' }] } });
   await assert.rejects(() => coordinator(pending).clearLocalConfiguration(), /open Clockoli.*finish syncing.*pending changes/i);
+});
+
+test('disconnect and clear inspect accepted work in every v5 destination', async () => {
+  const auth = { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', generation: 2 };
+  for (const [tracking, pattern] of [
+    [{ activeTimer: { destinationId: 'github:2', record: { id: 'running' } }, destinationStates: { entries: {} } }, /active timer/i],
+    [{ activeTimer: null, destinationStates: { entries: { 'github:1': { pendingWrites: [] }, 'github:2': { pendingWrites: [{ id: 'queued' }] } } } }, /pending changes/i],
+  ]) {
+    let removed = 0, cleared = 0;
+    const store = {
+      getAuthSnapshot: async () => ({ auth, authGeneration: 2 }),
+      getConfigurationSnapshot: async () => ({
+        config: { id: 'github:1' }, registry: { destinations: { 'github:1': {}, 'github:2': {} } },
+      }),
+      getTrackingSnapshot: async () => structuredClone(tracking),
+      removeCurrentAuthentication: async () => { removed += 1; return true; },
+      clearConfig: async () => { cleared += 1; },
+    };
+    const service = new OnboardingCoordinator({
+      store, currentCredentialProvider: {}, pendingCredentialProvider: {}, githubFactory: () => ({}),
+      discoveryFactory: () => ({}), initializerFactory: () => ({}), activeProbe: async () => false,
+    });
+    await assert.rejects(() => service.disconnect(), pattern);
+    await assert.rejects(() => service.clearLocalConfiguration(), pattern);
+    assert.equal(removed, 0); assert.equal(cleared, 0);
+  }
 });
 
 test('disconnect is local, generation-checked, and refuses to discard active or pending work', async () => {
@@ -178,7 +281,7 @@ test('PAT migration preserves a validated custom branch for the same stable repo
       return { status: 'access_checked', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'worklog' };
     } }),
   });
-  await c.selectRepository({ installationId: 88, repoId: 77 });
+  await c.selectRepository({ installationId: 88, repoId: 77, action: 'add' });
   assert.equal(store.config.branch, 'clockoli/users/123');
   assert.equal(store.config.defaultBranch, 'worklog');
   assert.equal(factoryCalls[0].branch, 'worklog');
@@ -200,7 +303,7 @@ test('PAT custom-branch migration fails closed when old coordinates resolve to a
     discoveryFactory: () => ({ discover: async () => ({ installations: [], repositories: [candidate], candidates: [candidate] }) }),
     initializerFactory: () => ({ initialize: async () => { throw new Error('must not initialize'); } }),
   });
-  await assert.rejects(() => c.selectRepository({ installationId: 88, repoId: 77 }), error => error.code === 'custom_branch_unverified');
+  await assert.rejects(() => c.selectRepository({ installationId: 88, repoId: 77, action: 'add' }), error => error.code === 'custom_branch_unverified');
   assert.equal(store.commits.length, 0);
   assert.equal(store.config.branch, 'worklog');
 });
@@ -226,14 +329,14 @@ test('stable-ID recovery atomically repairs renamed repository and default-branc
   const result = await c.recoverCurrentRepository();
   assert.equal(result.config.owner, 'new-owner');
   assert.equal(result.config.repo, 'renamed-time-data');
-  assert.equal(result.config.branch, 'clockoli/users/123');
-  assert.equal(result.config.defaultBranch, 'new-main');
-  assert.equal(result.config.branchMode, 'custom');
+  assert.equal(result.config.branch, 'new-main');
+  assert.equal(result.config.storageBranchVersion, undefined);
+  assert.equal(result.config.branchMode, 'default');
   assert.equal(store.saves.length, 1);
   assert.deepEqual(store.state.activeCache, state.activeCache);
   assert.deepEqual(store.state.pendingWrites, state.pendingWrites);
   assert.deepEqual(store.state.recentCache, state.recentCache);
-  assert.deepEqual(initializerCalls[0].options, { expectedRepositoryId: 77, selectedBranch: 'new-main', branchMode: 'default' });
+  assert.deepEqual(initializerCalls, [], 'automatic recovery does not run onboarding actions');
 });
 
 test('stable-ID recovery distinguishes lost installation access from expired authentication', async () => {
@@ -266,7 +369,7 @@ test('repository verification status is persisted atomically and survives state 
   });
   await coordinator(store, { initializer: { initialize: async () => ({
     status: 'access_checked', storageLogin: 'alice', repositoryFormatVersion: 1, repositoryId: 77, branch: 'main',
-  }) } }).selectRepository({ installationId: 88, repoId: 77 });
+  }) } }).selectRepository({ installationId: 88, repoId: 77, action: 'add' });
   assert.equal(store.state.onboardingVerificationStatus, 'access_checked');
   assert.match(store.state.onboardingLastVerifiedAt, /^\d{4}-\d{2}-\d{2}T/);
 });
@@ -304,7 +407,7 @@ test('PAT to App migration proves stable account identity before preserving lega
     discoveryFactory: () => ({ discover: async () => ({ installations: [], repositories: [candidate], candidates: [candidate] }) }),
     initializerFactory: () => ({ initialize: async (_user, options) => { calls.push(options); return { status: 'access_checked', storageLogin: 'old-login', repositoryFormatVersion: 1, repositoryId: 77, branch: 'main' }; } }),
   });
-  await c.selectRepository({ installationId: 88, repoId: 77 });
+  await c.selectRepository({ installationId: 88, repoId: 77, action: 'add' });
   assert.equal(calls[0].requiredStorageLogin, 'old-login');
   assert.deepEqual(store.state.recentCache, [{ id: 'kept' }]);
 
@@ -315,12 +418,12 @@ test('PAT to App migration proves stable account identity before preserving lega
     discoveryFactory: () => ({ discover: async () => ({ installations: [], repositories: [candidate], candidates: [candidate] }) }),
     initializerFactory: () => ({ initialize: async () => { throw new Error('must not initialize'); } }),
   });
-  await assert.rejects(() => rejected.selectRepository({ installationId: 88, repoId: 77 }), error => error.code === 'migration_identity_mismatch');
+  await assert.rejects(() => rejected.selectRepository({ installationId: 88, repoId: 77, action: 'add' }), error => error.code === 'migration_identity_mismatch');
   assert.equal(mismatch.commits.length, 0);
 });
 
 test('repository selection rejects future local data before initialization and preserves it exactly', async () => {
-  const future = { activeCache: null, pendingWrites: [], recentCache: [{ future: true }], user: 'alice', dataVersion: 5 };
+  const future = { activeCache: null, pendingWrites: [], recentCache: [{ future: true }], user: 'alice', dataVersion: 6 };
   const store = new MemoryStore({
     current: { mode: 'github_app', githubUserId: 123, githubLogin: 'alice', accessToken: 'current', generation: 2 },
     config: { owner: 'acme', repo: 'time-data', branch: 'main', branchMode: 'default', repoId: 77, storageLogin: 'alice' },
@@ -329,8 +432,8 @@ test('repository selection rejects future local data before initialization and p
   let initialized = 0;
   await assert.rejects(
     () => coordinator(store, { initializer: { initialize: async () => { initialized += 1; throw new Error('must not initialize'); } } })
-      .selectRepository({ installationId: 88, repoId: 77 }),
-    /unsupported local data version 5/,
+      .selectRepository({ installationId: 88, repoId: 77, action: 'add' }),
+    /unsupported local data version 6/,
   );
   assert.equal(initialized, 0);
   assert.deepEqual(store.state, { taskMetadataCache: null, reportCache: null, ...future });

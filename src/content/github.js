@@ -6,7 +6,7 @@
   const popupMode = location.protocol === 'chrome-extension:' && !timesMode;
   const actionSurfaceMode = globalThis.__CLOCKOLI_ACTION_SURFACE__ === true;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
-  const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
+
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
   const TASKS_PATH = 'M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z';
   const ACTIVITY_PATH = 'M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z';
@@ -57,7 +57,6 @@
   const queueDiagnostics = [];
 
   let menuOpen = false, menuScrollTop = 0;
-  let navigationOpen = false;
   let descriptionDraft = null;
   const timelineDescriptionDrafts = new Map();
   let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
@@ -723,6 +722,7 @@
       pageState = reconcileTimelineAcceptedActive({
         ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
         pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
+        partial: Boolean(data?.partial), readStatus: data?.readStatus ?? [], readConflicts: data?.conflicts ?? [],
       });
       applyTrackedTotals(data);
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
@@ -773,6 +773,12 @@
     return [item.operation, item.stage, item.status, item.retryCount, item.conflictReason, item.lastError].join('\u0001');
   }
 
+  function queueElapsedText(queuedAt) {
+    const elapsedMs = Date.now() - new Date(queuedAt).getTime();
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return '';
+    return elapsedMs < 1_000 ? ` in ${Math.round(elapsedMs)}ms` : ` in ${(elapsedMs / 1_000).toFixed(1)}s`;
+  }
+
   function recordQueueDiagnostics(previous, next) {
     const before = new Map((previous ?? []).map(item => [item.id, item]));
     const after = new Map((next ?? []).map(item => [item.id, item]));
@@ -780,13 +786,17 @@
     for (const item of next ?? []) {
       const prior = before.get(item.id), label = queueOperationLabel(item);
       if (!prior) append(`${label}: queued${item.queuedAt ? ` at ${item.queuedAt}` : ''}.`);
-      else if (queueOperationSignature(prior) !== queueOperationSignature(item)) {
+      const previousDiagnostics = prior?.diagnostics?.length || 0;
+      for (const event of (item.diagnostics ?? []).slice(previousDiagnostics)) {
+        append(`${label}: ${safeQueueDetail(event.message)}`);
+      }
+      if (prior && queueOperationSignature(prior) !== queueOperationSignature(item)) {
         const attempt = Number(item.retryCount) ? ` Attempt ${item.retryCount}.` : '';
         const detail = item.lastError ? ` ${safeQueueDetail(item.lastError)}` : '';
         append(`${label}: ${item.status || 'pending'} at ${item.stage || item.operation || 'queued'}.${attempt}${detail}`);
       }
     }
-    for (const item of previous ?? []) if (!after.has(item.id)) append(`${queueOperationLabel(item)}: synced.`);
+    for (const item of previous ?? []) if (!after.has(item.id)) append(`${queueOperationLabel(item)}: synced${queueElapsedText(item.queuedAt)}.`);
     if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
   }
 
@@ -1029,7 +1039,7 @@
 
   function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
 
-  function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
+  function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
   function originalRecord(entry) { return { id: entry.id, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
@@ -1112,7 +1122,7 @@
     }
     const next = [];
     for (const item of recent) {
-      if (item._path !== deleted._path || item._pending) { next.push(item); continue; }
+      if (item.destinationId !== deleted.destinationId || item._path !== deleted._path || item._pending) { next.push(item); continue; }
       if (item._index === deleted._index) {
         if (!sameRecord(item, deleted)) return null;
         continue;
@@ -1120,7 +1130,7 @@
       const index = item._index > deleted._index ? item._index - 1 : item._index;
       const replacement = byIndex.get(index);
       if (!replacement || replacement._path !== deleted._path || !sameRecord(replacement, item)) return null;
-      next.push(replacement);
+      next.push({ ...replacement, destinationId: deleted.destinationId, timeRepository: deleted.timeRepository });
     }
     return next;
   }
@@ -1189,7 +1199,7 @@
     const controls = node ? Array.from(node.parentElement?.children ?? [node]) : [];
     for (const control of controls) control.disabled = true;
     try {
-      const result = await send({ type: 'DELETE_ENTRY', payload: { path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
+      const result = await send({ type: 'DELETE_ENTRY', payload: { destinationId: entry.destinationId, path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
       activeInlineKey = null;
       pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
       const reconciled = reconcileDeletedFile(entry, result?.entries);
@@ -1208,7 +1218,7 @@
   }
 
   function entryKey(entry) {
-    return `${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
+    return `${entry.destinationId || ''}\n${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
   }
 
   function clearInlineGroup(key) {
@@ -1236,6 +1246,7 @@
     for (let left = 0; left < entries.length; left += 1) {
       const leftStart = new Date(entries[left].startedAt).getTime(), leftEnd = new Date(entries[left].endedAt).getTime();
       for (let right = left + 1; right < entries.length; right += 1) {
+        if (entries[left].destinationId !== entries[right].destinationId) continue;
         const rightStart = new Date(entries[right].startedAt).getTime(), rightEnd = new Date(entries[right].endedAt).getTime();
         if (leftStart < rightEnd && rightStart < leftEnd) {
           overlaps.add(entryKey(entries[left])); overlaps.add(entryKey(entries[right]));
@@ -1259,7 +1270,7 @@
 
   function recordsWithDrafts() {
     const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
-    return [...recent.filter(entry => !drafts.some(draft => draft.id === entry.id && draft._path === entry._path)), ...drafts];
+    return [...recent.filter(entry => !drafts.some(draft => draft.id === entry.id && draft._path === entry._path && draft.destinationId === entry.destinationId)), ...drafts];
   }
 
   function refreshOverlapWarnings() {
@@ -1295,6 +1306,7 @@
 
   function linkCrossedTimeBoundaries(entry, boundary, group) {
     const sequence = [...inlineEditors.entries()]
+      .filter(([, editor]) => editor.entry.destinationId === entry.destinationId)
       .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
       .flatMap(([key, editor]) => [
         { id: boundaryId(key, 'start'), key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, timezone: editor.entry.timezone, editor },
@@ -1354,9 +1366,9 @@
   }
 
   function applyQueuedInlineEntries(entries) {
-    const changes = new Map(entries.map(request => [`${request.path}\u0000${request.original.id}`, request.edits]));
+    const changes = new Map(entries.map(request => [`${request.destinationId}\u0000${request.path}\u0000${request.original.id}`, request.edits]));
     recent = recent.map(entry => {
-      const edits = changes.get(`${entry._path}\u0000${entry.id}`);
+      const edits = changes.get(`${entry.destinationId}\u0000${entry._path}\u0000${entry.id}`);
       if (!edits) return entry;
       const startedAt = edits.startedAt ?? entry.startedAt, endedAt = edits.endedAt ?? entry.endedAt;
       return {
@@ -1410,13 +1422,15 @@
           const description = String(value.metadataActive ? value.description : target.description || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
           const edits = { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
           const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
-          return changed ? { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
+          return changed ? { destinationId: target.destinationId, path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
         const savedKeys = new Set(submittedDrafts.keys());
         if (!entries.length) {
           clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
-        const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { entries } });
+        const destinationIds = [...new Set(entries.map(item => item.destinationId))];
+        if (destinationIds.length !== 1) throw new Error('Linked edits must stay within one time repository.');
+        const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { destinationId: destinationIds[0], entries: entries.map(({ destinationId: _destinationId, ...entry }) => entry) } });
         if (queued?.operationId) inlineQueuedOperationIds.add(queued.operationId);
         applyQueuedInlineEntries(entries);
         const acceptedKeys = new Set();
@@ -1487,6 +1501,7 @@
     const identity = el('div', undefined, 'entry-record-task-identity');
     identity.append(siteFavicon(entry, 'entry-record-favicon'), taskResult(entry, 'entry-record-task-result'));
     record.append(identity);
+    if (entry.timeRepository) record.append(el('div', `Time repository: ${entry.timeRepository}`, 'time-repository-label'));
     const title = record.querySelector('.task-title');
     if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
     const timeRow = el('div', undefined, 'entry-time-row'); let day;
@@ -1631,8 +1646,18 @@
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
     if (!pageState.configured && recentLoaded) {
-      body.append(el('p', 'Connect a GitHub repository before viewing time.', 'muted'), button('Connect GitHub', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
+      body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
       page.append(body); return page;
+    }
+    if (pageState.partial) {
+      const failed = (pageState.readStatus ?? []).filter(item => item.status === 'error').length;
+      const conflicts = pageState.readConflicts?.length || 0;
+      const warning = el('p', [
+        failed ? `${failed} time ${failed === 1 ? 'repository' : 'repositories'} could not be loaded.` : '',
+        conflicts ? `${conflicts} conflicting ${conflicts === 1 ? 'record was' : 'records were'} omitted.` : '',
+        'Showing available activity.',
+      ].filter(Boolean).join(' '), 'notice partial-read-warning');
+      body.append(warning);
     }
     const toolbar = el('section', undefined, 'times-toolbar');
     const filterLabel = el('label', 'Filter by URL or optional title'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Filter by URL or optional title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
@@ -1955,7 +1980,7 @@
       const previousState = timelineOptimisticEditStates.get(restore.previousGeneration);
       if (previousState?.settled) {
         if (restoreRecent && restore.previousEntry) {
-          recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+          recent = recent.map(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId ? restore.previousEntry : item);
         }
         timelineOptimisticEdits.delete(entry.id);
         timelineOptimisticEditGenerations.delete(entry.id);
@@ -1965,7 +1990,7 @@
       restore = previousState;
     }
     if (restoreRecent && restore.previousEntry) {
-      recent = recent.map(item => item.id === entry.id && item._path === entry._path ? restore.previousEntry : item);
+      recent = recent.map(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId ? restore.previousEntry : item);
     }
     if (restore.hadPreviousOptimisticEdit) timelineOptimisticEdits.set(entry.id, restore.previousOptimisticEdit);
     else timelineOptimisticEdits.delete(entry.id);
@@ -1974,7 +1999,7 @@
   }
 
   async function queueCalendarEntry(entry, edits) {
-    const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path);
+    const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId);
     const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
     const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
     const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
@@ -1993,6 +2018,7 @@
     if (!timelineInstance) renderUi();
     try {
       const result = await send({ type: 'QUEUE_ENTRY_EDIT', payload: {
+        destinationId: entry.destinationId,
         path: entry._path, originalSha: entry._sha, index: entry._index,
         original: originalRecord(entry), edits,
       } });
@@ -2058,7 +2084,7 @@
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
     const previousRecent = recent;
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
-    recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path));
+    recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
     timelineOptimisticCompletions.delete(entry.id);
     pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
     const acceptanceId = beginTimelineQueueAcceptance();
@@ -2067,6 +2093,7 @@
     recordTimelineQueueDiagnostic('Delete time entry: accepted locally and queued for GitHub.');
     try {
       const result = await send({ type: 'QUEUE_ENTRY_DELETE', payload: {
+        destinationId: entry.destinationId,
         path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry),
       } });
       if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
@@ -2562,8 +2589,8 @@
     if (pageState.configured == null) {
       if (!errorText) body.append(el('p', 'Loading…', 'muted'));
     } else if (!pageState.configured) {
-      body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
-      body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
+      body.append(el('p', 'Choose where Clockoli should save your time before tracking.', 'muted'));
+      body.append(button('Set up Clockoli', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
     } else {
       if (compact) {
         const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list');
@@ -2663,16 +2690,6 @@
     menu.append(body); startPanelClock(); return menu;
   }
 
-  function renderNavigationMenu() {
-    const menu = el('section', undefined, 'navigation-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Time tracker pages');
-    const reports = button('Reports', 'navigation-item', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); });
-    reports.setAttribute('role', 'menuitem'); reports.prepend(icon('graph', REPORTS_PATH));
-    const tasks = button('Top tasks', 'navigation-item', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); });
-    tasks.setAttribute('role', 'menuitem'); tasks.prepend(icon('checklist', TASKS_PATH));
-    const activity = button('Activity', 'navigation-item', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); });
-    activity.setAttribute('role', 'menuitem'); activity.prepend(icon('history', ACTIVITY_PATH));
-    menu.append(reports, tasks, activity); return menu;
-  }
 
   function restoreMenuScroll(scrollTop) {
     const menu = shadow?.querySelector('.menu');
@@ -2708,7 +2725,7 @@
     compactSurface = null;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     const surface = el('section', undefined, 'full-width-popup');
-    surface.append(renderMenu({ compact: true, onClose: () => closeFullWidthPopup() }));
+    surface.append(renderMenu({ compact: true, onClose: closeFullWidthPopup }));
     fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
     focusPopupAction();
   }
@@ -2939,9 +2956,8 @@
       .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:5px; background:transparent; color:var(--ck-success); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
       .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
-      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,var(--ck-button-invisible-fg-rest)); text-align:left }
-      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
+      .trigger-main { width:34px; margin-right:8px }
+      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved,.time-repository-label { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .time-repository-label { margin-top:3px } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
       .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
  .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
@@ -2973,8 +2989,10 @@
         :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
         :host(.full-width-popup-surface) .clockoli-wordmark { height:24px }
         :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
-        :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:start; flex-wrap:wrap }
-        :host(.full-width-popup-surface) .header-navigation { flex:1 1 100%; max-width:100%; overflow-x:auto }
+        :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:stretch; width:100%; flex-wrap:wrap }
+        :host(.full-width-popup-surface) .header-navigation { display:grid; flex:1 1 100%; width:100%; max-width:100%; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; overflow:visible }
+        :host(.full-width-popup-surface) .header-navigation .reports-button { min-width:0; justify-content:center; gap:3px; padding:5px 2px; font-size:10px; white-space:nowrap }
+        :host(.full-width-popup-surface) .header-navigation .reports-button svg { width:12px; height:12px }
       }
       :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
@@ -3003,48 +3021,29 @@
     if (!shadow || !root?.isConnected) return;
     if (timesMode) { shadow.append(style, renderTimesPage()); return; }
     if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
-    const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
+    const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(menuOpen));
+    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(fullWidthPopupOpen));
     main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(clockoliMark(22));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      const activatedTask = taskFromLocation();
-      if (!activatedTask) return;
-      navigationOpen = false; menuOpen = !menuOpen; if (!menuOpen) menuScrollTop = 0; cancelActiveInlineDraft();
-      if (pageState.configured != null) errorText = '';
-      renderUi();
-      if (menuOpen) {
-        try {
-          if (pageState.configured == null) await refreshState(false);
-          if (menuOpen && pageState.configured) await refreshRecent();
-        }
-        catch (error) { setError(error); }
-      }
+      await toggleFullWidthPopup();
     });
-    const arrow = el('button', undefined, 'trigger trigger-menu'); arrow.type = 'button'; arrow.setAttribute('aria-label', 'Open time tracker pages');
-    arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports, top tasks, and activity'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
-    arrow.addEventListener('click', event => {
-      if (!event.isTrusted) return;
-      menuOpen = false; menuScrollTop = 0; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); if (pageState.configured != null) errorText = ''; renderUi();
-    });
-    group.append(main, arrow); shadow.append(style, group);
-    if (navigationOpen) shadow.append(renderNavigationMenu());
-    else if (menuOpen) shadow.append(renderMenu());
+    shadow.append(style, main);
     restoreMenuScroll(preservedMenuScrollTop);
   }
 
   async function render(refresh = false) {
-    if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; navigationOpen = false; return; }
+    if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; return; }
     if (!mountInHeader()) return;
     renderUi();
     try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false })); errorText = ''; }
     catch (error) { errorText = error.message; errorCode = error.code || 'error'; }
     actionAnimationReady = true;
     renderUi();
-    if (menuOpen && pageState.configured) {
+    if ((menuOpen || fullWidthPopupOpen) && pageState.configured) {
       try { await refreshRecent(); }
       catch (error) { setError(error); }
     }
@@ -3059,7 +3058,7 @@
     const route = `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0;
       participantLoadId += 1; clearClockoliParticipantRetry(); participantData = null; scheduleClockoliParticipantAugmentation();
       void render(firstRender);
       void refreshClockoliParticipants();
@@ -3117,11 +3116,11 @@
       return true;
     });
     document.addEventListener('click', event => {
-      if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
+      if (menuOpen && !event.composedPath().includes(root)) closeMenu();
     });
     document.addEventListener('keydown', event => {
       if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) { closeFullWidthPopup(); return; }
-      if ((menuOpen || navigationOpen) && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
+      if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
     });
     document.addEventListener('visibilitychange', updateTaskAnimation);
     motionPreference?.addEventListener?.('change', updateTaskAnimation);

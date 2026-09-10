@@ -11,6 +11,7 @@
 .page-tab[aria-current="page"]{background:var(--button-default-bgColor-selected,var(--bgColor-muted));color:var(--fgColor-default)}
 .page-brand:focus-visible,.page-tab:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:-4px}
 @media(max-width:640px){.page-tabs{display:flex;flex-wrap:wrap;padding:8px 12px;gap:6px}.page-brand{width:100%}.page-brand img{height:24px}.page-tab-list{max-width:100%;margin:0;overflow-x:auto}.page-tab{padding-inline:5px;font-size:12px}}
+@media(max-width:400px){.page-tab-list{gap:0}.page-tab{gap:2px;padding-inline:2px;font-size:11px}.page-tab svg{width:13px;height:13px}}
 @media print{.page-tabs-shell{display:none}}
 /* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
 @media(prefers-color-scheme:dark){.page-brand img{filter:saturate(1.4) brightness(2.1)}}

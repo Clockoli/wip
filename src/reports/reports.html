@@ -118,13 +118,14 @@
     </dialog>
 
     <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="partial-status" class="notice" role="status" hidden></div>
     <div id="loading" class="notice loading-notice" role="status" aria-live="polite" hidden>
-      <div class="loading-copy"><strong id="loading-label">Connecting to GitHub…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
+      <div class="loading-copy"><strong id="loading-label">Loading time data…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
       <progress id="loading-progress" max="100" value="10">10%</progress>
     </div>
     <div id="setup" class="notice" hidden>
-      Configure a private time-data repository before opening reports.
-      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+      Choose where Clockoli should save your time before opening reports.
+      <button id="setup-settings" class="button primary" type="button">Set up Clockoli</button>
     </div>
 
     <section id="report-content" hidden>
@@ -165,6 +166,11 @@
             <input id="repositories-search" class="facet-search" type="search" placeholder="Search sources" aria-label="Search sources">
             <div id="repositories-facet" class="facet-list"></div>
           </section>
+          <section>
+            <div class="section-heading"><h2>Time repositories</h2><button id="timeRepositories-all" class="text-button" type="button">Select all</button></div>
+            <input id="timeRepositories-search" class="facet-search" type="search" placeholder="Search time repositories" aria-label="Search time repositories">
+            <div id="timeRepositories-facet" class="facet-list"></div>
+          </section>
         </aside>
 
         <div class="report-main">
@@ -189,6 +195,7 @@
                       <option value="month">Month</option>
                       <option value="person" selected>Person</option>
                       <option value="repository">Source</option>
+                      <option value="time-repository">Time repository</option>
                       <option value="task">Task URL / title</option>
                     </select>
                   </label>
@@ -202,6 +209,7 @@
                 <option value="month">Month</option>
                 <option value="person">Person</option>
                 <option value="repository">Source</option>
+                <option value="time-repository">Time repository</option>
                 <option value="task">Task URL / title</option>
               </select>
             </label>

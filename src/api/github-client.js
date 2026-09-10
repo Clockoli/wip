@@ -161,7 +161,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date() }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -178,11 +178,22 @@ export class GitHubClient {
     this.branchMode = branchMode;
     this.fetchImpl = fetchImpl.bind(globalThis);
     this.now = now;
+    this.validationCache = validationCache;
+    this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
 
   async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
+    const startedAt = Date.now();
+    const report = status => {
+      try {
+        this.requestDiagnostics?.({
+          method: options.method || 'GET', path: String(path).slice(0, 300), status,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        });
+      } catch { /* Diagnostics must never affect GitHub operations. */ }
+    };
     const requestWithToken = token => this.fetchImpl(`https://api.github.com${path}`, {
       ...options,
       cache: 'no-store',
@@ -195,17 +206,22 @@ export class GitHubClient {
       },
     });
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
-    let response = await requestWithToken(token);
+    let response;
+    try { response = await requestWithToken(token); }
+    catch (error) { report('network_error'); throw error; }
     if (response.status === 401 && this.credentialProvider) {
       token = await this.credentialProvider.getAccessToken({ forceRefresh: true, rejectedToken: token });
-      response = await requestWithToken(token);
+      try { response = await requestWithToken(token); }
+      catch (error) { report('network_error'); throw error; }
     }
     if (allowNotModified && response.status === 304) {
+      report(response.status);
       return { body: null, status: response.status, headers: response.headers, notModified: true };
     }
     let body = null;
     try { body = await response.json(); } catch { /* empty response */ }
     if (!response.ok) {
+      report(response.status);
       if (response.status === 401) throw new GitHubAuthenticationError();
       if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status, rateLimitRetryAt(response, this.now()));
       if (response.status === 403) {
@@ -225,6 +241,7 @@ export class GitHubClient {
       }
       throw new GitHubApiError(`GitHub request failed (${response.status})`, response.status);
     }
+    report(response.status);
     return { body, status: response.status, headers: response.headers, notModified: false };
   }
   async request(path, options = {}) {
@@ -479,12 +496,22 @@ export class GitHubClient {
     if (this.expectedRepositoryId === null) {
       throw new GitHubApiError('The configured GitHub repository identity has not been verified.', 409, 'repository_identity_unverified');
     }
-    const repository = await this.validateRepository();
-    if (repository.id !== this.expectedRepositoryId) {
-      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    const token = this.token || await this.credentialProvider.getAccessToken();
+    const cacheKey = `${token}\u0000${this.repositoryKey}\u0000${this.expectedRepositoryId}\u0000${this.branchMode}`;
+    const cached = this.validationCache?.get(cacheKey);
+    if (cached && cached.expiresAt > this.now().getTime()) return;
+    try {
+      const repository = await this.validateRepository();
+      if (repository.id !== this.expectedRepositoryId) {
+        throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+      }
+      this.assertCanonicalCoordinates(repository);
+      await this.assertConfiguredBranch(repository);
+      this.validationCache?.set(cacheKey, { expiresAt: this.now().getTime() + (5 * 60 * 1000) });
+    } catch (error) {
+      this.validationCache?.delete(cacheKey);
+      throw error;
     }
-    this.assertCanonicalCoordinates(repository);
-    await this.assertConfiguredBranch(repository);
   }
 
   async putInitialText(path, text, message) {
