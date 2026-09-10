@@ -18,39 +18,48 @@ function section(id) {
   return html.slice(start, nextSection === -1 ? html.length : nextSection);
 }
 
-test('first run is a linear three-step connection flow with one obvious primary action', () => {
-  assert.match(html, /Step <span id="current-step">1<\/span> of 3/);
-  assert.match(html, /Connect GitHub[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
-  assert.match(html, /id="authorize"[^>]*>Connect GitHub<\/button>/);
+test('first run has two steps: GitHub sign-in then repository selection regardless of access state', () => {
+  assert.match(html, /Step <span id="current-step">1<\/span> of 2/);
+  assert.match(html, /Set up Clockoli[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
+  assert.match(html, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
   assert.match(html, /Clockoli copies the one-time code before opening GitHub so you can paste it/);
   assert.match(html, /<details[^>]*id="connection-details"[\s\S]*<summary>How it works<\/summary>/i);
-  assert.doesNotMatch(html, /four guided steps|of 4|Step 4/i);
+  assert.doesNotMatch(html, /of [34]|Step [34]/i);
   assert.equal(onboardingStep({ authorized: false }), 1);
   assert.equal(onboardingStep({ authorized: true, repositories: [], repositoryAccessDetected: false }), 2);
-  assert.equal(onboardingStep({ authorized: true, repositories: [{ eligible: true }], repositoryAccessDetected: true }), 3);
+  assert.equal(onboardingStep({ authorized: true, repositories: [{ eligible: true }], repositoryAccessDetected: true }), 2);
+  assert.equal(onboardingStep({ authorized: true, repositories: [{ eligible: false }], repositoryAccessDetected: true }), 2);
 });
 
-test('repository creation and App grant are combined into step two while validation is step three', () => {
-  const connect = section('repository-setup-step');
-  assert.match(connect, /Create a private Clockoli data repository/i);
-  assert.match(connect, /Use an existing private repository/i);
+test('step two offers repositories and a manual target with conditional App access, not scenario choices', () => {
+  const connect = section('repository-step');
+  assert.match(connect, /Connect time repositories/i);
+  assert.match(connect, /id="repository-target-form"[\s\S]*Repository URL or owner\/name[\s\S]*id="repository-target"/);
+  assert.match(connect, /id="repository-list"/);
+  assert.match(connect, /<a id="new-time-repository"[^>]*>Create a new time repository<\/a>/);
+  assert.match(connect, /id="repository-access-panel"[^>]*hidden/);
   assert.match(connect, /Only select repositories/i);
-  assert.match(html, /id="repository-step"[\s\S]*Choose and validate/i);
-  assert.doesNotMatch(html, /id="repository-access-step"/);
-  assert.match(script, /\[2, 'repository-setup-step'\][\s\S]*\[3, 'repository-step'\]/);
-  assert.doesNotMatch(script, /\[4, 'repository-step'\]|4: 'repository-step-title'/);
+  assert.doesNotMatch(connect, /id="connect-repository"|id="refresh-repositories"/);
+  assert.match(connect, /id="setup-default-destination"/);
+  assert.match(connect, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
+  assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice|id="choose-existing-repository"/);
+  assert.match(script, /\$\('repository-step'\)\.hidden = step !== 2/);
+  const access = script.slice(script.indexOf('function renderRepositoryAccess()'), script.indexOf('function repositoryActionKey('));
+  assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready' && !selectedRepository/);
+  assert.match(access, /selectedRepository\?\.reasons\?\.includes\('app_contents_write_required'\)/);
+  assert.match(access, /if \(!\(missing \|\| needsAppWrite\)\) closeRepositoryAccess\(\)/);
+  assert.match(access, /Its existence is not confirmed/);
 });
 
-test('connected settings is a compact dashboard with primary status and secondary actions', () => {
+test('connected settings separates account controls from the destination registry', () => {
   const connected = section('connected');
-  for (const id of ['connected-account', 'connected-repository-link', 'connected-branch-link', 'connected-storage', 'connected-last-check', 'check-access', 'change-connection', 'manage-access']) {
+  for (const id of ['connected-account', 'manage-authorization', 'disconnect']) {
     assert.match(connected, new RegExp(`id="${id}"`));
   }
-  assert.match(connected, /Check access/);
-  assert.match(connected, /Change repository/);
-  assert.doesNotMatch(connected, /id="disconnect"|>Disconnect</);
-  assert.match(script, /\$\('check-access'\)\.addEventListener/);
-  assert.match(styles, /\.connection-dashboard/);
+  assert.doesNotMatch(connected, /connected-repository-link|connected-branch-link|connected-storage/);
+  assert.match(html, /id="time-repositories"[\s\S]*id="time-repository-list"/);
+  assert.match(script, /function renderDestinationCards/);
+  assert.match(styles, /\.time-repository/);
   assert.match(styles, /\.connected-secondary-actions/);
 });
 
@@ -63,16 +72,16 @@ test('one contextual recovery action replaces the three-button recovery strip', 
   assert.match(recovery, /repository_unavailable/);
 });
 
-test('regular local settings stay top-level while rare access controls are Advanced', () => {
+test('repository routing stays top-level while local secondary settings remain grouped', () => {
   const advancedStart = html.indexOf('id="advanced-settings"');
   assert.notEqual(advancedStart, -1);
   const before = html.slice(0, advancedStart);
   const advanced = html.slice(advancedStart);
-  for (const id of ['billing-settings', 'settings-backup']) assert.match(before, new RegExp(`id="${id}"`));
-  for (const id of ['disconnect', 'clear-local', 'advanced-pat', 'revoke-action']) assert.match(advanced, new RegExp(`id="${id}"`));
-  assert.doesNotMatch(advanced, /id="billing-settings"|id="settings-backup"/);
+  for (const id of ['time-repositories', 'display-settings', 'disconnect']) assert.match(before, new RegExp(`id="${id}"`));
+  for (const id of ['clear-local', 'advanced-pat', 'revoke-action']) assert.match(advanced, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(advanced, /id="time-repositories"|id="display-settings"|id="disconnect"/);
   assert.match(html, /<summary>Advanced<\/summary>/);
-  assert.match(html, />Activity<\/h2>/);
+  assert.match(html, />Projects and routing<\/h2>/);
   assert.match(html, />Backup &amp; restore<\/h2>/);
   assert.match(html, /<summary>What is included\?<\/summary>/);
 });
@@ -81,7 +90,8 @@ test('rates and backup copy explain locality, exclusions, and offline restoratio
   assert.match(html, /Add date ranges if a rate changes over time\. Rates are private to this browser;/i);
   assert.match(html, /never written to your GitHub repository/i);
   assert.doesNotMatch(html, /class="local-only-note"/);
-  assert.match(script, /Connected\. Existing Clockoli storage was validated\./);
+  assert.match(script, /Repository initialized\. Clockoli verified the setup write\./);
+  assert.match(script, /Repository joined\. Clockoli registered your storage branch\./);
   assert.doesNotMatch(script, /without an unnecessary write/);
   assert.match(script, /rateLabel\.textContent = 'Hourly rate'/);
   assert.match(script, /currencyLabel\.textContent = 'Currency'/);
@@ -101,13 +111,13 @@ test('local display settings stay available whenever local configuration exists'
   assert.doesNotMatch(script, /\$\('display-settings'\)\.hidden = !state\.ready/);
 });
 
-test('connected access check validates the configured destination for App and PAT auth', () => {
-  assert.match(script, /send\(\{ type: 'CHECK_REPOSITORY_ACCESS' \}\)/);
-  assert.doesNotMatch(script.slice(script.indexOf("$('check-access').addEventListener"), script.indexOf("$('connect-repository').addEventListener")), /DISCOVER_REPOSITORIES/);
+test('each connected destination has an explicit scoped access check', () => {
+  assert.match(script, /send\(\{ type: 'CHECK_REPOSITORY_ACCESS', destinationId: destination\.id \}\)/);
+  assert.match(script, /className = 'secondary check-repository-access'/);
   assert.match(worker, /message\.type === 'CHECK_REPOSITORY_ACCESS'/);
   assert.match(worker, /auth\?\.mode === 'github_app'[\s\S]*recoverCurrentRepository/);
   assert.match(worker, /assertDestinationReachable\(\)/);
-  assert.match(worker, /onboardingVerificationStatus: 'access_checked'/);
+  assert.match(worker, /saveDestinationVerification\(selectedId, 'access_checked', lastVerifiedAt\)/);
   assert.match(policy, /CHECK_REPOSITORY_ACCESS/);
 });
 
@@ -150,13 +160,36 @@ test('storage-format recovery returns to repository selection instead of a shall
   assert.doesNotMatch(script.slice(script.indexOf('function showRecovery'), script.indexOf('function isAppAuthorized')), /recoveryKind === 'repair'/);
 });
 
-test('one eligible repository completes setup without a manual validation click', () => {
-  assert.match(script, /relevantCandidates\.length === 1 && !suppressRepositoryAutoConnect\)[\s\S]*await connectSelectedRepository\(\{ automatic: true \}\)/);
-  assert.match(script, /async function connectSelectedRepository/);
+test('discovery never writes and explicit modal confirmation discloses administrator initialization', () => {
+  const render = script.slice(script.indexOf('function renderRepositories('), script.indexOf('function reviewSelectedRepository('));
+  assert.match(render, /selectedRepository = repositoryInputDirty \? null : repositoryTarget/);
+  assert.match(render, /repositories\.find\([^\n]+\) \|\| null/);
+  assert.match(render, /updateRepositoryConfirmation\(\)/);
+  const review = script.slice(script.indexOf('function reviewSelectedRepository('), script.indexOf('async function confirmRepositoryAction('));
+  assert.match(review, /pendingConfirmation = \{/);
+  assert.match(review, /Repository administrator confirmation is required/);
+  assert.match(review, /Create \.clockoli\/config\.json/);
+  assert.match(review, /showModal\(\)/);
+  assert.match(review, /\$\('repository-confirmation'\)\.hidden = false/);
+  assert.doesNotMatch(render + review, /send\(|SELECT_REPOSITORY/);
+  const confirm = script.slice(script.indexOf('async function confirmRepositoryAction('), script.indexOf('async function discoverRepositories('));
+  assert.match(confirm, /if \(!pendingConfirmation \|\| repositoryActionApplying\) return false/);
+  assert.match(confirm, /type: 'SELECT_REPOSITORY'/);
+  assert.match(script, /\$\('confirm-repository-action'\)\.addEventListener\('click', \(\) => void confirmRepositoryAction\(\)\)/);
+  assert.doesNotMatch(script, /connectSelectedRepository\(\{ automatic: true \}\)/);
 });
 
-test('repository monitoring stops immediately after automatic connection completes', () => {
-  assert.match(script, /await discoverRepositories\(\{ monitoring: true, deadline: repositoryMonitorDeadline \}\);\s*if \(state\?\.ready\) \{\s*stopRepositoryMonitoring\(\);\s*return;\s*\}/);
+test('repository polling stays silent and read-only until its lifecycle stops', () => {
+  const polling = script.slice(script.indexOf('function repositoryPollingActive('), script.indexOf('function addRateRow('));
+  assert.match(polling, /!repositoryPollingStopped && !setupCancelled && isAppAuthorized\(\)/);
+  assert.match(polling, /repositoryLifecycle\+\+/);
+  assert.match(polling, /clearTimeout\(repositoryMonitorTimer\)/);
+  assert.match(polling, /!pendingConfirmation && !repositoryActionApplying/);
+  assert.match(polling, /!discoveryPromise/);
+  assert.match(polling, /await discoverRepositories\(\{ silent: true \}\)/);
+  assert.match(polling, /}, 3000\)/);
+  assert.match(polling, /addEventListener\('pagehide'/);
+  assert.doesNotMatch(polling, /SELECT_REPOSITORY|confirmRepositoryAction\(|reviewSelectedRepository\(|showModal/);
 });
 
 test('Retry after a connected access-check failure repeats the destination check', () => {
@@ -174,28 +207,36 @@ test('expired PAT recovery opens the local PAT editor instead of Device Flow', (
   assert.match(script, /patUpdate[\s\S]*recoveryKind[\s\S]*'choose'/);
 });
 
-test('storage recovery suppresses one-repository auto-connect until the user validates a choice', () => {
-  assert.match(script, /forceManualSelection: storageRepair/);
-  assert.match(script, /suppressRepositoryAutoConnect = recoveryAction\.forceManualSelection/);
-  assert.match(script, /relevantCandidates\.length === 1 && !suppressRepositoryAutoConnect/);
+test('storage recovery returns to selection under the universal explicit-confirm gate', () => {
+  assert.match(script, /const storageRepair = recovery\.kind === 'repair'[\s\S]*storageRepair \? 'choose'/);
+  assert.match(script, /recoveryAction\.kind === 'choose'[\s\S]*beginRepositoryChange\(\)/);
+  const change = script.slice(script.indexOf('function beginRepositoryChange('), script.indexOf('async function checkRepositoryAccess('));
+  assert.match(change, /showOnboarding = true[\s\S]*discoveryStatus = 'idle'[\s\S]*discoverRepositories\(\)/);
+  assert.doesNotMatch(change, /repositoryChoiceMode|rememberRepositoryTarget\(''\)|SELECT_REPOSITORY/);
+  assert.match(script, /updateRepositoryConfirmation[\s\S]*pendingConfirmation = null/);
+  assert.doesNotMatch(script, /suppressRepositoryAutoConnect/);
 });
 
-test('repository setup selection is visible, focusable, aligned, and GitHub-like', () => {
-  assert.match(html, /id="create-repository-choice"[^>]*data-repository-choice="create"/);
-  assert.match(html, /id="existing-repository-choice"[^>]*data-repository-choice="existing"/);
-  assert.match(html, /id="skip-repository-creation"[^>]*aria-pressed="false"/);
-  assert.match(html, /class="help repository-list-help">Unavailable repositories/);
-  assert.match(styles, /\.setup-choice\.selected\{/);
-  assert.match(styles, /grid-template-columns:minmax\(0,1fr\) 202px/);
-  assert.match(styles, /\.setup-choice-action\{[^}]*width:202px[^}]*text-align:center/);
-  assert.match(styles, /\.repository-option input\[type=radio\]\{[^}]*width:16px[^}]*height:16px[^}]*appearance:none/);
-  assert.match(styles, /\.repository-option input\[type=radio\]:checked::after/);
-  assert.match(styles, /\.repository-option\{[^}]*font:var\(--text-body-shorthand-medium\)[^}]*font-weight:400/);
-  assert.match(styles, /\.repository-option strong\{font:600 14px\/20px var\(--fontStack-sansSerif\)\}/);
-  assert.match(styles, /\.repository-option small\{[^}]*font:400 12px\/18px var\(--fontStack-sansSerif\)/);
-  assert.match(script, /choice\.classList\.toggle\('selected', selected\)/);
-  assert.match(script, /existing-repository-choice'\)\.scrollIntoView/);
-  assert.match(script, /queueMicrotask\(\(\) => \$\('install-app'\)\.focus\(\)\)/);
+test('direct repository selection is accessible and exposes check progress and focused review', () => {
+  assert.match(html, /<label>Repository URL or owner\/name<input id="repository-target"[^>]*required/);
+  assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="check-repository-target"[^>]*type="submit"/);
+  assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
+  assert.match(html, /id="confirm-repository-action"[^>]*type="button"/);
+  assert.doesNotMatch(html, /Unavailable repositories include the reason/);
+  assert.match(styles, /\.repository-option/);
+  assert.match(styles, /\.repository-icon/);
+  assert.doesNotMatch(script, /radio\.type = 'radio'/);
+  assert.match(script, /status\.textContent = repositoryInspectionStatus\(repository\)/);
+  assert.match(script, /button\.disabled = true; button\.textContent = 'Checking repository'/);
+  const check = script.slice(script.indexOf("$('repository-target-form').addEventListener"), script.indexOf("$('close-repository-access').addEventListener"));
+  assert.match(check, /!repositoryInputDirty && repositoryTarget === target/);
+  assert.match(check, /if \(!reviewSelectedRepository\(\)\) \$\('repository-target-status'\)\.focus\(\)/);
+  assert.match(check, /repositoryInputDirty = true;\s*selectedRepository = null;\s*updateRepositoryConfirmation\(\)/);
+  assert.doesNotMatch(check, /SELECT_REPOSITORY/);
+  assert.match(script, /\$\('repository-confirmation'\)\.showModal\(\)/);
+  assert.match(styles, /@media\(max-width:400px\)/);
+  assert.match(styles, /\.actions button,[^}]*width:100%/);
 });
 
 

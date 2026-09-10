@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ReportService } from '../src/services/reports.js';
+import {
+  ReportService, annotateDestinationRecord, loadDestinationRecords, mergeDestinationRecords,
+  mergeDestinationTaskSummaries, withoutInternalMetadata,
+} from '../src/services/reports.js';
 import { applyTaskIndexChanges, emptyTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
 
 const block = (url, start, end, description = '', user = 'alice') => {
@@ -28,6 +31,100 @@ const taskIndex = (login, entries) => serializeTaskIndex(applyTaskIndexChanges(e
   })),
 }));
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
+
+test('destination records are annotated after parsing without changing their persistent body', () => {
+  const persistent = JSON.parse(block('https://example.com/work', '2026-08-17T09:00:00Z', '2026-08-17T10:00:00Z'));
+  const record = { id: persistent.id, _record: persistent, _path: 'times/2026-08/alice.jsonl' };
+  const annotated = annotateDestinationRecord(record, { id: 'github:1', label: 'acme/personal' });
+  assert.equal(annotated.destinationId, 'github:1');
+  assert.equal(annotated.timeRepository, 'acme/personal');
+  assert.equal('destinationId' in annotated._record, false);
+  assert.equal('timeRepository' in annotated._record, false);
+  assert.equal('destinationId' in record, false);
+});
+
+test('destination merge deduplicates canonical bodies and omits conflicting ULIDs safely', () => {
+  const body = JSON.parse(block('https://example.com/work', '2026-08-17T09:00:00Z', '2026-08-17T10:00:00Z'));
+  const reordered = Object.fromEntries(Object.entries(body).reverse());
+  const conflict = structuredClone(body); conflict.description = 'different private body';
+  const destinations = [{ id: 'github:1', label: 'acme/personal' }, { id: 'github:2', label: 'acme/team' }];
+  const equal = mergeDestinationRecords([
+    { destination: destinations[0], records: [{ id: body.id, _record: body }] },
+    { destination: destinations[1], records: [{ id: body.id, _record: reordered }] },
+  ], destinations.map(item => item.id));
+  assert.equal(equal.records.length, 1);
+  assert.deepEqual(equal.records[0].duplicateDestinations, ['github:1', 'github:2']);
+  assert.deepEqual(equal.conflicts, []);
+  const divergent = mergeDestinationRecords([
+    { destination: destinations[0], records: [{ id: body.id, _record: body }] },
+    { destination: destinations[1], records: [{ id: body.id, _record: conflict }] },
+  ], destinations.map(item => item.id));
+  assert.deepEqual(divergent.records, []);
+  assert.deepEqual(divergent.conflicts, [{
+    code: 'record_id_conflict', id: body.id,
+    destinationIds: ['github:1', 'github:2'], timeRepositories: ['acme/personal', 'acme/team'],
+  }]);
+  assert.doesNotMatch(JSON.stringify(divergent.conflicts), /different private body/);
+});
+
+test('task summaries merge by canonical URL and user instead of an absent work-record ID', () => {
+  const taskUrl = 'https://github.com/acme/app/issues/1';
+  const destinations = [{ id: 'github:1', label: 'alice/time' }, { id: 'github:2', label: 'team/time' }];
+  const merged = mergeDestinationTaskSummaries([
+    { destination: destinations[0], records: [
+      { user: 'Alice', taskUrl, durationSeconds: 60, recordIds: ['01K2ABCDEF0123456789ABCDE0'] },
+      { user: 'bob', taskUrl, durationSeconds: 120, recordIds: ['01K2ABCDEF0123456789ABCDE1'] },
+    ] },
+    { destination: destinations[1], records: [
+      { user: 'alice', taskUrl, durationSeconds: 180, recordIds: ['01K2ABCDEF0123456789ABCDE2'] },
+    ] },
+  ], destinations.map(item => item.id));
+  assert.deepEqual(merged.conflicts, []);
+  assert.deepEqual(merged.records, [
+    {
+      user: 'Alice', taskUrl, durationSeconds: 240,
+      recordIds: ['01K2ABCDEF0123456789ABCDE0', '01K2ABCDEF0123456789ABCDE2'],
+      destinationIds: ['github:1', 'github:2'], timeRepositories: ['alice/time', 'team/time'],
+    },
+    {
+      user: 'bob', taskUrl, durationSeconds: 120,
+      recordIds: ['01K2ABCDEF0123456789ABCDE1'],
+      destinationIds: ['github:1'], timeRepositories: ['alice/time'],
+    },
+  ]);
+});
+
+test('destination loads isolate ordinary failures, reject all failures, and propagate abort', async () => {
+  const destinations = [{ id: 'github:1', label: 'one' }, { id: 'github:2', label: 'two' }];
+  const partial = await loadDestinationRecords(destinations, async destination => {
+    if (destination.id === 'github:2') throw Object.assign(new Error('token=private'), { code: 'unavailable' });
+    return [{ id: '01K2ABCDEF0123456789ABCDE0', _record: { id: '01K2ABCDEF0123456789ABCDE0' } }];
+  });
+  assert.equal(partial.records.length, 1);
+  assert.equal(partial.partial, true);
+  assert.deepEqual(partial.readStatus.map(item => [item.destinationId, item.status]), [['github:1', 'ok'], ['github:2', 'error']]);
+  assert.doesNotMatch(JSON.stringify(partial.readStatus), /private/);
+  await assert.rejects(() => loadDestinationRecords(destinations, async () => { throw new Error('down'); }), error => error?.code === 'all_destinations_failed');
+  const controller = new AbortController(); let settled = 0;
+  const loading = loadDestinationRecords(destinations, (_destination, signal) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { settled += 1; reject(signal.reason); }, { once: true });
+  }), { signal: controller.signal });
+  controller.abort(new DOMException('cancelled', 'AbortError'));
+  await assert.rejects(loading, error => error?.name === 'AbortError');
+  assert.equal(settled, 2);
+});
+
+test('destination loads keep outer repository concurrency bounded', async () => {
+  const destinations = Array.from({ length: 9 }, (_, index) => ({ id: `github:${index + 1}`, label: `repo-${index + 1}` }));
+  let active = 0, peak = 0;
+  await loadDestinationRecords(destinations, async destination => {
+    active += 1; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    active -= 1;
+    return [{ id: `record-${destination.id}`, durationSeconds: 1 }];
+  }, { concurrency: 3 });
+  assert.equal(peak, 3);
+});
 
 class MemoryReportCache {
   constructor() { this.value = null; this.saves = 0; }
@@ -72,6 +169,32 @@ class FakeGitHub {
     return { path, sha: file.sha, text: file.text };
   }
 }
+
+test('ReportService retains unknown persistent fields until cross-destination conflict detection', async () => {
+  const taskUrl = 'https://github.com/acme/app/issues/1';
+  const base = JSON.parse(block(taskUrl, '2026-08-17T09:00:00Z', '2026-08-17T10:00:00Z'));
+  const changed = structuredClone(base);
+  changed.unknown_root = { revision: 2 };
+  changed.work_item.unknown_work_item = 'private-extension';
+  changed.activity.unknown_activity = true;
+  const destinations = [{ id: 'github:1', label: 'alice/time' }, { id: 'github:2', label: 'team/time' }];
+  const githubs = [new FakeGitHub(), new FakeGitHub()];
+  githubs[0].files = new Map([['times/2026-08/alice.jsonl', { sha: A, text: monthly(JSON.stringify(base)) }]]);
+  githubs[1].repositoryKey = 'acme/team-time@main';
+  githubs[1].files = new Map([['times/2026-08/alice.jsonl', { sha: B, text: monthly(JSON.stringify(changed)) }]]);
+  const loaded = await loadDestinationRecords(destinations, (destination, signal) => {
+    const index = destinations.findIndex(item => item.id === destination.id);
+    return new ReportService({ github: githubs[index] }).loadRange(
+      { startDate: '2026-08-17', endDate: '2026-08-17' }, { includeStorageMetadata: true, signal },
+    );
+  });
+  assert.equal(loaded.partial, true);
+  assert.deepEqual(loaded.records, []);
+  assert.deepEqual(loaded.conflicts.map(item => [item.code, item.id]), [['record_id_conflict', base.id]]);
+  assert.deepEqual(withoutInternalMetadata({ ...changed, _record: changed, _path: 'private', destinationId: 'github:2' }), {
+    ...changed, destinationId: 'github:2',
+  });
+});
 
 test('report service loads monthly files and filters records to the inclusive date range', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache();

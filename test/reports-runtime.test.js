@@ -15,6 +15,7 @@ const newRange = { startDate: '2026-08-24', endDate: '2026-08-30' };
 const record = (user, host = 'example.com', date = oldRange.startDate) => ({
   user, taskUrl: `https://${host}/task`, taskTitle: 'Review', entryDate: date,
   startedAt: `${date}T09:00:00Z`, endedAt: `${date}T10:00:00Z`, durationSeconds: 3600,
+  destinationId: 'github:1', timeRepository: 'alice/time',
 });
 const invoiceSettings = {
   seller: { name: 'Acme Studio', address: '1 Main Street', email: 'hello@example.com', taxId: 'VAT-1' },
@@ -115,6 +116,35 @@ test('first load defaults to current user, shows one time figure and hides uncon
   const chart = page.nodes.get('analytics-chart').children[0];
   assert.ok(chart.children.some(node => node.tagName === 'rect' && node.attributes.tabindex === '0'));
   assert.ok(page.nodes.get('print-detail-table').children[1].children.length);
+});
+
+test('partial multi-repository reports stay visible with exports disabled', async () => {
+  const page = await loaded({
+    ...result(), partial: true,
+    readStatus: [
+      { destinationId: 'github:1', timeRepository: 'alice/time', status: 'ok' },
+      { destinationId: 'github:2', timeRepository: 'team/time', status: 'error', error: { code: 'unavailable' } },
+    ],
+  });
+  assert.equal(page.nodes.get('report-content').hidden, false);
+  assert.equal(page.nodes.get('partial-status').hidden, false);
+  assert.match(page.nodes.get('partial-status').textContent, /Exports are disabled/);
+  assert.equal(page.selection('timeRepositories'), 'alice/time');
+  for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+});
+
+test('conflict-only partial reports identify omitted conflicts without claiming a read failure', async () => {
+  const page = await loaded({
+    ...result(), partial: true,
+    readStatus: [
+      { destinationId: 'github:1', timeRepository: 'alice/time', status: 'ok' },
+      { destinationId: 'github:2', timeRepository: 'team/time', status: 'ok' },
+    ],
+    conflicts: [{ code: 'record_id_conflict', id: '01K2ABCDEF0123456789ABCDE0' }],
+  });
+  assert.match(page.nodes.get('partial-status').textContent, /1 conflicting record was omitted/i);
+  assert.doesNotMatch(page.nodes.get('partial-status').textContent, /could not be loaded/i);
+  for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
 });
 
 test('billing stays visible when a configured rate belongs to someone outside the selection', async () => {
@@ -599,7 +629,7 @@ test('picker closes on Escape and outside clicks, retains inside clicks and mark
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const range = reporting.periodRange(preset, today);
-    const format = value => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`));
+    const format = value => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`));
     assert.equal(page.nodes.get('period-label').textContent, `${format(range.startDate)} – ${format(range.endDate)}`);
   }
 });

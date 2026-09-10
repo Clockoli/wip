@@ -31,10 +31,12 @@ GitHub user authorization and GitHub App installation are separate.
 
 1. Return to Clockoli Settings.
 2. Use **Done on GitHub—check now** if automatic checking has not completed.
-3. Continue to repository creation/access.
-4. Grant the Clockoli App access to the intended repository with **Contents: Read and write**.
+3. After sign-in, Clockoli automatically checks accessible repositories in **Connect time repositories**. Use a repository row’s action, or enter its GitHub URL or `owner/name` and select **Check repository**.
+4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Already-ready repositories become available automatically. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 
-### No repository is listed
+### My repository is not listed
+
+Enter its GitHub URL or `owner/name` in **Repository URL or owner/name**, then select **Check repository**. A missing private repository is not necessarily nonexistent: GitHub may hide it when your account or the App lacks access. Check the spelling and your GitHub access before creating a replacement.
 
 Check that:
 
@@ -45,7 +47,23 @@ Check that:
 - **Contents: Read and write** is granted;
 - an organization approval is not still pending.
 
-Use **Grant repository access** to review the App installation, then return to Settings. Clockoli checks again automatically; use the visible Retry action if monitoring times out or reports a transient error.
+When the checked target is missing or needs App Contents-write permission, use **Grant access**. If Clockoli knows the owner's existing App installation, this opens its settings. Choose **Only select repositories** and add the intended repository; ask its owner or organization administrator if you cannot change the grant. There is no need to repeat installation when the repository is already accessible.
+
+The access dialog appears only after an explicit **Check repository**. **Grant access** closes it and opens GitHub. Return to Settings and press **Check repository** again; the list refreshes silently every 3 seconds while setup is active. Clockoli remembers the repository you selected or explicitly checked across the GitHub visit and Settings reload. It does not silently substitute another repository if your target remains unavailable. Use **Check repository** to recheck the target. Network errors are reported separately from missing App access.
+
+If you really need a repository, use **Create a new time repository** at the beginning of the repository section, then return and enter its URL. Creating it does not grant App access.
+
+Discovery and inspection never write to GitHub. Ready repositories are added locally automatically after membership, personal branch ownership, and task-index validation. A missing branch needs explicit setup; invalid ownership or index data must be repaired before use. Select the repository row’s action, read the privacy disclosure and **Repository writes**, then explicitly confirm **Set up storage branch**, **Join repository**, or **Initialize repository**, as offered. Even **Set up storage branch** may create or verify your personal storage branch. Anyone with repository read access can see stored task URLs, titles, timestamps, and descriptions.
+
+### Check an edited repository target before connecting
+
+Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check repository** to inspect the edited target, resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
+
+### The list does not visibly refresh, or Finish setup is unavailable
+
+The compact icon-and-link list checks silently every 3 seconds while repository setup is active; there is no **Refresh repositories** or **Review connection** button and no radio-list selection. Unchanged results preserve the list DOM, focus, scroll, drafts, messages, and dialogs. Background errors retain the last good view without a spinner or notification. Use **Check repository** for an explicit result; it opens the appropriate access or setup dialog when needed, but writes still require the disclosed action-specific confirmation.
+
+Choose a usable connected repository in the separate **Default time repository** selector. New or replacement GitHub authorization is promoted automatically only for the same GitHub identity after every configured destination passes read-only validation and active/queued-work safety checks. If promotion is blocked, follow the single account-level message; there is no per-repository confirmation action. **Finish setup** remains unavailable while authorization or the default is unresolved. Finishing stops polling, discards late replies, and clears the remembered target without remote writes.
 
 ### Repository validation fails
 
@@ -63,7 +81,11 @@ Use a dedicated private repository with direct authenticated writes. Do not dele
 
 ### Organization approval is pending
 
-An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings and retry discovery.
+An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings; the list updates silently while setup is active. Select **Check repository** to explicitly recheck the target.
+
+### I cannot initialize an organization repository
+
+Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then select that repository from the accessible list or enter its URL or `owner/name` and select **Check repository**. Select the repository row’s action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
 
 ### Fine-grained PAT setup fails
 
@@ -85,14 +107,13 @@ Start is unavailable when:
 
 - setup is incomplete;
 - the active tab is not HTTP(S);
-- a timer is already running;
-- a completion is waiting to synchronize or has a conflict.
+- the requested Start cannot be safely ordered behind active or conflicted work.
 
-Open the panel for details. Choose **Sync now**, resolve the pending state, or stop the current timer before starting another task.
+Open the panel for details. Choose **Switch to this task** when another task is running. Choose **Sync now** or resolve the pending state when a queued dependency is blocked.
 
 ### The panel says “Tracking another task”
 
-The active timer's canonical URL differs from the page currently open. Select the active URL in the panel to return to it, or stop and save that timer before starting the current page.
+The active timer's canonical URL differs from the page currently open. Select the active URL to return to it, or choose **Switch to this task**. Clockoli queues completion in the active timer's time repository before starting in the destination selected for the current URL.
 
 ### Start works on GitHub but not another site
 
@@ -117,7 +138,7 @@ Clockoli has preserved the Stop operation in extension-local storage but could n
 - Choose **Sync now**.
 - Clockoli also retries at startup and approximately once per minute.
 
-A new timer is blocked until the pending completion is synchronized or resolved.
+A conflicted source completion can pause a dependent cross-repository Start until the conflict is resolved. Do not clear local data while either operation is queued.
 
 ### Sync keeps failing
 
@@ -195,9 +216,13 @@ Title enrichment can be unavailable because of repository visibility, permission
 
 - Confirm the inclusive Start/End date range.
 - Reports includes a record according to its Start date.
-- Clear People or Source facets that exclude the data.
-- Confirm team members selected the same data repository and have valid personal branches.
-- Check whether the repository reader can list and read those branches.
+- Clear People, Project, Task source, or Time repository facets that exclude the data.
+- Confirm the intended time repositories are selected and team members have valid personal branches.
+- Check whether each selected repository can list and read those branches.
+
+### A report says some time repositories could not be loaded
+
+Clockoli keeps records from destinations that loaded successfully and marks the result partial. Review the per-repository status and restore access or retry. Conflicting copies of the same record ID are omitted and also make the result partial. CSV, JSON, and print/PDF exports remain disabled until the selected result is complete and conflict-free.
 
 ### Reports says to choose a shorter period
 
@@ -232,7 +257,11 @@ Clockoli blocks transitions that could strand active or pending work. Stop activ
 
 ### Settings import did not reconnect GitHub
 
-This is intentional. The JSON backup excludes credentials and applies only display and billing preferences. Repository coordinates are reference-only and never switch the active destination.
+This is intentional. A version 6 JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub.
+
+### A task went to the wrong time repository
+
+Projects are checked top to bottom with case-insensitive URL-substring matching; the first match wins. Unmatched URLs use the explicit default. Reorder or correct the rules for future Starts. A running timer or queued write remains pinned to the destination chosen when Clockoli accepted it.
 
 Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
 

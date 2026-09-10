@@ -257,7 +257,12 @@ function summaryProjection(state, now) {
   };
 }
 function newestFirst(a, b) { return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(); }
-function stripInternal(value) { return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !['_path', '_sha', '_index', '_pending'].includes(key))); }
+function stripInternal(value) { return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !['_path', '_sha', '_index', '_pending', 'destinationId'].includes(key))); }
+function appendQueueDiagnostic(operation, message) {
+  const diagnostics = Array.isArray(operation.diagnostics) ? operation.diagnostics : (operation.diagnostics = []);
+  diagnostics.push({ at: new Date().toISOString(), message: String(message).slice(0, 300) });
+  if (diagnostics.length > 60) diagnostics.splice(0, diagnostics.length - 60);
+}
 function monthFromPath(path, user) { return assertUserMonthlyRecordsPath(path, user).month; }
 function editClock(clock, entry) { return new Date(Math.max(clock().getTime(), new Date(entry.updatedAt).getTime())); }
 function localMidnight(date) {
@@ -289,6 +294,12 @@ export class TrackerService {
     this.idFactory = idFactory;
     this.stopTail = Promise.resolve();
     this.recentDays = Math.min(31, Math.max(1, Number(recentDays) || 7));
+    this.currentQueueDiagnostic = null;
+    const priorRequestDiagnostics = this.github.requestDiagnostics;
+    this.github.requestDiagnostics = event => {
+      try { priorRequestDiagnostics?.(event); }
+      finally { this.currentQueueDiagnostic?.(event); }
+    };
   }
 
   validateTaskUrl(value) { return normalizeTaskUrl(value); }
@@ -429,18 +440,27 @@ export class TrackerService {
   async queueStart(taskUrl, taskTitle = '', description = '') {
     const state = await this.store.getState();
     if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
-    const startedAt = this.clock(), id = this.idFactory(startedAt.getTime());
-    const active = this.buildActive({ id, taskUrl: this.validateTaskUrl(taskUrl), startedAt, description, taskTitle });
-    const operation = {
-      operation: 'startTimer', id, status: 'pending', retryCount: 0, stage: 'startNext',
-      nextActive: stripInternal(active), queuedAt: startedAt.toISOString(), lastError: '',
-    };
-    const pendingActive = { ...active, _path: activeRecordPath(this.user), _sha: null, _pending: true };
+    const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description);
     await this.mutateState(current => {
       if (current.activeCache) throw new Error(`A timer is already tracking ${taskLabel(current.activeCache)}`);
       return { pendingWrites: [...(current.pendingWrites ?? []), operation], activeCache: pendingActive };
     });
     return pendingActive;
+  }
+
+  prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null } = {}) {
+    const start = new Date(startedAt), activeId = id || this.idFactory(start.getTime());
+    const active = this.buildActive({ id: activeId, taskUrl: this.validateTaskUrl(taskUrl), startedAt: start, description, taskTitle });
+    const operation = {
+      operation: 'startTimer', id: activeId, status: 'pending', retryCount: 0,
+      stage: blockedBy ? 'awaitSourceCompletion' : 'startNext',
+      nextActive: stripInternal(active), queuedAt: start.toISOString(), lastError: '',
+      ...(blockedBy ? { blockedBy: structuredClone(blockedBy) } : {}),
+    };
+    return {
+      operation,
+      pendingActive: { ...active, _path: activeRecordPath(this.user), _sha: null, _pending: true },
+    };
   }
 
   async switchTask(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
@@ -492,15 +512,7 @@ export class TrackerService {
     const state = await this.store.getState();
     const active = state.activeCache;
     if (!active) throw new Error('No timer is running');
-    validateActiveTimer(active);
-    const endedAt = this.clock(), id = active.id;
-    const entry = buildEntry({ active, endedAt, now: endedAt, description });
-    const operation = {
-      operation: 'completeTimer', id, status: 'pending', retryCount: 0, stage: 'verifyActive',
-      monthlyPath: monthlyRecordsPath(this.user, active.entryDate), entry, activeSnapshot: stripInternal(active), activeSha: active._sha,
-      queuedAt: endedAt.toISOString(), lastError: '',
-    };
-    const pendingEntry = { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true };
+    const { operation, pendingEntry, entry } = this.prepareQueuedStop(active, description);
     await this.mutateState(latest => {
       if (!sameTimer(latest.activeCache, active)) throw new Error('The local timer changed before Stop was accepted. Retry the action.');
       return {
@@ -509,6 +521,22 @@ export class TrackerService {
       };
     });
     return { entry, pending: true };
+  }
+
+  prepareQueuedStop(active, description = '', { endedAt = this.clock() } = {}) {
+    const persistedActive = stripInternal(active);
+    validateActiveTimer(persistedActive);
+    const end = new Date(endedAt), id = persistedActive.id;
+    const entry = buildEntry({ active: persistedActive, endedAt: end, now: end, description });
+    const operation = {
+      operation: 'completeTimer', id, status: 'pending', retryCount: 0, stage: 'verifyActive',
+      monthlyPath: monthlyRecordsPath(this.user, active.entryDate), entry, activeSnapshot: stripInternal(active), activeSha: active._sha,
+      queuedAt: end.toISOString(), lastError: '',
+    };
+    return {
+      operation, entry,
+      pendingEntry: { ...entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true },
+    };
   }
 
   async discardActive({ background = false } = {}) {
@@ -619,8 +647,8 @@ export class TrackerService {
     }
   }
 
-  async updateCompletedRecords(changes, message, { remove = [], add = [], guards = [], expectedHeadSha = null } = {}) {
-    const indexFile = await this.readTaskIndex();
+  async updateCompletedRecords(changes, message, { remove = [], add = [], guards = [], expectedHeadSha = null, indexFile = null } = {}) {
+    indexFile ||= await this.readTaskIndex();
     const index = applyTaskIndexChanges(indexFile.index, { remove, add });
     return this.github.updateTextsAtomic([
       ...changes,
@@ -678,7 +706,10 @@ export class TrackerService {
   }
 
   async ensureEntry(operation) {
-    let file = await this.readMonthly(operation.monthlyPath);
+    let [file, indexFile] = await Promise.all([
+      this.readMonthly(operation.monthlyPath),
+      this.readTaskIndex(),
+    ]);
     let found = await this.completionAlreadySaved(file, operation);
     if (found) return found;
     const proposed = [...file.entries, operation.entry];
@@ -688,7 +719,7 @@ export class TrackerService {
         { path: file.path, sha: file.sha, text: serializeMonthlyRecords(proposed) },
         ...(operation.preserveActive ? [] : [{ path: activePath, sha: operation.activeSha, text: null }]),
       ];
-      const result = await this.updateCompletedRecords(changes, `time: ${this.user} tracked ${trackedDurationLabel(operation.entry)} on ${taskLabel(operation.entry)}`, { add: [operation.entry] });
+      const result = await this.updateCompletedRecords(changes, `time: ${this.user} tracked ${trackedDurationLabel(operation.entry)} on ${taskLabel(operation.entry)}`, { add: [operation.entry], indexFile });
       operation.activeSha = null; operation.activeCleared = true;
       return parseMonthlyRecords(serializeMonthlyRecords(proposed), {
         user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
@@ -793,6 +824,12 @@ export class TrackerService {
   async syncPending() {
     const queue = await this.compactPendingQueue();
     for (const operation of [...queue]) {
+      if (operation.stage === 'awaitSourceCompletion') break;
+      const attemptStartedAt = Date.now();
+      this.currentQueueDiagnostic = event => {
+        appendQueueDiagnostic(operation, `GitHub ${event.method} ${event.path}: ${event.status} in ${event.durationMs}ms.`);
+      };
+      appendQueueDiagnostic(operation, `Sync attempt ${(operation.retryCount ?? 0) + 1} started at ${operation.stage}.`);
       try {
         const operationType = operation.operation ?? operation.stage;
         if (operation.status === 'conflict') {
@@ -955,6 +992,10 @@ export class TrackerService {
         });
         if (isNotFound(error)) throw error;
         break;
+      } finally {
+        const elapsedMs = Math.max(0, Date.now() - attemptStartedAt);
+        appendQueueDiagnostic(operation, `Sync attempt finished in ${elapsedMs}ms.`);
+        this.currentQueueDiagnostic = null;
       }
     }
     return (await this.store.getState()).pendingWrites ?? [];

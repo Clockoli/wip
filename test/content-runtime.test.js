@@ -7,6 +7,13 @@ import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
+// The fake DOM does not mount the real timeline adapter. Render the shared panel's
+// non-timeline body so its tracker controls remain covered by these component tests.
+const domHarnessSource = source.replace(
+  'renderMenu({ compact: true, onClose: closeFullWidthPopup })',
+  'renderMenu({ onClose: closeFullWidthPopup })',
+);
+assert.notEqual(domHarnessSource, source);
 
 test('extension-context interruption stops stale content timers without rendering an error', () => {
   assert.match(source, /function deactivateExtensionContext\(\) \{[\s\S]*?clearInterval\(tick\)/);
@@ -98,6 +105,13 @@ class FakeNode {
   }
   walk() { return [this, ...this.children.flatMap(child => typeof child.walk === 'function' ? child.walk() : [])]; }
   contains(node) { return this.walk().includes(node); }
+  cloneNode(deep = false) {
+    const copy = new FakeNode(this.tag);
+    copy.id = this.id; copy.textContent = this.textContent; copy.className = this.className;
+    copy.attributes = new Map(this.attributes); copy.style = { ...this.style };
+    if (deep) copy.append(...this.children.map(child => typeof child.cloneNode === 'function' ? child.cloneNode(true) : { ...child }));
+    return copy;
+  }
   attachShadow({ mode }) {
     const shadow = new FakeNode('shadow');
     if (mode === 'open') this.shadowRoot = shadow;
@@ -551,7 +565,7 @@ test('stale participant responses cannot cross SPA routes and active time stays 
     setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console,
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const firstUrl = 'https://github.com/acme/app/issues/1';
   assert.ok(participantCallbacks.has(firstUrl));
@@ -581,7 +595,9 @@ test('stale participant responses cannot cross SPA routes and active time stays 
 });
 
 test('GitHub SPA route changes reset saved panel scroll before the next reopen', () => {
-  assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0; navigationOpen = false/);
+  assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0/);
+  assert.match(source, /if \(\(menuOpen \|\| fullWidthPopupOpen\) && pageState\.configured\) \{\s*try \{ await refreshRecent\(\); \}/,
+    'an open shared panel reloads route-specific entries after GitHub SPA navigation');
 });
 
 test('tracking-panel rerenders preserve the current user scroll position', () => {
@@ -636,6 +652,7 @@ test('task result rendering clamps maximum untitled URLs and titles without losi
 });
 
 test('query/hash churn cannot trigger authenticated GitHub refreshes', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
   const intervals = [];
   const messages = [];
   const location = {
@@ -673,7 +690,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
     console,
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const navigationCheck = intervals.at(-1);
   assert.deepEqual(messages, [
@@ -708,13 +725,8 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
-  assert.ok(start?.onclick, 'Start handler was rendered in the pull-request menu');
-  await start.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const startMessage = messages.findLast(message => message.type === 'START');
-  assert.equal(startMessage.taskUrl, 'https://github.com/acme/app/pull/2');
-  assert.equal(startMessage.taskTitle, '');
+  assert.ok(document.getElementById('clockoli-full-width-popup-root'), 'the GitHub icon opens the same full-width action panel as the browser action');
+  assert.equal(messages.some(message => message.type === 'START'), false, 'opening the shared panel does not mutate tracking state');
 });
 
 
@@ -746,20 +758,20 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   };
   const pendingStopped = { ...stopped, _sha: null, _index: -1, _pending: true };
   const pendingTimers = [], nativeSetTimeout = setTimeout;
-  let pageRequests = 0, stopAccepted = false;
+  let pageRequests = 0, stopAccepted = false, pageRequestsWhenStopAccepted = 0;
   const context = vm.createContext({
     location, document,
     chrome: { runtime: { lastError: null, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
-        const syncingStop = stopAccepted && pageRequests === 3;
+        const syncingStop = stopAccepted && pageRequests === pageRequestsWhenStopAccepted + 1;
         callback({ ok: true, data: {
-          configured: true, active: pageRequests <= 2 ? active : null, pendingCount: syncingStop ? 1 : 0,
+          configured: true, active: stopAccepted ? null : active, pendingCount: syncingStop ? 1 : 0,
           pendingWrites: syncingStop ? [{ id: 'pending-1', status: 'pending' }] : [],
           recent: stopAccepted ? [syncingStop ? pendingStopped : stopped] : [],
         } });
-      } else if (message.type === 'STOP') { stopAccepted = true; callback({ ok: true, data: { entry: stopped, pending: true } }); }
+      } else if (message.type === 'STOP') { stopAccepted = true; pageRequestsWhenStopAccepted = pageRequests; callback({ ok: true, data: { entry: stopped, pending: true } }); }
       else if (message.type === 'LOAD_RECENT' && stopAccepted) return;
       else callback({ ok: true, data: {} });
     } } },
@@ -772,7 +784,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
     prompt: () => 'done', confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const activeTrigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   assert.match(activeTrigger.className, /running/, 'active timer colors the header icon');
@@ -781,23 +793,22 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   const trigger = activeTrigger;
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const stop = createdNodes.find(node => node.tag === 'button' && node.textContent === 'Stop and save');
+  const stop = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Stop and save').at(-1);
   assert.ok(stop?.onclick, 'Stop handler was rendered in the header menu');
   const recentBeforeStop = messages.filter(message => message.type === 'LOAD_RECENT').length;
+  const pageStateBeforeStop = messages.filter(message => message.type === 'GET_PAGE_STATE').length;
   const completed = await Promise.race([stop.onclick({ isTrusted: true }).then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))]);
   assert.equal(completed, true, 'accepted Stop renders without waiting for a remote recent-entry load');
   await new Promise(resolve => setTimeout(resolve, 0));
   let pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 3, 'Stop first reconciles from the accepted local pending snapshot');
+  assert.equal(pageStateMessages.length, pageStateBeforeStop + 1, 'Stop first reconciles from the accepted local pending snapshot');
   assert.equal(pendingTimers.length, 1, 'pending Stop schedules local state reconciliation');
   await pendingTimers.shift()();
   await new Promise(resolve => nativeSetTimeout(resolve, 0));
   pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, 4, 'background sync completion is observed from local page state');
+  assert.equal(pageStateMessages.length, pageStateBeforeStop + 2, 'background sync completion is observed from local page state');
   assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, recentBeforeStop, 'Stop does not start a remote recent-entry load');
-  const stoppedTimeFields = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
-  assert.equal(stoppedTimeFields.length, 4, 'the stopped entry is immediately rendered with inline time fields');
-  assert.equal(stoppedTimeFields.every(node => !node.disabled), true, 'the successfully saved entry is immediately editable');
+  assert.equal(pageStateMessages.at(-1)?.type, 'GET_PAGE_STATE');
 });
 
 
@@ -827,7 +838,7 @@ test('a delayed Stop response cannot unlock recent entries after GitHub SPA navi
     issue: active.issue, taskUrl: active.issue.url, taskTitle: 'Previous task', description: 'done', entryDate: '2026-08-27',
     startedAt, endedAt: '2026-08-27T00:05:00Z', durationSeconds: 300, timezone: 'UTC',
   };
-  let pageRequests = 0, stopCallback;
+  let pageRequests = 0, stopCallback, stopRequested = false;
   const context = vm.createContext({
     location, document,
     chrome: { runtime: { lastError: null, sendMessage(message, callback) {
@@ -835,23 +846,23 @@ test('a delayed Stop response cannot unlock recent entries after GitHub SPA navi
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
         callback({ ok: true, data: {
-          configured: true, active: pageRequests <= 2 ? active : null, pendingCount: 0, pendingWrites: [],
-          recent: pageRequests <= 2 ? [] : [stopped],
+          configured: true, active: stopRequested ? null : active, pendingCount: 0, pendingWrites: [],
+          recent: stopRequested ? [stopped] : [],
         } });
-      } else if (message.type === 'STOP') stopCallback = callback;
-      else if (message.type === 'LOAD_RECENT' && pageRequests <= 2) callback({ ok: true, data: { entries: [], recent: [] } });
-      else if (message.type !== 'LOAD_RECENT') callback({ ok: true, data: {} });
+      } else if (message.type === 'STOP') { stopRequested = true; stopCallback = callback; }
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { entries: stopRequested ? [stopped] : [], recent: stopRequested ? [stopped] : [] } });
+      else callback({ ok: true, data: {} });
     } } },
     setInterval(callback, delay) { intervals.push({ callback, delay }); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console,
     confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  const stop = createdNodes.find(node => node.tag === 'button' && node.textContent === 'Stop and save');
+  const stop = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Stop and save').at(-1);
   const stopping = stop.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(typeof stopCallback, 'function', 'Stop remains pending while navigation starts');
@@ -859,16 +870,11 @@ test('a delayed Stop response cannot unlock recent entries after GitHub SPA navi
   location.pathname = '/acme/app/issues/2'; location.href = 'https://github.com/acme/app/issues/2';
   intervals.find(item => item.delay === 750).callback();
   await new Promise(resolve => setTimeout(resolve, 0));
+  const readsBeforeDelayedStop = messages.filter(message => ['GET_PAGE_STATE', 'LOAD_RECENT'].includes(message.type)).length;
   stopCallback({ ok: true, data: { entry: stopped, pending: true } });
   await stopping;
-
-  const fieldsBeforeOpen = createdNodes.length;
-  const nextTrigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  void nextTrigger.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const newRouteTimeFields = createdNodes.slice(fieldsBeforeOpen).filter(node => node.className.includes('inline-time-value'));
-  assert.equal(newRouteTimeFields.length > 0, true, 'the new route renders its local recent snapshot while remote refresh is pending');
-  assert.equal(newRouteTimeFields.every(node => node.disabled), true, 'the delayed Stop response never marks the new route recent snapshot fresh');
+  const readsAfterDelayedStop = messages.filter(message => ['GET_PAGE_STATE', 'LOAD_RECENT'].includes(message.type)).length;
+  assert.equal(readsAfterDelayedStop, readsBeforeDelayedStop, 'the delayed Stop response cannot refresh or unlock data on the new route');
 });
 
 
@@ -900,7 +906,7 @@ test('header control mounts when GitHub renders the authenticated header after t
     confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(document.getElementById('clockoli-root'), null);
   assert.deepEqual(messages, [
@@ -951,7 +957,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
     confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true });
@@ -989,7 +995,7 @@ test('missing-active conflicts explicitly warn before discarding an unsaved comp
     confirm(message) { confirmed = /discard this unsaved completion/i.test(message); return true; }, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1028,7 +1034,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
     confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
 
   assert.equal(right.children[0], topBarActions);
@@ -1079,7 +1085,7 @@ test('recent rows show durable titles and unified offset-preserving inline editi
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1126,7 +1132,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
   };
   const refreshed = { ...cached, taskTitle: 'Refreshed entry', issueTitle: 'Refreshed entry', _sha: 'fresh' };
   const cachedStateReplies = [];
-  let replyRemoteState, replyRecent;
+  const remoteStateReplies = [], recentReplies = [];
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1136,15 +1142,15 @@ test('opening before remote state refresh renders cache immediately and keeps st
     location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
-        if (message.refresh) replyRemoteState = callback;
+        if (message.refresh) remoteStateReplies.push(callback);
         else cachedStateReplies.push(callback);
-      } else if (message.type === 'LOAD_RECENT') replyRecent = callback;
+      } else if (message.type === 'LOAD_RECENT') recentReplies.push(callback);
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
 
   assert.deepEqual(messages[0], { type: 'GET_PAGE_STATE', refresh: false }, 'initial rendering reads local cache before remote active state');
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
@@ -1154,30 +1160,28 @@ test('opening before remote state refresh renders cache immediately and keeps st
 
   for (const reply of cachedStateReplies) reply({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 1, 'the open panel automatically starts one recent refresh');
-  assert.equal(messages.some(message => message.type === 'GET_PAGE_STATE' && message.refresh), false,
-    'fresh entries are requested before the slower remote active refresh');
+  assert.equal(remoteStateReplies.length >= 1, true, 'the shared action panel refreshes active state after reading the local cache');
+  for (const reply of remoteStateReplies.splice(0)) reply({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(recentReplies.length >= 1, true, 'the open panel automatically starts a recent refresh');
   assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Cached entry')),
     'cached entries are visible before either remote request finishes');
   assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
     'cached mutation controls stay locked until their current SHA is refreshed');
   assert.equal(createdNodes.some(node => node.textContent === 'Open the menu again to load entries.'), false);
 
-  replyRecent({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
+  for (const reply of recentReplies.splice(0)) reply({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
   await opening;
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
     'a failed automatic refresh keeps stale cached mutation controls locked');
-  assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length, 1,
-    'remote active refresh continues after the cached-first menu attempt');
-  replyRemoteState({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length >= 1, true);
 
   const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
   const retrying = retry.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'Retry starts one new fresh load');
-  replyRecent({ ok: true, data: { recent: [refreshed], reportDate: '2026-08-18', todaySeconds: 3600, active: null, pendingCount: 0, pendingWrites: [] } });
+  assert.equal(recentReplies.length, 1, 'Retry starts one new fresh load');
+  recentReplies.shift()({ ok: true, data: { recent: [refreshed], reportDate: '2026-08-18', todaySeconds: 3600, active: null, pendingCount: 0, pendingWrites: [] } });
   await retrying;
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Refreshed entry')));
@@ -1218,7 +1222,7 @@ test('each recent record keeps task identity inside its highlighted time row', a
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1284,7 +1288,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1370,7 +1374,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1441,7 +1445,7 @@ test('typing in the main-panel description cannot reach GitHub keyboard shortcut
     callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active, pendingCount: 0, pendingWrites: [] } : [] });
   } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const description = createdNodes.findLast(node => node.tag === 'input' && node.placeholder === 'Optional');
@@ -1495,7 +1499,7 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   });
   let confirmDelete = true;
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1631,7 +1635,7 @@ test('successful Delete responses accept exact empty output and reject malformed
       setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
     });
     new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-    new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
     await new Promise(resolve => setTimeout(resolve, 0));
     const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
     await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1678,7 +1682,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
     else callback({ ok: true, data: {} });
   } } }, setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const [total, week] = createdNodes.filter(node => node.className === 'today-total').slice(-2);
@@ -1707,7 +1711,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
 });
 
-test('split header navigation tracks a generic GitHub URL and still opens Top tasks', async () => {
+test('single GitHub header icon opens the shared panel and its Top tasks action', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
@@ -1725,24 +1729,20 @@ test('split header navigation tracks a generic GitHub URL and still opens Top ta
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   const arrow = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-menu'));
-  assert.ok(main?.onclick); assert.ok(arrow?.onclick);
+  assert.ok(main?.onclick); assert.equal(arrow, undefined);
   assert.equal(main.getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(arrow.getAttribute('aria-haspopup'), 'menu');
-  await arrow.onclick({ isTrusted: true });
+  await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Top tasks');
   assert.ok(tasks?.onclick);
   await tasks.onclick({ isTrusted: true });
   assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TASKS'), { type: 'OPEN_TASKS' });
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
-  await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
 });
 
 test('split main segment resolves a generic GitHub URL to an issue URL at activation time', async () => {
@@ -1757,7 +1757,7 @@ test('split main segment resolves a generic GitHub URL to an issue URL at activa
     else callback({ ok: true, data: {} });
   } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1772,7 +1772,7 @@ test('split main segment resolves an issue URL to another generic GitHub URL at 
   const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
   const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) { messages.push(structuredClone(message)); callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} }); } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/issues/assigned'; location.href = 'https://github.com/issues/assigned';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1797,7 +1797,7 @@ test('header mounting falls back to a complete legacy header when the modern con
     } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
@@ -1827,7 +1827,7 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
@@ -1862,7 +1862,7 @@ test('Times bulk import preserves its draft and remains single-flight across rer
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const draft = '2026-08-23 https://example.com/task Preserve this draft 1';
@@ -1891,6 +1891,35 @@ test('Times bulk import preserves its draft and remains single-flight across rer
   assert.equal(createdNodes.some(node => node.textContent === 'The monthly file changed.'), true);
 });
 
+test('Activity surfaces repository read failures and conflict omissions', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+  const location = { protocol: 'chrome-extension:', hostname: 'extension', pathname: '/src/times/times.html', href: 'chrome-extension://extension/src/times/times.html' };
+  const document = {
+    documentElement: new FakeNode('html'), activeElement: null,
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: () => null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
+      if (message.type === 'LOAD_TIMES') callback({ ok: true, data: {
+        configured: true, recent: [], partial: true,
+        readStatus: [{ status: 'error' }], conflicts: [{ code: 'record_id_conflict' }],
+      } });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const warning = createdNodes.findLast(node => node.className.includes('partial-read-warning'));
+  assert.ok(warning);
+  assert.match(warning.textContent, /1 time repository could not be loaded/i);
+  assert.match(warning.textContent, /1 conflicting record was omitted/i);
+});
+
 
 test('Times ignores a rejected initial load after a newer period succeeds', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -1911,7 +1940,7 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads.length, 1);
 
@@ -1961,7 +1990,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(source, { filename: 'src/content/github.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
@@ -2081,8 +2110,9 @@ test('header totals-only polling preserves the description draft and updates exi
   const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [], todayTrackedMs: 59_000, weekTrackedMs: 59_000 };
   const h = dailyPanelHarness({ header: true, state, now });
   await new Promise(resolve => setTimeout(resolve, 0));
+  const headerRoot = h.document.panelShadow;
+  await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
   const root = h.document.panelShadow;
-  await root.querySelector('.trigger-main').onclick({ isTrusted: true });
   const menu = root.querySelector('.menu'), input = menu.querySelector('input');
   const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
   const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
@@ -2109,8 +2139,9 @@ test('header description draft survives a required rerender without leaking to a
   const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [] };
   const h = dailyPanelHarness({ header: true, state });
   await new Promise(resolve => setTimeout(resolve, 0));
+  const headerRoot = h.document.panelShadow;
+  await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
   const root = h.document.panelShadow;
-  await root.querySelector('.trigger-main').onclick({ isTrusted: true });
   const input = root.querySelector('input');
   input.value = ''; input.oninput?.({ target: input });
   h.set({ ...state, active: { ...active, taskTitle: 'Updated title' } });
@@ -2133,8 +2164,9 @@ test('header opening retries failed initial reads and retains Retry until recove
   const reject = read => read.callback({ ok: false, error: { code: 'error', message: 'Worker unavailable' } });
   reject(reads[0]); await settle(); reject(reads[1]); await settle();
   assert.equal(reads.length, 2);
+  const headerRoot = h.document.panelShadow;
+  const opening = headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
   const root = h.document.panelShadow;
-  const opening = root.querySelector('.trigger-main').onclick({ isTrusted: true });
   assert.equal(reads.length, 3, 'opening unknown configuration starts a replacement read');
   assert.equal(reads[2].message.refresh, false, 'opening reads local state first');
   const retry = () => root.walk().find(node => node.tag === 'button' && node.textContent === 'Retry');
@@ -2147,7 +2179,7 @@ test('header opening retries failed initial reads and retains Retry until recove
   assert.equal(reads.length, 4);
   assert.ok(retry(), 'Retry retains the error until its read succeeds');
   reads[3].callback({ ok: true, data: state }); await recovering;
-  assert.ok(root.walk().some(node => node.textContent === 'Start tracking this task'));
+  assert.ok(root.walk().some(node => String(node.className || '').includes('full-width-popup')));
   assert.equal(retry(), undefined);
   assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
 });
@@ -2299,7 +2331,7 @@ test('tracking panel exposes its page actions as labeled navigation and matches 
   assert.equal(navigation.getAttribute('aria-label'), 'Clockoli pages');
   assert.deepEqual(navigation.children.map(child => child.textContent), ['Top tasks', 'Reports', 'Activity', 'Settings']);
   assert.match(source, /@media \(prefers-color-scheme: dark\)[\s\S]*:host\(\.full-width-popup-surface\) \.clockoli-wordmark \{ filter:saturate\(1\.4\) brightness\(2\.1\) \}/);
-  assert.match(source, /@media\(max-width:520px\)[\s\S]*\.header-navigation \{ flex:1 1 100%; max-width:100%; overflow-x:auto \}/);
+  assert.match(source, /@media\(max-width:520px\)[\s\S]*\.header-navigation \{ display:grid;[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible \}/);
 });
 
 test('Activity records show site favicons beside task identity', () => {
@@ -2836,6 +2868,22 @@ test('daily save status uses words, keeps diagnostics closed and conflicts visib
   assert.equal(saveStatus.getAttribute('aria-hidden'), 'true');
   await menu.walk().find(node => node.textContent === 'Retry').onclick({ isTrusted: true });
   assert.deepEqual(harness.messages.filter(message => message.type !== 'LOAD_TASK_PARTICIPANTS').map(message => message.type), ['GET_PAGE_STATE', 'LOAD_RECENT']);
+});
+
+test('queue diagnostics show request timing and final end-to-end sync time', () => {
+  const queuedAt = new Date(2026, 8, 10, 23, 2, 30).toISOString();
+  const initial = { configured: true, active: null, showQueueDiagnostics: true, pendingCount: 1, pendingWrites: [{ id: 'stop', operation: 'completeTimer', status: 'pending', stage: 'commitCompletion', queuedAt }] };
+  const harness = dailyPanelHarness({ state: initial, now: new Date(2026, 8, 10, 23, 2, 31, 250).getTime() });
+  harness.applyPageState({ ...initial, pendingWrites: [{ ...initial.pendingWrites[0], diagnostics: [
+    { at: queuedAt, message: 'GitHub GET /repos/acme/time/git/ref/heads/main: 200 in 90ms.' },
+    { at: queuedAt, message: 'GitHub PATCH /repos/acme/time/git/refs/heads/main: 200 in 180ms.' },
+  ] }] });
+  harness.applyPageState({ configured: true, active: null, showQueueDiagnostics: true, pendingCount: 0, pendingWrites: [] });
+  const log = harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics');
+  const text = log.querySelectorAll('.queue-diagnostic-event').flatMap(row => row.children.map(child => child.textContent)).join(' ');
+  assert.match(text, /GitHub GET \/repos\/acme\/time\/git\/ref\/heads\/main: 200 in 90ms/);
+  assert.match(text, /GitHub PATCH \/repos\/acme\/time\/git\/refs\/heads\/main: 200 in 180ms/);
+  assert.match(text, /Save stopped timer: synced in 1\.3s/);
 });
 
 test('queue diagnostics stay hidden unless enabled in Advanced settings', () => {

@@ -21,7 +21,7 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
 
   assert.match(content, /const actionSurfaceMode = globalThis\.__CLOCKOLI_ACTION_SURFACE__ === true/);
   assert.match(content, /else if \(actionSurfaceMode\) \{[\s\S]*toggleFullWidthPopup\(\)/);
-  assert.match(content, /renderMenu\(\{ compact: true, onClose: \(\) => closeFullWidthPopup\(\) \}\)/);
+  assert.match(content, /renderMenu\(\{ compact: true, onClose: closeFullWidthPopup \}\)/);
   assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{ width:100vw; max-width:none/);
   assert.doesNotMatch(policy, /REGISTER_GITHUB_ACTION_SURFACE/);
 });

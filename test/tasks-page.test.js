@@ -83,15 +83,15 @@ test('standalone selects use an inset custom caret while the GitHub header caret
   assert.doesNotMatch(content, /trigger-menu[^}]*translateX/);
 });
 
-test('GitHub header uses a separately clickable split trigger and a Reports/Top tasks/Activity navigation menu', () => {
+test('GitHub header icon opens the browser action panel without a dropdown', () => {
   assert.match(content, /trigger-main/);
-  assert.match(content, /trigger-menu/);
-  assert.match(content, /renderNavigationMenu/);
-  assert.match(content, /button\('Reports'/);
-  assert.match(content, /button\('Top tasks'/);
-  assert.match(content, /button\('Activity'/);
-  assert.match(content, /type:\s*'OPEN_TASKS'/);
-  assert.match(worker, /src\/tasks\/tasks\.html/);
+  assert.doesNotMatch(content, /trigger-menu|navigation-menu|renderNavigationMenu/);
+  const start = content.indexOf("main.addEventListener('click'");
+  const click = content.slice(start, content.indexOf('shadow.append(style, main)', start));
+  assert.match(click, /toggleFullWidthPopup\(\)/);
+  assert.doesNotMatch(click, /menuOpen = !menuOpen|renderMenu\(/);
+  const full = content.slice(content.indexOf('function renderFullWidthPopup'), content.indexOf('async function toggleFullWidthPopup'));
+  assert.match(full, /renderMenu\(\{ compact: true, onClose: closeFullWidthPopup \}\)/);
 });
 
 
@@ -119,7 +119,7 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
   assert.match(worker, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
   assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
-  assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\)[\s\S]*sync-pending-now/,
+  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\)[\s\S]*sync-pending-now/,
     'MV3 retry alarms must continue for safely rebased entry edits and stop only for a missing record or an unsafe conflict');
   assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
   assert.match(js, /const busy = state\.loading \|\| hasRunnablePending\(\)/);
@@ -251,6 +251,30 @@ test('Top tasks keeps GitHub issue icons, uses favicons for other sites, and col
     assert.match(row.style, /^--task-color:#[0-9a-f]{6}$/i);
     assert.match(row.querySelector('.task-title').style, /^color:#[0-9a-f]{6}$/i);
   }
+});
+
+test('Top tasks displays repository provenance while timer actions keep the task URL as identity', async () => {
+  const task = { ...taskA, destinationIds: ['github:1', 'github:2'], timeRepositories: ['alice/time', 'team/time'] };
+  const page = await tasksHarness({ tasks: [task] });
+  assert.equal(page.rows()[0].querySelector('.task-repositories').textContent, 'Saved in alice/time, team/time');
+  await page.rows()[0].querySelector('.timer-button').click(); await page.settle();
+  const start = page.messages.find(message => message.type === 'START');
+  assert.equal(start.taskUrl, task.taskUrl);
+  assert.equal('destinationId' in start, false);
+});
+
+test('Top tasks distinguishes read failures from conflict-only omissions', async () => {
+  const failed = await tasksHarness({ respond: message => message.type === 'LOAD_TASKS' ? {
+    configured: true, tasks: [taskA], active: null, pendingWrites: [], partial: true,
+    readStatus: [{ status: 'error' }], conflicts: [],
+  } : undefined });
+  assert.match(failed.nodes['partial-status'].textContent, /1 time repository could not be loaded/i);
+  const conflicted = await tasksHarness({ respond: message => message.type === 'LOAD_TASKS' ? {
+    configured: true, tasks: [taskA], active: null, pendingWrites: [], partial: true,
+    readStatus: [{ status: 'ok' }, { status: 'ok' }], conflicts: [{ code: 'record_id_conflict' }],
+  } : undefined });
+  assert.match(conflicted.nodes['partial-status'].textContent, /1 conflicting record was omitted/i);
+  assert.doesNotMatch(conflicted.nodes['partial-status'].textContent, /could not be loaded/i);
 });
 
 for (const pending of [false, true]) test(`shared strip Stop reconciles Top tasks with pending writes ${pending}`, async () => {

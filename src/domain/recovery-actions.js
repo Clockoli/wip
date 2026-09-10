@@ -13,7 +13,7 @@
     ]),
   });
   const labels = Object.freeze({
-    connect: 'Connect GitHub',
+    connect: 'Sign in with GitHub',
     grant: 'Grant access',
     choose: 'Choose another repository',
     repair: 'Repair storage',
@@ -24,13 +24,15 @@
     const code = String(value || '');
     if (!code) return null;
     const kind = Object.keys(kinds).find(name => kinds[name].has(code)) || 'retry';
-    return Object.freeze({ kind, label: labels[kind] });
+    const label = code === 'org_approval_required' ? 'Request organization approval' : labels[kind];
+    return Object.freeze({ kind, label });
   }
 
   function describeConnectionError(error) {
     const code = error?.code || 'error';
     let headline = "Couldn't reach GitHub";
-    if (kinds.connect.has(code) || kinds.grant.has(code)) headline = 'GitHub access was revoked';
+    if (code === 'org_approval_required') headline = 'Organization approval required';
+    else if (kinds.connect.has(code) || kinds.grant.has(code)) headline = 'GitHub access was revoked';
     else if (['not_found', 'private_required', 'repository_access_required'].includes(code)) headline = 'Repository not found or not private';
     else if (code === 'rate_limit') {
       headline = 'GitHub rate limit reached';
@@ -39,6 +41,7 @@
         headline += ` — retry after ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
       }
     } else if (code === 'conflict') headline = 'Your changes need review before saving';
+    else if (code === 'cross_destination_switch_pending') headline = 'Task switch still syncing';
     else if (kinds.choose.has(code)) headline = 'GitHub repository needs attention';
     else if (kinds.repair.has(code)) headline = 'Time storage needs repair';
     else if (code === 'validation') headline = "GitHub couldn't save these changes";

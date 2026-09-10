@@ -2,9 +2,11 @@
 
 Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Clockoli is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no Clockoli application server and no separate time-tracking database.
+Clockoli is a Chrome/Chromium time tracker that stores your records in private GitHub time repositories you control. It has no Clockoli application server and no separate time-tracking database.
 
 Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
+
+Clockoli keeps three concepts separate: your **GitHub account** authenticates you, a **source repository** may own a tracked GitHub issue or pull request, and a **time repository** is the private destination where Clockoli stores records.
 
 ## Why Clockoli
 
@@ -15,7 +17,7 @@ Most time trackers put your records in a vendor database. Clockoli writes readab
 - **There is no Clockoli backend.** The extension talks directly to GitHub.
 - **It works beyond one issue tracker.** Any valid HTTP(S) URL can be a task.
 - **It still feels native on GitHub.** A stopwatch appears in the GitHub header, while the browser toolbar popup works on other sites.
-- **Team reporting does not require a second data silo.** Team members can write to isolated personal branches in one shared private repository; Reports reads them together.
+- **Team reporting does not require a second data silo.** Team members write to isolated personal branches, and Reports can combine selected personal and organization time repositories.
 
 Clockoli is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why Clockoli](docs/why-clockoli.md) for a detailed comparison and the tradeoffs.
 
@@ -36,7 +38,9 @@ Clockoli currently runs as a trusted unpacked extension. This checkout and its l
 3. Enable **Developer mode**.
 4. Select **Load unpacked** and choose the repository root, the directory that contains `manifest.json`.
 5. Pin Clockoli to the browser toolbar.
-6. Open **Settings** and complete the four GitHub connection steps.
+6. Open **Settings**, sign in with GitHub, then use **Check repository** or a repository row’s action to review and explicitly confirm a connection. Choose **Default time repository** separately and select **Finish setup**.
+
+During setup, the compact repository list updates silently every 3 seconds without making writes or opening dialogs. Unchanged results leave the list and your input untouched.
 
 If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
 
@@ -51,7 +55,7 @@ Full setup instructions: [Getting started](docs/getting-started.md).
 
 On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
 
-Clockoli permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
+Clockoli permits one running timer across all configured time repositories. If another task is running, choose **Switch to this task**: Clockoli durably queues completion in the source time repository before starting the new timer in its routed destination.
 
 ## Features
 
@@ -78,6 +82,7 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 - Period filters from two weeks to one year.
 - Totals include completed sessions and the currently running session.
 - Aggregated completed and running time per task.
+- Aggregation by canonical URL across selected time repositories, with time-repository provenance.
 
 ### Times
 
@@ -88,25 +93,26 @@ Clockoli permits one running timer per connected GitHub account. If the panel sa
 
 ### Reports and billing
 
-- Repository-wide reporting across marker-backed `clockoli/users/` personal branches; the default branch remains metadata-only.
+- Reporting across selected or all configured time repositories and their marker-backed `clockoli/users/` personal branches.
 - Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
-- People and Source facets. A Source is a GitHub owner/repository for GitHub tasks or a hostname for another URL.
+- People, Project, Task source, and Time repository facets. A Task source is a GitHub owner/repository for GitHub tasks or a hostname for another URL; a Time repository is where Clockoli stored the record.
 - Total time, average time per distinct task, distinct task count, and billable amount.
-- Independent Day, Week, Month, Person, Source, and Task chart dimensions.
+- Independent Day, Week, Month, Person, Task source, Time repository, and Task chart dimensions.
 - CSV and JSON timesheet downloads.
 - Native print/save-to-PDF.
+- Partial results remain visible when one selected time repository cannot be read or conflicting copies of a record are omitted; exports are disabled until the selected report is complete and conflict-free.
 - Mixed-currency billable charts converted by day with locally cached rates from [Frankfurter](https://github.com/lineofflight/frankfurter).
-- Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to the data repository.
+- Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to time repositories.
 
 ### Storage, sync, and privacy
 
 - Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
-- Dedicated private GitHub data repository, with one marked personal branch per user.
+- Multiple dedicated private personal or organization time repositories, each with one marked personal branch per user.
 - Human-readable monthly JSONL files with UTC timestamps plus explicit local dates and IANA timezones.
 - Exact per-task indexes for fast all-time participant totals without scanning monthly history.
 - SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
-- Locally queued Stop operations with automatic retry when GitHub is temporarily unavailable.
-- Settings backup in readable JSON without credentials, active timers, pending writes, or tracked time.
+- Destination-pinned queued writes with automatic retry when GitHub is temporarily unavailable; routing changes never redirect accepted work.
+- Version 6 settings backup in readable JSON with destination references, the exported default, and project routing, but without credentials, active timers, pending writes, or tracked time. Import can restore project routes only for destinations already configured in the browser; references remain unverified, and import does not change the browser's current default, add destinations, or reconnect repositories.
 - Credentials and local settings remain in extension-origin IndexedDB and are not exposed to GitHub pages.
 
 See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
@@ -126,11 +132,11 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - Chrome/Chromium 102 or newer; no Firefox package.
 - Current beta installation is unpacked and has no automatic updates.
 - Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
-- One active timer per connected GitHub account.
+- One global active timer across all configured time repositories.
 - Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
 - The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.
 - Billable rates are local to each browser and are not shared with teammates.
-- Anyone who can read the data repository can read stored URLs, titles, timestamps, and descriptions.
+- Anyone who can read a time repository can read the URLs, titles, timestamps, and descriptions stored in that repository.
 
 ## Development
 

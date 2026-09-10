@@ -7,6 +7,22 @@ function assertLoadUsable({ signal, assertCurrent } = {}) {
   assertCurrent?.();
 }
 
+export async function runDestinationLoads(destinations, operation, { signal } = {}) {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+  if (signal?.aborted) abortFromParent();
+  else signal?.addEventListener('abort', abortFromParent, { once: true });
+  try {
+    const results = await Promise.allSettled((destinations ?? []).map(destination => operation(destination, controller.signal)));
+    if (signal?.aborted || controller.signal.aborted) {
+      throw signal?.reason ?? controller.signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
+    return results;
+  } finally {
+    signal?.removeEventListener('abort', abortFromParent);
+  }
+}
+
 export async function refreshTaskState(executor, store, tracker, expectedGeneration, guard = {}) {
   return executor.run(async () => {
     assertLoadUsable(guard);

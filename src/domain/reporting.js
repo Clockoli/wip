@@ -1,7 +1,7 @@
 import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
 import { billableMinorForRecord, exchangeCurrencyCode, projectNameForUrl, rateForUser } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'task']);
+const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task']);
 const METRICS = new Set(['total-time', 'avg-time', 'task-count', 'billable-amount']);
 const MONTH_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric', timeZone: 'UTC' });
 const MONTH_LABELS = new Map();
@@ -88,16 +88,22 @@ export function taskSource(record) {
   const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
   return issue ? `${issue.owner}/${issue.repo}` : new URL(taskUrl).hostname;
 }
+export function timeRepository(record) {
+  if (typeof record?.timeRepository !== 'string' || !record.timeRepository.trim()) throw new Error('Time repository annotation is required');
+  return record.timeRepository;
+}
 function repository(record) { return taskSource(record); }
 function project(record, definitions, otherProjectName) { return projectNameForUrl(taskUrlOf(record), definitions, otherProjectName); }
 function selected(values) { return values instanceof Set ? values : new Set(values ?? []); }
 
 export function filterReportRecords(records, filters = {}) {
-  const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories);
+  const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories), timeRepositories = selected(filters.timeRepositories);
   const peopleMatch = record => people.size ? people.has(record.user) : !filters.emptyMeansNone;
   const projectMatch = record => projects.size ? projects.has(project(record, filters.projectDefinitions, filters.otherProjectName)) : !filters.emptyMeansNone;
   const repositoryMatch = record => repositories.size ? repositories.has(repository(record)) : !filters.emptyMeansNone;
-  return (records ?? []).filter(record => peopleMatch(record) && projectMatch(record) && repositoryMatch(record));
+  const timeRepositoryMatch = record => timeRepositories.size ? timeRepositories.has(timeRepository(record))
+    : !Object.hasOwn(filters, 'timeRepositories') || !filters.emptyMeansNone;
+  return (records ?? []).filter(record => peopleMatch(record) && projectMatch(record) && repositoryMatch(record) && timeRepositoryMatch(record));
 }
 
 function facet(records, key) {
@@ -110,14 +116,16 @@ function facet(records, key) {
 }
 
 export function buildFacets(records, filters = {}) {
-  const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories);
+  const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories), timeRepositories = selected(filters.timeRepositories);
   const matchesProjects = record => !projects.size || projects.has(project(record, filters.projectDefinitions, filters.otherProjectName));
   const matchesRepositories = record => !repositories.size || repositories.has(repository(record));
   const matchesPeople = record => !people.size || people.has(record.user);
+  const matchesTimeRepositories = record => !timeRepositories.size || timeRepositories.has(timeRepository(record));
   return {
-    people: facet((records ?? []).filter(record => matchesProjects(record) && matchesRepositories(record)), record => record.user),
-    projects: facet((records ?? []).filter(record => matchesPeople(record) && matchesRepositories(record)), record => project(record, filters.projectDefinitions, filters.otherProjectName)),
-    repositories: facet((records ?? []).filter(record => matchesPeople(record) && matchesProjects(record)), repository),
+    people: facet((records ?? []).filter(record => matchesProjects(record) && matchesRepositories(record) && matchesTimeRepositories(record)), record => record.user),
+    projects: facet((records ?? []).filter(record => matchesPeople(record) && matchesRepositories(record) && matchesTimeRepositories(record)), record => project(record, filters.projectDefinitions, filters.otherProjectName)),
+    repositories: facet((records ?? []).filter(record => matchesPeople(record) && matchesProjects(record) && matchesTimeRepositories(record)), repository),
+    timeRepositories: facet((records ?? []).filter(record => matchesPeople(record) && matchesProjects(record) && matchesRepositories(record)), timeRepository),
   };
 }
 
@@ -145,6 +153,7 @@ function axisPart(record, axis, reportingUtc) {
   }
   if (axis === 'person') return { key: record.user, label: record.user };
   if (axis === 'repository') return { key: repository(record), label: repository(record) };
+  if (axis === 'time-repository') return { key: timeRepository(record), label: timeRepository(record) };
   return taskPart(record);
 }
 

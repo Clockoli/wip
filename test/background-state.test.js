@@ -6,19 +6,49 @@ import { TrackerService } from '../src/services/tracker.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
 import { serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
 import { assertMessageAllowed } from '../src/background/message-policy.js';
+import { loadDestinationRecords } from '../src/services/reports.js';
 
 const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
 const origin = 'chrome-extension://clockoli/';
 const sender = { url: `${origin}src/times/times.html`, documentId: 'activity' };
+const destinationId = 'github:1';
+const registry = { defaultDestinationId: destinationId, destinations: { [destinationId]: {} } };
+
+function installWorkerHandler(context) {
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('async function handle(')), context);
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+}
+
+test('pending projection includes bounded redacted timing diagnostics only', () => {
+  const context = vm.createContext({});
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('function destinationSaveConfirmed(')), context);
+  const result = plain(context.safePendingProjection({
+    id: 'pending', status: 'pending', stage: 'commitCompletion', operation: 'completeTimer', queuedAt: '2026-09-10T16:02:30.000Z', retryCount: 0,
+    diagnostics: [
+      { at: '2026-09-10T16:02:31.000Z', message: 'GitHub GET /repos/acme/time: 200 in 87ms.' },
+      { at: 'invalid', message: 'must not escape' },
+      { at: '2026-09-10T16:02:32.000Z', message: 'token=secret' },
+    ],
+  }, destinationId));
+  assert.deepEqual(result.diagnostics, [
+    { at: '2026-09-10T16:02:31.000Z', message: 'GitHub GET /repos/acme/time: 200 in 87ms.' },
+    { at: '2026-09-10T16:02:32.000Z', message: 'token=[redacted]' },
+  ]);
+  assert.equal(JSON.stringify(result).includes('secret'), false);
+});
 
 test('Activity returns the current safe pending/conflict projection after records load', async () => {
   const state = { user: 'alice', activeCache: null, recentCache: [], pendingWrites: [] };
-  const store = { ensureDataVersion: async () => {}, getState: async () => structuredClone(state) };
+  const destination = { id: destinationId, owner: 'acme', repo: 'time', label: 'acme/time' };
+  const store = { ensureDataVersion: async () => {} };
   const context = vm.createContext({ AbortController, TrackerService, Map,
     store, reportLoads: new Map(), githubForConfig: () => ({}),
     loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
-    configuredSnapshot: async () => ({ config: { owner: 'acme', repo: 'time', storageLogin: 'alice' }, auth: { githubLogin: 'alice' }, generation: 1 }),
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' }, generation: 1 }),
+    selectReadDestinations: () => [destination], destinationUser: async () => 'alice', loadDestinationRecords,
+    trackerForDestination: async () => ({ getRecoveryState: async () => ({ pendingWrites: state.pendingWrites, remoteWriteConfirmed: false }) }),
+    safePendingProjection: (operation, id) => ({ id: operation.id, destinationId: id, operation: operation.operation, status: operation.status, stage: operation.stage, conflictReason: operation.conflictReason, retryCount: 0 }),
     emitReportProgress: () => {},
     ReportService: class {
       async loadUserRange() {
@@ -30,8 +60,9 @@ test('Activity returns the current safe pending/conflict projection after record
   vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
   const result = plain(await context.loadTimes({ payload: {} }, sender));
   assert.equal(result.recent[0].id, 'record');
+  assert.equal(result.recent[0].destinationId, destinationId);
   assert.equal(result.pendingCount, 1);
-  assert.deepEqual(result.pendingWrites, [{ id: 'conflict', operation: 'editEntry', status: 'conflict', stage: 'editEntry', conflictReason: 'queued_entry_missing' }]);
+  assert.deepEqual(result.pendingWrites, [{ id: 'conflict', destinationId, operation: 'editEntry', status: 'conflict', stage: 'editEntry', conflictReason: 'queued_entry_missing', retryCount: 0 }]);
   assert.equal(result.remoteWriteConfirmed, false);
   assert.equal(context.reportLoads.size, 0);
 });
@@ -44,10 +75,14 @@ test('page state exposes full totals while retaining safe active and pending pro
   };
   const context = vm.createContext({ assertMessageAllowed,
     chrome: { runtime: { getURL: () => origin } },
-    configuredSnapshot: async () => ({ config: {}, auth: {} }),
-    context: async () => ({ tracker }), store: { getLocalPreferences: async () => ({ projects: [] }) },
+    configuredSnapshot: async () => ({ registry, auth: {} }),
+    trackerForDestination: async () => tracker,
+    store: {
+      getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: active } }),
+      getLocalPreferences: async () => ({ projects: [] }),
+    },
   });
-  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  installWorkerHandler(context);
   const result = plain(await context.handle({ type: 'GET_PAGE_STATE', refresh: true }, sender));
   assert.equal(result.todayTrackedMs, 3_600_000);
   assert.equal(result.weekTrackedMs, 7_200_000);
@@ -58,17 +93,45 @@ test('page state exposes full totals while retaining safe active and pending pro
   await assert.rejects(() => context.handle({ type: 'LOAD_TIMES' }, { url: 'https://example.org' }), /extension|allowed|trusted/i);
 });
 
+test('real page-state handler confirms a used destination without requiring summaries or records in unused ready destinations', async () => {
+  const ids = ['github:1', 'github:2', 'github:3'];
+  const multiRegistry = { defaultDestinationId: ids[0], destinations: Object.fromEntries(ids.map(id => [id, {}])) };
+  const states = new Map([
+    [ids[0], { active: null, recent: [{ id: 'saved', _sha: 'sha-1' }], pendingWrites: [], todayTrackedMs: 60_000, weekTrackedMs: 60_000, remoteWriteAttempted: true, remoteWriteConfirmed: true }],
+    [ids[1], { active: null, recent: [], pendingWrites: [], todayTrackedMs: null, weekTrackedMs: null, remoteWriteAttempted: false, remoteWriteConfirmed: false }],
+    [ids[2], { active: null, recent: [], pendingWrites: [], todayTrackedMs: null, weekTrackedMs: null, remoteWriteAttempted: false, remoteWriteConfirmed: false }],
+  ]);
+  const context = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } },
+    configuredSnapshot: async () => ({ registry: multiRegistry, auth: {} }),
+    trackerForDestination: async id => ({
+      getState: async () => structuredClone(states.get(id)),
+      loadMenuData: async () => structuredClone(states.get(id)),
+    }),
+    store: { getTrackingSnapshot: async () => ({ activeTimer: null }), getLocalPreferences: async () => ({ projects: [] }) },
+  });
+  installWorkerHandler(context);
+  const result = plain(await context.handle({ type: 'GET_PAGE_STATE', refresh: false }, sender));
+  assert.equal(result.todayTrackedMs, null, 'unused repositories may not have summary caches yet');
+  assert.equal(result.remoteWriteConfirmed, true, 'unused repositories are neutral for save confirmation');
+  assert.equal(result.pendingCount, 0);
+});
+
 test('page state keeps accepted local work available when complete summaries cannot be loaded', async () => {
   const state = { active: { id: 'local', taskUrl: 'https://example.org/task', entryDate: '2026-09-05', timezone: 'UTC', _pending: true }, recent: [], pendingWrites: [{ id: 'queued', status: 'pending' }] };
   const tracker = { getState: async () => state, loadMenuData: async () => { throw new TypeError('Failed to fetch'); } };
   const context = vm.createContext({ assertMessageAllowed, diagnosticError: value => value,
     chrome: { runtime: { getURL: () => origin } },
-    configuredSnapshot: async () => ({ config: {}, auth: {} }),
-    context: async () => ({ tracker }), store: { getLocalPreferences: async () => ({ projects: [] }) },
+    configuredSnapshot: async () => ({ registry, auth: {} }),
+    trackerForDestination: async () => tracker,
+    store: {
+      getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: state.active } }),
+      getLocalPreferences: async () => ({ projects: [] }),
+    },
   });
   vm.runInContext(worker.slice(worker.indexOf('function serializeError('), worker.indexOf('function authSummary(')), context);
   vm.runInContext(worker.slice(worker.indexOf('const READ_RETRY_MESSAGES'), worker.indexOf('const RECOVERABLE_REPOSITORY_MESSAGES')), context);
-  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  installWorkerHandler(context);
   const result = plain(await context.handle({ type: 'GET_PAGE_STATE', refresh: true }, sender));
   assert.equal(result.active.id, 'local');
   assert.equal(result.pendingCount, 1);
@@ -105,16 +168,20 @@ for (const cacheDate of ['today', 'stale', 'absent']) {
     };
     const calls = [];
     const github = new Proxy({}, { get: (_, method) => async () => { calls.push(method); throw new TypeError('Unexpected GitHub call'); } });
-    const store = { getState: async () => structuredClone(state), getLocalPreferences: async () => ({ projects: [] }) };
+    const store = {
+      getState: async () => structuredClone(state),
+      getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: state.activeCache } }),
+      getLocalPreferences: async () => ({ projects: [] }),
+    };
     const tracker = new TrackerService({ github, store, user: 'alice', clock: () => now });
     const context = vm.createContext({ assertMessageAllowed, diagnosticError: value => value,
       chrome: { runtime: { getURL: () => origin } },
-      configuredSnapshot: async () => ({ config: {}, auth: {} }),
-      context: async () => ({ tracker }), store,
+      configuredSnapshot: async () => ({ registry, auth: {} }),
+      trackerForDestination: async () => tracker, store,
     });
     vm.runInContext(worker.slice(worker.indexOf('function serializeError('), worker.indexOf('function authSummary(')), context);
     vm.runInContext(worker.slice(worker.indexOf('const READ_RETRY_MESSAGES'), worker.indexOf('const RECOVERABLE_REPOSITORY_MESSAGES')), context);
-    vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+    installWorkerHandler(context);
     for (const refresh of [false, undefined]) {
       const result = plain(await context.handle({ type: 'GET_PAGE_STATE', ...(refresh === undefined ? {} : { refresh }) }, sender));
       assert.deepEqual(calls, []);
@@ -133,18 +200,20 @@ test('local page state skips network-capable configuration probes as well as tra
   const state = { activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: 'alice' };
   const store = {
     migrateLegacyPatAuth: async () => {},
-    getConfigurationSnapshot: async () => ({ config: { owner: 'acme', repo: 'time', storageLogin: 'alice' } }),
+    getConfigurationSnapshot: async () => ({ registry, destinationId, config: { owner: 'acme', repo: 'time', storageLogin: 'alice' } }),
     getAuthSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
     getState: async () => structuredClone(state), ensureDataVersion: async () => structuredClone(state),
+    getTrackingSnapshot: async () => ({ activeTimer: null }),
     getLocalPreferences: async () => ({ projects: [] }),
   };
+  const tracker = new TrackerService({ github: network, store, user: 'alice' });
   const context = vm.createContext({ assertMessageAllowed, TrackerService,
     chrome: { runtime: { getURL: () => origin } },
     store, configuration: network, githubForConfig: () => network, ReportService: class {},
+    trackerForDestination: async () => tracker,
   });
   vm.runInContext(worker.slice(worker.indexOf('async function configuredSnapshot('), worker.indexOf('async function onboardingState(')), context);
-  vm.runInContext(worker.slice(worker.indexOf('async function context('), worker.indexOf('function emitReportProgress(')), context);
-  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  installWorkerHandler(context);
   const result = plain(await context.handle({ type: 'GET_PAGE_STATE', refresh: false }, sender));
   assert.deepEqual(calls, []);
   assert.equal(result.configured, true);
@@ -161,6 +230,7 @@ function pageStateFixture() {
       Object.assign(state, structuredClone(mutate(structuredClone(state)) || {}));
       return structuredClone(state);
     },
+    getTrackingSnapshot: async () => ({ activeTimer: state.activeCache ? { destinationId, record: state.activeCache } : null }),
     getLocalPreferences: async () => ({ projects: [] }),
   };
   const github = {
@@ -173,12 +243,12 @@ function pageStateFixture() {
   let now = new Date('2026-08-18T10:00:00Z');
   const tracker = new TrackerService({ github, store, user: 'alice', clock: () => now });
   const context = vm.createContext({ assertMessageAllowed, diagnosticError: value => value,
-    chrome: { runtime: { getURL: () => origin } }, configuredSnapshot: async () => ({ config: {}, auth: {} }),
-    context: async () => ({ tracker }), store,
+    chrome: { runtime: { getURL: () => origin } }, configuredSnapshot: async () => ({ registry, auth: {} }),
+    trackerForDestination: async () => tracker, store,
   });
   vm.runInContext(worker.slice(worker.indexOf('function serializeError('), worker.indexOf('function authSummary(')), context);
   vm.runInContext(worker.slice(worker.indexOf('const READ_RETRY_MESSAGES'), worker.indexOf('const RECOVERABLE_REPOSITORY_MESSAGES')), context);
-  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  installWorkerHandler(context);
   const active = buildActiveTimer({ user: 'alice', taskUrl: 'https://example.org/a', startedAt: '2026-08-18T08:00:00.000Z', timezone: 'UTC' });
   return { state, store, tracker, files, active, advance: () => { now = new Date(now.getTime() + 60_000); },
     read: refresh => context.handle({ type: 'GET_PAGE_STATE', refresh }, sender) };

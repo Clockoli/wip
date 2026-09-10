@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
+import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
+
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
@@ -29,20 +30,18 @@ function element(tagName = 'div') {
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
     replaceChildren(...children) { this.children = []; this.append(...children); },
-    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() {},
-    querySelectorAll(selector) {
-      const className = selector.startsWith('.') ? selector.slice(1) : '';
-      const matches = child => className && child.className.split(' ').includes(className);
-      return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]);
-    },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
+    showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
+    querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className && child.className.split(' ').includes(className); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
+
     addEventListener(type, handler) { this.listeners[type] = handler; },
   };
   return node;
 }
 
-function harness({ reply = () => ({}), confirm = () => false } = {}) {
+function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map() } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [];
@@ -50,13 +49,17 @@ function harness({ reply = () => ({}), confirm = () => false } = {}) {
     document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
-    onboardingStep, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings,
+    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings,
+    ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
+
     ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { sendMessage(request, callback) {
       requests.push(request);
       const result = reply(request);
-      if (result && typeof result.then === 'function') { result.then(value => callback({ ok: true, data: value }), error => callback({ ok: false, error: { message: error.message } })); return; }
-      callback(result instanceof Error ? { ok: false, error: { message: result.message } } : { ok: true, data: result });
+      const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message } } : { ok: true, data: value });
+      if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message } }));
+      else respond(result);
+
     } } },
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
@@ -66,6 +69,281 @@ function harness({ reply = () => ({}), confirm = () => false } = {}) {
     submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
   };
 }
+
+test('queue diagnostics saves immediately without submitting unrelated draft settings', async () => {
+  const saved = { ...preferences, projects: [{ pattern: 'https://github.com/acme/*', label: 'Acme' }], showQueueDiagnostics: false };
+  const page = harness({ reply: request => request.type === 'SET_QUEUE_DIAGNOSTICS'
+    ? { preferences: { ...saved, showQueueDiagnostics: request.enabled } }
+    : {} });
+  page.render(connectedState);
+  page.context.savedPreferences = saved;
+  vm.runInContext('localPreferences = savedPreferences;', page.context);
+  const control = page.nodes.get('show-queue-diagnostics');
+  control.checked = true;
+  await control.listeners.change();
+  const request = page.requests.find(item => item.type === 'SET_QUEUE_DIAGNOSTICS');
+  assert.deepEqual(JSON.parse(JSON.stringify(request)), { type: 'SET_QUEUE_DIAGNOSTICS', enabled: true });
+  assert.equal(page.requests.some(item => item.type === 'UPDATE_DISPLAY_PREFERENCES'), false);
+  assert.equal(page.nodes.get('diagnostics-feedback').textContent, 'Queue diagnostics saved.');
+});
+
+test('ready discovery populates both default options without selection writes and preserves silent DOM', async () => {
+  const repositories = [77, 78].map(repoId => ({ repoId, installationId: 88, owner: 'acme', repo: `time-${repoId}`,
+    fullName: `acme/time-${repoId}`, state: 'initialized_member', canAdd: true, eligible: true, ready: true }));
+  const onboardingState = { ...connectedState, config: null, destinationRegistry: { defaultDestinationId: 'github:77' },
+    destinations: repositories.map(repository => ({ ...repository, id: `github:${repository.repoId}`, verificationStatus: 'access_checked' })) };
+  const result = { repositories, onboardingState };
+  const page = harness({ reply: () => result });
+  page.render({ ...connectedState, ready: false, config: null });
+  await page.context.discoverRepositories();
+  assert.equal(page.nodes.get('setup-default-destination').children.length, 2);
+  assert.equal(page.nodes.get('onboarding').hidden, false);
+  assert.equal(page.nodes.get('finish-setup').disabled, false);
+  assert.ok(page.nodes.get('repository-list').children.every(row => row.children.length === 2));
+  assert.equal(page.nodes.get('repository-confirmation').open, false);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  const option = page.nodes.get('setup-default-destination').children[0];
+  const row = page.nodes.get('repository-list').children[0];
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.nodes.get('setup-default-destination').children[0], option);
+  assert.equal(page.nodes.get('repository-list').children[0], row);
+});
+
+test('silent discovery preserves unchanged DOM, dirty intent, and ignores replies after Finish', async () => {
+  let release;
+  const result = { repositories: [{ installationId: 11, repoId: 22, fullName: 'octocat/clockoli-data', state: 'initialized_member', canAdd: true, eligible: true }, { installationId: 10, repoId: 20, fullName: 'acme/new', state: 'uninitialized', canInitialize: true, eligible: true }], installations: [] };
+  const page = harness({ reply: () => new Promise(resolve => { release = resolve; }) });
+  page.render(connectedState);
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  page.context.renderRepositories(result);
+  const root = page.nodes.get('repository-list');
+  const original = root.children[0];
+  const before = page.nodes.get('message').textContent;
+  let poll = page.context.discoverRepositories({ silent: true }); release(result); await poll;
+  assert.equal(root.children[0], original);
+  assert.equal(page.nodes.get('message').textContent, before);
+  page.nodes.get('repository-target').value = 'dirty/draft';
+  page.nodes.get('repository-target').listeners.input();
+  poll = page.context.discoverRepositories({ silent: true }); release({ ...result, repositories: [...result.repositories, { ...result.repositories[0], repoId: 21, fullName: 'acme/extra' }] }); await poll;
+  assert.equal(page.nodes.get('repository-target').value, 'dirty/draft');
+  assert.equal(page.context.reviewSelectedRepository(), false);
+  poll = page.context.discoverRepositories({ silent: true });
+  await page.nodes.get('finish-setup').listeners.click();
+  release(result); await poll;
+  assert.equal(page.context.reviewSelectedRepository(), false);
+  assert.equal(page.nodes.get('onboarding').hidden, true);
+});
+
+test('queued manual Check cannot open a modal after setup lifecycle changes', async () => {
+  let release;
+  const result = { repositories: [], installations: [] };
+  let requests = 0;
+  const page = harness({ reply: () => ++requests === 1 ? new Promise(resolve => { release = resolve; }) : result });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.rememberRepositoryTarget('acme/new');
+  vm.runInContext("discoveryStatus = 'ready';", page.context);
+  const poll = page.context.discoverRepositories({ silent: true });
+  const check = page.submit('repository-target-form');
+  await new Promise(resolve => setImmediate(resolve));
+  vm.runInContext('setupCancelled = true; stopRepositoryMonitoring();', page.context);
+  release(result);
+  await Promise.all([poll, check]);
+  assert.equal(page.nodes.get('repository-access-panel').open, false);
+  assert.equal(page.nodes.get('repository-confirmation').open, false);
+  assert.equal(page.requests.length, 1);
+});
+
+test('manual check opens native initialization confirmation without writing', async () => {
+  const page = harness({ reply: () => ({ repositories: [{ installationId: 10, repoId: 20, fullName: 'acme/new', state: 'uninitialized', canInitialize: true, eligible: true }], installations: [] }) });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = 'acme/new';
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.match(page.nodes.get('repository-confirmation-body').textContent, /read access/);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('access create link uses the checked target and preserves private template defaults', async () => {
+  const page = harness({ reply: () => ({ repositories: [], installations: [] }) });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' } });
+  page.nodes.get('repository-target').value = 'acme/another.repo-2';
+  await page.submit('repository-target-form');
+  const url = new URL(page.nodes.get('modal-new-time-repository').href);
+  assert.equal(url.searchParams.get('name'), 'another.repo-2');
+  assert.equal(url.searchParams.get('owner'), 'acme');
+  assert.equal(url.searchParams.get('visibility'), 'private');
+  assert.equal(url.searchParams.get('template_owner'), 'Clockoli');
+  assert.equal(url.searchParams.get('template_name'), 'data-template');
+});
+
+test('setup exposes connected repositories and finishes without another repository write', async () => {
+  const page = harness();
+  page.render(connectedState);
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  assert.equal(page.nodes.get('time-repositories').hidden, false);
+  assert.equal(page.nodes.get('finish-setup').disabled, false);
+  await page.nodes.get('finish-setup').listeners.click();
+  assert.equal(page.nodes.get('onboarding').hidden, true);
+  assert.equal(page.requests.length, 0);
+  page.render({ ready: false, appConfigured: true, auth: connectedState.auth });
+  assert.equal(page.nodes.get('finish-setup').disabled, true);
+});
+
+test('pending reauthorization has no per-repository confirmation action and cannot finish before automatic promotion', () => {
+  const page = harness();
+  page.render({ ...connectedState, candidateAuth: { mode: 'github_app', githubLogin: 'octocat' } });
+  page.context.renderRepositories({ repositories: [{ installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data', state: 'initialized_member', canAdd: true, eligible: true, ready: true }], installations: [] });
+  assert.equal(page.nodes.get('finish-setup').disabled, true);
+  assert.equal(vm.runInContext('repositoryCanBeSelected(selectedRepository)', page.context), false);
+  assert.equal(page.context.reviewSelectedRepository(), false);
+  assert.ok(page.nodes.get('repository-list').children.every(row => row.children.length === 2));
+  assert.equal(page.nodes.get('repository-confirmation').open, false);
+  assert.doesNotMatch(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, /confirm authorization/i);
+});
+
+test('Finish clears remembered target and reviewed writes without changing connected settings', async () => {
+  const savedChoices = new Map();
+  const page = harness({ savedChoices });
+  page.render(connectedState);
+  await page.context.rememberRepositoryTarget('acme/more-time');
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  await page.nodes.get('finish-setup').listeners.click();
+  assert.equal(savedChoices.get('octocat'), '');
+  assert.equal(page.nodes.get('repository-target').value, '');
+  assert.equal(page.context.reviewSelectedRepository(), false);
+  assert.equal(page.nodes.get('onboarding').hidden, true);
+  assert.equal(page.requests.length, 0);
+});
+
+test('Finish is blocked throughout an in-flight repository connection', async () => {
+  let release;
+  const response = new Promise(resolve => { release = resolve; });
+  const page = harness({ reply: request => request.type === 'SELECT_REPOSITORY' ? response : request.type === 'GET_ONBOARDING_STATE' ? connectedState : request.type === 'DISCOVER_REPOSITORIES' ? { repositories: [{ fullName: 'octocat/clockoli-data', state: 'initialized_member', canAdd: true, eligible: true }], installations: [] } : preferences });
+  page.render(connectedState);
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  page.context.renderRepositories({ repositories: [{ installationId: 10, repoId: 21, fullName: 'acme/more-time', state: 'initialized_member', canAdd: true, eligible: true }], installations: [] });
+  assert.equal(page.context.reviewSelectedRepository(), true);
+  const pending = page.context.confirmRepositoryAction();
+  assert.equal(page.nodes.get('finish-setup').disabled, true);
+  // Guard the operation state even if an old render made the control enabled.
+  page.nodes.get('finish-setup').disabled = false;
+  await page.nodes.get('finish-setup').listeners.click();
+  assert.equal(page.nodes.get('onboarding').hidden, false);
+  release({});
+  assert.equal(await pending, true, page.nodes.get('message').textContent);
+  assert.equal(page.nodes.get('finish-setup').disabled, false);
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 1);
+});
+
+test('late discovery cannot restore a reviewed repository after the target is edited', async () => {
+  const repository = { installationId: 10, repoId: 20, fullName: 'alice/time-data', owner: 'alice', repo: 'time-data', ownerType: 'User', state: 'initialized_member', canAdd: true, eligible: true };
+  let release;
+  const response = new Promise(resolve => { release = resolve; });
+  const page = harness({ reply: () => response });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' } });
+  await page.context.rememberRepositoryTarget(repository.fullName);
+  page.context.renderRepositories({ repositories: [repository], installations: [] });
+  page.context.reviewSelectedRepository();
+  assert.equal(page.nodes.get('repository-confirmation').hidden, false);
+  const pending = page.context.discoverRepositories();
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  page.nodes.get('repository-target').listeners.input();
+  release({ repositories: [repository], candidates: [repository] });
+  await pending;
+  assert.equal(page.nodes.get('repository-target').value, 'acme/time-data');
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
+  assert.equal(page.nodes.get('repository-confirmation').hidden, true);
+  assert.equal(page.nodes.get('repository-access-panel').hidden, true);
+  assert.equal(page.context.reviewSelectedRepository(), false);
+  assert.equal(await page.context.confirmRepositoryAction(), false);
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+});
+
+test('manual target survives page reload and never falls back to another owner with the same repository name', async () => {
+  const savedChoices = new Map();
+  const authState = { ready: false, appConfigured: true, auth: { mode: 'github_app', githubUserId: 1, githubLogin: 'alice' } };
+  const alice = { installationId: 10, repoId: 20, fullName: 'alice/time-data', owner: 'alice', repo: 'time-data', ownerType: 'User', state: 'initialized_member', canAdd: true, eligible: true };
+  const acme = { ...alice, installationId: 11, repoId: 21, fullName: 'acme/time-data', owner: 'acme', ownerType: 'Organization' };
+  let granted = false;
+  const reply = request => {
+    if (request.type === 'GET_ONBOARDING_STATE') return authState;
+    if (request.type === 'RESUME_DEVICE_FLOW') return null;
+    if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: granted ? [alice, acme] : [alice], installations: [{ accountLogin: 'acme', settingsUrl: 'https://github.com/settings/installations/11' }] };
+    throw new Error(`Unexpected message: ${request.type}`);
+  };
+  const page = harness({ reply, savedChoices });
+  await page.context.refreshState();
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  assert.equal(page.nodes.get('repository-access-panel').hidden, true);
+  page.nodes.get('repository-target').value = 'https://github.com/acme/time-data';
+  await page.submit('repository-target-form');
+  assert.equal(savedChoices.get('1'), 'acme/time-data');
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
+  assert.equal(page.nodes.get('repository-access-panel').hidden, false);
+  assert.equal(page.nodes.get('install-app').href, 'https://github.com/settings/installations/11');
+  assert.match(page.nodes.get('repository-target-status').textContent, /existence is not confirmed/);
+  const reopened = harness({ reply, savedChoices });
+  await reopened.context.refreshState();
+  assert.equal(reopened.nodes.get('repository-target').value, 'acme/time-data');
+  assert.equal(reopened.context.reviewSelectedRepository(), false);
+  assert.equal(reopened.nodes.get('repository-access-panel').open, false, 'Reload never opens an access modal');
+  assert.equal(page.nodes.get('repository-access-panel').open, true, 'Only explicit Check opens the modal');
+  granted = true;
+  await reopened.context.discoverRepositories();
+  assert.equal(vm.runInContext('repositoryCanBeSelected(selectedRepository)', reopened.context), true);
+  assert.equal(reopened.nodes.get('repository-access-panel').hidden, true);
+  reopened.context.reviewSelectedRepository();
+  assert.match(reopened.nodes.get('repository-confirmation-title').textContent, /acme\/time-data/);
+  assert.equal(reopened.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+});
+
+test('discovery failure keeps the manual target without misreporting missing permission', async () => {
+  const page = harness({ reply: () => new Error('GitHub rate limit exceeded') });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' } });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-target').value, 'acme/time-data');
+  assert.match(page.nodes.get('message').textContent, /rate limit/);
+  assert.equal(page.nodes.get('repository-access-panel').hidden, true);
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+});
+
+test('access modal closes on Grant and return remains read-only until manual Check', async () => {
+  let granted = false;
+  const target = { installationId: 11, repoId: 21, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', ownerType: 'Organization', state: 'initialized_joinable', canJoin: true, eligible: true };
+  const page = harness({ reply: () => ({ repositories: granted ? [target] : [], installations: [] }) });
+  page.context.window.open = () => ({ opener: {}, location: { replace(url) { assert.equal(url, 'https://github.com/apps/clockoli/installations/new'); } } });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' }, installationUrl: 'https://github.com/apps/clockoli/installations/new' });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-access-panel').open, true);
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  assert.equal(page.nodes.get('repository-access-panel').open, false);
+  assert.equal(page.nodes.get('check-repository-target').focused, true);
+  const before = page.requests.length;
+  granted = true;
+  await page.context.rediscoverAfterGitHubHandoff();
+  assert.equal(page.requests.length, before);
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
+  await page.submit('repository-target-form');
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), false);
+  assert.equal(page.nodes.get('repository-access-panel').open, false);
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+});
+
+test('known repository missing App write access does not claim existence is unknown', async () => {
+  const page = harness({ reply: () => ({ repositories: [{ fullName: 'acme/time-data', reasons: ['app_contents_write_required'], eligible: false }], installations: [] }) });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' } });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-access-panel').open, true);
+  assert.match(page.nodes.get('repository-access-instruction').textContent, /Contents: Read and write/);
+  assert.doesNotMatch(page.nodes.get('repository-access-instruction').textContent, /existence/);
+  page.nodes.get('close-repository-access').listeners.click();
+  assert.equal(page.nodes.get('repository-access-panel').open, false);
+  assert.equal(page.nodes.get('check-repository-target').focused, true);
+});
 
 test('secondary settings collapse only on disconnect and remain reachable across refreshes', () => {
   const page = harness();
@@ -85,7 +363,7 @@ test('secondary settings collapse only on disconnect and remain reachable across
 });
 
 for (const [form, requestType, originalLabel] of [
-  ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Save display settings'],
+  ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Save projects and routing'],
   ['billing', 'SAVE_BILLING_SETTINGS', 'Save billable rates'],
   ['invoicing', 'SAVE_BILLING_SETTINGS', 'Save invoicing settings'],
 ]) {
@@ -470,22 +748,110 @@ test('destructive confirmations name their button scope and cancellation makes n
   assert.match(html, /id="revoke"[^>]*href="https:\/\/github.com\/settings\/apps\/authorizations"[^>]*>Revoke GitHub sign-in/);
 });
 
-test('sole eligible repository still auto-connects and reveals completion after validation', async () => {
-  const repository = { installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data', repo: 'clockoli-data', eligible: true };
+test('sole eligible repository is preselected but writes only after review and action confirmation', async () => {
+  const repository = {
+    installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data', owner: 'octocat', ownerType: 'User', repo: 'clockoli-data',
+    state: 'initialized_member', canAdd: true, canJoin: false, canInitialize: false, eligible: true,
+  };
   const page = harness({ reply(request) {
     if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: [repository], candidates: [repository] };
     if (request.type === 'SELECT_REPOSITORY') return { status: 'write_verified' };
     if (request.type === 'GET_ONBOARDING_STATE') return connectedState;
     if (request.type === 'RESUME_DEVICE_FLOW') return null;
+    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.render({ ready: false, appConfigured: true });
   await page.context.discoverRepositories();
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), false);
+  await page.context.reviewSelectedRepository();
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+  assert.equal(page.nodes.get('repository-confirmation').hidden, false);
+  assert.equal(page.nodes.get('confirm-repository-action').textContent, 'Set up storage branch');
+  await page.nodes.get('confirm-repository-action').listeners.click();
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 1);
-  assert.equal(page.requests.find(request => request.type === 'SELECT_REPOSITORY').payload.repoId, 20);
-  assert.equal(page.nodes.get('connected').hidden, false);
-  assert.equal(page.nodes.get('onboarding').hidden, true);
-  assert.equal(page.nodes.get('connected-storage').textContent.includes('Write verified'), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'SELECT_REPOSITORY').payload)),
+    { installationId: 10, repoId: 20, action: 'add' });
+});
+
+test('repository-first empty discovery asks for a concrete target before offering access', async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: [], candidates: [] };
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' } });
+  await page.context.discoverRepositories();
+  assert.equal(page.nodes.get('repository-step').hidden, false);
+  assert.equal(page.nodes.get('current-step').textContent, '2');
+  assert.equal(page.nodes.get('repository-access-panel').hidden, true);
+  assert.match(page.nodes.get('message').textContent, /Enter a repository URL or owner\/name/);
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+});
+
+test('connected sharing instructions use the owner-neutral path for user and organization repositories', () => {
+  const page = harness();
+  for (const destination of [
+    { owner: 'alice', repo: 'clockoli-data', ownerType: 'User' },
+    { owner: 'acme', repo: 'team-time', ownerType: 'Organization' },
+  ]) {
+    page.context.testDestination = destination;
+    const text = vm.runInContext('teammateInstructions(testDestination)', page.context);
+    assert.match(text, /2\. Install Clockoli and select Sign in with GitHub\./);
+    assert.match(text, /3\. Select .* or enter its GitHub URL in Connect time repositories\./);
+    assert.match(text, new RegExp(`grant the Clockoli GitHub App access to ${destination.owner}\/${destination.repo}`));
+    assert.doesNotMatch(text, /Connect GitHub|Join an organization repository/);
+  }
+});
+
+test('repository confirmation sends the one action allowed by the inspected repository state', async () => {
+  const scenarios = [
+    ['existing', 'User', 'initialized_member', { canAdd: true, canJoin: false, canInitialize: false }, 'add', 'Set up storage branch'],
+    ['existing', 'Organization', 'initialized_joinable', { canAdd: false, canJoin: true, canInitialize: false }, 'join', 'Join repository'],
+    ['new', 'User', 'uninitialized', { canAdd: false, canJoin: false, canInitialize: true }, 'initialize', 'Initialize repository'],
+    ['new', 'Organization', 'empty', { canAdd: false, canJoin: false, canInitialize: true }, 'initialize', 'Initialize repository'],
+  ];
+  for (const [mode, ownerType, state, capabilities, expectedAction, expectedLabel] of scenarios) {
+    const repository = {
+      installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data', owner: 'octocat', ownerType, repo: 'clockoli-data',
+      state, ...capabilities, eligible: true,
+    };
+    const page = harness({ reply(request) {
+      if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: [repository], candidates: [repository] };
+      if (request.type === 'SELECT_REPOSITORY') return { status: 'write_verified' };
+      if (request.type === 'GET_ONBOARDING_STATE') return connectedState;
+      if (request.type === 'RESUME_DEVICE_FLOW') return null;
+      if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+      throw new Error(`Unexpected message: ${request.type}`);
+    } });
+    page.render({ ready: false, appConfigured: true });
+    page.context.testMode = mode;
+    await page.context.discoverRepositories();
+    await page.context.reviewSelectedRepository();
+    assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
+    assert.equal(page.nodes.get('repository-confirmation').hidden, false);
+    assert.equal(page.nodes.get('confirm-repository-action').textContent, expectedLabel);
+    await page.nodes.get('confirm-repository-action').listeners.click();
+    assert.equal(page.requests.find(request => request.type === 'SELECT_REPOSITORY').payload.action, expectedAction);
+  }
+});
+
+test('repository confirmation fails closed when state and capability flags disagree', async () => {
+  const repository = {
+    installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data', owner: 'octocat', ownerType: 'User', repo: 'clockoli-data',
+    state: 'initialized_member', canAdd: false, canJoin: true, canInitialize: false, eligible: true,
+  };
+  const page = harness({ reply(request) {
+    if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: [repository], candidates: [repository] };
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.render({ ready: false, appConfigured: true });
+  await page.context.discoverRepositories();
+  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
+  await page.context.reviewSelectedRepository();
+  await page.nodes.get('confirm-repository-action').listeners.click();
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
 
 test('adding a client cannot reuse an id still assigned to a project or the main bucket', () => {
