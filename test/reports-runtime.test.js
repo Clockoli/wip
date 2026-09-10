@@ -596,7 +596,11 @@ test('picker closes on Escape and outside clicks, retains inside clicks and mark
     page.fire('period-trigger'); page.fire(`preset-${preset}`); await page.settle(); await page.reply(result());
     assert.equal(page.nodes.get('period-popover').hidden, true);
     assert.equal(page.nodes.get(`preset-${preset}`).attributes['aria-current'], 'true');
-    assert.equal(page.nodes.get('period-label').textContent, reporting.periodRange(preset, '2026-08-18').label);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const range = reporting.periodRange(preset, today);
+    const format = value => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`));
+    assert.equal(page.nodes.get('period-label').textContent, `${format(range.startDate)} – ${format(range.endDate)}`);
   }
 });
 

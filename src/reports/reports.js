@@ -456,8 +456,8 @@ const CALENDAR_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'long', y
 function reportToday() { return state.reportingUtc ? new Date().toISOString().slice(0, 10) : localDateValue(); }
 function renderRangeContext() {
   const range = state.range;
-  if (range) $('period-label').textContent = range.preset && range.preset !== 'custom' ? range.label
-    : `${RANGE_FORMATTER.format(new Date(`${range.startDate}T00:00:00Z`))} – ${RANGE_FORMATTER.format(new Date(`${range.endDate}T00:00:00Z`))}`;
+  // The resolved dates are the question the button answers; a preset name alone hides them.
+  if (range) $('period-label').textContent = `${RANGE_FORMATTER.format(new Date(`${range.startDate}T00:00:00Z`))} – ${RANGE_FORMATTER.format(new Date(`${range.endDate}T00:00:00Z`))}`;
   $('period-trigger').setAttribute('aria-busy', String(state.loading));
   for (const preset of PERIOD_PRESETS) {
     if (range?.preset === preset) $(`preset-${preset}`).setAttribute('aria-current', 'true');
