@@ -6,15 +6,16 @@ const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.
 const js = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
 const reporting = fs.readFileSync(new URL('../src/domain/reporting.js', import.meta.url), 'utf8');
 const worker = fs.readFileSync(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+const styles = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
 
 test('reports page exposes periods, independent chart axes, facets, and direct export links', () => {
-  for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'custom']) assert.match(html, new RegExp(`value="${value}"`));
+  for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'today', 'yesterday', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${value}"`));
   for (const id of ['metric', 'horizontal-axis', 'stack-by']) assert.match(html, new RegExp(`id="${id}"`));
   for (const value of ['total-time', 'avg-time', 'task-count']) assert.match(html, new RegExp(`value="${value}"`));
-  for (const value of ['day', 'week', 'month', 'person', 'repository', 'task']) {
+  for (const value of ['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task']) {
     assert.match(html, new RegExp(`<option value="${value}"`));
   }
-  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'timeRepositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Time by day, person and task/);
   assert.match(html, /Total time by task/);
   assert.match(js, /buildPrintableTimesheet\(filtered\)/);
@@ -22,6 +23,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Search people"/);
   assert.match(html, /aria-label="Search projects"/);
   assert.match(html, /aria-label="Search sources"/);
+  assert.match(html, /aria-label="Search time repositories"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
   assert.match(html, /aria-label="Print report or save as PDF"/);
@@ -46,8 +48,8 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(worker, /previous\.controller\.abort\(\)/);
   assert.match(worker, /await previous\.promise\.catch/);
   assert.match(worker, /await Promise\.allSettled/);
-  assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(4\)/);
-  assert.match(worker, /function syncPendingNow[\s\S]*ensureDataVersion\(4\)/);
+  assert.match(worker, /async function loadReport[\s\S]*ensureDataVersion\(5\)/);
+  assert.match(worker, /function syncPendingNow[\s\S]*syncPendingAll\(\{ store, trackerForDestination \}\)/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
   assert.match(js, /Math\.max\(320, analytics\.buckets\.length \* 92 \+ 100\)/);
 });
@@ -61,21 +63,24 @@ test('high-cardinality analytics stays sparse in aggregation and the collapsed d
 
 
 test('reports use requested defaults, monotonic progress and task identity labels', () => {
-  assert.match(html, /<option value="last-week" selected>Last week<\/option>/);
+  assert.match(html, /id="preset-last-week"[^>]*aria-current="true">Last week<\/button>/);
   assert.match(html, /<option value="day" selected>Day<\/option>/);
   assert.match(html, /<option value="person" selected>Person<\/option>/);
   assert.match(html, /<option value="total-time" selected>Total time<\/option>/);
   assert.doesNotMatch(html, /<option value="week" selected>/);
-  assert.match(js, /const initial = periodRange\('last-week'/);
-  assert.match(js, /state\.people = new Set\(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
+  assert.match(js, /const initial = \{ \.\.\.periodRange\('last-week'/);
+  assert.match(js, /const currentUsers = result\.currentUsers \? Object\.values\(result\.currentUsers\) : \(result\.currentUser \? \[result\.currentUser\] : \[\]\)/);
+  assert.match(js, /state\.people = new Set\(currentUsers\.filter\(Boolean\)\)/);
   assert.match(js, /state\.progressValue = Math\.max\(state\.progressValue/);
   assert.match(js, /Task URL \/ title/);
-  assert.doesNotMatch(js, /Repositories:/);
+  assert.doesNotMatch(js, /['"`]Repositories:/);
 });
 
 test('recoverable queued entry-edit conflicts keep the background retry alarm alive', () => {
   assert.match(worker, /function hasRunnablePending\(queue\) \{[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
-  assert.match(worker, /if \(hasRunnablePending\(latest\.pendingWrites\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+  assert.match(worker, /function shouldContinuePendingSync\(\)[\s\S]*getPendingDestinationIds\(\)[\s\S]*destinationIds\.some\(destinationId => hasRunnablePending\(entries\[destinationId\]\?\.pendingWrites\)\)/);
+  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\.catch\(\(\) => false\)\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
 });
 
 
@@ -84,4 +89,45 @@ test('reports mounts the shared running status directly below the tabs', () => {
   assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
   assert.match(js, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);
   assert.match(js, /mountRunningStatus\(\$\('running-status'\), \{ send \}\)/);
+});
+
+test('reports exposes local invoice preview, export, numbering and print contracts', () => {
+  for (const id of [
+    'create-invoice', 'invoice-dialog', 'invoice-client', 'invoice-currency', 'invoice-group-by',
+    'invoice-issue-date', 'invoice-billing-period', 'invoice-preview', 'invoice-feedback', 'invoice-print',
+    'invoice-extra-lines', 'invoice-add-line', 'invoice-close', 'print-invoice',
+  ]) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(js, /buildInvoice\(/);
+  assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
+  assert.match(js, /function renderInvoiceDocument\(container, invoice\)/);
+  assert.match(styles, /\.print-invoice\{display:none\}/);
+  assert.match(styles, /body\.printing-invoice \.print-timesheet\{display:none!important\}/);
+  assert.match(styles, /body\.printing-invoice \.print-invoice\{display:block\}/);
+  assert.match(styles, /dialog\{display:none!important\}/);
+  const additional = html.slice(html.indexOf('class="invoice-additional-control"'), html.indexOf('id="invoice-feedback"'));
+  assert.ok(additional.indexOf('Additional lines') < additional.indexOf('id="invoice-extra-lines"'));
+  assert.ok(additional.indexOf('id="invoice-extra-lines"') < additional.indexOf('id="invoice-add-line"'));
+  assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
+  assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
+});
+
+test('invoice controls name the billing period and keep only print exports', () => {
+  assert.match(html, /<label>Start <input id="start-date"/); assert.match(html, /<label>End <input id="end-date"/);
+  for (const id of ['this-month', 'last-month', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${id}"`));
+  assert.doesNotMatch(html + js, /invoice-download-csv|invoice-download-json|invoice-due-days|invoiceCsv|invoiceJson|invoiceFilename/);
+});
+
+test('invoice print paper overrides the app theme even when later stylesheets load dark tokens', () => {
+  assert.match(styles, /@media print\{[\s\S]*body\.printing-invoice,body\.printing-invoice main\{color-scheme:light;background:#fff;color:#000\}/);
+  assert.match(styles, /\.invoice-dates,\.invoice-period,\.invoice-date-cell\{font-variant-numeric:tabular-nums\}/);
+  assert.match(styles, /\.invoice-notes,\.invoice-terms\{max-width:68ch\}/);
+});
+
+
+test('date range picker replaces the old controls with one accessible trigger and dialog', () => {
+  assert.match(html, /id="period-trigger"[^>]*aria-haspopup="dialog"[^>]*aria-expanded="false"/);
+  assert.match(html, /id="period-popover"[^>]*role="dialog"[^>]*hidden/);
+  for (const id of ['period', 'custom-period', 'apply-period', 'report-range']) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(styles, /\.period-presets|\.period-select|\.custom-period|#report-range/);
+  assert.match(html, /id="reporting-utc"[^>]*role="switch"/);
 });

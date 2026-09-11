@@ -9,7 +9,7 @@ const ISSUE_OPEN_PATH = 'M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM8 0a8 8 0 1
 const PULL_OPEN_PATH = 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z';
 const TASK_COLORS = ['#e76f51','#2a9d8f','#b8860b','#5f8f52','#d66b2c','#477ca8','#8f4fc7','#d94c78','#27866a','#c76f0a','#659344','#4c6f8c','#d52f33','#0087a3','#806b99','#b88400','#2886a8','#914657','#55766e','#c95e43'];
 const $ = id => document.getElementById(id);
-const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null };
+const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null, partial: false };
 let tick = null;
 let pendingRefresh = null;
 let pendingRender = false;
@@ -231,6 +231,10 @@ function rebuildList(tasks) {
       const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
     }
     copy.append(url);
+    if (task.timeRepositories?.length) {
+      const repositories = document.createElement('div'); repositories.className = 'task-repositories';
+      repositories.textContent = `Saved in ${task.timeRepositories.join(', ')}`; copy.append(repositories);
+    }
     main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
     const total = document.createElement('span'); total.className = 'tracked-time'; total.setAttribute('aria-label', 'Accumulated time');
@@ -282,7 +286,15 @@ async function load() {
       state.tasks = []; state.active = null; state.pendingWrites = [];
       render({ force: true }); return;
     }
-    state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
+    state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? []; state.partial = Boolean(result.partial);
+    const failed = (result.readStatus || []).filter(item => item.status === 'error').length;
+    const conflictCount = result.conflicts?.length || 0;
+    $('partial-status').hidden = !state.partial;
+    $('partial-status').textContent = !state.partial ? '' : [
+      failed ? `${failed} time ${failed === 1 ? 'repository' : 'repositories'} could not be loaded.` : '',
+      conflictCount ? `${conflictCount} conflicting ${conflictCount === 1 ? 'record was' : 'records were'} omitted.` : '',
+      'Showing available tracked work.',
+    ].filter(Boolean).join(' ');
     $('tasks-content').hidden = false; render();
     if (!filterFocused) {
       filterFocused = true;

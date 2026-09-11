@@ -8,17 +8,19 @@ test('Settings edits ordered Projects with one URL substring per line', () => {
   const html = read('src/options/options.html');
   const script = read('src/options/options.js');
   const css = read('src/options/options.css');
-  assert.match(html, /<legend>Projects<\/legend>/);
+  assert.match(html, /<legend>Projects and routing<\/legend>/);
   assert.match(html, /id="projects-list"/);
   assert.match(html, /id="add-project"/);
   assert.match(html, /id="other-project-name"/);
-  assert.match(html, /Tasks that do not match a named project appear here/);
+  assert.match(html, /Tasks that do not match a named project/);
   assert.match(script, /function addProjectRow\(/);
   assert.match(script, /function projectsPayload\(\)/);
   assert.match(script, /function moveProjectRow\(row, direction\)/);
   assert.match(script, /Move project .* up/);
   assert.match(script, /Move project .* down/);
   assert.match(script, /projects: projectsPayload\(\)/);
+  assert.match(script, /defaultDestinationId: \$\('default-destination'\)\.value/);
+  assert.match(script, /destinationId: rows\[index\]\.querySelector\('\.project-destination'\)\.value/);
   assert.match(script, /otherProjectName: \$\('other-project-name'\)\.value/);
   assert.match(script, /name\.placeholder = 'work'/);
   assert.match(script, /linear\.app\/my-team\/\\ngithub\.com\/my-company\//);
@@ -26,6 +28,10 @@ test('Settings edits ordered Projects with one URL substring per line', () => {
   assert.match(css, /\.project-row textarea/);
   assert.match(css, /\.project-row input::placeholder,.project-row textarea::placeholder\{[^}]*opacity:\.55/);
   assert.match(css, /\.project-row\{[^}]*align-items:start/);
+  assert.match(css, /\.projects-fieldset\{[^}]*min-width:0/);
+  assert.match(css, /\.project-row\{[^}]*min-width:0/);
+  assert.match(css, /\.project-row>\*\{min-width:0/);
+  assert.match(css, /@media\(max-width:700px\)\{\.project-row\{display:flex;flex-direction:column\}\.project-row>\*\{width:100%\}/);
   assert.match(css, /\.project-actions\{[^}]*margin-top:27px/);
 });
 

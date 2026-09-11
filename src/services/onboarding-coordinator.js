@@ -1,11 +1,6 @@
-import { OnboardingError } from './github-app-onboarding.js';
-import { ensureUserStorageBranch } from './user-storage-branch.js';
-
-function changedDestination(previous, candidate, selectedBranch = candidate.defaultBranch) {
-  if (!previous) return false;
-  if (previous.repoId) return previous.repoId !== candidate.repoId;
-  return previous.owner !== candidate.owner || previous.repo !== candidate.repo || previous.branch !== selectedBranch;
-}
+import { OnboardingError, RepositoryInspectionService } from './github-app-onboarding.js';
+import { ensureUserStorageBranch, parseUserBranchMetadata, userStorageBranch, USER_METADATA_PATH } from './user-storage-branch.js';
+import { parseTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 
 function transitionError(state) {
   if ((state.pendingWrites || []).length) return new OnboardingError('Open Clockoli and finish syncing its pending changes before changing GitHub authentication or the data repository.', 'migration_blocked');
@@ -16,7 +11,7 @@ function transitionError(state) {
 export class OnboardingCoordinator {
   constructor({
     store, currentCredentialProvider, pendingCredentialProvider, githubFactory,
-    discoveryFactory, initializerFactory, activeProbe = async () => false, now = () => Date.now(),
+    discoveryFactory, initializerFactory, activeProbe = async () => false, now = () => Date.now(), maxRepositoryInspections = 100,
     userBranchProvisioner = ensureUserStorageBranch,
   }) {
     this.store = store;
@@ -28,6 +23,7 @@ export class OnboardingCoordinator {
     this.activeProbe = activeProbe;
     this.userBranchProvisioner = userBranchProvisioner;
     this.now = now;
+    this.maxRepositoryInspections = maxRepositoryInspections;
   }
 
   async authContext() {
@@ -38,12 +34,138 @@ export class OnboardingCoordinator {
   }
 
   async discover() {
-    const auth = await this.authContext();
-    return this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
+    try {
+      return await this.discoverWithAuthorization();
+    } catch (error) {
+      const pending = await this.store.getPendingAuthSnapshot();
+      if (pending.auth?.mode !== 'github_app' || ![
+        'migration_blocked', 'migration_identity_mismatch', 'migration_identity_unverified',
+        'repository_access_required', 'onboarding_superseded',
+      ].includes(error?.code)) throw error;
+      return {
+        installations: [], repositories: [], candidates: [], promoted: false,
+        blocked: { code: error.code, message: error.message },
+      };
+    }
   }
 
-  async assertSafeTransition(previousConfig, state, changing) {
+  async discoverWithAuthorization() {
+    const auth = await this.authContext();
+    let configuration = null;
+    if (auth.source === 'pending') {
+      await this.store.ensureDataVersion(5);
+      configuration = await this.store.getConfigurationSnapshot();
+      await this.assertSafeTransition(configuration, await this.store.ensureDataVersion(5), true,
+        { auth: auth.snapshot.auth, credentialProvider: auth.credentialProvider });
+      await this.assertMatchingAuthorizationIdentity(auth);
+    }
+    const discovery = await this.inspectDiscovery(auth);
+    const configs = [];
+    for (const repository of discovery.repositories) {
+      if (repository.state !== 'initialized_member' || !repository.eligible) continue;
+      repository.ready = false;
+      const branch = userStorageBranch(auth.snapshot.auth.githubUserId);
+      const github = this.githubFactory({ credentialProvider: auth.credentialProvider,
+        owner: repository.owner, repo: repository.repo, branch,
+        expectedRepositoryId: repository.repoId, branchMode: 'custom' });
+      try {
+        // Read only: membership alone does not prove the personal branch exists.
+        const metadata = parseUserBranchMetadata((await github.getText(USER_METADATA_PATH)).text);
+        if (metadata.id !== auth.snapshot.auth.githubUserId || metadata.login.toLowerCase() !== repository.storageLogin.toLowerCase()) {
+          throw new Error('Personal storage branch identity mismatch');
+        }
+        parseTaskIndex((await github.getText(TASK_INDEX_PATH)).text, { user: metadata.login });
+        repository.ready = true;
+        configs.push({ owner: repository.owner, ownerType: repository.ownerType, repo: repository.repo,
+          repoId: repository.repoId, installationId: repository.installationId,
+          branch, branchMode: 'custom', defaultBranch: repository.defaultBranch,
+          storageBranchVersion: 1, repositoryFormatVersion: 1, storageLogin: metadata.login,
+          visibility: 'private', authMode: 'github_app', recentDays: 7 });
+      } catch (error) {
+        repository.branchSetupRequired = error?.status === 404 || error?.code === 'not_found';
+        if (!repository.branchSetupRequired) {
+          repository.eligible = false;
+          repository.inspectionError = 'personal_branch_unverified';
+        }
+      }
+    }
+    if (auth.source === 'current' && configs.length) {
+      await this.store.ensureDataVersion(5);
+      const saved = await this.store.registerReadyGitHubAppRepositories(configs, auth.snapshot.authGeneration);
+      if (!saved) throw new OnboardingError('Authentication changed during discovery. Check repositories again.', 'onboarding_superseded');
+      return { ...discovery, candidates: discovery.repositories.filter(repository => repository.eligible), promoted: false };
+    }
+    if (auth.source === 'pending') {
+      const existing = Object.values(configuration?.registry?.destinations ?? {});
+      const readyById = new Map(configs.map(config => [config.repoId, config]));
+      const inaccessible = existing.find(config => !readyById.has(config.repoId));
+      if (inaccessible) {
+        throw new OnboardingError(`The new GitHub authorization cannot validate ${inaccessible.owner}/${inaccessible.repo}. Grant access to every connected time repository, then try again.`, 'repository_access_required');
+      }
+      const promotedConfigs = [
+        ...existing.map(config => ({ ...config, ...readyById.get(config.repoId),
+          recentDays: config.recentDays ?? readyById.get(config.repoId).recentDays, authMode: 'github_app' })),
+        ...configs.filter(config => !existing.some(current => current.repoId === config.repoId)),
+      ];
+      await this.assertSafeTransition(await this.store.getConfigurationSnapshot(), await this.store.ensureDataVersion(5), true,
+        { auth: auth.snapshot.auth, credentialProvider: auth.credentialProvider });
+      const saved = await this.store.promotePendingGitHubAppAuthorization(promotedConfigs, {
+        pendingAuthGeneration: auth.snapshot.authGeneration,
+        currentAuthGeneration: auth.currentSnapshot.authGeneration,
+        configurationGeneration: configuration.generation,
+        registry: configuration.registry,
+        githubUserId: auth.snapshot.auth.githubUserId,
+        verifiedAt: new Date(this.now()).toISOString(),
+      });
+      if (!saved) throw new OnboardingError('Authentication, repository configuration, or accepted work changed during authorization. Clockoli kept the current connection; try again.', 'onboarding_superseded');
+      return { ...discovery, candidates: discovery.repositories.filter(repository => repository.eligible), promoted: true };
+    }
+    return { ...discovery, candidates: discovery.repositories.filter(repository => repository.eligible), promoted: false };
+  }
+
+  async assertMatchingAuthorizationIdentity(auth) {
+    const candidateIdentity = await this.githubFactory({ credentialProvider: auth.credentialProvider }).getAuthenticatedIdentity();
+    if (candidateIdentity.id !== auth.snapshot.auth.githubUserId) {
+      throw new OnboardingError('GitHub returned a different account for the new authorization.', 'migration_identity_mismatch');
+    }
+    if (auth.currentSnapshot.auth?.githubUserId
+        && auth.currentSnapshot.auth.githubUserId !== candidateIdentity.id) {
+      throw new OnboardingError('The existing and new GitHub authorizations belong to different GitHub accounts.', 'migration_identity_mismatch');
+    }
+  }
+
+  async inspectDiscovery(auth) {
+    const discovery = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
+    const pending = discovery.repositories.filter(repository => !repository.state);
+    if (!pending.length) return discovery;
+    if (!Number.isSafeInteger(this.maxRepositoryInspections) || this.maxRepositoryInspections <= 0
+        || pending.length > this.maxRepositoryInspections) {
+      throw new OnboardingError('Repository inspection exceeded its bounded result budget.', 'repository_discovery_budget');
+    }
+    const user = { id: auth.snapshot.auth.githubUserId, login: auth.snapshot.auth.githubLogin };
+    const inspected = [];
+    for (const repository of discovery.repositories) {
+      if (repository.state) { inspected.push(repository); continue; }
+      const github = this.githubFactory({
+        credentialProvider: auth.credentialProvider,
+        owner: repository.owner, repo: repository.repo, branch: repository.defaultBranch || 'main',
+        expectedRepositoryId: repository.repoId, branchMode: 'default',
+      });
+      inspected.push(await new RepositoryInspectionService({ github }).inspect(user, repository));
+    }
+    inspected.sort((left, right) => left.fullName.localeCompare(right.fullName));
+    return { ...discovery, repositories: inspected, candidates: inspected.filter(repository => repository.eligible) };
+  }
+
+  async assertSafeTransition(configuration, state, changing, credentials = {}) {
+    const previousConfig = configuration?.config;
     if (!changing || !previousConfig) return;
+    if (typeof this.store.getTrackingSnapshot === 'function' && configuration.registry) {
+      const current = credentials.auth ? null : await this.store.getAuthSnapshot();
+      await this.assertSafeLocalReset(configuration, credentials.auth || current.auth,
+        'changing GitHub authentication', credentials.credentialProvider || this.currentCredentialProvider);
+      return;
+    }
     const local = transitionError(state);
     if (local) throw local;
     const current = await this.store.getAuthSnapshot();
@@ -57,14 +179,24 @@ export class OnboardingCoordinator {
     if (!Number.isSafeInteger(installationId) || installationId <= 0 || !Number.isSafeInteger(repoId) || repoId <= 0) {
       throw new OnboardingError('Select a repository discovered through the Clockoli GitHub App.', 'repository_access_required');
     }
+    const action = typeof payload.action === 'string' ? payload.action : '';
+    if (!['add', 'join', 'initialize'].includes(action)) {
+      throw new OnboardingError('Choose whether to add, join, or initialize the repository.', 'repository_action_required');
+    }
     const auth = await this.authContext();
-    const discovery = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
+    const discovery = await this.inspectDiscovery(auth);
     let candidate = discovery.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
     if (!candidate) throw new OnboardingError('Clockoli no longer has access to the selected repository.', 'repository_access_required');
+    const allowed = { add: candidate.canAdd, join: candidate.canJoin, initialize: candidate.canInitialize };
+    if (allowed[action] !== true) {
+      throw new OnboardingError(`The selected repository cannot perform the requested ${action} action. Refresh repository access and choose an available action.`, 'repository_action_unavailable');
+    }
 
-    const [{ config: previousConfig }, before] = await Promise.all([
-      this.store.getConfigurationSnapshot(), this.store.ensureDataVersion(4),
+    await this.store.ensureDataVersion(5);
+    const [configurationBefore, before] = await Promise.all([
+      this.store.getConfigurationSnapshot(), this.store.ensureDataVersion(5),
     ]);
+    const previousConfig = configurationBefore.config;
     let migrationGithub = null, migrationIdentity = null;
     const migratingPat = auth.source === 'pending' && auth.currentSnapshot.auth?.mode === 'pat';
     if (migratingPat) {
@@ -108,8 +240,11 @@ export class OnboardingCoordinator {
       selectedBranch = previousConfig.branch;
       branchMode = 'custom';
     }
-    const changing = auth.source === 'pending' || changedDestination(previousConfig, candidate, selectedBranch);
-    await this.assertSafeTransition(previousConfig, before, changing);
+    // Adding another destination under the current GitHub authorization does
+    // not redirect accepted work. Only an authorization promotion is a
+    // protected transition of the existing account/storage identity.
+    const changing = auth.source === 'pending';
+    await this.assertSafeTransition(configurationBefore, before, changing);
 
     const initialize = async () => {
       const github = this.githubFactory({
@@ -117,20 +252,27 @@ export class OnboardingCoordinator {
         owner: candidate.owner, repo: candidate.repo, branch: selectedBranch,
         expectedRepositoryId: candidate.repoId, branchMode,
       });
-      return this.initializerFactory({ github }).initialize({
+      const initializer = this.initializerFactory({ github });
+      const user = {
         id: auth.snapshot.auth.githubUserId,
         login: auth.snapshot.auth.githubLogin,
-      }, {
+      };
+      const options = {
         expectedRepositoryId: candidate.repoId, selectedBranch, branchMode,
         ...(requiredStorageLogin ? { requiredStorageLogin } : {}),
-      });
+      };
+      if (typeof initializer.execute === 'function') return initializer.execute(action, user, options);
+      if (action === 'initialize' && typeof initializer.initializeRepository === 'function') return initializer.initializeRepository(user, options);
+      if (typeof initializer[action] === 'function') return initializer[action](user, options);
+      // Temporary compatibility for injected initializers predating explicit actions.
+      return initializer.initialize(user, options);
     };
     let initialization;
     try {
       initialization = await initialize();
     } catch (error) {
       if (error?.code !== 'repository_branch_changed' || branchMode !== 'default') throw error;
-      const refreshed = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
+      const refreshed = await this.inspectDiscovery(auth);
       const refreshedCandidate = refreshed.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
       if (!refreshedCandidate?.defaultBranch) {
         throw new OnboardingError('GitHub is still finishing repository setup. Wait a moment, then validate again.', 'onboarding_superseded');
@@ -159,12 +301,15 @@ export class OnboardingCoordinator {
     }, branchSource);
 
     // Close the validation-vs-Start/Stop race before committing the transition.
-    const after = await this.store.ensureDataVersion(4);
-    await this.assertSafeTransition(previousConfig, after, changing);
+    const [configurationAfter, after] = await Promise.all([
+      this.store.getConfigurationSnapshot(), this.store.ensureDataVersion(5),
+    ]);
+    await this.assertSafeTransition(configurationAfter, after, changing);
     const recentDays = Number(payload.recentDays ?? previousConfig?.recentDays ?? 7);
     if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new OnboardingError('Recent entries shown in the main panel must be between 1 and 31 days.', 'invalid_configuration');
     const config = {
       owner: candidate.owner,
+      ...(candidate.ownerType ? { ownerType: candidate.ownerType } : {}),
       repo: candidate.repo,
       branch: personal.branch,
       branchMode: 'custom',
@@ -178,19 +323,12 @@ export class OnboardingCoordinator {
       recentDays,
       authMode: 'github_app',
     };
-    const previousStorageLogin = previousConfig?.storageLogin || after.user || '';
-    const repositoryDataChanged = !sameRepository
-      || (previousStorageLogin && previousStorageLogin !== initialization.storageLogin);
     const patch = {
       user: initialization.storageLogin,
-      activeCache: repositoryDataChanged ? null : after.activeCache,
-      recentCache: repositoryDataChanged ? [] : (after.recentCache || []),
-      pendingWrites: repositoryDataChanged ? [] : (after.pendingWrites || []),
-      dataVersion: 4,
+      dataVersion: 5,
       taskMetadataCache: null,
       onboardingLastVerifiedAt: new Date(this.now()).toISOString(),
       onboardingVerificationStatus: initialization.status,
-      ...(repositoryDataChanged ? { reportCache: null } : {}),
     };
     const saved = auth.source === 'pending'
       ? await this.store.commitPendingGitHubAppConfiguration(config, patch, auth.snapshot.authGeneration)
@@ -219,27 +357,74 @@ export class OnboardingCoordinator {
       }
       throw new OnboardingError('The Clockoli App no longer has access to the configured repository. Grant access or choose another private repository.', 'repository_access_required');
     }
-    const selectedBranch = config.branchMode === 'custom' ? config.branch : candidate.defaultBranch;
+    const selectedBranch = config.branchMode === 'default' ? candidate.defaultBranch : config.branch;
     const changed = config.owner !== candidate.owner || config.repo !== candidate.repo
       || config.installationId !== candidate.installationId || config.branch !== selectedBranch;
-    if (!changed) return { recovered: false, config };
-    const repaired = await this.selectRepository({
-      installationId: candidate.installationId,
-      repoId: candidate.repoId,
-      recentDays: config.recentDays,
-    });
-    return { ...repaired, recovered: true };
+    // Recovery is not an onboarding action: inspect remotely, then repair only
+    // local coordinates. Never initialize, join, provision, or move accepted work.
+    const github = this.githubFactory({ credentialProvider: this.currentCredentialProvider,
+      owner: candidate.owner, repo: candidate.repo, branch: candidate.defaultBranch,
+      expectedRepositoryId: config.repoId, branchMode: 'default' });
+    const inspected = await new RepositoryInspectionService({ github }).inspect({
+      id: current.auth.githubUserId, login: current.auth.githubLogin,
+    }, candidate);
+    if (!inspected.eligible || inspected.state !== 'initialized_member') {
+      throw new OnboardingError('Open Settings, Check repository, and explicitly confirm the required repository setup or join action.', 'repository_setup_required');
+    }
+    const personal = this.githubFactory({ credentialProvider: this.currentCredentialProvider,
+      owner: candidate.owner, repo: candidate.repo, branch: selectedBranch,
+      expectedRepositoryId: config.repoId, branchMode: 'custom' });
+    try {
+      const metadata = parseUserBranchMetadata((await personal.getText(USER_METADATA_PATH)).text);
+      if (metadata.id !== current.auth.githubUserId
+          || metadata.login.toLowerCase() !== inspected.storageLogin.toLowerCase()
+          || (config.storageLogin && metadata.login !== config.storageLogin)) {
+        throw new Error('Personal storage branch identity mismatch');
+      }
+      parseTaskIndex((await personal.getText(TASK_INDEX_PATH)).text, { user: metadata.login });
+    } catch (error) {
+      if (error?.status === 404 || error?.code === 'not_found') {
+        throw new OnboardingError('Open Settings, Check repository, and explicitly confirm Set up storage branch before retrying. Automatic recovery cannot create personal storage.', 'personal_branch_setup_required');
+      }
+      throw error;
+    }
+    const repaired = { ...config, owner: candidate.owner, repo: candidate.repo,
+      installationId: candidate.installationId, branch: selectedBranch };
+    const saved = await this.store.repairGitHubAppRepositoryCoordinates(
+      repaired, current.authGeneration, configuration.generation,
+    );
+    if (saved === false) throw new OnboardingError('Authentication or repository configuration changed during recovery. Check access and try again.', 'onboarding_superseded');
+    return { recovered: changed, config: repaired };
+  }
+
+  async assertSafeLocalReset(configuration, auth, action, credentialProvider = this.currentCredentialProvider) {
+    if (typeof this.store.getTrackingSnapshot !== 'function' || !configuration.registry) {
+      const state = await this.store.getState();
+      const local = transitionError(state);
+      if (local) throw local;
+      if (auth && configuration.config && await this.activeProbe({ config: configuration.config, auth, state, credentialProvider })) {
+        throw new OnboardingError(`Stop the active timer before ${action}.`, 'migration_blocked');
+      }
+      return;
+    }
+    const tracking = await this.store.getTrackingSnapshot();
+    if (tracking.activeTimer) throw new OnboardingError(`Stop the active timer before ${action}.`, 'migration_blocked');
+    for (const [destinationId, state] of Object.entries(tracking.destinationStates?.entries ?? {})) {
+      if ((state.pendingWrites ?? []).length) {
+        throw new OnboardingError('Open Clockoli and finish syncing its pending changes before changing GitHub authentication or the data repository.', 'migration_blocked');
+      }
+      const config = configuration.registry.destinations?.[destinationId];
+      if (auth && config && await this.activeProbe({ config, auth, state: { ...state, activeCache: null }, credentialProvider })) {
+        throw new OnboardingError(`Stop the active timer before ${action}.`, 'migration_blocked');
+      }
+    }
   }
 
   async disconnect() {
-    const [snapshot, state, configuration] = await Promise.all([
-      this.store.getAuthSnapshot(), this.store.getState(), this.store.getConfigurationSnapshot(),
+    const [snapshot, configuration] = await Promise.all([
+      this.store.getAuthSnapshot(), this.store.getConfigurationSnapshot(),
     ]);
-    const local = transitionError(state);
-    if (local) throw local;
-    if (snapshot.auth && configuration.config && await this.activeProbe({ config: configuration.config, auth: snapshot.auth, state })) {
-      throw new OnboardingError('Stop the active timer before disconnecting this browser.', 'migration_blocked');
-    }
+    await this.assertSafeLocalReset(configuration, snapshot.auth, 'disconnecting this browser');
     if (snapshot.auth && !await this.store.removeCurrentAuthentication(snapshot.authGeneration)) {
       throw new OnboardingError('Authentication changed while disconnecting. Try again.', 'onboarding_superseded');
     }
@@ -247,14 +432,10 @@ export class OnboardingCoordinator {
   }
 
   async clearLocalConfiguration() {
-    const [snapshot, state, configuration] = await Promise.all([
-      this.store.getAuthSnapshot(), this.store.getState(), this.store.getConfigurationSnapshot(),
+    const [snapshot, configuration] = await Promise.all([
+      this.store.getAuthSnapshot(), this.store.getConfigurationSnapshot(),
     ]);
-    const local = transitionError(state);
-    if (local) throw local;
-    if (snapshot.auth && configuration.config && await this.activeProbe({ config: configuration.config, auth: snapshot.auth, state })) {
-      throw new OnboardingError('Stop the active timer before clearing local Clockoli configuration.', 'migration_blocked');
-    }
+    await this.assertSafeLocalReset(configuration, snapshot.auth, 'clearing local Clockoli configuration');
     await this.store.clearConfig();
     return { cleared: true, remoteDataDeleted: false };
   }

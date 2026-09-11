@@ -372,7 +372,7 @@ test('tracking timeline renders named rows and the configurable main project for
   assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now \}\)/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
   assert.match(content, /otherProjectName/);
-  assert.match(read('src/background/service-worker.js'), /projects: preferences\.projects, otherProjectName: preferences\.otherProjectName/);
+  assert.match(read('src/background/service-worker.js'), /projects: preferences\.projects,[\s\S]*otherProjectName: preferences\.otherProjectName/);
 });
 
 
@@ -475,7 +475,7 @@ test('timeline exposes Delete and current-page tracking through durable handlers
   assert.match(worker, /case 'DISCARD_ACTIVE'/);
   assert.match(worker, /tracker\.discardActive\(\{ background: true \}\)/);
   assert.match(worker, /case 'QUEUE_ENTRY_DELETE'/);
-  assert.match(worker, /tracker\.queueEntryDelete\(message\.payload\)/);
+  assert.match(worker, /trackerForDestination\(destinationId\)[\s\S]*\.queueEntryDelete\(payload\)/);
   assert.doesNotMatch(content, /The previous version remains in Git history/);
   assert.match(content, /\} else if \(!compact\) \{\s*const startButton = button\(current \? 'Start tracking this task'/,
     'the legacy bottom start button is absent from the full-width compact panel');

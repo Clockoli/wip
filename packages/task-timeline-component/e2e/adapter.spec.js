@@ -230,7 +230,7 @@ test('details description remains clickable and editable for a non-movable task 
   });
   for (const mode of ['timeline', 'calendar']) {
     await page.evaluate(nextMode => window.__timeline.setViewMode(nextMode), mode);
-    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="active:locked"]`).click();
+    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="active:locked"]`).first().click();
     const input = page.locator('#timeline .clockoli-timeline-description');
     await input.click();
     expect(await input.evaluate(element => element.getRootNode().activeElement === element)).toBe(true);
@@ -331,8 +331,10 @@ test('Calendar task cards show description only when the card has room', async (
     { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: now - HOUR, endedAt: now - HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]');
-  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]');
+  // A task crossing local midnight has one Calendar segment per day; geometry
+  // below is defined for its initial card, not the continuation card.
+  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]:not(.segment-continuation)');
+  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]:not(.segment-continuation)');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar description');
   await expect(short.locator('.clockoli-calendar-description')).toHaveCount(0);
   const geometry = await tall.evaluate(element => {

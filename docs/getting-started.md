@@ -1,15 +1,15 @@
 # Getting started with Clockoli
 
-Clockoli is a Chrome/Chromium extension. It uses GitHub for sign-in and stores time records in a dedicated private GitHub repository.
+Clockoli is a Chrome/Chromium extension. It uses one GitHub account for sign-in and can store time records in several dedicated private GitHub time repositories.
 
 ## What you need
 
 - Chrome or another Chromium browser, version 102 or newer.
 - A GitHub account.
 - Access to the current Clockoli source checkout or a trusted current extracted package.
-- Permission to create a private GitHub repository, or write access to a private repository already used by your team for Clockoli data.
+- Read/write access to a suitable private time repository, or permission to create one. It may belong to you, another person, or an organization. Initializing an organization repository requires GitHub repository-admin permission.
 
-The data repository is separate from the repositories, documents, tickets, and pages you track. Clockoli does not need write access to a source repository just because one of its issues or pull requests is a task.
+A time repository is separate from the source repositories, documents, tickets, and pages you track. Clockoli does not need write access to a source repository just because one of its issues or pull requests is a task. Your GitHub account supplies identity and access; it is not itself either kind of repository.
 
 ## 1. Install the current beta
 
@@ -41,26 +41,26 @@ An unpacked extension does not update automatically:
 3. Select **Reload** on the Clockoli card.
 4. Refresh any already-open GitHub tabs so they receive the current content script.
 
-## 2. Connect GitHub
+## 2. Set up Clockoli
 
 Clockoli Settings opens after the first installation. You can reopen it from the gear button in the Clockoli panel or from the extension details page.
 
-Normal setup has three guided steps. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
+Normal setup has two guided steps: sign in with GitHub, then discover ready time repositories, choose a default, and finish setup. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
 
 ### Step 1: activate the device
 
-1. Select **Connect GitHub**. Clockoli copies the one-time code before opening GitHub so you can paste it.
+1. Select **Sign in with GitHub**. Clockoli copies the one-time code before opening GitHub so you can paste it.
 2. On GitHub, verify that you reached **github.com** for the Clockoli authorization you initiated in Settings.
 3. Paste the one-time code and approve the request.
 4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.
 
 Device activation signs this browser in without asking you to create or paste a personal access token. GitHub authorization and GitHub App repository access are separate steps.
 
-### Step 2: choose private data storage
+### Step 2: connect time repositories
 
-For a new setup, use **Create private repository**. GitHub opens a prefilled private-repository form for **clockoli-data** based on Clockoli's template.
+After sign-in, Clockoli shows accessible repositories as a compact list with repository icons, owner/name links, status, and independent row actions—not radio choices. Use a row’s action, or enter its GitHub URL (for example, `https://github.com/acme/time-data`) or `owner/name` in **Repository URL or owner/name**, then select **Check repository**. Unavailable repositories show why they cannot be used. There is no separate existing/new or personal/organization choice: Clockoli inspects the selected repository's state and your permissions.
 
-If you already have a suitable repository, select **Use existing repository**.
+If you need a repository, use **Create a new time repository** at the beginning of the repository section. Create it on GitHub, then return and enter its URL. Creating a repository does not grant the Clockoli GitHub App access to it.
 
 A suitable repository must be:
 
@@ -70,23 +70,38 @@ A suitable repository must be:
 - granted to the Clockoli GitHub App with **Contents: Read and write**;
 - compatible with direct writes under its branch rules.
 
-Select **Grant repository access**. Use **Only select repositories** and grant access only to the data repository.
+Clockoli asks for **Grant access** only when the checked target is missing from the accessible list or needs App Contents-write permission. If Clockoli knows the owner's existing App installation, the link opens that installation's settings rather than starting another installation. Use **Only select repositories** and grant access only to the intended time repository or repositories. If you cannot change access, ask the repository owner or organization administrator; approval may be required.
 
-Creating a repository does not grant the GitHub App access to it. Clockoli monitors access when you return from GitHub.
+An access dialog opens only after an explicit **Check repository** finds missing App access. **Grant access** closes the dialog and opens the existing installation settings when known, or the App install page otherwise. Return to Settings and press **Check repository** again; the accessible list refreshes silently every 3 seconds while setup is active. A repository you selected or explicitly checked is remembered for the signed-in account across the GitHub visit and Settings reload. Clockoli does not replace a missing target with another available repository. If a private repository is missing, that does not prove it does not exist: check the name, your GitHub access, the App grant, and any pending approval.
 
-### Step 3: choose and validate the data repository
+#### Review and confirm
 
-When there is only one eligible repository, Clockoli automatically validates and connects it. If several are available, select the repository and choose **Validate and connect**. Clockoli checks privacy, permissions, repository identity, branch routing, and storage compatibility before enabling tracking.
+Ready repositories become available automatically after Clockoli verifies your membership, personal branch ownership, and task index. No Add button or remote write is needed. **Check repository** or a row’s action opens the appropriate access or setup dialog for that target; there is no separate **Review connection** or **Refresh repositories** button. After each confirmed connection, setup stays open. Your first repository becomes the default; later additions preserve it. Choose **Default time repository** separately, then select **Finish setup** when the default is usable and no authorization confirmation is pending. Finish stops discovery polling and clears the remembered target without remote writes. You can add more from Settings later.
 
-Clockoli creates or verifies its repository marker and provisions a personal branch named from your stable GitHub user ID. Routine timer writes go to that personal branch.
+Discovery only reads GitHub, registers already-ready repositories locally, and runs silently every 3 seconds only while repository setup is active. The list rerenders only when its meaningful data changes; unchanged results preserve focus, scroll, drafts, messages, and open dialogs. Background errors keep the last good list without a spinner or notification; explicit checks report errors. Polling never opens a dialog or performs remote writes. It may automatically confirm a same-account candidate authorization only after read-validating every configured destination and passing atomic active/queued-work guards.
 
-The connection card confirms: “Setup complete. Open a task page, then click the Clockoli icon to start tracking.” Open **Repository verification details** below it to review the account, repository, branch and verification status, **Check access**, or **Change repository**.
+New or replacement GitHub authorization is confirmed automatically when it belongs to the same GitHub identity, can read every configured time repository, and cannot strand active or queued work. If any check fails, the current credentials remain in use and Clockoli shows one account-level recovery message. There is no per-repository **Confirm authorization** button.
+
+The access dialog’s **Create one on GitHub** link prefills the checked repository name and owner while retaining the private Clockoli template. GitHub may ignore the owner if you lack creation permission; verify the owner before creating. The top **Create a new time repository** link still suggests `clockoli-data`.
+
+Discovery and inspection never write to GitHub. Already-ready repositories are registered locally under the current authorization and appear in **Default time repository** automatically. **Check repository** or a row’s action opens an action-specific setup dialog when needed. Read the privacy disclosure and **Repository writes**, then explicitly confirm the offered action:
+
+- **Set up storage branch** explicitly creates or verifies a missing personal storage branch for an existing member. Invalid branch ownership or task-index data is unavailable until repaired; discovery never overwrites it.
+
+- **Join repository** registers your GitHub identity in the initialized repository's Clockoli user list and creates or verifies your personal storage branch.
+- **Initialize repository** creates the Clockoli marker and personal storage branch; for an empty repository, it also creates the first commit and default branch.
+
+Clockoli rechecks repository state and permissions before applying the confirmed action. Initializing an organization repository requires fresh GitHub repository-admin permission; an ordinary teammate can join a valid initialized repository but cannot initialize an unmarked one. Editing the repository input invalidates selection and confirmation: select **Check repository** and review the new target before confirming.
+
+Anyone with read access to the selected repository can see stored task URLs, titles, timestamps, and descriptions. Use a separate repository for each privacy boundary. Routine timer writes go to your personal `clockoli/users/{github-user-id}` branch.
+
+After confirmation succeeds, the repository appears under **Time repositories**. Shared repositories provide copyable instructions for other people who should join them, whether owned by a person or an organization. In Settings, keep the **GitHub account**, **Time repositories**, and **Projects and routing** concepts distinct. Use **Add time repository** to add more destinations later regardless of who owns them, and choose an explicit default destination.
 
 ## Advanced PAT setup
 
 Open **More settings**, then **Advanced** → **Use a personal access token** in Settings if your environment cannot install the App or already uses the compatibility flow. After connecting, **Advanced** is available directly on the page.
 
-Create a fine-grained personal access token restricted to the one private data repository with **Contents: Read and write**, then enter:
+PAT compatibility mode supports one destination only. Create a fine-grained personal access token restricted to that private time repository with **Contents: Read and write**, then enter:
 
 - repository owner;
 - repository name;
@@ -121,12 +136,16 @@ GitHub issue and pull-request titles can be used as optional metadata when GitHu
 
 ### One timer at a time
 
-Clockoli permits one active timer per connected GitHub account. The panel says:
+Clockoli permits one global active timer across every configured time repository. The panel says:
 
 - **Tracking this task** when the active timer matches the current page;
 - **Tracking another task** when a different URL is active.
 
-Stop the current timer before starting another one. Pending completions must be synchronized or resolved before a new timer can start.
+Choose **Switch to this task** to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
+
+### Route new Starts
+
+Projects are ordered, case-insensitive URL-substring rules. The first matching project chooses the time repository for a new Start. An explicit default time repository receives unmatched URLs. A running timer and every accepted queued write remain pinned to their original destination if you later reorder rules or change the default.
 
 ## 4. Correct a record
 
@@ -144,9 +163,11 @@ If moving a boundary crosses the adjacent record, Clockoli changes the matching 
 
 Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
 
-- **Tasks** groups your sessions by task URL, displays URL and optional title as a search-style result, adds the running session, and provides URL/title search, periods, and inline Start/Stop actions.
-- **Times** shows completed entries for preset or custom periods, supports URL/title filtering and inline correction, and accepts all-or-nothing bulk manual entries.
-- **Reports** reads the selected period across the data repository and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF.
+- **Tasks** groups the current user's sessions by canonical task URL across selected time repositories, retains time-repository provenance, and provides search, periods, and inline actions.
+- **Times** combines completed entries from selected time repositories for preset or custom periods, supports URL/title filtering and inline correction, and accepts all-or-nothing bulk manual entries.
+- **Reports** reads selected or all time repositories and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF. It labels the tracked URL's **Task source** separately from the **Time repository** that stores the record.
+
+Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and print/PDF exports while the selected data is partial.
 
 ## 6. Optional settings
 
@@ -166,20 +187,20 @@ Export a readable JSON backup after changing display or billing settings. It con
 
 - recent-entry display setting;
 - hourly rates with their currency signs or descriptions;
-- repository coordinates as a reference.
+- version 6 destination references, the default destination, and project routing rules.
 
-It does not contain credentials, device codes, active timers, pending writes, or tracked time. Import restores display and billing settings only; it does not reconnect GitHub or switch the current data repository.
+It does not contain credentials, device codes, active timers, pending writes, or tracked time. Import can restore project routes only when every referenced destination is already configured in the browser. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
 
 ## Team setup
 
 For shared reporting:
 
-1. Use one dedicated private Clockoli data repository.
-2. Grant the Clockoli GitHub App access only to that repository.
-3. Give each team member the GitHub rights needed to read and write it.
-4. Have every person install Clockoli, activate their own GitHub account, and select the same data repository.
-5. Clockoli provisions a marked personal branch for each stable GitHub user ID.
-6. Reports discovers those branches and combines the visible records.
+1. A repository administrator signs in, selects a suitable private repository or enters its URL, and grants the Clockoli GitHub App access only if needed. After the repository row’s action, they explicitly confirm **Initialize repository** and copy the teammate instructions. Shared repositories may belong to a person or an organization; organization initialization requires fresh GitHub repository-admin permission.
+2. Give each teammate the GitHub rights needed to read and write that repository.
+3. Each teammate installs Clockoli, signs in with their own GitHub account, selects the repository from the accessible list or enters its URL or `owner/name`, and selects **Check repository** for an entered target. If access is missing, follow the target-specific access instructions and return. Select the repository row’s action, read the disclosure and writes, and explicitly confirm **Join repository** (or **Set up storage branch** if already a member with a missing branch; ready members need no Add action).
+4. Clockoli provisions a marked personal branch for each stable GitHub user ID.
+5. Teammates can add that shared repository alongside other personal or organization time repositories and route projects to it.
+6. Reports combines the selected visible repositories and branches.
 
 Repository readers can see every stored URL, title, timestamp, and description included in shared reporting. Use separate data repositories for groups with different access boundaries.
 

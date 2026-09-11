@@ -126,6 +126,35 @@ function service(options = {}) {
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
 }
 
+test('queued start/stop preparation is side-effect free and keeps destination metadata out of work JSON', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const running = { ...active(), _path: 'active/alice.json', _sha: 'active-sha', destinationId: 'must-not-persist' };
+  store.value.activeCache = running;
+  const stopped = tracker.prepareQueuedStop(running, 'done');
+  const started = tracker.prepareQueuedStart('https://example.test/next', 'Next', '', {
+    blockedBy: { destinationId: 'github:1', operationId: stopped.operation.id },
+  });
+  assert.equal(stopped.operation.nextActive, undefined);
+  assert.equal(started.operation.stage, 'awaitSourceCompletion');
+  assert.equal(started.operation.blockedBy.destinationId, 'github:1');
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.id, running.id);
+  assert.doesNotMatch(serializeActiveRecord(started.pendingActive), /destination/i);
+  assert.doesNotMatch(serializeMonthlyRecords([stopped.pendingEntry]), /destination/i);
+});
+
+test('sync leaves an await-source start untouched without attempting a remote write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  store.value.pendingWrites = [{
+    id: 'blocked', operation: 'startTimer', stage: 'awaitSourceCompletion', status: 'pending', retryCount: 0,
+    nextActive: stripInternalForTest(active('2026-08-18T09:00:00.000Z')),
+    blockedBy: { destinationId: 'github:1', operationId: 'source' }, queuedAt: '2026-08-18T09:00:00.000Z', lastError: '',
+  }];
+  const remaining = await tracker.syncPending();
+  assert.equal(remaining[0].stage, 'awaitSourceCompletion');
+  assert.deepEqual(github.writes, []);
+});
+
 test('completed-record mutations update the mandatory task index atomically', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');

@@ -1,11 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
 import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
+
+test('invoice number reservation is extension-only and the dispatcher ignores payloads', async () => {
+  assert.equal(assertMessageAllowed('RESERVE_INVOICE_NUMBER', extension, origin), 'extension');
+  assert.throws(() => assertMessageAllowed('RESERVE_INVOICE_NUMBER', content, origin), /not allowed/i);
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  let calls = 0;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } }, store: {
+    reserveInvoiceNumber: async (...args) => { assert.deepEqual(args, []); calls += 1; return { sequence: calls }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  assert.equal((await context.handle({ type: 'RESERVE_INVOICE_NUMBER', payload: { nextNumber: 999 } }, extension)).sequence, 1);
+  await assert.rejects(context.handle({ type: 'RESERVE_INVOICE_NUMBER' }, content), /not allowed/i);
+  assert.equal(calls, 1);
+});
 
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
@@ -60,6 +76,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
@@ -69,6 +86,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   }
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
@@ -89,7 +107,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
   ];
   for (const type of privileged) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');

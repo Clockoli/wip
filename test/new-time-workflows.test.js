@@ -44,7 +44,7 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
   assert.match(worker, /src\/times\/times\.html/);
   assert.match(worker, /message\.type === 'LOAD_TIMES'/);
   assert.match(worker, /case 'BULK_ADD_TIMES'/);
-  assert.match(worker, /async function loadTimes[\s\S]*new AbortController\(\)[\s\S]*includeStorageMetadata: true, signal: controller\.signal/);
+  assert.match(worker, /async function loadTimes[\s\S]*const controller = new AbortController\(\)[\s\S]*loadDestinationRecords\(destinations, async \(destination, signal\) => \{[\s\S]*signal\.throwIfAborted\(\)[\s\S]*includeStorageMetadata: true, signal[\s\S]*\}, \{ signal: controller\.signal \}\)/);
   assert.match(worker, /async function loadTimes\(message, sender\)[\s\S]*sender\?\.documentId \?\? sender\?\.tab\?\.id[\s\S]*:times:\$\{requestOwner\}/);
   assert.match(worker, /message\.type === 'LOAD_TIMES'\) return loadTimes\(message, sender\)/);
   assert.match(content, /function refreshRecent\(force = false\)[\s\S]*loadId === recentLoadId/);
@@ -75,7 +75,8 @@ test('Times is covered by extension-page validation and candidate versions are d
 });
 
 test('page-state active projection carries calendar identity for local-date summaries', () => {
-  assert.match(worker, /startedAt: state\.active\.startedAt[\s\S]*entryDate: state\.active\.entryDate[\s\S]*timezone: state\.active\.timezone/);
+  assert.match(worker, /function safeActiveProjection\(active, destinationId\)[\s\S]*startedAt: active\.startedAt[\s\S]*entryDate: active\.entryDate, timezone: active\.timezone[\s\S]*destinationId/);
+  assert.match(worker, /const active = activeId \? safeActiveProjection\(states\.get\(activeId\)\?\.active, activeId\) : null/);
 });
 
 test('acceptance plan matches URL-first tracking and Top tasks Activity Reports navigation', () => {

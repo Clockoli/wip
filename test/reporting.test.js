@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAnalytics, buildFacets, buildPrintableTimesheet, exportTimesheet, filterReportRecords, formatClockDuration,
-  periodRange, reportFilename, reportPdfTitle, todayTrackedSeconds, validateDateRange,
+  periodRange, reportFilename, reportPdfTitle, timeRepository, todayTrackedSeconds, validateDateRange,
 } from '../src/domain/reporting.js';
 
 const issue = (owner, repo, number, type = 'issue') => ({
@@ -47,7 +47,8 @@ test('person and repository facets cross-filter and expose duration counts', () 
   assert.deepEqual(filterReportRecords(records, { people: ['alice'], repositories: [] }).map(item => item.user), ['alice', 'alice']);
   assert.deepEqual(filterReportRecords(records, { people: [], repositories: ['acme/api'] }).map(item => item.user), ['alice']);
   assert.deepEqual(filterReportRecords(records, { people: [], repositories: [], emptyMeansNone: true }), []);
-  const facets = buildFacets(records, { people: ['alice'], repositories: ['acme/app'] });
+  const annotated = records.map(item => ({ ...item, timeRepository: 'acme/time' }));
+  const facets = buildFacets(annotated, { people: ['alice'], repositories: ['acme/app'] });
   assert.deepEqual(facets.people, [
     { value: 'alice', count: 1, seconds: 3600 },
     { value: 'bob', count: 1, seconds: 7200 },
@@ -56,6 +57,20 @@ test('person and repository facets cross-filter and expose duration counts', () 
     { value: 'acme/api', count: 1, seconds: 10800 },
     { value: 'acme/app', count: 1, seconds: 3600 },
   ]);
+});
+
+test('task-source and time-repository facets and axes remain independent', () => {
+  const annotated = [
+    { ...records[0], timeRepository: 'acme/personal' },
+    { ...records[1], timeRepository: 'acme/team' },
+    { ...records[2], timeRepository: 'acme/team' },
+  ];
+  assert.equal(timeRepository(annotated[0]), 'acme/personal');
+  assert.throws(() => timeRepository(records[0]), /time repository/i);
+  assert.deepEqual(filterReportRecords(annotated, { repositories: ['acme/app'], timeRepositories: ['acme/team'] }), [annotated[1]]);
+  const facets = buildFacets(annotated, { people: ['alice'], repositories: ['acme/app'], timeRepositories: ['acme/team'] });
+  assert.deepEqual(facets.timeRepositories, [{ value: 'acme/personal', count: 1, seconds: 3600 }]);
+  assert.deepEqual(buildAnalytics(annotated, { horizontalAxis: 'repository', stackBy: 'time-repository' }).buckets.map(item => item.key), ['acme/api', 'acme/app']);
 });
 
 test('project facets classify URL substrings, cross-filter, and retain unmatched work as Other', () => {
@@ -69,7 +84,7 @@ test('project facets classify URL substrings, cross-filter, and retain unmatched
   }, {
     user: 'bob', taskUrl: 'https://elsewhere.test/task', taskTitle: 'Other',
     startedAt: '2026-08-18T14:00:00Z', endedAt: '2026-08-18T14:15:00Z', entryDate: '2026-08-18', durationSeconds: 900,
-  }];
+  }].map(item => ({ ...item, timeRepository: 'acme/time' }));
   assert.deepEqual(filterReportRecords(projectRecords, { projects: ['work'], projectDefinitions: projects }).map(item => item.durationSeconds), [3600, 7200, 10800]);
   assert.equal(filterReportRecords(projectRecords, { projects: ['Other'], projectDefinitions: projects }).length, 1);
   assert.deepEqual(buildFacets(projectRecords, { people: ['alice'], projectDefinitions: projects }).projects, [
@@ -95,11 +110,12 @@ test('analytics independently selects total-time horizontal and stack dimensions
 });
 
 test('analytics supports average time and task count for every requested axis', () => {
-  const axes = ['day', 'week', 'month', 'person', 'repository', 'task'];
+  const axes = ['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task'];
+  const annotatedRecords = records.map(item => ({ ...item, timeRepository: 'acme/time' }));
   for (const metric of ['total-time', 'avg-time', 'task-count']) {
     for (const horizontalAxis of axes) {
       for (const stackBy of axes) {
-        const analytics = buildAnalytics(records, { metric, horizontalAxis, stackBy });
+        const analytics = buildAnalytics(annotatedRecords, { metric, horizontalAxis, stackBy });
         assert.ok(analytics.buckets.every(bucket => Math.abs(bucket.segments.reduce((sum, segment) => sum + segment.value, 0) - bucket.totalValue) < 1e-9), `${metric}/${horizontalAxis}/${stackBy}`);
         assert.ok(analytics.buckets.every(bucket => bucket.segments.every(segment => segment.count >= 1)));
         if (metric === 'task-count') assert.equal(analytics.buckets.reduce((sum, bucket) => sum + bucket.totalValue, 0), 3, `${horizontalAxis}/${stackBy}`);
@@ -210,4 +226,33 @@ test('timesheet exports use task URL and title without repository or provider ty
   assert.doesNotMatch(csv, /Repository|Pull request|Issue/);
   const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-18', endDate: '2026-08-19' }));
   assert.deepEqual(Object.keys(json.entries[0]), ['person', 'taskUrl', 'taskTitle', 'start', 'end', 'duration', 'durationSeconds', 'description']);
+});
+
+
+test('short presets include today and cross leap days and year boundaries', () => {
+  for (const [preset, today, startDate, endDate, label] of [
+    ['today', '2028-03-01', '2028-03-01', '2028-03-01', 'Today'],
+    ['yesterday', '2028-03-01', '2028-02-29', '2028-02-29', 'Yesterday'],
+    ['last-7-days', '2026-01-03', '2025-12-28', '2026-01-03', 'Last 7 days'],
+    ['last-30-days', '2028-03-01', '2028-02-01', '2028-03-01', 'Last 30 days'],
+  ]) assert.deepEqual(periodRange(preset, today), { startDate, endDate, label });
+});
+
+test('UTC grouping, printing and export pricing use the same effective date', () => {
+  const records = [{ user: 'alice', taskUrl: 'https://example.com/task', entryDate: '2026-09-01', startedAt: '2026-08-31T22:30:00Z', endedAt: '2026-08-31T23:30:00Z', durationSeconds: 3600 }];
+  const rates = { alice: [
+    { startDate: '', endDate: '2026-08-31', amountMinorPerHour: 1000, currency: 'EUR' },
+    { startDate: '2026-09-01', endDate: '', amountMinorPerHour: 2000, currency: 'EUR' },
+  ] };
+  for (const reportingUtc of [false, true]) {
+    const date = reportingUtc ? '2026-08-31' : '2026-09-01', amount = reportingUtc ? 1000 : 2000;
+    const analytics = buildAnalytics(records, { horizontalAxis: 'day', stackBy: 'month', metric: 'billable-amount', rates, reportingUtc });
+    assert.equal(analytics.buckets[0].key, date); assert.equal(analytics.buckets[0].segments[0].key, date.slice(0, 7));
+    assert.equal(analytics.buckets[0].totalValue, amount);
+    assert.equal(buildPrintableTimesheet(records, { reportingUtc }).byDate[0].date, date);
+    const exported = JSON.parse(exportTimesheet(records, { format: 'json', startDate: date, endDate: date, rates, reportingUtc }));
+    assert.equal(exported.entries[0].hourlyRate, (amount / 100).toFixed(2));
+    assert.equal(exported.entries[0].billableAmount, (amount / 100).toFixed(2));
+  }
+  assert.equal(records[0].entryDate, '2026-09-01');
 });

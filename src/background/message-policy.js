@@ -7,13 +7,17 @@ const CONTENT_MESSAGES = new Set([
 ]);
 const EXTENSION_MESSAGES = new Set([
   'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
-  'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'GET_LOCAL_PREFERENCES',
-  'SAVE_BILLING_SETTINGS', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
+  'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'GET_LOCAL_PREFERENCES',
+  'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
   'LOAD_TASKS', 'LOAD_TIMES', 'BULK_ADD_TIMES', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
-  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP',
+  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP',
   'CLEAR_LOCAL_CONFIGURATION',
 ]);
+const COMPLETED_MUTATION_MESSAGES = new Set([
+  'EDIT_ENTRIES', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY',
+]);
+const DESTINATION_ID_RE = /^github:[1-9]\d*$/;
 
 function senderContext(sender, extensionOrigin) {
   const value = sender?.url || sender?.tab?.url || '';
@@ -32,6 +36,16 @@ export function assertMessageAllowed(type, sender, extensionOrigin) {
   const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES : context.kind === 'content' ? CONTENT_MESSAGES : new Set();
   if (!allowed.has(type)) throw new Error(`Message ${type} is not allowed from this sender`);
   return context.kind;
+}
+
+export function destinationIdForCompletedMutation(type, payload, sender, extensionOrigin) {
+  if (!COMPLETED_MUTATION_MESSAGES.has(type)) throw new Error(`Message ${type} is not a completed-record mutation`);
+  assertMessageAllowed(type, sender, extensionOrigin);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || typeof payload.destinationId !== 'string' || !DESTINATION_ID_RE.test(payload.destinationId)) {
+    throw new Error('Completed-record mutations require a valid destination ID');
+  }
+  return payload.destinationId;
 }
 
 export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {

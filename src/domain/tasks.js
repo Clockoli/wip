@@ -14,6 +14,7 @@ function dateValue(date) {
 }
 function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? '').trim().slice(0, 300); }
 function sameTimer(left, right) {
+  if (left?.id && right?.id && left.id === right.id) return true;
   if (right?.id && Array.isArray(left?.recordIds) && left.recordIds.includes(right.id)) return true;
   return left?.user === right?.user && taskUrlOf(left) === taskUrlOf(right)
     && left.startedAt === right.startedAt;
@@ -77,28 +78,47 @@ export function sortTrackedTasks(tasks, options = {}) {
     || taskUrlOf(a).localeCompare(taskUrlOf(b)));
 }
 
-export function aggregateTrackedTasks(records, { user, metadata = new Map(), active = null, pendingWrites = [], startDate = '', endDate = '' } = {}) {
-  if (typeof user !== 'string' || !user) throw new Error('Task owner is required');
+export function aggregateTrackedTasks(records, { user, currentUsers = null, metadata = new Map(), active = null, pendingWrites = [], startDate = '', endDate = '' } = {}) {
+  const users = new Set(currentUsers ?? (typeof user === 'string' && user ? [user] : []));
+  if (!users.size) throw new Error('Task owner is required');
   const persisted = [...(records ?? [])];
   const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry)
-    .map(operation => operation.entry)
+    .map(operation => ({
+      ...operation.entry,
+      destinationId: operation.entry.destinationId || operation.destinationId,
+      timeRepository: operation.entry.timeRepository || operation.timeRepository,
+    }))
     .filter(entry => (!startDate || entry.entryDate >= startDate) && (!endDate || entry.entryDate <= endDate)
       && !persisted.some(record => sameTimer(record, entry)));
-  const tasks = new Map();
+  const tasks = new Map(), countedIds = new Set();
   for (const record of [...persisted, ...pending]) {
-    if (record?.user !== user) continue;
+    if (!users.has(record?.user)) continue;
     const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
     const seconds = Number(record.durationSeconds);
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('Invalid tracked task duration');
-    const existing = tasks.get(taskUrl) ?? { taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0 };
+    const existing = tasks.get(taskUrl) ?? {
+      taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0,
+      destinationIds: new Set(), timeRepositories: new Set(),
+    };
     const storedTitle = taskTitleOf(record);
     if (storedTitle) existing.title = storedTitle;
+    if (record.destinationId) existing.destinationIds.add(record.destinationId);
+    if (record.timeRepository) existing.timeRepositories.add(record.timeRepository);
+    for (const destinationId of record.duplicateDestinations ?? []) existing.destinationIds.add(destinationId);
+    for (const repository of record.duplicateTimeRepositories ?? []) existing.timeRepositories.add(repository);
+    if (record.id && countedIds.has(record.id)) { tasks.set(taskUrl, existing); continue; }
+    if (record.id) countedIds.add(record.id);
     existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(taskUrl, existing);
   }
-  if (active?.user === user) {
+  if (users.has(active?.user)) {
     const taskUrl = taskUrlOf(active), issue = active.issue ?? parseGitHubTaskUrl(taskUrl), startedAt = new Date(active.startedAt);
     if (Number.isNaN(startedAt.getTime())) throw new Error('Invalid active task start time');
-    const existing = tasks.get(taskUrl) ?? { taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0 };
+    const existing = tasks.get(taskUrl) ?? {
+      taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0,
+      destinationIds: new Set(), timeRepositories: new Set(),
+    };
+    if (active.destinationId) existing.destinationIds.add(active.destinationId);
+    if (active.timeRepository) existing.timeRepositories.add(active.timeRepository);
     existing.activeStartedAt = startedAt.toISOString(); tasks.set(taskUrl, existing);
   }
   return [...tasks.values()].map(task => {
@@ -109,6 +129,8 @@ export function aggregateTrackedTasks(records, { user, metadata = new Map(), act
     return {
       taskUrl: task.taskUrl, ...(task.issue ? { issue: task.issue } : {}), title,
       totalSeconds: task.totalSeconds, sessionCount: task.sessionCount,
+      ...(task.destinationIds.size ? { destinationIds: [...task.destinationIds].sort() } : {}),
+      ...(task.timeRepositories.size ? { timeRepositories: [...task.timeRepositories].sort() } : {}),
       ...(task.activeStartedAt ? { activeStartedAt: task.activeStartedAt } : {}),
     };
   }).sort((a, b) => b.totalSeconds - a.totalSeconds || a.taskUrl.localeCompare(b.taskUrl));

@@ -23,29 +23,48 @@
   <div id="running-status"></div>
   <main>
     <section id="period-card" class="card period-card" hidden aria-labelledby="period-heading">
-      <div>
+      <div class="period-picker">
         <h2 id="period-heading">Reporting period</h2>
-        <p class="muted">Entries are included by their start date.</p>
-      </div>
-      <div class="period-controls">
-        <label class="period-select"><span>Period</span>
-          <select id="period" aria-label="Reporting period">
-            <option value="this-week">This week</option>
-            <option value="last-week" selected>Last week</option>
-            <option value="this-month">This month</option>
-            <option value="last-month">Last month</option>
-            <option value="this-quarter">This quarter</option>
-            <option value="last-quarter">Last quarter</option>
-            <option value="this-year">This year</option>
-            <option value="last-year">Last year</option>
-            <option value="custom">Custom period</option>
-          </select>
-        </label>
-        <p id="report-range" class="muted" role="status" aria-live="polite"></p>
-        <div id="custom-period" class="custom-period" hidden>
-          <label>Start <input id="start-date" type="date" required></label>
-          <label>End <input id="end-date" type="date" required></label>
-          <button id="apply-period" class="button secondary" type="button">Apply</button>
+        <button id="period-trigger" class="button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-popover">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 0v2H2a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1h-2V0h-1v2H5V0H4ZM2 6h12v8H2V6Zm0-3h12v2H2V3Z"/></svg>
+          <span id="period-label">Last week</span>
+        </button>
+        <div id="period-popover" role="dialog" aria-labelledby="period-heading" hidden>
+          <div class="period-shortcuts" role="group" aria-label="Date range presets">
+            <button id="preset-today" class="text-button" type="button">Today</button>
+            <button id="preset-yesterday" class="text-button" type="button">Yesterday</button>
+            <button id="preset-last-7-days" class="text-button" type="button">Last 7 days</button>
+            <button id="preset-last-30-days" class="text-button" type="button">Last 30 days</button>
+            <button id="preset-this-week" class="text-button" type="button">This week</button>
+            <button id="preset-last-week" class="text-button" type="button" aria-current="true">Last week</button>
+            <button id="preset-this-month" class="text-button" type="button">This month</button>
+            <button id="preset-last-month" class="text-button" type="button">Last month</button>
+            <button id="preset-this-quarter" class="text-button" type="button">This quarter</button>
+            <button id="preset-last-quarter" class="text-button" type="button">Last quarter</button>
+            <button id="preset-this-year" class="text-button" type="button">This year</button>
+            <button id="preset-last-year" class="text-button" type="button">Last year</button>
+          </div>
+          <div class="period-calendar">
+            <div class="period-fields">
+              <label>Start <input id="start-date" type="date" required></label>
+              <label>End <input id="end-date" type="date" required></label>
+            </div>
+            <div class="calendar-heading">
+              <button id="calendar-previous" class="text-button" type="button" aria-label="Previous month">‹</button>
+              <span id="calendar-month" aria-live="polite"></span>
+              <button id="calendar-next" class="text-button" type="button" aria-label="Next month">›</button>
+            </div>
+            <div role="grid" aria-labelledby="calendar-month">
+              <div class="calendar-weekdays" role="row">
+                <span role="columnheader" aria-label="Monday">M</span><span role="columnheader" aria-label="Tuesday">T</span><span role="columnheader" aria-label="Wednesday">W</span><span role="columnheader" aria-label="Thursday">T</span><span role="columnheader" aria-label="Friday">F</span><span role="columnheader" aria-label="Saturday">S</span><span role="columnheader" aria-label="Sunday">S</span>
+              </div>
+              <div id="calendar-grid" role="rowgroup"></div>
+            </div>
+          </div>
+          <div class="period-footer">
+            <span id="period-timezone"></span>
+            <label class="period-utc"><input id="reporting-utc" type="checkbox" role="switch">UTC</label>
+          </div>
         </div>
       </div>
       <div class="export-controls" aria-label="Timesheet downloads">
@@ -61,17 +80,52 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0A1.75 1.75 0 0 0 3 1.75V5h1.5V1.75a.25.25 0 0 1 .25-.25h6.5a.25.25 0 0 1 .25.25V5H13V1.75A1.75 1.75 0 0 0 11.25 0h-6.5ZM3 10.5v3.75C3 15.216 3.784 16 4.75 16h6.5A1.75 1.75 0 0 0 13 14.25V10.5h-1.5v3.75a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25V10.5H3ZM1.75 5A1.75 1.75 0 0 0 0 6.75v3.5C0 11.216.784 12 1.75 12H3v-1.5H1.75a.25.25 0 0 1-.25-.25v-3.5a.25.25 0 0 1 .25-.25h12.5a.25.25 0 0 1 .25.25v3.5a.25.25 0 0 1-.25.25H13V12h1.25A1.75 1.75 0 0 0 16 10.25v-3.5A1.75 1.75 0 0 0 14.25 5H1.75Z"/></svg>
           <span>Print</span>
         </a>
+        <a id="create-invoice" class="export-link disabled" aria-disabled="true" href="#" aria-label="Create invoice">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.75 0A1.75 1.75 0 0 0 2 1.75v12.5C2 15.216 2.784 16 3.75 16h8.5A1.75 1.75 0 0 0 14 14.25V4.56c0-.46-.18-.9-.51-1.23L10.67.51A1.74 1.74 0 0 0 9.44 0H3.75ZM3.5 1.75a.25.25 0 0 1 .25-.25H9v2.75C9 5.216 9.784 6 10.75 6h1.75v8.25a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25V1.75Zm7 .81 1.94 1.94h-1.69a.25.25 0 0 1-.25-.25V2.56ZM5 8.25a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 5 8.25Zm0 3a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Z"/></svg>
+          <span>Create invoice</span>
+        </a>
       </div>
     </section>
 
+    <dialog id="invoice-dialog" aria-labelledby="invoice-dialog-title">
+      <div class="invoice-dialog-heading"><div><h2 id="invoice-dialog-title">Create invoice</h2><p class="muted">Preview and print an invoice from the current report filters.</p></div><button id="invoice-close" class="button secondary" type="button">Close</button></div>
+      <div class="invoice-controls">
+        <p id="invoice-billing-period" class="invoice-billing-period" role="status" aria-live="polite"></p>
+        <label>Client<select id="invoice-client"><option value="">No client</option></select></label>
+        <label>Currency<select id="invoice-currency"></select></label>
+        <label>Group lines by<select id="invoice-group-by"><option value="task" selected>Task</option><option value="day">Day and task</option></select></label>
+        <label>Issue date<input id="invoice-issue-date" type="date" required></label>
+        <div class="invoice-projects-control">
+          <div class="section-heading"><span>Projects</span><span id="invoice-project-count" class="muted"></span></div>
+          <div id="invoice-projects" class="facet-list" role="group" aria-label="Projects billed by this invoice"></div>
+          <p id="invoice-project-warning" class="notice" role="status" aria-live="polite" hidden></p>
+        </div>
+      </div>
+      <div class="invoice-additional-control" role="group" aria-labelledby="invoice-additional-label">
+        <div class="section-heading"><span id="invoice-additional-label">Additional lines</span></div>
+        <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
+        <div id="invoice-extra-lines"></div>
+        <button id="invoice-add-line" class="button secondary" type="button">Add line</button>
+      </div>
+      <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
+      <section class="invoice-preview-region" aria-labelledby="invoice-preview-title">
+        <div class="section-heading invoice-preview-heading"><h3 id="invoice-preview-title">Preview</h3></div>
+        <div id="invoice-preview" class="invoice-preview" aria-live="polite"><p class="invoice-preview-empty">Choose a client and currency to preview the invoice.</p></div>
+      </section>
+      <div class="invoice-actions">
+        <button id="invoice-print" class="button primary" type="button" disabled>Print / Save as PDF</button>
+      </div>
+    </dialog>
+
     <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="partial-status" class="notice" role="status" hidden></div>
     <div id="loading" class="notice loading-notice" role="status" aria-live="polite" hidden>
-      <div class="loading-copy"><strong id="loading-label">Connecting to GitHub…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
+      <div class="loading-copy"><strong id="loading-label">Loading time data…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
       <progress id="loading-progress" max="100" value="10">10%</progress>
     </div>
     <div id="setup" class="notice" hidden>
-      Configure a private time-data repository before opening reports.
-      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+      Choose where Clockoli should save your time before opening reports.
+      <button id="setup-settings" class="button primary" type="button">Set up Clockoli</button>
     </div>
 
     <section id="report-content" hidden>
@@ -93,6 +147,7 @@
         <section aria-labelledby="print-detail-heading"><h3 id="print-detail-heading">Time by day, person and task</h3><table id="print-detail-table"></table></section>
         <section aria-labelledby="print-task-heading"><h3 id="print-task-heading">Total time by task</h3><table id="print-task-table"></table></section>
       </section>
+      <section id="print-invoice" class="print-invoice" aria-label="Printable invoice"></section>
 
       <div id="reports-layout" class="reports-layout">
         <aside class="filters card" aria-label="Report filters">
@@ -110,6 +165,11 @@
             <div class="section-heading"><h2>Sources</h2><button id="repositories-all" class="text-button" type="button">Select all</button></div>
             <input id="repositories-search" class="facet-search" type="search" placeholder="Search sources" aria-label="Search sources">
             <div id="repositories-facet" class="facet-list"></div>
+          </section>
+          <section>
+            <div class="section-heading"><h2>Time repositories</h2><button id="timeRepositories-all" class="text-button" type="button">Select all</button></div>
+            <input id="timeRepositories-search" class="facet-search" type="search" placeholder="Search time repositories" aria-label="Search time repositories">
+            <div id="timeRepositories-facet" class="facet-list"></div>
           </section>
         </aside>
 
@@ -135,6 +195,7 @@
                       <option value="month">Month</option>
                       <option value="person" selected>Person</option>
                       <option value="repository">Source</option>
+                      <option value="time-repository">Time repository</option>
                       <option value="task">Task URL / title</option>
                     </select>
                   </label>
@@ -148,6 +209,7 @@
                 <option value="month">Month</option>
                 <option value="person">Person</option>
                 <option value="repository">Source</option>
+                <option value="time-repository">Time repository</option>
                 <option value="task">Task URL / title</option>
               </select>
             </label>

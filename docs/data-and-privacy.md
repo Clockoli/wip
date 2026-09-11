@@ -13,14 +13,14 @@ Chrome extension UI ── trusted messages ── Manifest V3 service worker
                        extension-local IndexedDB ◄──┤
                        credentials, preferences,    │ direct GitHub API
                        pending retry state, caches  ▼
-                                      private GitHub data repository
+                                   private GitHub time repositories
 ```
 
 There is no Clockoli application server between the extension and GitHub.
 
-## What the GitHub repository stores
+## What each time repository stores
 
-The durable repository can contain:
+Each durable time repository can contain:
 
 - a Clockoli repository-format and user-mapping marker;
 - a personal-branch ownership marker;
@@ -38,7 +38,7 @@ Clockoli uses extension-origin IndexedDB for:
 
 - GitHub App access/refresh credentials or PAT compatibility credentials;
 - resumable Device Flow state;
-- selected configuration and generation counters;
+- the selected GitHub account, configured destination registry, explicit default destination, ordered project routing, and generation counters;
 - pending mutation stages and conflict state;
 - recent-entry and report caches;
 - task metadata cache;
@@ -46,11 +46,11 @@ Clockoli uses extension-origin IndexedDB for:
 - per-person hourly rates and each rate's currency sign or description;
 - settings-backup revision state.
 
-GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. The extension requests no `chrome.storage` permission; its data store is scoped to the extension origin.
+GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. Durable local data remains in extension-origin IndexedDB, and the extension does not request the `storage` permission.
 
-## Repository and branch layout
+## Time-repository and branch layout
 
-The repository's default branch owns the shared marker:
+Each time repository's default branch owns its shared marker:
 
 ```text
 .clockoli/config.json
@@ -108,11 +108,13 @@ Normal Device Flow setup has two separate grants:
 1. **User authorization** identifies the signed-in GitHub user and gives the browser a user access token.
 2. **GitHub App installation access** limits which repositories Clockoli can access.
 
-The data repository must grant **Contents: Read and write** to the Clockoli App. The signed-in user also needs appropriate repository and branch rights. Clockoli does not request repository Administration permission just to create a data repository; setup opens GitHub's repository-creation form instead.
+Each time repository must grant **Contents: Read and write** to the Clockoli App. The signed-in user also needs appropriate repository and branch rights. Initializing a personal repository is an individual action. Initializing an organization repository requires GitHub repository-admin permission; teammates with ordinary write access join only after an administrator has created the valid marker. Clockoli has no separate permanent administrator role.
+
+Discovery, inspection, classification, and preselection never write to GitHub. Already-ready repositories are registered locally after membership, branch ownership, and task-index validation, without changing an existing default or accepted work. Clockoli writes a marker or personal branch only after an explicit **Initialize repository**, **Join repository**, or **Set up storage branch** confirmation.
 
 Tracking a URL does not post time data back to that page or source system. A GitHub issue/PR can be tracked without giving Clockoli write access to its source repository. Metadata enrichment is available only when the authenticated user can read the relevant GitHub task.
 
-The advanced PAT path should use a fine-grained token restricted to the one private data repository with **Contents: Read and write**.
+The advanced PAT path should use a fine-grained token restricted to one private time repository with **Contents: Read and write**. PAT compatibility mode supports one destination; multi-repository routing requires GitHub App authentication.
 
 ## Security boundaries
 
@@ -124,7 +126,7 @@ The GitHub control uses a closed Shadow DOM and rejects synthetic privileged act
 
 ### Repository verification
 
-Before writing, Clockoli verifies the configured repository's stable GitHub ID, canonical owner/name, private visibility, branch route, and accessibility. Repository rename/transfer recovery is bounded and identity-based; Clockoli does not silently write to a different repository that happens to occupy old coordinates.
+Before writing, Clockoli verifies the destination's stable GitHub ID, canonical owner/name, private visibility, branch route, and accessibility. Repository rename/transfer recovery is bounded and identity-based; Clockoli does not silently write to a different repository that happens to occupy old coordinates.
 
 ### Storage ownership
 
@@ -149,17 +151,21 @@ Repository adoption fails closed:
 
 Clockoli accepts timer mutations locally during temporary connectivity loss, but GitHub remains the canonical destination:
 
-- Start, Stop, and task switches are persisted in the extension-local queue and retried.
+- Start, Stop, and task switches are persisted in destination-scoped extension-local queues and retried.
+- One global active timer is shared across destinations. A cross-repository switch durably queues source completion before target Start.
+- Every accepted timer and queued mutation stays pinned to its acceptance-time destination when routing changes.
 - A locally accepted mutation is not fully synchronized until its GitHub write completes.
 - Pending writes are attempted at extension startup and on a one-minute alarm.
 - **Sync now** requests an immediate retry.
-- A new Start is blocked while a completion is pending or conflicted.
+- A conflicted dependency can pause a queued cross-repository Start until its source completion is resolved.
 
 Do not clear browser data or Clockoli local configuration while a Stop is waiting to synchronize.
 
-## Reports cache
+## Aggregated reads and reports cache
 
-Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
+Tasks, Times, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
+
+For each repository, Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
 
 Cache entries are scoped to repository, branch, user, and configuration generation as appropriate. Configuration changes cancel stale loads and prevent old results from being committed into a new context.
 
@@ -171,11 +177,17 @@ Hourly rates and their currency signs or descriptions stay in extension-local In
 
 Billable money uses integer minor units and tracked seconds. Clockoli aggregates before final rounding to avoid accumulating per-record rounding errors.
 
-The settings JSON backup can include rates, so protect that backup according to the sensitivity of your rate card.
+The settings JSON backup can include rates and invoicing details, so protect that user-requested download according to the sensitivity of your rate card and customer data.
+
+## Invoice privacy
+
+Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in `chrome.storage.local`. Hourly rates, computed amounts, seller details, and client details never leave the browser.
+
+An invoice exists only as the on-screen preview and as a file the user prints or downloads. Clockoli does not archive invoices, and no invoice or invoice number is ever written to the time-data repository.
 
 ## Settings backup exclusions
 
-A settings export includes local display and billing preferences plus reference-only repository coordinates. It excludes:
+A version 6 settings export includes local display and billing preferences plus credential-free destination references, the exported default destination, and project routing. It excludes:
 
 - access and refresh tokens;
 - personal access tokens;
@@ -185,13 +197,13 @@ A settings export includes local display and billing preferences plus reference-
 - tracked records;
 - report and metadata caches.
 
-Import validates the entire file and applies supported local preferences atomically. It does not reconnect GitHub or switch repositories.
+Import validates the entire file and applies supported local preferences atomically. It can restore project routing only when every referenced destination is already configured. Destination references remain unverified, and the imported default does not replace this browser's current default. Import does not inspect repositories, verify access, add destinations, or reconnect GitHub.
 
 ## Access and privacy consequences
 
-Anyone with read access to the data repository can inspect stored task URLs, titles, timestamps, descriptions, and user branches. URLs and descriptions can reveal sensitive customer or project information.
+Anyone with read access to a time repository can inspect the task URLs, titles, timestamps, descriptions, and user branches stored there. URLs and descriptions can reveal sensitive customer or project information.
 
-Use separate data repositories when groups have different access boundaries. Grant the Clockoli App access only to the intended repository and use **Only select repositories** during installation.
+Use separate time repositories when groups have different access boundaries. Grant the Clockoli App access only to the intended repositories and use **Only select repositories** during installation.
 
 Git history helps recovery and review, but a GitHub repository administrator can rewrite or delete history. Use repository policy and optional `git clone --mirror` backups when stronger retention is required.
 

@@ -32,7 +32,7 @@ test('grouped inline save uses the durable queue route', () => {
   assert.doesNotMatch(source, /type: 'EDIT_ENTRIES'/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', contentSender, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', extensionSender, origin), /not allowed/i);
-  assert.match(serviceWorker, /case 'QUEUE_ENTRIES_EDIT': \{[\s\S]*tracker\.queueEntriesEdit\(message\.payload\)[\s\S]*requestPendingSync\(\)/);
+  assert.match(serviceWorker, /case 'QUEUE_ENTRIES_EDIT': \{[\s\S]*destinationIdForCompletedMutation\(message\.type, message\.payload, sender, extensionOrigin\)[\s\S]*const \{ destinationId: _destinationId, \.\.\.payload \} = message\.payload;[\s\S]*trackerForDestination\(destinationId\)\)\.queueEntriesEdit\(payload\)[\s\S]*requestPendingSync\(\)[\s\S]*return \{ \.\.\.result, destinationId \}/);
   assert.doesNotMatch(serviceWorker, /case 'MOVE_BOUNDARY'/);
 });
 

@@ -1,3 +1,5 @@
+import { recordDate } from '../domain/reporting.js';
+import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { entryDateParts, normalizeTaskUrl, validatePathSegment } from '../domain/values.js';
@@ -7,9 +9,131 @@ const CACHE_VERSION = 1;
 const DEFAULT_USER_BUDGET = Object.freeze({ maxFiles: 13, maxBytes: 20 * 1024 * 1024, maxRecords: 100000 });
 const DEFAULT_TASK_USER_BUDGET = 1_000;
 
-function withoutStorageMetadata(record) {
+function sortedValue(value) {
+  if (Array.isArray(value)) return value.map(sortedValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedValue(value[key])]));
+  return value;
+}
+
+export function canonicalRecordBody(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('A parsed persistent record body is required');
+  const body = record._record && typeof record._record === 'object' && !Array.isArray(record._record)
+    ? record._record
+    : Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')
+      && !['destinationId', 'timeRepository', 'duplicateDestinations', 'duplicateTimeRepositories'].includes(key)));
+  return JSON.stringify(sortedValue(body));
+}
+
+function destinationLabel(destination) {
+  return destination?.label || (destination?.owner && destination?.repo ? `${destination.owner}/${destination.repo}` : 'Unknown repository');
+}
+
+export function annotateDestinationRecord(record, destination) {
+  if (!record || typeof record !== 'object' || typeof destination?.id !== 'string' || !destination.id) throw new Error('A parsed record and destination are required');
+  return { ...record, destinationId: destination.id, timeRepository: destinationLabel(destination) };
+}
+
+function sanitizedReadError(error) {
+  return {
+    code: error?.name === 'AbortError' ? 'aborted' : String(error?.code || 'read_failed').slice(0, 80),
+    message: 'This time repository could not be read.',
+    ...(error?.retryAt ? { retryAt: error.retryAt } : {}),
+  };
+}
+
+export function mergeDestinationRecords(destinationResults, destinationOrder = []) {
+  const order = new Map(destinationOrder.map((id, index) => [id, index])), byId = new Map();
+  for (const result of destinationResults ?? []) {
+    for (const source of result.records ?? []) {
+      const record = source.destinationId ? source : annotateDestinationRecord(source, result.destination);
+      const origins = byId.get(record.id) ?? [];
+      origins.push({ record, body: canonicalRecordBody(record) }); byId.set(record.id, origins);
+    }
+  }
+  const records = [], conflicts = [];
+  for (const [id, origins] of byId) {
+    origins.sort((left, right) => (order.get(left.record.destinationId) ?? Infinity) - (order.get(right.record.destinationId) ?? Infinity));
+    const destinationIds = [...new Set(origins.map(item => item.record.destinationId))];
+    const timeRepositories = [...new Set(origins.map(item => item.record.timeRepository))];
+    if (new Set(origins.map(item => item.body)).size > 1) {
+      conflicts.push({ code: 'record_id_conflict', id, destinationIds, timeRepositories }); continue;
+    }
+    records.push(origins.length > 1 ? {
+      ...origins[0].record, duplicateDestinations: destinationIds, duplicateTimeRepositories: timeRepositories,
+    } : origins[0].record);
+  }
+  return { records, conflicts };
+}
+
+export function mergeDestinationTaskSummaries(destinationResults, destinationOrder = []) {
+  const order = new Map(destinationOrder.map((id, index) => [id, index])), summaries = new Map();
+  for (const result of destinationResults ?? []) {
+    const destinationId = result.destination?.id, timeRepository = destinationLabel(result.destination);
+    for (const record of result.records ?? []) {
+      const taskUrl = normalizeTaskUrl(record.taskUrl), user = String(record.user || '').trim();
+      const durationSeconds = Number(record.durationSeconds);
+      if (!taskUrl || !user || !Number.isFinite(durationSeconds) || durationSeconds < 0 || !Array.isArray(record.recordIds)) throw new Error('Invalid task summary');
+      const key = `${taskUrl}\n${user.toLowerCase()}`;
+      const summary = summaries.get(key) ?? {
+        user, taskUrl, durationSeconds: 0, recordIds: new Set(), destinationIds: new Set(), timeRepositories: new Set(),
+      };
+      summary.durationSeconds += durationSeconds;
+      for (const id of record.recordIds) summary.recordIds.add(id);
+      if (destinationId) summary.destinationIds.add(destinationId);
+      if (timeRepository) summary.timeRepositories.add(timeRepository);
+      summaries.set(key, summary);
+    }
+  }
+  const sortDestinations = values => [...values].sort((left, right) => (order.get(left) ?? Infinity) - (order.get(right) ?? Infinity) || left.localeCompare(right));
+  return {
+    records: [...summaries.values()].map(summary => ({
+      user: summary.user, taskUrl: summary.taskUrl, durationSeconds: summary.durationSeconds,
+      recordIds: [...summary.recordIds].sort(), destinationIds: sortDestinations(summary.destinationIds),
+      timeRepositories: [...summary.timeRepositories],
+    })),
+    conflicts: [],
+  };
+}
+
+export async function loadDestinationRecords(destinations, read, { signal, concurrency = 4, merge = mergeDestinationRecords } = {}) {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+  if (signal?.aborted) abortFromParent(); else signal?.addEventListener('abort', abortFromParent, { once: true });
+  try {
+    const inputs = destinations ?? [], settled = new Array(inputs.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < inputs.length && !controller.signal.aborted) {
+        const index = next++;
+        try { settled[index] = { status: 'fulfilled', value: await read(inputs[index], controller.signal) }; }
+        catch (reason) {
+          settled[index] = { status: 'rejected', reason };
+          if (reason?.name === 'AbortError') controller.abort(reason);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(inputs.length, Math.max(1, Number(concurrency) || 1)) }, worker));
+    if (signal?.aborted || controller.signal.aborted) throw signal?.reason ?? controller.signal.reason;
+    const successful = [], readStatus = [];
+    settled.forEach((result, index) => {
+      const destination = inputs[index], base = { destinationId: destination.id, timeRepository: destinationLabel(destination) };
+      if (result.status === 'fulfilled') { successful.push({ destination, records: result.value }); readStatus.push({ ...base, status: 'ok' }); }
+      else readStatus.push({ ...base, status: 'error', error: sanitizedReadError(result.reason) });
+    });
+    if (!successful.length) {
+      const error = new Error('All configured time repositories failed to load.');
+      error.code = 'all_destinations_failed'; error.readStatus = readStatus; throw error;
+    }
+    const merged = merge(successful, inputs.map(destination => destination.id));
+    return { ...merged, readStatus, partial: successful.length !== inputs.length || merged.conflicts.length > 0 };
+  } finally { signal?.removeEventListener('abort', abortFromParent); }
+}
+
+export function withoutInternalMetadata(record) {
   return Object.fromEntries(Object.entries(record).filter(([key]) => !key.startsWith('_')));
 }
+
+const withoutStorageMetadata = withoutInternalMetadata;
 
 function reportRecordKey(record) { return record.id; }
 
@@ -145,10 +269,10 @@ export class ReportService {
     await this.cache?.saveReportCache?.(value);
   }
 
-  async loadRepositoryRange(range, { defaultBranch = null, signal } = {}) {
+  async loadRepositoryRange(range, { defaultBranch = null, signal, includeStorageMetadata = false } = {}) {
     this.onProgress({ label: 'Discovering people and time files…', value: 20 });
     if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
-      return this.loadRange(range, { signal });
+      return this.loadRange(range, { signal, includeStorageMetadata });
     }
     const defaultGithub = this.github.forBranch(defaultBranch, 'default');
     const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
@@ -160,7 +284,7 @@ export class ReportService {
         new ReportService({
           github: user.github, cache: this.cache, concurrency: this.concurrency,
           onProgress: this.onProgress, requestLimiter: this.requestLimiter,
-        }).loadUserRange(range, user.login, { signal: branchSignal })
+        }).loadUserRange(range, user.login, { signal: branchSignal, includeStorageMetadata })
       ));
       personalRecords.push(...chunk.flat());
     }
@@ -215,10 +339,11 @@ export class ReportService {
     });
   }
 
-  async loadRange({ startDate, endDate }, {
+  async loadRange({ startDate, endDate, reportingUtc = false }, {
     signal, user = null, taskUrl = null, maxFiles = Infinity, maxBytes = Infinity,
     maxRecords = Infinity, includeStorageMetadata = false, resourceBudget = null,
   } = {}) {
+    normalizeReportingUtc(reportingUtc);
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
     const canonicalTaskUrl = taskUrl === null ? null : normalizeTaskUrl(taskUrl);
@@ -251,7 +376,14 @@ export class ReportService {
       if (!resourceBudget) await this.saveCache(cache);
     }
 
-    const startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
+    let startMonth = startDate.slice(0, 7), endMonth = endDate.slice(0, 7);
+    if (reportingUtc) {
+      // Files are partitioned by local date, so UTC boundary records can live in either adjacent month.
+      const start = new Date(`${startDate}T00:00:00Z`), end = new Date(`${endDate}T00:00:00Z`);
+      start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - 1);
+      end.setUTCDate(1); end.setUTCMonth(end.getUTCMonth() + 1);
+      startMonth = start.toISOString().slice(0, 7); endMonth = end.toISOString().slice(0, 7);
+    }
     const files = cache.files.map(file => {
       try { return { ...file, ...parseMonthlyRecordsPath(file.path) }; }
       catch { return null; }
@@ -294,7 +426,7 @@ export class ReportService {
         });
         consumeTaskScanBudget(resourceBudget, 'records', parsed.length);
         records.push(...parsed
-          .filter(record => record.entryDate >= startDate && record.entryDate <= endDate
+          .filter(record => recordDate(record, reportingUtc) >= startDate && recordDate(record, reportingUtc) <= endDate
             && (!canonicalTaskUrl || record.taskUrl === canonicalTaskUrl))
           .map(record => includeStorageMetadata ? record : withoutStorageMetadata(record)));
       } catch (error) {
