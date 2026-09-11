@@ -2818,7 +2818,6 @@
         --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#fff0);
         --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#fff0);
         --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#818b98);
-        --ck-button-invisible-fg-rest: var(--button-invisible-fgColor-rest,#25292e);
         --ck-border-danger: var(--borderColor-danger-muted,#ff818266);
         --ck-bg-danger: var(--bgColor-danger-muted,#ffebe9);
         --ck-danger: var(--fgColor-danger,#d1242f);
@@ -2873,7 +2872,7 @@
           --ck-control-bg-rest: var(--control-bgColor-rest,#212830);
           --ck-control-fg-rest: var(--control-fgColor-rest,#f0f6fc);
           --ck-bg-muted: var(--bgColor-muted,#151b23);
-          --ck-bg-attention: var(--bgColor-attention-muted,#151b23);
+          --ck-bg-attention: var(--bgColor-attention-muted,#bb800926);
           --ck-accent: var(--fgColor-accent,#4493f8);
           --ck-success: var(--fgColor-success,#3fb950);
           --ck-button-default-border-rest: var(--button-default-borderColor-rest,#3d444d);
@@ -2910,7 +2909,6 @@
           --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#0000);
           --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#0000);
           --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#656c76);
-          --ck-button-invisible-fg-rest: var(--button-invisible-fgColor-rest,#f0f6fc);
           --ck-border-danger: var(--borderColor-danger-muted,#f8514966);
           --ck-bg-danger: var(--bgColor-danger-muted,#f851491a);
           --ck-danger: var(--fgColor-danger,#f85149);
@@ -2923,8 +2921,8 @@
           --ck-control-fg-disabled: var(--control-fgColor-disabled,#656c76);
           --ck-shadow-overlay: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
           --ck-transparent: var(--button-invisible-bgColor-rest,#0000);
-          --fgColor-default:#f0f6fc; --fgColor-muted:#9198a1; --fgColor-accent:#4493f8; --fgColor-danger:#fa5e55;
-          --bgColor-default:#0d1117; --bgColor-muted:#151b23; --bgColor-inset:#010409; --bgColor-attention-muted:#151b23; --bgColor-danger-muted:#f851491a;
+          --fgColor-default:#f0f6fc; --fgColor-muted:#9198a1; --fgColor-accent:#4493f8; --fgColor-danger:#f85149;
+          --bgColor-default:#0d1117; --bgColor-muted:#151b23; --bgColor-inset:#010409; --bgColor-attention-muted:#bb800926; --bgColor-danger-muted:#f851491a;
           --borderColor-default:#3d444d; --borderColor-muted:#3d444db3; --borderColor-danger-muted:#f8514966; --focus-outlineColor:#1f6feb;
           --button-default-borderColor-rest:#3d444d; --button-default-bgColor-rest:#212830; --button-default-fgColor-rest:#f0f6fc;
           --button-default-bgColor-hover:#262c36; --button-default-bgColor-active:#2a313c; --button-default-bgColor-selected:#2a313c;
