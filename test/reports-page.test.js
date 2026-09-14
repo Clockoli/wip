@@ -102,7 +102,10 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
   assert.match(js, /function renderInvoiceDocument\(container, invoice\)/);
   assert.match(js, /invoice\.seller\?\.name/);
-  assert.match(js, /function saveInvoicePdf\(invoice\)/);
+  assert.match(js, /const pageLines = \[\];/);
+  assert.match(js, /for \(let index = 0; index < wrapped\.length; index \+= 42\)/);
+  assert.doesNotMatch(js, /\.slice\(0, 45\)/);
+  assert.doesNotMatch(js, /function pdfHexText\(value\)/);
   assert.match(js, /application\/pdf/);
   assert.match(js, /if \(saveAsPdf\) \{[\s\S]*saveInvoicePdf\(invoice\)/);
   assert.match(js, /formatInvoiceDate/);

@@ -164,10 +164,9 @@ function renderInvoiceDocument(container, invoice) {
   container.append(documentRoot);
 }
 
-function pdfHexText(value) {
-  let hex = 'FEFF';
-  for (const unit of String(value).slice(0, 2000)) hex += unit.charCodeAt(0).toString(16).padStart(4, '0');
-  return `<${hex}>`;
+function pdfLiteralText(value) {
+  const ascii = String(value).normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^\x20-\x7E]/g, '?');
+  return `(${ascii.replace(/[\\()]/g, '\\$&')})`;
 }
 
 function buildInvoicePdf(invoice) {
@@ -184,15 +183,25 @@ function buildInvoicePdf(invoice) {
   if (invoice.taxPercent !== 0) lines.push(`VAT ${invoice.taxPercent}%: ${formatMoney(invoice.taxMinor, invoice.currency, invoice.currencyPosition)}`);
   lines.push(`Total: ${formatMoney(invoice.totalMinor, invoice.currency, invoice.currencyPosition)}`);
   if (invoice.notes) lines.push('', invoice.notes);
-  const wrapped = lines.flatMap(line => { const text = String(line); if (!text) return ['']; const result = []; for (let index = 0; index < text.length; index += 88) result.push(text.slice(index, index + 88)); return result; }).slice(0, 45);
-  const streamLines = ['BT', '/F1 10 Tf', '50 780 Td', ...wrapped.map((line, index) => `${pdfHexText(line)} Tj${index === wrapped.length - 1 ? '' : ' 0 -16 Td'}`), 'ET'];
+  const wrapped = lines.flatMap(line => { const text = String(line); if (!text) return ['']; const result = []; for (let index = 0; index < text.length; index += 88) result.push(text.slice(index, index + 88)); return result; });
+  const pageLines = [];
+  for (let index = 0; index < wrapped.length; index += 42) pageLines.push(wrapped.slice(index, index + 42));
+  const pageCount = Math.max(1, pageLines.length);
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    `<< /Length ${new TextEncoder().encode(streamLines.join('\n')).length} >>\nstream\n${streamLines.join('\n')}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Type /Pages /Kids [${pageLines.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
   ];
+  for (const linesForPage of pageLines) {
+    const streamLines = ['BT', '/F1 10 Tf', '50 780 Td', ...linesForPage.map((line, index) => `${pdfLiteralText(line)} Tj${index === linesForPage.length - 1 ? '' : ' 0 -16 Td'}`), 'ET'];
+    const pageObjectNumber = objects.length + 1;
+    const contentObjectNumber = pageObjectNumber + 1;
+    const fontObjectNumber = 3 + pageCount * 2;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObjectNumber} 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`,
+      `<< /Length ${new TextEncoder().encode(streamLines.join('\\n')).length} >>\\nstream\\n${streamLines.join('\\n')}\\nendstream`,
+    );
+  }
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', offsets = [0];
   for (let index = 0; index < objects.length; index += 1) { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`; }
   const xrefOffset = new TextEncoder().encode(pdf).length;

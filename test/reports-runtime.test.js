@@ -525,6 +525,7 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(pdf.includes('xref\n0 6\n'), true);
   assert.equal(pdf.includes('trailer\n<< /Size 6 /Root 1 0 R >>'), true);
   assert.equal(pdf.includes('\\n1 0 obj'), false);
+  assert.equal(pdf.includes('(INVOICE  INV-2026-0007) Tj'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
 });
 
