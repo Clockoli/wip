@@ -31,8 +31,12 @@ test('Settings edits ordered Projects with one URL substring per line', () => {
   assert.match(css, /\.projects-fieldset\{[^}]*min-width:0/);
   assert.match(css, /\.project-row\{[^}]*min-width:0/);
   assert.match(css, /\.project-row>\*\{min-width:0/);
-  assert.match(css, /@media\(max-width:700px\)\{\.project-row\{display:flex;flex-direction:column\}\.project-row>\*\{width:100%\}/);
-  assert.match(css, /\.project-actions\{[^}]*margin-top:27px/);
+  assert.match(css, /@media\(max-width:700px\)\{\.project-row\{grid-template-columns:1fr\}\}/);
+  assert.match(css, /\.project-row textarea\{[^}]*overflow-y:auto;resize:none/);
+  assert.match(css, /\.remove-client\{position:absolute/);
+  assert.match(script, /actions\.append\(up, down, remove\)/);
+  assert.match(script, /substrings\.rows = Math\.max\(1, /);
+  assert.match(css, /\.project-actions\{position:absolute;top:8px;right:8px/);
 });
 
 test('saving or importing Projects refreshes already-open tracking and Reports surfaces', () => {
