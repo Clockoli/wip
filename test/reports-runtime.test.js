@@ -510,14 +510,16 @@ test('invoice composition projects billing inputs without serializing record met
   }
 });
 
-test('Save as PDF uses the client first-last and invoice number filename', async () => {
-  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+test('Save as PDF uses the seller first-last and invoice number filename', async () => {
+  const settings = { ...invoiceSettings, seller: { ...invoiceSettings.seller, name: 'Sergey Nikolaev' } };
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }, settings));
   await page.fire('create-invoice'); await page.settle();
   const saving = page.fire('invoice-save-pdf');
   await page.reply({ sequence: 7 }); await saving;
   assert.equal(page.prints.length, 0);
   assert.equal(page.blobs.length, 1);
   assert.equal(page.blobs[0].type, 'application/pdf');
+  assert.equal(page.downloads.at(-1).download, 'Sergey-Nikolaev-INV-2026-0007.pdf');
   const pdf = await page.blobs[0].text();
   assert.equal(pdf.startsWith('%PDF-1.4\n'), true);
   assert.equal(pdf.includes('xref\n0 6\n'), true);

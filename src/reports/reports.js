@@ -942,8 +942,8 @@ $('invoice-client').addEventListener('change', () => {
   state.invoiceClientChosen = true; resetInvoiceReservation(); resetInvoiceProjects(currentFilteredRecords()); populateInvoiceCurrencies(invoiceFilteredRecords(), true); void rebuildInvoicePreview();
 });
 function invoicePdfFilename(invoice) {
-  const words = String(invoice.client?.name || 'Client').trim().split(/\s+/).filter(Boolean);
-  const first = words.shift() || 'Client', last = words.pop() || first;
+  const words = String(invoice.seller?.name || 'Seller').trim().split(/\s+/).filter(Boolean);
+  const first = words.shift() || 'Seller', last = words.pop() || first;
   const safe = value => String(value).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
   return `${safe(first)}-${safe(last)}-${safe(invoice.number || 'invoice')}.pdf`;
 }
