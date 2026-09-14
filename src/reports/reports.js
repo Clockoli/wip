@@ -98,6 +98,23 @@ function invoiceParty(label, party) {
   return section;
 }
 
+function formatInvoiceDate(value) {
+  const text = String(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return text;
+  const date = new Date(`${text}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? text : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function invoiceTaskCell(line) {
+  const cell = invoiceNode('td', 'invoice-task-cell');
+  const label = String(line.taskTitle || line.taskUrl || '').trim();
+  if (line.taskUrl) {
+    const link = invoiceNode('a', '', label || line.taskUrl); link.href = line.taskUrl; link.target = '_blank'; link.rel = 'noreferrer'; cell.append(link);
+  } else cell.textContent = label;
+  return cell;
+}
+
 function renderInvoiceDocument(container, invoice) {
   container.replaceChildren();
   const documentRoot = invoiceNode('article', 'invoice-document');
@@ -107,24 +124,23 @@ function renderInvoiceDocument(container, invoice) {
   const identity = invoiceNode('div', 'invoice-identity'); identity.append(invoiceNode('h1', '', `INVOICE  ${invoice.number}`));
   const dates = invoiceNode('dl', 'invoice-dates');
   for (const [label, value] of [['Issued', invoice.issueDate], ['Due', invoice.dueDate]]) {
-    const row = invoiceNode('div'); row.append(invoiceNode('dt', '', label), invoiceNode('dd', '', value)); dates.append(row);
+    const row = invoiceNode('div'); row.append(invoiceNode('dt', '', label), invoiceNode('dd', '', formatInvoiceDate(value))); dates.append(row);
   }
   identity.append(dates); heading.append(identity); documentRoot.append(heading);
   const parties = invoiceNode('div', 'invoice-parties'), client = invoiceParty('Bill to', invoice.client);
   if (client) parties.append(client);
   if (parties.children.length) documentRoot.append(parties);
-  documentRoot.append(invoiceNode('p', 'invoice-period', `Period: ${invoice.period.startDate} — ${invoice.period.endDate}`));
+  documentRoot.append(invoiceNode('p', 'invoice-period', `Period: ${formatInvoiceDate(invoice.period.startDate)} — ${formatInvoiceDate(invoice.period.endDate)}`));
   const table = invoiceNode('table', 'invoice-table'), head = invoiceNode('thead'), headRow = invoiceNode('tr');
   const byDay = invoice.groupBy === 'day';
-  for (const label of [...(byDay ? ['Date'] : []), 'Description', 'Hours', 'Rate', 'Amount']) headRow.append(invoiceNode('th', ['Date', 'Description'].includes(label) ? 'invoice-text-cell' : '', label));
+  for (const label of [...(byDay ? ['Date'] : []), 'Task', 'Description', 'Hours', 'Amount']) headRow.append(invoiceNode('th', ['Date', 'Task', 'Description'].includes(label) ? 'invoice-text-cell' : '', label));
   head.append(headRow); table.append(head);
   const body = invoiceNode('tbody');
   for (const line of invoice.lines) {
     const row = invoiceNode('tr');
-    if (byDay) row.append(invoiceNode('td', 'invoice-date-cell', line.date || ''));
+    if (byDay) row.append(invoiceNode('td', 'invoice-date-cell', formatInvoiceDate(line.date || '')));
     row.append(
-      invoiceNode('td', 'invoice-text-cell', line.description), invoiceNode('td', '', line.hours === undefined ? '' : line.hours.toFixed(2)),
-      invoiceNode('td', '', line.hours === undefined ? '' : formatMoney(line.effectiveRateMinorPerHour, invoice.currency, invoice.currencyPosition)),
+      invoiceTaskCell(line), invoiceNode('td', 'invoice-text-cell', line.description || ''), invoiceNode('td', '', line.hours === undefined ? '' : line.hours.toFixed(2)),
       invoiceNode('td', '', formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)),
     );
     body.append(row);
@@ -195,7 +211,7 @@ function setInvoiceAvailable(filtered) {
 }
 
 function setInvoiceActionsAvailable(available) {
-  $('invoice-print').disabled = !available || state.loading;
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || state.loading;
 }
 
 function invoiceCurrencies(filtered) {
@@ -862,7 +878,7 @@ $('download-pdf').addEventListener('click', event => {
 $('create-invoice').addEventListener('click', event => {
   event.preventDefault();
   if (state.loading || $('create-invoice').classList.contains('disabled')) return;
-  const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
+  const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {
   if (state.invoiceExtraLines.length >= 20) return;
@@ -878,16 +894,28 @@ for (const id of ['invoice-currency', 'invoice-group-by', 'invoice-issue-date'])
 $('invoice-client').addEventListener('change', () => {
   state.invoiceClientChosen = true; resetInvoiceReservation(); resetInvoiceProjects(currentFilteredRecords()); populateInvoiceCurrencies(invoiceFilteredRecords(), true); void rebuildInvoicePreview();
 });
-$('invoice-print').addEventListener('click', async () => {
+function invoicePdfFilename(invoice) {
+  const words = String(invoice.client?.name || 'Client').trim().split(/\s+/).filter(Boolean);
+  const first = words.shift() || 'Client', last = words.pop() || first;
+  const safe = value => String(value).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+  return `${safe(first)}-${safe(last)}-${safe(invoice.number || 'invoice')}.pdf`;
+}
+
+async function printInvoice({ saveAsPdf = false } = {}) {
   setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
   try {
     const invoice = await ensureReservedInvoice(), previousTitle = document.title;
     renderInvoiceDocument($('print-invoice'), invoice); document.body.classList.add('printing-invoice');
-    document.title = `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`; $('invoice-dialog').close();
+    const filename = invoicePdfFilename(invoice);
+    document.title = saveAsPdf ? filename.replace(/\.pdf$/, '') : `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    $('invoice-dialog').close();
     addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
     window.print();
   } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not print invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
-});
+}
+
+$('invoice-print').addEventListener('click', () => void printInvoice());
+$('invoice-save-pdf').addEventListener('click', () => void printInvoice({ saveAsPdf: true }));
 
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });

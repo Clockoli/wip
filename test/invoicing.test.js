@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildInvoice } from '../src/domain/invoicing.js';
 import { billableTotalsByCurrency, formatInvoiceNumber, invoicingSettings } from '../src/domain/local-settings.js';
 
-const record = { user: 'alice', taskUrl: 'https://example.com/task', taskTitle: 'Task', entryDate: '2026-08-14', durationSeconds: 3600 };
+const record = { user: 'alice', taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'Work description', entryDate: '2026-08-14', durationSeconds: 3600 };
 const options = { rates: { alice: 12345 }, startDate: '2026-08-01', endDate: '2026-08-31', issueDate: '2026-09-01' };
 
 test('invoice assembles seller, selected client, period, whole-cent tax, terms and UTC due date without mutation', () => {
@@ -13,7 +13,7 @@ test('invoice assembles seller, selected client, period, whole-cent tax, terms a
   assert.deepEqual(invoice, {
     number: 'INV-2026-0007', sequence: 7, issueDate: '2026-09-01', dueDate: '2026-09-15', seller: invoicing.seller, client: invoicing.clients[0],
     period: { startDate: '2026-08-01', endDate: '2026-08-31' }, groupBy: 'task',
-    lines: [{ key: JSON.stringify([record.taskUrl, 'alice', 12345, 'USD']), taskUrl: record.taskUrl, taskTitle: 'Task', person: 'alice', description: 'Task', seconds: 3600, hours: 1, rateMinorPerHour: 12345, effectiveRateMinorPerHour: 12345, rateCurrency: 'USD', amountMinor: 12345 }],
+    lines: [{ key: JSON.stringify([record.taskUrl, 'alice', 'Work description', 12345, 'USD']), taskUrl: record.taskUrl, taskTitle: 'Task', person: 'alice', description: 'Work description', seconds: 3600, hours: 1, rateMinorPerHour: 12345, effectiveRateMinorPerHour: 12345, rateCurrency: 'USD', amountMinor: 12345 }],
     unbilled: [], subtotalMinor: 12345, taxMinor: 895, totalMinor: 13240, taxPercent: 7.25, currency: 'USD', currencyPosition: 'suffix', paymentTermsDays: 14, notes: 'Thanks', converted: false,
   });
   assert.deepEqual(invoicing, input);
@@ -26,21 +26,21 @@ test('uncovered records remain visible but only billed people determine descript
   const records = [record, { ...record, user: 'zoe', durationSeconds: 600 }, { ...record, user: 'bob', durationSeconds: 300 }, { ...record, user: 'zoe', durationSeconds: 120 }];
   const invoice = buildInvoice(records, options);
   assert.deepEqual(invoice.unbilled, [{ person: 'bob', seconds: 300 }, { person: 'zoe', seconds: 720 }]);
-  assert.equal(invoice.lines[0].description, 'Task');
+  assert.equal(invoice.lines[0].description, 'Work description');
   assert.equal(invoice.totalMinor, 12345);
   assert.equal(invoice.number, '');
   assert.equal(invoice.sequence, null);
   assert.equal(invoice.client, null);
   assert.deepEqual(buildInvoice(records, { ...options, rates: {}, currency: '$' }).unbilled, [{ person: 'alice', seconds: 3600 }, { person: 'bob', seconds: 300 }, { person: 'zoe', seconds: 720 }]);
   const multiple = buildInvoice(records, { ...options, rates: { ...options.rates, bob: 10000 } });
-  assert.deepEqual(multiple.lines.map(line => line.description), ['Task — alice', 'Task — bob']);
+  assert.deepEqual(multiple.lines.map(line => line.description), ['Work description', 'Work description']);
   assert.deepEqual(multiple.unbilled, [{ person: 'zoe', seconds: 720 }]);
 });
 
 test('day grouping sorts by date then description and task grouping preserves canonical URL identity', () => {
   const records = [{ ...record, taskTitle: 'Z', entryDate: '2026-08-15' }, { ...record, taskTitle: '', taskUrl: 'https://github.com/acme/app/issues/7?x=1#comment' }, { ...record, taskTitle: '', taskUrl: 'https://github.com/acme/app/issues/7' }];
   const invoice = buildInvoice(records, { ...options, groupBy: 'day' });
-  assert.deepEqual(invoice.lines.map(line => [line.date, line.description, line.hours]), [['2026-08-14', 'https://github.com/acme/app/issues/7', 2], ['2026-08-15', 'Z', 1]]);
+  assert.deepEqual(invoice.lines.map(line => [line.date, line.description, line.hours]), [['2026-08-14', 'Work description', 2], ['2026-08-15', 'Work description', 1]]);
   const byTask = buildInvoice([record, { ...record, entryDate: '2026-08-15' }], options);
   assert.equal(byTask.lines.length, 1);
   assert.equal(Object.hasOwn(byTask.lines[0], 'date'), false);

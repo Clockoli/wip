@@ -39,6 +39,7 @@ export function buildInvoice(records, {
   let converted = false;
   for (const { record, rate } of entries) {
     const date = recordDate(record), taskUrl = taskUrlOf(record), taskTitle = String(record.taskTitle ?? record.issueTitle ?? '').trim();
+    const description = String(record.description ?? '').trim();
     const person = String(record.user || ''), seconds = Math.max(0, Number(record.durationSeconds) || 0);
     validateDateRange(date, date);
     if (!rate) { uncovered.set(person, (uncovered.get(person) ?? 0) + seconds); continue; }
@@ -46,10 +47,10 @@ export function buildInvoice(records, {
     const factor = sourceCode === targetCode ? 1 : Number(exchangeRates?.[date]?.[sourceCode]);
     if (!Number.isFinite(factor) || !(factor > 0)) throw new Error(`No ${sourceCode} to ${targetCode} exchange rate for ${date}.`);
     if (sourceCode !== targetCode) converted = true;
-    const key = JSON.stringify([...(groupBy === 'day' ? [date] : []), taskUrl, person, rate.amountMinorPerHour, rate.currency, ...(sourceCode !== targetCode ? [factor] : [])]);
+    const key = JSON.stringify([...(groupBy === 'day' ? [date] : []), taskUrl, person, description, rate.amountMinorPerHour, rate.currency, ...(sourceCode !== targetCode ? [factor] : [])]);
     const line = groups.get(key) ?? {
       key, ...(groupBy === 'day' ? { date } : {}), taskUrl, taskTitle, person,
-      description: `${taskTitle || taskUrl}${people.size > 1 ? ` — ${person}` : ''}`, seconds: 0, hours: 0,
+      description, seconds: 0, hours: 0,
       rateMinorPerHour: rate.amountMinorPerHour, rateCurrency: rate.currency, amountMinor: 0,
     };
     line.seconds += seconds; line.hours = line.seconds / 3600;

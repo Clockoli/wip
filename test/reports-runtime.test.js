@@ -464,7 +464,8 @@ test('a single source currency fetches exchange rates for the selected client cu
   assert.equal(request.message.payload.dates.join(','), oldRange.startDate);
   await page.reply({ rates: { [oldRange.startDate]: { USD: 0.9 } } }, request);
   assert.equal(page.nodes.get('invoice-feedback').textContent, '');
-  assert.match(page.textOf(page.nodes.get('invoice-preview')), /90.00 EUR90.00 EUR/);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /90.00 EUR/);
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /90.00 EUR90.00 EUR/);
   for (const id of ['invoice-print']) assert.equal(page.nodes.get(id).disabled, false);
 });
 
@@ -508,13 +509,22 @@ test('invoice composition projects billing inputs without serializing record met
   }
 });
 
+test('Save as PDF uses the client first-last and invoice number filename', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  const saving = page.fire('invoice-save-pdf');
+  await page.reply({ sequence: 7 }); await saving;
+  assert.deepEqual(page.prints, ['Client-One-INV-2026-0007']);
+});
+
+
 test('invoice names the billed range and uses refreshed payment days on the next preview', async () => {
   const response = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
   const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
   assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-17 to 2026-08-23');
   page.nodes.get('invoice-issue-date').value = '2026-09-01'; await page.fire('invoice-issue-date', 'change'); await page.settle();
   const refresh = page.context.refreshProjectDefinitions(); await page.reply({ ...response.billing, invoicing: { ...invoiceSettings, paymentTermsDays: 45 } }); await refresh; await page.settle();
-  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Due2026-10-16/);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /DueOct 16, 2026/);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Payment terms: Net 45/);
   const pending = page.load(newRange); await page.reply(response); await pending; await page.settle();
   assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-24 to 2026-08-30');
@@ -545,8 +555,10 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   description.value = ' Materials '; await description.listeners.change(); amount.value = '25.50'; await amount.listeners.change(); await page.settle();
   const document = page.nodes.get('invoice-preview').children[0], table = document.children.find(node => node.tagName === 'table');
   assert.equal(page.textOf(table.children[1].children[1]), 'Materials25.50 EUR');
-  assert.equal(table.children[1].children[1].children[1].textContent, '');
-  assert.equal(table.children[1].children[1].children[2].textContent, '');
+  const extraRow = table.children[1].children[1];
+  assert.equal(extraRow.children[0].textContent, '');
+  assert.equal(extraRow.children[1].textContent, 'Materials');
+  assert.equal(extraRow.children[2].textContent, '');
   assert.match(page.textOf(table), /Subtotal145.50 EURVAT 20%29.10 EURTotal174.60 EUR/);
   amount.value = '-5.25'; await amount.listeners.change(); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal114.75 EURVAT 20%22.95 EURTotal137.70 EUR/);

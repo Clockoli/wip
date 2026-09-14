@@ -26,7 +26,8 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Search time repositories"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
-  assert.match(html, /aria-label="Print report or save as PDF"/);
+  assert.match(html, /aria-label="Print report"/);
+  assert.doesNotMatch(html, /aria-label="Print report or save as PDF"/);
   assert.doesNotMatch(html, /id="settings"|id="source"/);
   assert.match(js, /window\.print\(\)/);
   assert.match(js, /reportPdfTitle\(state\.range, state\.people\)/);
@@ -94,13 +95,18 @@ test('reports mounts the shared running status directly below the tabs', () => {
 test('reports exposes local invoice preview, export, numbering and print contracts', () => {
   for (const id of [
     'create-invoice', 'invoice-dialog', 'invoice-client', 'invoice-currency', 'invoice-group-by',
-    'invoice-issue-date', 'invoice-billing-period', 'invoice-preview', 'invoice-feedback', 'invoice-print',
+    'invoice-issue-date', 'invoice-billing-period', 'invoice-preview', 'invoice-feedback', 'invoice-print', 'invoice-save-pdf',
     'invoice-extra-lines', 'invoice-add-line', 'invoice-close', 'print-invoice',
   ]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(js, /buildInvoice\(/);
   assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
   assert.match(js, /function renderInvoiceDocument\(container, invoice\)/);
-  assert.match(styles, /\.print-invoice\{display:none\}/);
+  assert.match(js, /function invoicePdfFilename\(invoice\)/);
+  assert.match(js, /invoice\.client\?\.name/);
+  assert.match(js, /invoice-save-pdf/);
+  assert.match(js, /formatInvoiceDate/);
+  assert.match(js, /invoiceTaskCell/);
+  assert.doesNotMatch(js, /'Rate'/);
   assert.match(styles, /body\.printing-invoice \.print-timesheet\{display:none!important\}/);
   assert.match(styles, /body\.printing-invoice \.print-invoice\{display:block\}/);
   assert.match(styles, /dialog\{display:none!important\}/);
