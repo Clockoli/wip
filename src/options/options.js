@@ -356,6 +356,7 @@ function renderDestinationCards() {
   $('pat-repository-limitation').hidden = state?.auth?.mode !== 'pat';
   const fallback = defaultDestinationId();
   const chooser = $('setup-default-destination');
+  $('setup-default-destination-label').hidden = destinations.length === 0;
   chooser.replaceChildren();
   for (const destination of destinations.filter(readySetupDestination)) {
     const option = document.createElement('option'); option.value = destination.id; option.textContent = destinationLabel(destination); chooser.append(option);
@@ -980,7 +981,7 @@ function renderDestinationControls(preferences = {}) {
   const destinations = configuredDestinations(), fallback = preferences.defaultDestinationId || defaultDestinationId();
   fillDestinationSelect($('default-destination'), fallback);
   $('default-destination').disabled = state?.auth?.mode === 'pat' || destinations.length < 2;
-  $('default-destination-label').hidden = state?.auth?.mode === 'pat';
+  $('default-destination-label').hidden = state?.auth?.mode === 'pat' || destinations.length === 0;
   $('pat-routing-summary').hidden = state?.auth?.mode !== 'pat';
   $('pat-routing-summary').textContent = state?.auth?.mode === 'pat' && destinations[0]
     ? `All projects use ${destinationLabel(destinations[0])} in personal access token compatibility mode.` : '';
