@@ -71,7 +71,7 @@ function saveButtonFeedback(button, outcome = 'saving', operation = null) {
 
 function autoGrowTextarea(textarea) {
   if (!textarea.scrollHeight) return;
-  textarea.style.height = 'auto'; textarea.style.height = `${textarea.scrollHeight}px`;
+  textarea.style.height = 'auto'; textarea.style.height = `${textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight}px`;
 }
 
 function wireAutoGrow(textarea) {
@@ -911,7 +911,7 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name';
   const name = document.createElement('input'); name.className = 'project-name'; name.required = true; name.maxLength = 80; name.autocomplete = 'off'; name.placeholder = 'work'; name.value = project.name || ''; nameLabel.append(name);
   const substringsLabel = document.createElement('label'); substringsLabel.textContent = 'URL substrings';
-  const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = 3; substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
+  const substrings = document.createElement('textarea'); substrings.className = 'project-substrings'; substrings.required = true; substrings.rows = Math.max(1, (project.substrings || []).length); substrings.maxLength = 50_000; substrings.placeholder = 'linear.app/my-team/\ngithub.com/my-company/'; substrings.value = (project.substrings || []).join('\n'); substringsLabel.append(substrings);
   const destinationLabelElement = document.createElement('label'); destinationLabelElement.textContent = 'Time repository';
   const destination = document.createElement('select'); destination.className = 'project-destination'; destination.required = true;
   destination.dataset.selectedDestinationId = project.destinationId || $('default-destination').value || defaultDestinationId();
@@ -923,9 +923,9 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const actions = document.createElement('div'); actions.className = 'project-actions';
   const up = document.createElement('button'); up.type = 'button'; up.className = 'secondary move-project-up'; up.textContent = '↑'; up.setAttribute('aria-label', `Move project ${project.name || 'row'} up`); up.addEventListener('click', () => moveProjectRow(row, -1));
   const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '×'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '✕'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
   remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
-  actions.append(up, down); row.append(nameLabel, substringsLabel, destinationLabelElement, clientLabel, actions, remove); $('projects-list').append(row); wireAutoGrow(substrings); renderDestinationControls(localPreferences || {}); refreshProjectOrderControls(); refreshProjectClients();
+  actions.append(up, down, remove); row.append(nameLabel, substringsLabel, destinationLabelElement, clientLabel, actions); $('projects-list').append(row); wireAutoGrow(substrings); renderDestinationControls(localPreferences || {}); refreshProjectOrderControls(); refreshProjectClients();
 
 }
 

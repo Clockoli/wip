@@ -850,6 +850,8 @@ test('a five-second block can be dragged exactly to 19:30:00', async ({ page }) 
 
 test('minimum-width boundary badges stay visible at both Timeline viewport edges', async ({ page }) => {
   const now = Date.parse('2026-09-08T21:00:00Z');
+  // mount() reads Date.now(); pin it so the fixed items keep the same scale as real days pass.
+  await page.clock.setFixedTime(now);
   await mount(page, { view: { start: now - 9 * 24 * HOUR, end: now, focusedAt: now - 4 * 24 * HOUR }, rows: [{ id: 'one', title: 'One' }], items: [
     { id: 'entry:first-edge', url: 'https://example.com/first', title: 'First', startedAt: now - 8 * 24 * HOUR, endedAt: now - 8 * 24 * HOUR + 5_000, rowId: 'one', isEditable: true },
     { id: 'entry:last-edge', url: 'https://example.com/last', title: 'Last', startedAt: now - 24 * HOUR, endedAt: now - 24 * HOUR + 5_000, rowId: 'one', isEditable: true },
@@ -892,6 +894,8 @@ test('minimum-width boundary badges stay visible at both Timeline viewport edges
 test('minimum-width badges paint above adjacent task blocks', async ({ page }) => {
   const now = Date.parse('2026-09-08T21:00:00Z');
   const start = now - 4 * 24 * HOUR;
+  // mount() reads Date.now(); pin it so the four-day scale does not keep shrinking as real days pass.
+  await page.clock.setFixedTime(now);
   await mount(page, { rows: [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }], items: [
     { id: 'entry:before', url: 'https://example.com/before', title: 'Before', startedAt: start, endedAt: start + 5_000, rowId: 'one', isEditable: true },
     { id: 'entry:middle', url: 'https://example.com/middle', title: 'Middle', startedAt: start + 5_000, endedAt: start + 10_000, rowId: 'one', isEditable: true },
@@ -1005,6 +1009,8 @@ test('details actions always target the task currently shown', async ({ page }) 
   const second = page.locator('#timeline .task').nth(1);
   await first.click();
   await second.hover();
+  // Background renders (such as the debounced ResizeObserver render after mount) must not move details off the hovered task.
+  await page.evaluate(() => window.__timeline.__timeline._renderAll({ invalidateRulerScales: false }));
   const state = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     return {

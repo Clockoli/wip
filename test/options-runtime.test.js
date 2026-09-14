@@ -461,11 +461,13 @@ test('editing any settings section clears persistent feedback and stored textare
     assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
   }
   const address = page.nodes.get('seller-address'), notes = page.nodes.get('invoice-notes');
+  // A 1px border on each side sits outside scrollHeight under border-box sizing.
   address.scrollHeight = 48; notes.scrollHeight = 72;
+  Object.assign(address, { offsetHeight: 50, clientHeight: 48 }); Object.assign(notes, { offsetHeight: 74, clientHeight: 72 });
   page.context.renderInvoicingPreferences(preferences);
-  assert.equal(address.style.height, '48px'); assert.equal(notes.style.height, '72px');
+  assert.equal(address.style.height, '50px'); assert.equal(notes.style.height, '74px');
   address.scrollHeight = 96; address.listeners.input();
-  assert.equal(address.style.height, '96px');
+  assert.equal(address.style.height, '98px');
 });
 
 test('hidden invoicing textareas keep their height when layout reports zero scroll height', () => {
