@@ -1009,6 +1009,8 @@ test('details actions always target the task currently shown', async ({ page }) 
   const second = page.locator('#timeline .task').nth(1);
   await first.click();
   await second.hover();
+  // Background renders (such as the debounced ResizeObserver render after mount) must not move details off the hovered task.
+  await page.evaluate(() => window.__timeline.__timeline._renderAll({ invalidateRulerScales: false }));
   const state = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     return {

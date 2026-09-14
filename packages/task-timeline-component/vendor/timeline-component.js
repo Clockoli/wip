@@ -2567,7 +2567,12 @@
     _renderTasks() {
       this.taskRow.innerHTML = '';
       this.editGuideLayer.innerHTML = '';
-      if (!this.editState) this._clearTaskDetails();
+      if (!this.editState) {
+        // Re-rendering must not move details off the task they show (for example a hovered block during a resize render).
+        const shown = this.detailsKey == null ? null : this._findTask(this.detailsKey);
+        if (shown) this._showTaskDetails(shown);
+        else this._clearTaskDetails();
+      }
 
       for (let i = 1; i < this.rowValues.length; i++) {
         const line = document.createElement('div');
