@@ -282,7 +282,8 @@ test('multi-repository routing stays top-level while secondary settings remain g
 test('connected repository details are rendered per destination rather than as one singleton card', () => {
   assert.doesNotMatch(source, /id="setup-complete"|id="repository-verification"|id="connected-storage"/);
   assert.match(script, /function renderDestinationCard\(destination, isDefault\)/);
-  assert.match(script, /article\.dataset\.destinationId = destination\.id/);
+  assert.match(script, /document\.createElement\('details'\)/);
+  assert.match(script, /const header = document\.createElement\('summary'\)/);
   assert.match(script, /repositoryMetadata\(destination\)/);
 });
 

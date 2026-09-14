@@ -291,8 +291,8 @@ function renderRemoval(container, destination) {
 }
 
 function renderDestinationCard(destination, isDefault) {
-  const article = document.createElement('article'); article.className = 'time-repository'; article.dataset.destinationId = destination.id;
-  const header = document.createElement('div'); header.className = 'repository-card-heading';
+  const article = document.createElement('details'); article.className = 'time-repository'; article.dataset.destinationId = destination.id;
+  const header = document.createElement('summary'); header.className = 'repository-card-heading';
   const title = document.createElement('h3'); title.textContent = destinationLabel(destination);
   const badges = document.createElement('div'); badges.className = 'repository-badges';
   appendBadge(badges, destinationStatus(destination), destinationNeedsAttention(destination) ? 'attention' : 'ready');
