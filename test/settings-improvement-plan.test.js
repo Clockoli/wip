@@ -57,8 +57,9 @@ test('connected settings separates account controls from the destination registr
     assert.match(connected, new RegExp(`id="${id}"`));
   }
   assert.doesNotMatch(connected, /connected-repository-link|connected-branch-link|connected-storage/);
-  assert.match(html, /id="time-repositories"[\s\S]*id="time-repository-list"/);
-  assert.match(script, /function renderDestinationCards/);
+  assert.match(html, /id="time-repositories"[\s\S]*id="time-repositories-details"[^>]*>[\s\S]*id="time-repository-list"/);
+  assert.match(html, /id="add-time-repository"[^>]*class="button-link secondary-link time-repositories-add"/);
+  assert.match(html, /id="manage-authorization"[^>]*class="button-link secondary-link"/);
   assert.match(styles, /\.time-repository/);
   assert.match(styles, /\.connected-secondary-actions/);
 });

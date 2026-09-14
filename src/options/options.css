@@ -10,6 +10,9 @@
 .danger-link:hover{border-color:var(--button-danger-borderColor-hover);background:var(--button-danger-bgColor-hover);color:var(--button-danger-fgColor-hover)}
 .danger-link:active{background:var(--button-danger-bgColor-active);color:var(--button-danger-fgColor-active)}
 .connected-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:18px}
+.time-repositories-details{margin-top:18px;border-top:1px solid var(--borderColor-muted);border-bottom:1px solid var(--borderColor-muted)}
+.time-repositories-details summary{padding:12px 0;color:var(--fgColor-default);cursor:pointer;font-weight:600}
+.time-repositories-add{display:inline-block;margin-top:16px}
 .connected-action{display:flex;align-items:flex-start;flex-direction:column;gap:8px}
 .connected-action .help{margin:0}
 .connected-action button,.connected-action .button-link{display:flex;align-items:center;justify-content:center;width:100%;min-height:58px;text-align:center}

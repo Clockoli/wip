@@ -118,7 +118,7 @@
               <p class="help">Need a new time repository? <a id="modal-new-time-repository" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create one on GitHub.</a></p>
             </div>
           </dialog>
-          <fieldset>
+          <fieldset id="repository-choice-fieldset" hidden>
             <legend id="repository-choice-legend">Repositories Clockoli can use for data storage</legend>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
@@ -153,12 +153,14 @@
   <section id="time-repositories" class="card" aria-labelledby="time-repositories-title" hidden>
     <div class="card-heading">
       <div><h2 id="time-repositories-title" tabindex="-1">Time repositories</h2><p>Clockoli stores time in dedicated private GitHub repositories. Ready repositories are available automatically, regardless of who owns them.</p></div>
-      <button id="add-time-repository" type="button">Add time repository</button>
     </div>
     <p id="pat-repository-limitation" class="notice" hidden>Personal access token compatibility mode supports one time repository only. Connect with the Clockoli GitHub App to use multiple repositories.</p>
     <p id="time-repositories-empty" class="help">No time repositories are connected. Use one that already contains Clockoli data, or set up a new private repository.</p>
-    <div id="time-repository-list" class="time-repository-list"></div>
-
+    <details id="time-repositories-details" class="time-repositories-details">
+      <summary>Connected repositories</summary>
+      <div id="time-repository-list" class="time-repository-list"></div>
+    </details>
+    <a id="add-time-repository" class="button-link secondary-link time-repositories-add" href="#">Add time repository</a>
   </section>
 
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>

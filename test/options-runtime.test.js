@@ -787,6 +787,7 @@ test('repository-first empty discovery asks for a concrete target before offerin
   assert.equal(page.nodes.get('repository-step').hidden, false);
   assert.equal(page.nodes.get('current-step').textContent, '2');
   assert.equal(page.nodes.get('repository-access-panel').hidden, true);
+  assert.equal(page.nodes.get('repository-choice-fieldset').hidden, true);
   assert.match(page.nodes.get('message').textContent, /Enter a repository URL or owner\/name/);
   assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);

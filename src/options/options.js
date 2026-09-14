@@ -653,7 +653,8 @@ function renderRepositories(result) {
   selectedRepository = repositoryInputDirty ? null : repositoryTarget
     ? repositories.find(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase()) || null
     : selectOnlyEligibleRepository(repositories.filter(repositoryCanBeSelected));
-  $('repository-search-label').hidden = false;
+  $('repository-choice-fieldset').hidden = repositories.length === 0;
+  $('repository-search-label').hidden = repositories.length === 0;
   updateRepositoryConfirmation();
   renderRepositoryList();
   renderRepositoryAccess();
@@ -1312,7 +1313,8 @@ $('finish-setup').addEventListener('click', async () => {
   renderState();
   message('Setup complete. Add more time repositories here whenever you need them.', 'success');
 });
-$('add-time-repository').addEventListener('click', async () => {
+$('add-time-repository').addEventListener('click', async event => {
+  event.preventDefault();
   stopRepositoryMonitoring();
   setupCancelled = false;
   showOnboarding = true;
