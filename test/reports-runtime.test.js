@@ -531,6 +531,7 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(page.pdfExports.length, 1);
   const [job] = page.pdfExports;
   assert.equal(job.source, page.nodes.get('invoice-preview').children[0]);
+  assert.match(page.textOf(job.source), /Sergey\u00a0Nikolaev/);
   assert.equal(job.source.classList.contains('invoice-pdf-export'), false);
   assert.equal(job.options.filename, 'Sergey-Nikolaev-INV-2026-0007.pdf');
   assert.equal(job.options.image.type, 'jpeg');

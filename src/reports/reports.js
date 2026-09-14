@@ -120,7 +120,7 @@ function renderInvoiceDocument(container, invoice) {
   const documentRoot = invoiceNode('article', 'invoice-document');
   const heading = invoiceNode('header', 'invoice-document-heading');
   const seller = invoiceParty('From', invoice.seller);
-  if (seller) { seller.className += ' invoice-seller'; seller.children[0].textContent = invoice.seller.name || 'From'; heading.append(seller); }
+  if (seller) { seller.className += ' invoice-seller'; seller.children[0].textContent = String(invoice.seller.name || 'From').trim().split(/\s+/).join('\u00a0'); heading.append(seller); }
   const identity = invoiceNode('div', 'invoice-identity'); identity.append(invoiceNode('h1', '', `INVOICE  ${invoice.number}`));
   const dates = invoiceNode('dl', 'invoice-dates');
   for (const [label, value] of [['Issued', invoice.issueDate], ['Due', invoice.dueDate]]) {
