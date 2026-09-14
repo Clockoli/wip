@@ -318,6 +318,7 @@ test('invoice dialog renders the filtered records and reserves one number across
   const reserve = page.requests.at(-1);
   assert.equal(reserve.message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 7 }, reserve); await print;
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
   const before = page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length;
   await page.fire('create-invoice'); await page.settle();
   await page.fire('invoice-print'); await page.settle();
@@ -517,7 +518,12 @@ test('Save as PDF uses the client first-last and invoice number filename', async
   assert.equal(page.prints.length, 0);
   assert.equal(page.blobs.length, 1);
   assert.equal(page.blobs[0].type, 'application/pdf');
-  assert.equal((await page.blobs[0].text()).startsWith('%PDF-1.4'), true);
+  const pdf = await page.blobs[0].text();
+  assert.equal(pdf.startsWith('%PDF-1.4\n'), true);
+  assert.equal(pdf.includes('xref\n0 6\n'), true);
+  assert.equal(pdf.includes('trailer\n<< /Size 6 /Root 1 0 R >>'), true);
+  assert.equal(pdf.includes('\\n1 0 obj'), false);
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
 });
 
 

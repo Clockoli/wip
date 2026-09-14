@@ -190,15 +190,15 @@ function buildInvoicePdf(invoice) {
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    `<< /Length ${new TextEncoder().encode(streamLines.join('\\n')).length} >>\\nstream\\n${streamLines.join('\\n')}\\nendstream`,
+    `<< /Length ${new TextEncoder().encode(streamLines.join('\n')).length} >>\nstream\n${streamLines.join('\n')}\nendstream`,
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ];
-  let pdf = '%PDF-1.4\\n%\xE2\xE3\xCF\xD3\\n', offsets = [0];
-  for (let index = 0; index < objects.length; index += 1) { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\\n${objects[index]}\\nendobj\\n`; }
+  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', offsets = [0];
+  for (let index = 0; index < objects.length; index += 1) { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`; }
   const xrefOffset = new TextEncoder().encode(pdf).length;
-  pdf += `xref\\n0 ${objects.length + 1}\\n0000000000 65535 f \\n`;
-  for (let index = 1; index < offsets.length; index += 1) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \\n`;
-  pdf += `trailer\\n<< /Size ${objects.length + 1} /Root 1 0 R >>\\nstartxref\\n${xrefOffset}\\n%%EOF`;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index < offsets.length; index += 1) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
   return new TextEncoder().encode(pdf);
 }
 
@@ -954,14 +954,12 @@ async function printInvoice({ saveAsPdf = false } = {}) {
     const invoice = await ensureReservedInvoice();
     if (saveAsPdf) {
       saveInvoicePdf(invoice);
-      $('invoice-dialog').close();
       setInvoiceActionsAvailable(Boolean(state.invoice));
       return;
     }
     const previousTitle = document.title;
     renderInvoiceDocument($('print-invoice'), invoice); document.body.classList.add('printing-invoice');
     document.title = `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
-    $('invoice-dialog').close();
     addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
     window.print();
   } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not process invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
