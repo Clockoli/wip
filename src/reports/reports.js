@@ -198,7 +198,7 @@ function buildInvoicePdf(invoice) {
     const fontObjectNumber = 3 + pageCount * 2;
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObjectNumber} 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`,
-      `<< /Length ${new TextEncoder().encode(streamLines.join('\\n')).length} >>\\nstream\\n${streamLines.join('\\n')}\\nendstream`,
+      `<< /Length ${new TextEncoder().encode(streamLines.join('\n')).length} >>\nstream\n${streamLines.join('\n')}\nendstream`,
     );
   }
   objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');

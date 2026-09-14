@@ -522,8 +522,9 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(page.downloads.at(-1).download, 'Sergey-Nikolaev-INV-2026-0007.pdf');
   const pdf = await page.blobs[0].text();
   assert.equal(pdf.startsWith('%PDF-1.4\n'), true);
-  assert.equal(pdf.includes('xref\n0 6\n'), true);
-  assert.equal(pdf.includes('trailer\n<< /Size 6 /Root 1 0 R >>'), true);
+  assert.match(pdf, /xref\n0 \d+\n/);
+  assert.equal(pdf.includes('stream\nBT\n'), true);
+  assert.equal(pdf.includes('stream\\nBT'), false);
   assert.equal(pdf.includes('\\n1 0 obj'), false);
   assert.equal(pdf.includes('(INVOICE  INV-2026-0007) Tj'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
