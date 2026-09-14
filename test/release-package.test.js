@@ -82,6 +82,8 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/times/times.css',
   'src/times/times.html',
   'src/ui/running-status.js',
+  'src/vendor/html2pdf.LICENSE.txt',
+  'src/vendor/html2pdf.bundle.min.js',
 ];
 
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {

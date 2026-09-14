@@ -131,8 +131,8 @@ function renderInvoiceDocument(container, invoice) {
   if (client) parties.append(client);
   if (parties.children.length) documentRoot.append(parties);
   documentRoot.append(invoiceNode('p', 'invoice-period', `Period: ${formatInvoiceDate(invoice.period.startDate)} — ${formatInvoiceDate(invoice.period.endDate)}`));
-  const table = invoiceNode('table', 'invoice-table'), head = invoiceNode('thead'), headRow = invoiceNode('tr');
   const byDay = invoice.groupBy === 'day';
+  const table = invoiceNode('table', `invoice-table invoice-table-${byDay ? 'by-day' : 'by-task'}`), head = invoiceNode('thead'), headRow = invoiceNode('tr');
   for (const label of [...(byDay ? ['Date'] : []), 'Task', 'Description', 'Hours', 'Amount']) {
     const className = ['Date', 'Task', 'Description'].includes(label) ? 'invoice-text-cell' : 'invoice-numeric-cell';
     headRow.append(invoiceNode('th', className, label));
@@ -152,7 +152,7 @@ function renderInvoiceDocument(container, invoice) {
   const foot = invoiceNode('tfoot');
   const totalRow = (label, value) => {
     const row = invoiceNode('tr', 'invoice-total-row'), labelCell = invoiceNode('th', '', label);
-    labelCell.colSpan = byDay ? 4 : 3; row.append(labelCell, invoiceNode('td', '', formatMoney(value, invoice.currency, invoice.currencyPosition))); return row;
+    labelCell.colSpan = byDay ? 4 : 3; row.append(labelCell, invoiceNode('td', 'invoice-numeric-cell', formatMoney(value, invoice.currency, invoice.currencyPosition))); return row;
   };
   foot.append(totalRow('Subtotal', invoice.subtotalMinor));
   if (invoice.taxPercent !== 0) foot.append(totalRow(`VAT ${invoice.taxPercent}%`, invoice.taxMinor));
@@ -164,57 +164,23 @@ function renderInvoiceDocument(container, invoice) {
   container.append(documentRoot);
 }
 
-function pdfLiteralText(value) {
-  const ascii = String(value).normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^\x20-\x7E]/g, '?');
-  return `(${ascii.replace(/[\\()]/g, '\\$&')})`;
-}
-
-function buildInvoicePdf(invoice) {
-  const lines = [`INVOICE  ${invoice.number}`, `Issued: ${formatInvoiceDate(invoice.issueDate)}    Due: ${formatInvoiceDate(invoice.dueDate)}`];
-  if (invoice.seller?.name) lines.push(`From: ${invoice.seller.name}`);
-  if (invoice.client?.name) lines.push(`Bill to: ${invoice.client.name}`);
-  lines.push(`Period: ${formatInvoiceDate(invoice.period.startDate)} - ${formatInvoiceDate(invoice.period.endDate)}`, '');
-  lines.push(invoice.groupBy === 'day' ? 'Date | Task | Description | Hours | Amount' : 'Task | Description | Hours | Amount');
-  for (const line of invoice.lines) {
-    const prefix = invoice.groupBy === 'day' ? `${formatInvoiceDate(line.date || '')} | ` : '';
-    lines.push(`${prefix}${line.taskTitle || line.taskUrl || ''} | ${line.description || ''} | ${line.hours === undefined ? '' : line.hours.toFixed(2)} | ${formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)}`);
+async function saveInvoicePdf(invoice) {
+  const source = $('invoice-preview').children[0];
+  if (!source || typeof globalThis.html2pdf !== 'function') throw new Error('PDF export is unavailable. Reload Clockoli and try again.');
+  source.classList.add('invoice-pdf-export');
+  try {
+    await globalThis.html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename: invoicePdfFilename(invoice),
+      image: { type: 'jpeg', quality: 0.98 },
+      enableLinks: true,
+      html2canvas: { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.invoice-document-heading', '.invoice-parties', '.invoice-total-row', '.invoice-unbilled', '.invoice-footnote', '.invoice-terms', '.invoice-notes'] },
+    }).from(source).save();
+  } finally {
+    source.classList.remove('invoice-pdf-export');
   }
-  lines.push('', `Subtotal: ${formatMoney(invoice.subtotalMinor, invoice.currency, invoice.currencyPosition)}`);
-  if (invoice.taxPercent !== 0) lines.push(`VAT ${invoice.taxPercent}%: ${formatMoney(invoice.taxMinor, invoice.currency, invoice.currencyPosition)}`);
-  lines.push(`Total: ${formatMoney(invoice.totalMinor, invoice.currency, invoice.currencyPosition)}`);
-  if (invoice.notes) lines.push('', invoice.notes);
-  const wrapped = lines.flatMap(line => { const text = String(line); if (!text) return ['']; const result = []; for (let index = 0; index < text.length; index += 88) result.push(text.slice(index, index + 88)); return result; });
-  const pageLines = [];
-  for (let index = 0; index < wrapped.length; index += 42) pageLines.push(wrapped.slice(index, index + 42));
-  const pageCount = Math.max(1, pageLines.length);
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    `<< /Type /Pages /Kids [${pageLines.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
-  ];
-  for (const linesForPage of pageLines) {
-    const streamLines = ['BT', '/F1 10 Tf', '50 780 Td', ...linesForPage.map((line, index) => `${pdfLiteralText(line)} Tj${index === linesForPage.length - 1 ? '' : ' 0 -16 Td'}`), 'ET'];
-    const pageObjectNumber = objects.length + 1;
-    const contentObjectNumber = pageObjectNumber + 1;
-    const fontObjectNumber = 3 + pageCount * 2;
-    objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontObjectNumber} 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`,
-      `<< /Length ${new TextEncoder().encode(streamLines.join('\n')).length} >>\nstream\n${streamLines.join('\n')}\nendstream`,
-    );
-  }
-  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n', offsets = [0];
-  for (let index = 0; index < objects.length; index += 1) { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`; }
-  const xrefOffset = new TextEncoder().encode(pdf).length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (let index = 1; index < offsets.length; index += 1) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return new TextEncoder().encode(pdf);
-}
-
-function saveInvoicePdf(invoice) {
-  const blob = new Blob([buildInvoicePdf(invoice)], { type: 'application/pdf' });
-  const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = invoicePdfFilename(invoice); anchor.click();
-  setTimeout(() => URL.revokeObjectURL(anchor.href), 0);
 }
 
 function formatMetricValue(value, metric, { tooltip = false } = {}) {
@@ -962,7 +928,7 @@ async function printInvoice({ saveAsPdf = false } = {}) {
   try {
     const invoice = await ensureReservedInvoice();
     if (saveAsPdf) {
-      saveInvoicePdf(invoice);
+      await saveInvoicePdf(invoice);
       setInvoiceActionsAvailable(Boolean(state.invoice));
       return;
     }

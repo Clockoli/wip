@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const html = fs.readFileSync(new URL('../src/reports/reports.html', import.meta.url), 'utf8');
 const js = fs.readFileSync(new URL('../src/reports/reports.js', import.meta.url), 'utf8');
 const reporting = fs.readFileSync(new URL('../src/domain/reporting.js', import.meta.url), 'utf8');
 const worker = fs.readFileSync(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const styles = fs.readFileSync(new URL('../src/reports/reports.css', import.meta.url), 'utf8');
+const html2pdfBundle = fs.readFileSync(new URL('../src/vendor/html2pdf.bundle.min.js', import.meta.url));
+
+test('vendored html2pdf bundle is the reviewed 0.14.0 artifact', () => {
+  assert.equal(createHash('sha256').update(html2pdfBundle).digest('hex'), '2be8dd6f51226c102898621d20c355cf4da81d596846622ddb13b5b55709496e');
+});
 
 test('reports page exposes periods, independent chart axes, facets, and direct export links', () => {
   for (const value of ['this-week', 'last-week', 'this-month', 'last-month', 'this-quarter', 'last-quarter', 'this-year', 'last-year', 'today', 'yesterday', 'last-7-days', 'last-30-days']) assert.match(html, new RegExp(`id="preset-${value}"`));
@@ -102,12 +108,13 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(js, /type:\s*'RESERVE_INVOICE_NUMBER'/);
   assert.match(js, /function renderInvoiceDocument\(container, invoice\)/);
   assert.match(js, /invoice\.seller\?\.name/);
-  assert.match(js, /const pageLines = \[\];/);
-  assert.match(js, /for \(let index = 0; index < wrapped\.length; index \+= 42\)/);
-  assert.doesNotMatch(js, /\.slice\(0, 45\)/);
-  assert.doesNotMatch(js, /function pdfHexText\(value\)/);
-  assert.match(js, /application\/pdf/);
-  assert.match(js, /if \(saveAsPdf\) \{[\s\S]*saveInvoicePdf\(invoice\)/);
+  assert.match(html, /<script src="\.\.\/vendor\/html2pdf\.bundle\.min\.js"><\/script>/);
+  assert.match(html, /<link rel="license" href="\.\.\/vendor\/html2pdf\.LICENSE\.txt">/);
+  assert.match(js, /globalThis\.html2pdf\(\)\.set\(/);
+  assert.match(js, /html2canvas:\s*\{[^}]*scale:\s*2/);
+  assert.match(js, /pagebreak:\s*\{[^}]*avoid:\s*\['tr'/);
+  assert.doesNotMatch(js, /function buildInvoicePdf|function pdfLiteralText|new Blob\(\[buildInvoicePdf/);
+  assert.match(js, /if \(saveAsPdf\) \{[\s\S]*await saveInvoicePdf\(invoice\)/);
   assert.match(js, /formatInvoiceDate/);
   assert.match(js, /invoiceTaskCell/);
   assert.doesNotMatch(js, /'Rate'/);
@@ -119,6 +126,10 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.ok(additional.indexOf('id="invoice-extra-lines"') < additional.indexOf('id="invoice-add-line"'));
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
+  assert.match(styles, /\.invoice-document\.invoice-pdf-export\{[^}]*width:718px!important/);
+  assert.match(styles, /\.invoice-pdf-export \.invoice-table\{[^}]*table-layout:fixed!important/);
+  assert.match(styles, /\.invoice-pdf-export tr,[^{]+\{break-inside:avoid;page-break-inside:avoid\}/);
+  assert.match(styles, /\.invoice-pdf-export \.invoice-table-by-task th:nth-child\(4\)\{width:18%\}/);
 });
 
 test('invoice controls name the billing period and keep only print exports', () => {

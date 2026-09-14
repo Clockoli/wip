@@ -61,9 +61,18 @@ function harness(preferences = {}) {
   document.body = new Node('body'); document.listeners = {}; document.addEventListener = (type, handler) => { document.listeners[type] = handler; };
   document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => new Node(tag);
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
-  const requests = [], downloads = [], prints = [], listeners = [], blobs = [], windowListeners = {};
+  const requests = [], downloads = [], prints = [], listeners = [], blobs = [], pdfExports = [], windowListeners = {};
+  const html2pdf = () => {
+    const job = {};
+    const worker = {
+      set(options) { job.options = options; return worker; },
+      from(sourceNode) { job.source = sourceNode; return worker; },
+      async save() { pdfExports.push(job); },
+    };
+    return worker;
+  };
   const context = vm.createContext({
-    ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
+    ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
@@ -73,7 +82,7 @@ function harness(preferences = {}) {
   const reply = async (data, request = requests.at(-1)) => { request.callback(data instanceof Error ? { ok: false, error: { message: data.message } } : { ok: true, data }); await settle(); };
   const fire = (id, type = 'click') => nodes.get(id).listeners[type]({ preventDefault() {}, target: nodes.get(id) });
   const textOf = node => `${node?.textContent || ''}${(node?.children || []).map(textOf).join('')}`;
-  return { nodes, document, context, requests, downloads, prints, listeners, blobs, reply, settle, fire, textOf,
+  return { nodes, document, context, requests, downloads, prints, listeners, blobs, pdfExports, reply, settle, fire, textOf,
     select: (key, value, checked) => {
       const input = nodes.get(`${key}-facet`).children.flatMap(label => label.children).find(node => node.value === value);
       assert.ok(input, `visible ${key} checkbox ${value}`);
@@ -517,17 +526,34 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   const saving = page.fire('invoice-save-pdf');
   await page.reply({ sequence: 7 }); await saving;
   assert.equal(page.prints.length, 0);
-  assert.equal(page.blobs.length, 1);
-  assert.equal(page.blobs[0].type, 'application/pdf');
-  assert.equal(page.downloads.at(-1).download, 'Sergey-Nikolaev-INV-2026-0007.pdf');
-  const pdf = await page.blobs[0].text();
-  assert.equal(pdf.startsWith('%PDF-1.4\n'), true);
-  assert.match(pdf, /xref\n0 \d+\n/);
-  assert.equal(pdf.includes('stream\nBT\n'), true);
-  assert.equal(pdf.includes('stream\\nBT'), false);
-  assert.equal(pdf.includes('\\n1 0 obj'), false);
-  assert.equal(pdf.includes('(INVOICE  INV-2026-0007) Tj'), true);
+  assert.equal(page.blobs.length, 0);
+  assert.equal(page.downloads.length, 0);
+  assert.equal(page.pdfExports.length, 1);
+  const [job] = page.pdfExports;
+  assert.equal(job.source, page.nodes.get('invoice-preview').children[0]);
+  assert.equal(job.source.classList.contains('invoice-pdf-export'), false);
+  assert.equal(job.options.filename, 'Sergey-Nikolaev-INV-2026-0007.pdf');
+  assert.equal(job.options.image.type, 'jpeg');
+  assert.equal(job.options.image.quality, 0.98);
+  assert.equal(job.options.html2canvas.scale, 2);
+  assert.equal(job.options.jsPDF.format, 'a4');
+  assert.equal(job.options.pagebreak.avoid.includes('tr'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
+});
+test('failed HTML-to-PDF export restores preview state and reports the error', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  let source;
+  page.context.html2pdf = () => {
+    const worker = { set() { return worker; }, from(value) { source = value; return worker; }, async save() { throw new Error('PDF render failed'); } };
+    return worker;
+  };
+  const saving = page.fire('invoice-save-pdf');
+  await page.reply({ sequence: 7 }); await saving;
+  assert.equal(source.classList.contains('invoice-pdf-export'), false);
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, 'PDF render failed');
 });
 
 

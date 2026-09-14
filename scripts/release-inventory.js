@@ -21,7 +21,7 @@ function localReferences(file, text) {
   const references = [];
   const extension = path.extname(file);
   if (extension === '.js') {
-    for (const match of text.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/g)) references.push(match[1]);
+    for (const match of text.matchAll(/(?<![\w$.])(?:from\s+|import\s*)["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.html') {
     for (const match of text.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.css') {

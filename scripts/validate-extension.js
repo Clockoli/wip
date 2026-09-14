@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const root = process.cwd();
 const fail = message => { throw new Error(message); };
@@ -34,6 +35,13 @@ for (const file of htmlFiles) {
 }
 
 const generatedBundles = new Set(['src/content/task-timeline-component.js']);
+const reviewedBundleHashes = new Map([
+  ['src/vendor/html2pdf.bundle.min.js', '2be8dd6f51226c102898621d20c355cf4da81d596846622ddb13b5b55709496e'],
+]);
+for (const [file, expected] of reviewedBundleHashes) {
+  const actual = createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex');
+  if (actual !== expected) fail(`Reviewed bundle hash mismatch: ${file}`);
+}
 const jsFiles = [];
 function walk(directory) {
   for (const entry of fs.readdirSync(path.join(root, directory), { withFileTypes: true })) {
@@ -45,8 +53,8 @@ function walk(directory) {
 walk('src');
 for (const file of jsFiles) {
   const code = read(file);
-  if (!generatedBundles.has(file) && /\.(innerHTML|outerHTML)\s*=/.test(code)) fail(`Unsafe HTML assignment in ${file}`);
-  if (!generatedBundles.has(file) && /\beval\s*\(|new\s+Function\s*\(/.test(code)) fail(`Dynamic code execution in ${file}`);
+  if (!generatedBundles.has(file) && !reviewedBundleHashes.has(file) && /\.(innerHTML|outerHTML)\s*=/.test(code)) fail(`Unsafe HTML assignment in ${file}`);
+  if (!generatedBundles.has(file) && /\beval\s*\(|\b(?:new\s+)?Function\s*\(/.test(code)) fail(`Dynamic code execution in ${file}`);
 }
 const content = read('src/content/github.js');
 if (/Authorization|Bearer|\btoken\b/i.test(content)) fail('Content script must not contain credential handling');
