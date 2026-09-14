@@ -133,15 +133,18 @@ function renderInvoiceDocument(container, invoice) {
   documentRoot.append(invoiceNode('p', 'invoice-period', `Period: ${formatInvoiceDate(invoice.period.startDate)} — ${formatInvoiceDate(invoice.period.endDate)}`));
   const table = invoiceNode('table', 'invoice-table'), head = invoiceNode('thead'), headRow = invoiceNode('tr');
   const byDay = invoice.groupBy === 'day';
-  for (const label of [...(byDay ? ['Date'] : []), 'Task', 'Description', 'Hours', 'Amount']) headRow.append(invoiceNode('th', ['Date', 'Task', 'Description'].includes(label) ? 'invoice-text-cell' : '', label));
+  for (const label of [...(byDay ? ['Date'] : []), 'Task', 'Description', 'Hours', 'Amount']) {
+    const className = ['Date', 'Task', 'Description'].includes(label) ? 'invoice-text-cell' : 'invoice-numeric-cell';
+    headRow.append(invoiceNode('th', className, label));
+  }
   head.append(headRow); table.append(head);
   const body = invoiceNode('tbody');
   for (const line of invoice.lines) {
     const row = invoiceNode('tr');
     if (byDay) row.append(invoiceNode('td', 'invoice-date-cell', formatInvoiceDate(line.date || '')));
     row.append(
-      invoiceTaskCell(line), invoiceNode('td', 'invoice-text-cell', line.description || ''), invoiceNode('td', '', line.hours === undefined ? '' : line.hours.toFixed(2)),
-      invoiceNode('td', '', formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)),
+      invoiceTaskCell(line), invoiceNode('td', 'invoice-text-cell', line.description || ''), invoiceNode('td', 'invoice-numeric-cell', line.hours === undefined ? '' : line.hours.toFixed(2)),
+      invoiceNode('td', 'invoice-numeric-cell', formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)),
     );
     body.append(row);
   }
@@ -159,6 +162,50 @@ function renderInvoiceDocument(container, invoice) {
   documentRoot.append(invoiceNode('p', 'invoice-terms', `Payment terms: ${invoice.paymentTermsDays === 0 ? 'Due on receipt' : `Net ${invoice.paymentTermsDays}`}`));
   if (invoice.notes) documentRoot.append(invoiceNode('p', 'invoice-notes', invoice.notes));
   container.append(documentRoot);
+}
+
+function pdfHexText(value) {
+  let hex = 'FEFF';
+  for (const unit of String(value).slice(0, 2000)) hex += unit.charCodeAt(0).toString(16).padStart(4, '0');
+  return `<${hex}>`;
+}
+
+function buildInvoicePdf(invoice) {
+  const lines = [`INVOICE  ${invoice.number}`, `Issued: ${formatInvoiceDate(invoice.issueDate)}    Due: ${formatInvoiceDate(invoice.dueDate)}`];
+  if (invoice.seller?.name) lines.push(`From: ${invoice.seller.name}`);
+  if (invoice.client?.name) lines.push(`Bill to: ${invoice.client.name}`);
+  lines.push(`Period: ${formatInvoiceDate(invoice.period.startDate)} - ${formatInvoiceDate(invoice.period.endDate)}`, '');
+  lines.push(invoice.groupBy === 'day' ? 'Date | Task | Description | Hours | Amount' : 'Task | Description | Hours | Amount');
+  for (const line of invoice.lines) {
+    const prefix = invoice.groupBy === 'day' ? `${formatInvoiceDate(line.date || '')} | ` : '';
+    lines.push(`${prefix}${line.taskTitle || line.taskUrl || ''} | ${line.description || ''} | ${line.hours === undefined ? '' : line.hours.toFixed(2)} | ${formatMoney(line.amountMinor, invoice.currency, invoice.currencyPosition)}`);
+  }
+  lines.push('', `Subtotal: ${formatMoney(invoice.subtotalMinor, invoice.currency, invoice.currencyPosition)}`);
+  if (invoice.taxPercent !== 0) lines.push(`VAT ${invoice.taxPercent}%: ${formatMoney(invoice.taxMinor, invoice.currency, invoice.currencyPosition)}`);
+  lines.push(`Total: ${formatMoney(invoice.totalMinor, invoice.currency, invoice.currencyPosition)}`);
+  if (invoice.notes) lines.push('', invoice.notes);
+  const wrapped = lines.flatMap(line => { const text = String(line); if (!text) return ['']; const result = []; for (let index = 0; index < text.length; index += 88) result.push(text.slice(index, index + 88)); return result; }).slice(0, 45);
+  const streamLines = ['BT', '/F1 10 Tf', '50 780 Td', ...wrapped.map((line, index) => `${pdfHexText(line)} Tj${index === wrapped.length - 1 ? '' : ' 0 -16 Td'}`), 'ET'];
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${new TextEncoder().encode(streamLines.join('\\n')).length} >>\\nstream\\n${streamLines.join('\\n')}\\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.4\\n%\xE2\xE3\xCF\xD3\\n', offsets = [0];
+  for (let index = 0; index < objects.length; index += 1) { offsets.push(new TextEncoder().encode(pdf).length); pdf += `${index + 1} 0 obj\\n${objects[index]}\\nendobj\\n`; }
+  const xrefOffset = new TextEncoder().encode(pdf).length;
+  pdf += `xref\\n0 ${objects.length + 1}\\n0000000000 65535 f \\n`;
+  for (let index = 1; index < offsets.length; index += 1) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \\n`;
+  pdf += `trailer\\n<< /Size ${objects.length + 1} /Root 1 0 R >>\\nstartxref\\n${xrefOffset}\\n%%EOF`;
+  return new TextEncoder().encode(pdf);
+}
+
+function saveInvoicePdf(invoice) {
+  const blob = new Blob([buildInvoicePdf(invoice)], { type: 'application/pdf' });
+  const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = invoicePdfFilename(invoice); anchor.click();
+  setTimeout(() => URL.revokeObjectURL(anchor.href), 0);
 }
 
 function formatMetricValue(value, metric, { tooltip = false } = {}) {
@@ -904,14 +951,20 @@ function invoicePdfFilename(invoice) {
 async function printInvoice({ saveAsPdf = false } = {}) {
   setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
   try {
-    const invoice = await ensureReservedInvoice(), previousTitle = document.title;
+    const invoice = await ensureReservedInvoice();
+    if (saveAsPdf) {
+      saveInvoicePdf(invoice);
+      $('invoice-dialog').close();
+      setInvoiceActionsAvailable(Boolean(state.invoice));
+      return;
+    }
+    const previousTitle = document.title;
     renderInvoiceDocument($('print-invoice'), invoice); document.body.classList.add('printing-invoice');
-    const filename = invoicePdfFilename(invoice);
-    document.title = saveAsPdf ? filename.replace(/\.pdf$/, '') : `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+    document.title = `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
     $('invoice-dialog').close();
     addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
     window.print();
-  } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not print invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
+  } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not process invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
 }
 
 $('invoice-print').addEventListener('click', () => void printInvoice());

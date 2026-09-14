@@ -63,7 +63,7 @@ function harness(preferences = {}) {
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
   const requests = [], downloads = [], prints = [], listeners = [], blobs = [], windowListeners = {};
   const context = vm.createContext({
-    ...reporting, ...billing, ...invoicing, ...values, document, Blob, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
+    ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
@@ -514,7 +514,10 @@ test('Save as PDF uses the client first-last and invoice number filename', async
   await page.fire('create-invoice'); await page.settle();
   const saving = page.fire('invoice-save-pdf');
   await page.reply({ sequence: 7 }); await saving;
-  assert.deepEqual(page.prints, ['Client-One-INV-2026-0007']);
+  assert.equal(page.prints.length, 0);
+  assert.equal(page.blobs.length, 1);
+  assert.equal(page.blobs[0].type, 'application/pdf');
+  assert.equal((await page.blobs[0].text()).startsWith('%PDF-1.4'), true);
 });
 
 

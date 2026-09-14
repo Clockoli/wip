@@ -30,7 +30,7 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
   for (const file of ['src/times/times.html', 'src/times/times.css']) assert.equal(fs.existsSync(new URL(`../${file}`, import.meta.url)), true, `${file} must exist`);
   const html = read('src/times/times.html');
   assert.match(html, /clockoli-times-root/);
-  assert.match(content, /const timesMode/);
+  assert.match(content, /isolateShadowHost\(root, \{ wide: timesMode \}\)/);
   for (const value of ['today', 'yesterday', 'this-week', 'last-week', 'this-month', 'last-month', 'custom']) {
     assert.match(content, new RegExp(`['\"]${value}['\"]`));
   }

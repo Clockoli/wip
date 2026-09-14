@@ -983,12 +983,13 @@
     return null;
   }
 
-  function isolateShadowHost(node, { fullWidth = false } = {}) {
+  function isolateShadowHost(node, { fullWidth = false, wide = false } = {}) {
     const set = (property, value) => node.style?.setProperty?.(property, value, 'important');
     set('all', 'initial');
     set('box-sizing', 'border-box');
     set('position', fullWidth ? 'fixed' : 'relative');
-    set('display', fullWidth ? 'block' : 'inline-flex');
+    set('display', fullWidth || wide ? 'block' : 'inline-flex');
+    if (wide) set('width', '100%');
     if (fullWidth) {
       set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
       set('width', '100vw'); set('pointer-events', 'none');
@@ -999,7 +1000,7 @@
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
-      isolateShadowHost(root);
+      isolateShadowHost(root, { wide: timesMode });
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
