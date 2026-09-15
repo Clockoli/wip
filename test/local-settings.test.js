@@ -95,6 +95,32 @@ test('plain-text settings export excludes credentials and imports display plus b
 
 });
 
+test('routed v6 settings export round-trips invoicing and still accepts pre-invoicing billing', () => {
+  const destinations = {
+    'github:42': { repoId: 42, owner: 'acme', repo: 'time-data', branch: 'clockoli/users/1' },
+    'github:84': { repoId: 84, owner: 'acme', repo: 'shared-time', branch: 'clockoli/users/1' },
+  };
+  const billing = {
+    rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
+    invoicing: normalizeInvoicingSettings({ seller: { name: 'Alice Example' }, clients: [{ id: 'client-1', name: 'Client One' }] }),
+  };
+  const text = settingsExportText({
+    config: { recentDays: 9 }, billing, destinations, defaultDestinationId: 'github:42',
+    projects: [{ id: 'project-1', name: 'Work', substrings: ['github.com/acme/'], destinationId: 'github:42', client: 'client-1' }],
+    exportedAt: '2026-09-14T12:00:00.000Z',
+  });
+  const exported = JSON.parse(text);
+  assert.equal(exported.version, 6);
+  assert.deepEqual(Object.keys(exported.billing).sort(), ['invoicing', 'rates']);
+  const imported = parseSettingsImport(text);
+  assert.equal(imported.billing.invoicing.seller.name, 'Alice Example');
+  assert.equal(imported.projects[0].client, 'client-1');
+  assert.equal(imported.repositoryReferencesVerified, false);
+
+  delete exported.billing.invoicing;
+  assert.deepEqual(Object.keys(parseSettingsImport(JSON.stringify(exported)).billing), ['rates']);
+});
+
 test('invoicing settings populate defaults and normalize browser-local seller and clients', () => {
   const defaults = { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' };
   assert.deepEqual(normalizeInvoicingSettings(), defaults);

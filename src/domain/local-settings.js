@@ -578,8 +578,9 @@ export function parseSettingsImport(text) {
         : value.version === 4 ? ['otherProjectName,recentDays'] : ['recentDays'];
   if (!displayKeySets.includes(displayKeys)) throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  const billingKeySets = value.version >= 7 || (value.version === 6 && !routedExport)
-    ? ['invoicing,rates'] : value.version === 1 ? ['currency,rates'] : ['rates'];
+  const billingKeySets = value.version >= 7
+    ? ['invoicing,rates'] : value.version === 6 ? ['invoicing,rates', 'rates']
+      : value.version === 1 ? ['currency,rates'] : ['rates'];
   if (!billingKeySets.includes(billingKeys)) throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
