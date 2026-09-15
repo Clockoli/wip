@@ -169,13 +169,15 @@ function renderInvoiceDocument(container, invoice) {
   container.append(documentRoot);
 }
 
-function replaceSellerNameWithCanvas(source, value) {
+const INVOICE_PDF_RENDER_SCALE = 3;
+
+function replaceSellerNameWithRasterImage(source, value) {
   const heading = source.querySelector?.('.invoice-seller')?.children[0], canvas = document.createElement('canvas');
   const context = canvas.getContext?.('2d');
   if (!heading || !context) return () => {};
   const text = String(value || 'From').trim().replace(/\s+/g, ' ') || 'From';
   const style = getComputedStyle(heading), fontSize = Number.parseFloat(style.fontSize) || 28;
-  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.25, ratio = 1;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.25, ratio = INVOICE_PDF_RENDER_SCALE;
   const font = `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   context.font = font;
   const measured = context.measureText(text), maxWidth = Math.max(1, Math.ceil(heading.getBoundingClientRect?.().width || measured.width));
@@ -204,13 +206,14 @@ function replaceSellerNameWithCanvas(source, value) {
   if (line) lines.push(line);
   const width = Math.max(1, Math.ceil(Math.max(...lines.map(item => context.measureText(item).width))));
   canvas.width = Math.ceil(width * ratio); canvas.height = Math.ceil(lineHeight * lines.length * ratio);
-  canvas.style.width = `${width}px`; canvas.style.height = `${lineHeight * lines.length}px`;
-  canvas.className = 'invoice-seller-name-canvas'; canvas.setAttribute('aria-label', text);
   context.scale(ratio, ratio); context.font = font; context.fillStyle = style.color || '#000'; context.textBaseline = 'alphabetic';
   const ascent = measured.actualBoundingBoxAscent || fontSize * .8, descent = measured.actualBoundingBoxDescent || fontSize * .2;
   const baseline = (lineHeight - ascent - descent) / 2 + ascent;
   lines.forEach((item, index) => context.fillText(item, 0, baseline + index * lineHeight));
-  const original = [...(heading.childNodes || heading.children)]; heading.replaceChildren(canvas);
+  const image = document.createElement('img');
+  image.src = canvas.toDataURL('image/png'); image.width = width; image.height = Math.ceil(lineHeight * lines.length);
+  image.className = 'invoice-seller-name-raster'; image.alt = text; image.setAttribute('aria-label', text);
+  const original = [...(heading.childNodes || heading.children)]; heading.replaceChildren(image);
   return () => heading.replaceChildren(...original);
 }
 
@@ -220,13 +223,13 @@ async function saveInvoicePdf(invoice) {
   source.classList.add('invoice-pdf-export');
   let restoreSellerName = () => {};
   try {
-    restoreSellerName = replaceSellerNameWithCanvas(source, invoice.seller?.name || 'From');
+    restoreSellerName = replaceSellerNameWithRasterImage(source, invoice.seller?.name || 'From');
     await globalThis.html2pdf().set({
       margin: [10, 10, 10, 10],
       filename: invoicePdfFilename(invoice),
       image: { type: 'jpeg', quality: 0.98 },
       enableLinks: true,
-      html2canvas: { backgroundColor: '#ffffff', scale: 2, useCORS: true, logging: false },
+      html2canvas: { backgroundColor: '#ffffff', scale: INVOICE_PDF_RENDER_SCALE, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.invoice-document-heading', '.invoice-parties', '.invoice-total-row', '.invoice-unbilled', '.invoice-footnote', '.invoice-terms', '.invoice-notes'] },
     }).from(source).save();

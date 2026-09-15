@@ -64,6 +64,7 @@ function harness(preferences = {}) {
       };
       return this.context;
     }
+    toDataURL() { return 'data:image/png;base64,dGVzdA=='; }
     focus() { document.activeElement = this; }
     click() { downloads.push(this); }
     showModal() { this.open = true; }
@@ -75,14 +76,15 @@ function harness(preferences = {}) {
   })) nodes.set(id, node);
   for (const [id, value] of Object.entries({ metric: 'total-time', 'horizontal-axis': 'day', 'stack-by': 'person' })) nodes.get(id).value = value;
   document.body = new Node('body'); document.listeners = {}; document.addEventListener = (type, handler) => { document.listeners[type] = handler; };
-  document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => new Node(tag);
+  const createdCanvases = [];
+  document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => { const node = new Node(tag); if (tag === 'canvas') createdCanvases.push(node); return node; };
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
   const requests = [], downloads = [], prints = [], listeners = [], blobs = [], pdfExports = [], windowListeners = {};
   const html2pdf = () => {
     const job = {};
     const worker = {
       set(options) { job.options = options; return worker; },
-      from(sourceNode) { job.source = sourceNode; job.sellerNameCanvas = sourceNode.querySelector('.invoice-seller-name-canvas'); return worker; },
+      from(sourceNode) { job.source = sourceNode; job.sellerNameRaster = sourceNode.querySelector('.invoice-seller-name-raster'); return worker; },
       async save() { pdfExports.push(job); },
     };
     return worker;
@@ -98,7 +100,7 @@ function harness(preferences = {}) {
   const reply = async (data, request = requests.at(-1)) => { request.callback(data instanceof Error ? { ok: false, error: { message: data.message } } : { ok: true, data }); await settle(); };
   const fire = (id, type = 'click') => nodes.get(id).listeners[type]({ preventDefault() {}, target: nodes.get(id) });
   const textOf = node => `${node?.textContent || ''}${(node?.children || []).map(textOf).join('')}`;
-  return { nodes, document, context, requests, downloads, prints, listeners, blobs, pdfExports, reply, settle, fire, textOf,
+  return { nodes, document, context, requests, downloads, prints, listeners, blobs, pdfExports, createdCanvases, reply, settle, fire, textOf,
     select: (key, value, checked) => {
       const input = nodes.get(`${key}-facet`).children.flatMap(label => label.children).find(node => node.value === value);
       assert.ok(input, `visible ${key} checkbox ${value}`);
@@ -549,8 +551,9 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(page.pdfExports.length, 1);
   const [job] = page.pdfExports;
   assert.equal(job.source, page.nodes.get('invoice-preview').children[0]);
-  assert.equal(job.sellerNameCanvas?.drawnText, 'Sergey Nikolaev');
-  assert.equal(job.sellerNameCanvas?.attributes['aria-label'], 'Sergey Nikolaev');
+  assert.equal(page.createdCanvases.at(-1)?.drawnText, 'Sergey Nikolaev');
+  assert.equal(job.sellerNameRaster?.attributes['aria-label'], 'Sergey Nikolaev');
+  assert.equal(job.sellerNameRaster?.alt, 'Sergey Nikolaev');
   const sellerName = job.source.children[0].children[0].children[0];
   assert.deepEqual(sellerName.children.map(part => [part.className, part.textContent]), [
     ['invoice-seller-name-part', 'Sergey'],
@@ -560,24 +563,27 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(job.options.filename, 'Sergey-Nikolaev-INV-2026-0007.pdf');
   assert.equal(job.options.image.type, 'jpeg');
   assert.equal(job.options.image.quality, 0.98);
-  assert.equal(job.options.html2canvas.scale, 2);
+  assert.equal(job.options.html2canvas.scale, 3);
   assert.equal(job.options.jsPDF.format, 'a4');
   assert.equal(job.options.pagebreak.avoid.includes('tr'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
 });
 
-test('PDF seller canvas wraps long names without horizontal compression and restores the preview DOM', async () => {
+test('PDF seller raster wraps long names at 3x without changing layout and restores the preview DOM', async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
   const source = page.nodes.get('invoice-preview').children[0], heading = source.querySelector('.invoice-seller').children[0];
   heading.rectWidth = 180;
   const original = [...heading.children], longName = `Alpha ${'X'.repeat(40)} Omega Company`;
-  const restore = page.context.replaceSellerNameWithCanvas(source, longName), canvas = heading.querySelector('.invoice-seller-name-canvas');
-  assert.ok(canvas);
+  const restore = page.context.replaceSellerNameWithRasterImage(source, longName), image = heading.querySelector('.invoice-seller-name-raster');
+  const canvas = page.createdCanvases.at(-1);
+  assert.ok(image);
   assert.ok(canvas.drawnLines.length > 2);
   assert.ok(canvas.drawnLines.every(line => line.length * 10 <= 180));
-  assert.ok(Number.parseFloat(canvas.style.width) <= 180);
-  assert.equal(Number.parseFloat(canvas.style.height), canvas.drawnLines.length * 35);
+  assert.ok(image.width <= 180);
+  assert.equal(image.height, canvas.drawnLines.length * 35);
+  assert.equal(canvas.width, image.width * 3);
+  assert.equal(canvas.height, image.height * 3);
   restore();
   assert.deepEqual(heading.children, original);
 });

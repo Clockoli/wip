@@ -111,7 +111,8 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(html, /<script src="\.\.\/vendor\/html2pdf\.bundle\.min\.js"><\/script>/);
   assert.match(html, /<link rel="license" href="\.\.\/vendor\/html2pdf\.LICENSE\.txt">/);
   assert.match(js, /globalThis\.html2pdf\(\)\.set\(/);
-  assert.match(js, /html2canvas:\s*\{[^}]*scale:\s*2/);
+  assert.match(js, /const INVOICE_PDF_RENDER_SCALE = 3/);
+  assert.match(js, /html2canvas:\s*\{[^}]*scale:\s*INVOICE_PDF_RENDER_SCALE/);
   assert.match(js, /pagebreak:\s*\{[^}]*avoid:\s*\['tr'/);
   assert.doesNotMatch(js, /function buildInvoicePdf|function pdfLiteralText|new Blob\(\[buildInvoicePdf/);
   assert.match(js, /if \(saveAsPdf\) \{[\s\S]*await saveInvoicePdf\(invoice\)/);
@@ -127,8 +128,8 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
   assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
-  assert.match(styles, /\.invoice-seller-name-canvas\{display:block\}/);
-  assert.doesNotMatch(styles, /\.invoice-seller-name-canvas\{[^}]*max-width/);
+  assert.match(styles, /\.invoice-seller-name-raster\{display:block\}/);
+  assert.doesNotMatch(styles, /\.invoice-seller-name-raster\{[^}]*max-width/);
   assert.match(styles, /\.invoice-seller\{[^}]*max-width:55%/);
   assert.match(styles, /\.invoice-identity\{flex:none;/);
   assert.match(styles, /\.invoice-identity h1\{[^}]*white-space:nowrap/);
