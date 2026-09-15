@@ -1001,18 +1001,37 @@ export class ChromeStore {
         const registry = structuredClone(values[DESTINATION_REGISTRY]);
         const destinations = normalizedRegistryDestinations(registry.destinations);
         const referencedIds = Object.keys(imported.destinations ?? {});
-        if (referencedIds.some(id => !Object.hasOwn(destinations, id))) {
-          throw new Error('Settings reference a repository that is not a configured destination. Add it before importing routes.');
-        }
+        const missingIds = new Set(referencedIds.filter(id => !Object.hasOwn(destinations, id)));
+        const repositoryName = id => {
+          const reference = imported.destinations?.[id];
+          return reference ? `${reference.owner}/${reference.repo}` : id || 'unknown repository';
+        };
+        const notRestored = [...missingIds].map(destinationId => ({
+          type: 'repository', destinationId, repository: repositoryName(destinationId),
+          reason: 'not connected in Clockoli on this browser, and backups do not include GitHub credentials',
+        }));
         registry.defaultDestinationId = normalizeDefaultDestinationId(registry.defaultDestinationId, destinations);
         projects = (imported.projectDefinitions ?? imported.projects).map((project, index) => Object.hasOwn(project, 'id')
           ? project
           : { ...project, id: `legacy-project-${index + 1}`, destinationId: registry.defaultDestinationId });
+        projects = projects.filter(project => {
+          if (project.destinationId && Object.hasOwn(destinations, project.destinationId)) return true;
+          const destinationId = project.destinationId || imported.defaultDestinationId || '';
+          notRestored.push({
+            type: 'project', name: project.name, destinationId, repository: repositoryName(destinationId),
+            reason: destinationId ? 'not connected in Clockoli on this browser, and backups do not include GitHub credentials' : 'unavailable because no time repository is connected in Clockoli on this browser',
+          });
+          return false;
+        });
         projects = normalizeProjectDefinitions(projects, destinations);
-        registry.destinations[registry.defaultDestinationId] = {
-          ...registry.destinations[registry.defaultDestinationId], recentDays: imported.recentDays,
-        };
+        if (registry.defaultDestinationId) {
+          registry.destinations[registry.defaultDestinationId] = {
+            ...registry.destinations[registry.defaultDestinationId], recentDays: imported.recentDays,
+          };
+        }
         set[DESTINATION_REGISTRY] = registry;
+        set[PROJECTS] = projects;
+        return { set, result: { ...imported, billing, projects, notRestored, revision, exportRecommended: false } };
       } else if (values.config) {
         set.config = { ...values.config, recentDays: imported.recentDays };
       }

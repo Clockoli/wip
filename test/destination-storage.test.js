@@ -540,9 +540,37 @@ test('v6 settings import routes only to configured destinations and never verifi
   invalidValue.destinations['github:99'] = { repoId: 99, owner: 'unknown', repo: 'time', branch: 'old' };
   delete invalidValue.destinations['github:2'];
   invalidValue.defaultDestinationId = 'github:99';
-  const before = backend.snapshot();
-  await assert.rejects(() => store.importSettings(JSON.stringify(invalidValue)), /configured destination|missing destination/i);
-  assert.deepEqual(backend.snapshot(), before);
+  invalidValue.projects.push({ id: 'local', name: 'Local', substrings: ['github.com/local/'], destinationId: 'github:1' });
+  invalidValue.billing.rates = { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] };
+  const partial = await store.importSettings(JSON.stringify(invalidValue));
+  assert.equal(partial.recentDays, 12);
+  assert.deepEqual(partial.projects.map(project => project.name), ['Local']);
+  assert.deepEqual(partial.notRestored, [
+    { type: 'repository', destinationId: 'github:99', repository: 'unknown/time', reason: 'not connected in Clockoli on this browser, and backups do not include GitHub credentials' },
+    { type: 'project', name: 'Team', destinationId: 'github:99', repository: 'unknown/time', reason: 'not connected in Clockoli on this browser, and backups do not include GitHub credentials' },
+  ]);
+  assert.equal((await store.getDestinationRegistry()).defaultDestinationId, 'github:1');
+  assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
+  assert.equal((await store.getLocalPreferences()).rates.alice[0].amountMinorPerHour, 15000);
+  assert.equal(backend.values.get('repositoryVerification')['github:1'].status, 'write_verified');
+});
+
+test('partial routed import with no connected repositories does not create a null destination', async () => {
+  const initial = v5State();
+  initial.destinationRegistry = { version: 1, defaultDestinationId: null, destinations: {} };
+  const backend = new MemoryBackend(initial), store = new ChromeStore(backend);
+  const text = JSON.stringify({
+    format: 'clockoli-settings', version: 6, exportedAt: '2026-09-09T00:00:00.000Z',
+    display: { recentDays: 12, otherProjectName: 'General', showQueueDiagnostics: false },
+    projects: [{ id: 'team', name: 'Team', substrings: ['github.com/team/'], destinationId: 'github:99' }],
+    billing: { rates: {} },
+    destinations: { 'github:99': { repoId: 99, owner: 'unknown', repo: 'time', branch: 'old' } },
+    defaultDestinationId: 'github:99', security: { credentialsIncluded: false },
+  });
+  const imported = await store.importSettings(text);
+  assert.deepEqual((await store.getDestinationRegistry()).destinations, {});
+  assert.deepEqual(imported.projects, []);
+  assert.deepEqual(imported.notRestored.map(item => item.type), ['repository', 'project']);
 });
 
 test('ready discovery registration is atomic, additive, idempotent and never promotes candidate auth', async () => {

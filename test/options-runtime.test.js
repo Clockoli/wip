@@ -119,6 +119,54 @@ test('ready discovery populates both default options without selection writes an
   assert.equal(page.nodes.get('repository-list').children[0], row);
 });
 
+test('repository search is shown only for five or more discovered repositories', () => {
+  const page = harness();
+  const repositories = count => Array.from({ length: count }, (_, index) => ({
+    installationId: 10, repoId: index + 1, fullName: `acme/time-${index + 1}`,
+    state: 'initialized_member', canAdd: true, eligible: true,
+  }));
+  page.context.renderRepositories({ repositories: repositories(4), installations: [] });
+  assert.equal(page.nodes.get('repository-choice-fieldset').hidden, false);
+  assert.equal(page.nodes.get('repository-search-label').hidden, true);
+  page.context.renderRepositories({ repositories: repositories(5), installations: [] });
+  assert.equal(page.nodes.get('repository-search-label').hidden, false);
+  page.nodes.get('repository-search').value = 'time-5';
+  page.context.renderRepositoryList();
+  assert.equal(page.nodes.get('repository-list').children.length, 1);
+  page.context.renderRepositories({ repositories: repositories(4), installations: [] });
+  assert.equal(page.nodes.get('repository-search').value, '');
+  assert.equal(page.nodes.get('repository-list').children.length, 4);
+});
+
+test('partial settings import message names repositories and project routes that were not restored', () => {
+  const page = harness();
+  const text = page.context.settingsImportMessage({ notRestored: [
+    { type: 'repository', repository: 'acme/archive', reason: 'not connected in Clockoli on this browser' },
+    { type: 'project', name: 'Legacy', repository: 'acme/archive', reason: 'not connected in Clockoli on this browser' },
+  ] });
+  assert.match(text, /restored where possible/i);
+  assert.match(text, /repository acme\/archive.*not connected/i);
+  assert.match(text, /project “Legacy”.*acme\/archive.*not connected/i);
+  assert.match(text, /connect.*import.*again/i);
+});
+
+test('partial settings import completes and displays the concrete recovery report', async () => {
+  const imported = {
+    recentDays: 12,
+    notRestored: [{ type: 'project', name: 'Legacy', repository: 'acme/archive', reason: 'not connected in Clockoli on this browser' }],
+  };
+  const page = harness({ reply: request => request.type === 'IMPORT_SETTINGS' ? imported : preferences });
+  page.render(connectedState);
+  const input = page.nodes.get('import-settings-file');
+  input.files = [{ size: 100, text: async () => '{"backup":true}' }];
+  await input.listeners.change();
+  assert.equal(page.requests.some(request => request.type === 'IMPORT_SETTINGS'), true);
+  assert.match(page.nodes.get('message').textContent, /project “Legacy”.*acme\/archive.*not connected/i);
+  assert.equal(page.nodes.get('message').className, 'warning');
+  assert.equal(input.disabled, false);
+  assert.equal(input.value, '');
+});
+
 test('silent discovery preserves unchanged DOM, dirty intent, and ignores replies after Finish', async () => {
   let release;
   const result = { repositories: [{ installationId: 11, repoId: 22, fullName: 'octocat/clockoli-data', state: 'initialized_member', canAdd: true, eligible: true }, { installationId: 10, repoId: 20, fullName: 'acme/new', state: 'uninitialized', canInitialize: true, eligible: true }], installations: [] };

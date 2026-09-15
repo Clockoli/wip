@@ -655,7 +655,12 @@ function renderRepositories(result) {
     ? repositories.find(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase()) || null
     : selectOnlyEligibleRepository(repositories.filter(repositoryCanBeSelected));
   $('repository-choice-fieldset').hidden = repositories.length === 0;
-  $('repository-search-label').hidden = repositories.length === 0;
+  const searchHidden = repositories.length < 5;
+  $('repository-search-label').hidden = searchHidden;
+  if (searchHidden && $('repository-search').value) {
+    $('repository-search').value = '';
+    repositoryListSignature = '';
+  }
   updateRepositoryConfirmation();
   renderRepositoryList();
   renderRepositoryAccess();
@@ -1470,6 +1475,15 @@ $('export-settings').addEventListener('click', async () => {
   } catch (error) { message(error.message || 'Could not export settings.', 'error'); }
   finally { $('export-settings').disabled = false; }
 });
+function settingsImportMessage(result) {
+  const issues = Array.isArray(result?.notRestored) ? result.notRestored : [];
+  if (!issues.length) return 'Local settings restored from backup. GitHub remains connected only if it was already connected.';
+  const details = issues.map(issue => issue.type === 'project'
+    ? `project “${issue.name}” — its route was not restored because repository ${issue.repository} is ${issue.reason}`
+    : `repository ${issue.repository} — dependent settings were not restored because it is ${issue.reason}`);
+  return `Local settings restored where possible. Not restored: ${details.join('; ')}. Connect the missing time repositories, then import the backup again. GitHub remains connected only if it was already connected.`;
+}
+
 $('import-settings-file').addEventListener('change', async () => {
   const input = $('import-settings-file'), file = input.files?.[0];
   if (!file) return;
@@ -1480,7 +1494,7 @@ $('import-settings-file').addEventListener('change', async () => {
     if (state?.config) state.config.recentDays = result.recentDays;
     $('recent-days').value = result.recentDays;
     await refreshLocalPreferences();
-    message('Local settings restored from backup. GitHub remains connected only if it was already connected.', 'success');
+    message(settingsImportMessage(result), result.notRestored?.length ? 'warning' : 'success');
   } catch (error) { message(error.message || 'Could not import settings.', 'error'); }
   finally { input.value = ''; input.disabled = false; }
 });
