@@ -30,12 +30,28 @@ test('billing dispatcher forwards project client links only from extension pages
     saveBillingSettings: async (...args) => { calls.push(args); return { revision: 8 }; },
   } });
   vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
-  const message = { type: 'SAVE_BILLING_SETTINGS', payload: { rates: {} }, projectLinks: { expectedRevision: 4, projectClients: { 'project-1': 'client-1' }, otherProjectClient: '' } };
+  const message = { type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: {} }, expectedRevision: 4, projectLinks: { projectClients: { 'project-1': 'client-1' }, otherProjectClient: '' } };
   await context.handle(message, extension);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.projectLinks]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.projectLinks, message.expectedRevision]]);
   assert.deepEqual(broadcasts, [8]);
   await assert.rejects(context.handle(message, content), /not allowed/i);
   assert.equal(calls.length, 1);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+});
+
+test('display dispatcher forwards the expected revision and returns the atomic mutation result', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [], result = { config: { recentDays: 14 }, generation: 3, revision: 8, preferences: { recentDays: 14, revision: 8 } };
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    updateDisplayPreferences: async (...args) => { calls.push(args); return result; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'UPDATE_DISPLAY_PREFERENCES', payload: { recentDays: 14 }, expectedRevision: 7 };
+  assert.deepEqual(await context.handle(message, extension), result);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.expectedRevision]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
 });
 
 test('content scripts receive only page-safe state and timer actions', () => {

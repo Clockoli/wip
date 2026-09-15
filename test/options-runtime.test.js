@@ -15,7 +15,7 @@ const preferences = {
     clients: [{ id: 'client-1', name: 'Client', address: 'Road', email: 'client@example.com', taxId: 'TAX-2', defaultCurrency: 'EUR' }],
     nextNumber: 7, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTerms: 'Net 30', taxPercent: 20, notes: 'Thanks',
   },
-  projects: [], recentDays: 7, exportRecommended: false,
+  projects: [], otherProjectClient: '', recentDays: 7, revision: 0, exportRecommended: false,
 };
 const connectedState = {
   ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' },
@@ -67,6 +67,16 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     nodes, requests, timers, context,
     render(state) { context.nextState = state; vm.runInContext('state = nextState; renderState();', context); },
     submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
+  };
+}
+
+function billingSaveResult(request, current = preferences) {
+  return {
+    rates: request.payload.rates ?? current.rates,
+    invoicing: request.payload.invoicing ?? current.invoicing,
+    projects: current.projects,
+    otherProjectClient: current.otherProjectClient ?? '',
+    revision: request.expectedRevision + 1,
   };
 }
 
@@ -372,7 +382,10 @@ for (const [form, requestType, originalLabel] of [
     const page = harness({ reply(request) {
       if (request.type === requestType) {
         assert.equal(page.nodes.get(`save-${form}`).disabled, true);
-        return fail ? new Error('Save rejected') : { config: connectedState.config, preferences };
+        if (fail) return new Error('Save rejected');
+        return request.type === 'SAVE_BILLING_SETTINGS'
+          ? billingSaveResult(request)
+          : { config: connectedState.config, preferences: { ...preferences, ...request.payload, revision: 1 }, revision: 1 };
       }
       if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
       throw new Error(`Unexpected message: ${request.type}`);
@@ -401,7 +414,7 @@ for (const [form, requestType, originalLabel] of [
 }
 
 test('client-card save confirms on the clicked replacement button and stale timers cannot restore a newer save', async () => {
-  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? preferences : {} });
+  const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
   const first = page.nodes.get('clients-list').querySelector('.save-client');
   await page.submit('invoicing-form', first);
@@ -431,7 +444,7 @@ test('invoicing save blocks every section save button and ignores concurrent sub
   for (const button of buttons) assert.equal(button.disabled, true);
   await page.submit('invoicing-form', buttons[1]);
   assert.equal(page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').length, 1);
-  finishSave({}); await first;
+  finishSave(billingSaveResult(page.requests[0], saved)); await first;
   const replacements = page.nodes.get('clients-list').querySelectorAll('.save-client');
   assert.equal(page.nodes.get('save-invoicing').disabled, false);
   assert.equal(replacements[0].textContent, 'Saved'); assert.equal(replacements[0].disabled, true);
@@ -439,7 +452,7 @@ test('invoicing save blocks every section save button and ignores concurrent sub
 });
 
 test('restoring invoicing siblings does not clobber another active Saved confirmation', async () => {
-  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? preferences : {} });
+  const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
   await page.submit('invoicing-form');
   const sectionButton = page.nodes.get('save-invoicing'), sectionTimer = page.timers.at(-1);
@@ -482,8 +495,9 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   let fail = true;
   const message = 'Next invoice number cannot go below 8; invoice 7 has already been issued.';
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') return fail ? new Error(message) : {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return { ...preferences, invoicing: { ...preferences.invoicing, nextNumber: 9 } };
+    if (request.type === 'SAVE_BILLING_SETTINGS') return fail ? new Error(message) : {
+      ...billingSaveResult(request), invoicing: { ...preferences.invoicing, nextNumber: 9 },
+    };
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.context.renderLocalPreferences(preferences);
@@ -495,7 +509,7 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   assert.equal(page.requests.length, 1);
   fail = false; page.nodes.get('invoice-next-number').value = '8';
   await page.submit(`${form}-form`);
-  assert.equal(page.requests.at(-1).type, 'GET_LOCAL_PREFERENCES');
+  assert.equal(page.requests.at(-1).type, 'SAVE_BILLING_SETTINGS');
   assert.equal(page.nodes.get('invoice-next-number').value, form === 'invoicing' ? '9' : '8');
   assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
@@ -510,10 +524,9 @@ test('invalid billable input reports inline without sending a mutation', async (
   assert.equal(page.nodes.get('save-billing').disabled, false);
 });
 
-test('both billing saves carry rates and invoicing so neither half is erased', async () => {
+test('rates and invoicing saves send only their owned section and use the atomic returned revision', async () => {
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    if (request.type === 'SAVE_BILLING_SETTINGS') return { ...request.payload, projects: preferences.projects, otherProjectClient: '', revision: request.expectedRevision + 1 };
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.context.renderLocalPreferences(preferences);
@@ -521,11 +534,14 @@ test('both billing saves carry rates and invoicing so neither half is erased', a
   await page.submit('invoicing-form');
   const saves = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(saves.length, 2);
-  for (const save of saves) {
-    assert.equal(save.payload.rates.octocat[0].amountMinorPerHour, 12500);
-    assert.equal(save.payload.invoicing.seller.name, 'Seller');
-    assert.equal(save.payload.invoicing.clients[0].id, 'client-1');
-  }
+  assert.deepEqual(Object.keys(saves[0].payload), ['rates']);
+  assert.equal(saves[0].payload.rates.octocat[0].amountMinorPerHour, 12500);
+  assert.equal(saves[0].expectedRevision, preferences.revision);
+  assert.deepEqual(Object.keys(saves[1].payload), ['invoicing']);
+  assert.equal(saves[1].payload.invoicing.seller.name, 'Seller');
+  assert.equal(saves[1].payload.invoicing.clients[0].id, 'client-1');
+  assert.equal(saves[1].expectedRevision, preferences.revision + 1);
+  assert.equal(page.requests.some(request => request.type === 'GET_LOCAL_PREFERENCES'), false);
 });
 
 test('saving invoicing also persists current client links for stored projects', async () => {
@@ -542,8 +558,8 @@ test('saving invoicing also persists current client links for stored projects', 
   page.nodes.get('other-project-client').value = 'client-1';
   await page.submit('invoicing-form');
   const request = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(request.expectedRevision, saved.revision);
   assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    expectedRevision: saved.revision,
     projectClients: { 'project-1': 'client-1' },
     otherProjectClient: 'client-1',
   });
@@ -556,10 +572,9 @@ test('a newly saved project is immediately included in the next invoicing link s
   const page = harness({ reply(request) {
     if (request.type === 'UPDATE_DISPLAY_PREFERENCES') {
       latest = { ...latest, ...request.payload, revision: 1 };
-      return { config: routedState.config, preferences: latest };
+      return { config: routedState.config, preferences: latest, revision: 1 };
     }
-    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return { ...latest, revision: 2 };
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request, latest);
     return {};
   } });
   page.context.latestPreferences = latest;
@@ -571,8 +586,8 @@ test('a newly saved project is immediately included in the next invoicing link s
   project.querySelector('.project-client').value = 'client-1';
   await page.submit('invoicing-form');
   const request = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').at(-1);
+  assert.equal(request.expectedRevision, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    expectedRevision: 1,
     projectClients: { [project.dataset.projectId]: 'client-1' },
     otherProjectClient: '',
   });
@@ -581,7 +596,8 @@ test('a newly saved project is immediately included in the next invoicing link s
 test('successful display save preserves an unsaved client row and other forms while refreshing project client names', async () => {
   const page = harness({ reply(request) {
     if (request.type === 'UPDATE_DISPLAY_PREFERENCES') return {
-      config: { ...connectedState.config, recentDays: request.payload.recentDays }, preferences: { ...preferences, ...request.payload },
+      config: { ...connectedState.config, recentDays: request.payload.recentDays },
+      preferences: { ...preferences, ...request.payload, revision: 1 }, revision: 1,
     };
     throw new Error(`Unexpected message: ${request.type}`);
   } });
@@ -613,8 +629,7 @@ test('successful display save preserves an unsaved client row and other forms wh
 
 for (const form of ['billing', 'invoicing']) test(`${form} successful save preserves unsaved display settings and the other form`, async () => {
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request);
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.context.renderLocalPreferences(preferences);
@@ -636,18 +651,17 @@ for (const form of ['billing', 'invoicing']) test(`${form} successful save prese
   if (form === 'billing') {
     assert.equal(page.nodes.get('clients-list').querySelector('.client-row'), client); assert.equal(client.querySelector('.client-name').value, 'Draft client');
     assert.equal(page.nodes.get('seller-name').value, 'Draft seller'); assert.equal(page.nodes.get('invoice-notes').value, 'Draft notes');
-    assert.equal(page.nodes.get('rates-list').querySelector('.rate-value').value, '125');
+    assert.equal(page.nodes.get('rates-list').querySelector('.rate-value').value, '150');
   } else {
     assert.equal(page.nodes.get('rates-list').querySelector('.rate-row'), rate); assert.equal(rate.querySelector('.rate-value').value, '150');
-    assert.equal(page.nodes.get('clients-list').querySelector('.client-name').value, 'Client');
-    assert.equal(project.querySelector('.project-client').children.find(option => option.value === 'client-1').textContent, 'Client');
+    assert.equal(page.nodes.get('clients-list').querySelector('.client-name').value, 'Draft client');
+    assert.equal(project.querySelector('.project-client').children.find(option => option.value === 'client-1').textContent, 'Draft client');
   }
 });
 
-for (const form of ['billing', 'invoicing']) test(`${form} saves a typed client without validating incomplete projects`, async () => {
+for (const form of ['billing', 'invoicing']) test(`${form} handles a typed client without validating incomplete projects`, async () => {
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
-    if (request.type === 'GET_LOCAL_PREFERENCES') return preferences;
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request);
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.context.renderLocalPreferences(preferences);
@@ -660,9 +674,15 @@ for (const form of ['billing', 'invoicing']) test(`${form} saves a typed client 
   assert.equal(page.nodes.get(`${form}-feedback`).textContent, '');
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
-  assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
-  assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
-  assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
+  if (form === 'invoicing') {
+    assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
+    assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
+    assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
+  } else {
+    assert.deepEqual(Object.keys(save.payload), ['rates']);
+    assert.equal(client.querySelector('.client-name').value, 'Typed client');
+    assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
+  }
 });
 
 test('project and main client options refresh on add, name input and removal without losing missing ids', () => {
@@ -687,8 +707,10 @@ test('project and main client options refresh on add, name input and removal wit
 for (const form of ['billing', 'invoicing']) test(`${form} save retains stored clients without metadata and their project links`, async () => {
   let stored = { ...preferences, projects: [{ name: 'Work', substrings: ['work/'], client: 'empty' }], otherProjectClient: 'empty', invoicing: { ...preferences.invoicing, clients: [{ id: 'empty' }, { id: 'unlinked' }] } };
   const page = harness({ reply(request) {
-    if (request.type === 'SAVE_BILLING_SETTINGS') { stored = { ...stored, ...request.payload }; return {}; }
-    if (request.type === 'GET_LOCAL_PREFERENCES') return stored;
+    if (request.type === 'SAVE_BILLING_SETTINGS') {
+      stored = { ...stored, ...request.payload, revision: request.expectedRevision + 1 };
+      return billingSaveResult(request, stored);
+    }
     throw new Error(`Unexpected message: ${request.type}`);
   } });
   page.context.renderLocalPreferences(stored);

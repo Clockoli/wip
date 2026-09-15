@@ -326,7 +326,8 @@ test('invoice dialog renders the filtered records and reserves one number across
   const print = page.fire('invoice-print');
   const reserve = page.requests.at(-1);
   assert.equal(reserve.message.type, 'RESERVE_INVOICE_NUMBER');
-  await page.reply({ sequence: 7 }, reserve); await print;
+  await page.reply({ sequence: 7, revision: 1 }, reserve); await print;
+  assert.equal(vm.runInContext('state.settingsRevision', page.context), 1);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
   const before = page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length;
   await page.fire('create-invoice'); await page.settle();
@@ -691,7 +692,7 @@ test('picker closes on Escape and outside clicks, retains inside clicks and mark
 });
 
 test('UTC preference loads before reports, projects dates for billing and persists switch changes', async () => {
-  const page = harness({ reportingUtc: true }); await page.settle();
+  const page = harness({ reportingUtc: true, revision: 5 }); await page.settle();
   assert.equal(page.requests.at(-1).message.payload.reportingUtc, true);
   const data = result([{ ...record('alice'), entryDate: '2026-09-01', startedAt: '2026-08-31T22:30:00Z' }]);
   await page.reply(data);
@@ -700,7 +701,9 @@ test('UTC preference loads before reports, projects dates for billing and persis
   page.nodes.get('reporting-utc').checked = false; page.fire('reporting-utc', 'change'); await page.settle();
   assert.equal(page.requests.at(-1).message.type, 'UPDATE_DISPLAY_PREFERENCES');
   assert.equal(page.requests.at(-1).message.payload.reportingUtc, false);
-  await page.reply({ preferences: { reportingUtc: false } });
+  assert.equal(page.requests.at(-1).message.expectedRevision, 5);
+  await page.reply({ revision: 6, preferences: { reportingUtc: false, revision: 6 } });
+  assert.equal(vm.runInContext('state.settingsRevision', page.context), 6);
   assert.equal(page.requests.at(-1).message.type, 'LOAD_REPORT'); assert.equal(page.requests.at(-1).message.payload.reportingUtc, false);
 });
 

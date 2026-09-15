@@ -964,7 +964,6 @@ function projectsPayload() {
 function projectClientLinksPayload() {
   const rows = new Map([...$('projects-list').querySelectorAll('.project-row')].map(row => [row.dataset.projectId, row]));
   return {
-    expectedRevision: localPreferences?.revision,
     projectClients: Object.fromEntries((localPreferences?.projects || []).filter(project => project.id && rows.has(project.id))
       .map(project => [project.id, rows.get(project.id).querySelector('.project-client').value])),
     otherProjectClient: $('other-project-client').value,
@@ -1052,7 +1051,7 @@ async function refreshLocalPreferences() {
   renderLocalPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
 }
 
-function billingPayload() {
+function ratesPayload() {
   const rates = {};
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
     const login = row.querySelector('.rate-login').value.trim();
@@ -1066,7 +1065,7 @@ function billingPayload() {
     rates[login] ||= [];
     rates[login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
-  return { rates, invoicing: invoicingPayload() };
+  return rates;
 }
 
 function invoicingPayload() {
@@ -1403,7 +1402,7 @@ $('display-form').addEventListener('submit', async event => {
   const button = $('save-display'), operation = saveButtonFeedback(button);
   formFeedback('display-feedback', 'Saving display settings…');
   try {
-    const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: {
+    const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', expectedRevision: localPreferences.revision, payload: {
       recentDays: Number($('recent-days').value),
       projects: projectsPayload(),
       defaultDestinationId: $('default-destination').value,
@@ -1412,8 +1411,8 @@ $('display-form').addEventListener('submit', async event => {
       showQueueDiagnostics: $('show-queue-diagnostics').checked,
     } });
     state.config = result.config;
-    localPreferences = result.preferences;
-    renderDisplayPreferences(result.preferences);
+    localPreferences = { ...localPreferences, ...result.preferences, revision: result.revision };
+    renderDisplayPreferences(localPreferences);
     formFeedback('display-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
@@ -1424,8 +1423,8 @@ $('add-client').addEventListener('click', () => addClientRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {
-    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
-    localPreferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { rates: ratesPayload() }, expectedRevision: localPreferences.revision });
+    localPreferences = { ...localPreferences, rates: result.rates, revision: result.revision, exportRecommended: true };
     renderBillingPreferences(localPreferences);
     formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
@@ -1439,8 +1438,14 @@ $('invoicing-form').addEventListener('submit', async event => {
   for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
   let confirmationButton = null; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
   try {
-    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload(), projectLinks: projectClientLinksPayload() });
-    localPreferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    const result = await send({
+      type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: invoicingPayload() },
+      projectLinks: projectClientLinksPayload(), expectedRevision: localPreferences.revision,
+    });
+    localPreferences = {
+      ...localPreferences, invoicing: result.invoicing, projects: result.projects,
+      otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
+    };
     renderInvoicingPreferences(localPreferences);
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
     formFeedback('invoicing-feedback', ''); saveButtonFeedback(confirmationButton, 'saved', operation);

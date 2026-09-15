@@ -688,11 +688,10 @@ async function handle(message, sender) {
     return configuration.save(message.payload);
   }
   if (message.type === 'UPDATE_DISPLAY_PREFERENCES') {
-    const generation = await store.updateDisplayPreferences(message.payload || {});
-    const { config } = await store.getConfigurationSnapshot();
-    const preferences = await store.getLocalPreferences();
-    broadcastLocalPreferencesChanged(preferences.revision);
-    return { config, generation, preferences };
+    if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision < 0) throw new Error('Settings revision is invalid');
+    const result = await store.updateDisplayPreferences(message.payload || {}, message.expectedRevision);
+    broadcastLocalPreferencesChanged(result.revision);
+    return result;
   }
   if (message.type === 'SET_QUEUE_DIAGNOSTICS') {
     await store.setQueueDiagnostics(message.enabled === true);
@@ -702,7 +701,8 @@ async function handle(message, sender) {
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'SAVE_BILLING_SETTINGS') {
-    const result = await store.saveBillingSettings(message.payload || {}, message.projectLinks ?? null);
+    if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision < 0) throw new Error('Settings revision is invalid');
+    const result = await store.saveBillingSettings(message.payload || {}, message.projectLinks ?? null, message.expectedRevision);
     broadcastLocalPreferencesChanged(result.revision);
     return result;
   }

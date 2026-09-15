@@ -849,28 +849,33 @@ export class ChromeStore {
     };
   }
 
-  async saveBillingSettings(value, projectLinks = null) {
-    const billing = normalizeBillingSettings(value);
+  async saveBillingSettings(value, projectLinks = null, expectedRevision = null) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Object.keys(value).length || Object.keys(value).some(key => !['rates', 'invoicing'].includes(key))) {
+      throw new Error('Billing settings are invalid');
+    }
+    if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('Settings revision is invalid');
     let normalizedLinks = null;
     if (projectLinks !== null) {
+      if (!Object.hasOwn(value, 'invoicing')) throw new Error('Project client links require invoicing settings');
       if (!projectLinks || typeof projectLinks !== 'object' || Array.isArray(projectLinks)
-          || Object.keys(projectLinks).some(key => !['expectedRevision', 'projectClients', 'otherProjectClient'].includes(key))
-          || !Number.isSafeInteger(projectLinks.expectedRevision) || projectLinks.expectedRevision < 0
+          || Object.keys(projectLinks).some(key => !['projectClients', 'otherProjectClient'].includes(key))
           || !projectLinks.projectClients || typeof projectLinks.projectClients !== 'object' || Array.isArray(projectLinks.projectClients)) {
         throw new Error('Project client links are invalid');
       }
       const normalizeClient = value => normalizeOtherProjectClient(value);
       normalizedLinks = {
-        expectedRevision: projectLinks.expectedRevision,
         projectClients: Object.fromEntries(Object.entries(projectLinks.projectClients).map(([id, client]) => [id, normalizeClient(client)])),
         otherProjectClient: normalizeClient(projectLinks.otherProjectClient),
       };
     }
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
-      const stored = invoicingSettings(values[BILLING_SETTINGS] || {}).nextNumber;
+      const previousBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
+      const billing = normalizeBillingSettings({ ...previousBilling, ...value });
+      const stored = invoicingSettings(previousBilling).nextNumber;
       if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
       const currentRevision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
-      if (normalizedLinks && normalizedLinks.expectedRevision !== currentRevision) throw new Error('Settings changed in another page. Reload settings and try again.');
+      if (expectedRevision !== null && expectedRevision !== currentRevision) throw new Error('Settings changed in another page. Reload settings and try again.');
       const revision = currentRevision + 1;
       const set = { ...preservedProjectClients(values), [BILLING_SETTINGS]: billing, [SETTINGS_REVISION]: revision };
       if (normalizedLinks) {
@@ -881,7 +886,14 @@ export class ChromeStore {
           ? { ...project, client: normalizedLinks.projectClients[project.id] } : project);
         set[OTHER_PROJECT_CLIENT] = normalizedLinks.otherProjectClient;
       }
-      return { set, result: { ...billing, revision, exportRecommended: true } };
+      return {
+        set,
+        result: {
+          ...billing, projects: set[PROJECTS] || values[PROJECTS] || [],
+          otherProjectClient: set[OTHER_PROJECT_CLIENT] ?? values[OTHER_PROJECT_CLIENT] ?? '',
+          revision, exportRecommended: true,
+        },
+      };
     });
   }
 
@@ -906,8 +918,11 @@ export class ChromeStore {
     });
   }
 
-  async updateDisplayPreferences(preferences = {}) {
+  async updateDisplayPreferences(preferences = {}, expectedRevision = null) {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Settings revision is invalid');
     return this.backend.mutateMany(['config', 'dataVersion', DESTINATION_REGISTRY, ...SETTINGS_KEYS, CONFIGURATION_GENERATION], values => {
+      const currentRevision = generationValue(values[SETTINGS_REVISION]);
+      if (expectedRevision !== currentRevision) throw new Error('Settings changed in another page. Reload settings and try again.');
       const defaultConfig = values.dataVersion === 5
         ? values[DESTINATION_REGISTRY]?.destinations?.[values[DESTINATION_REGISTRY]?.defaultDestinationId]
         : values.config;
@@ -923,28 +938,42 @@ export class ChromeStore {
         throw new Error('Recent entries shown in the main panel must be between 1 and 31 days');
       }
       const generation = generationValue(values[CONFIGURATION_GENERATION]) + 1;
-      const revision = generationValue(values[SETTINGS_REVISION]) + 1;
+      const revision = currentRevision + 1;
       const set = {
         [LOCAL_RECENT_DAYS]: normalized, [OTHER_PROJECT_NAME]: normalizedOtherProjectName, [OTHER_PROJECT_CLIENT]: normalizedOtherProjectClient, [REPORTING_UTC]: reportingUtc,
         [SHOW_QUEUE_DIAGNOSTICS]: showQueueDiagnostics === true,
         [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision,
       };
+      let config, projects;
       if (values.dataVersion === 5) {
         if (!values[DESTINATION_REGISTRY]) throw storageFormatError('Clockoli local data version 5 has no destination registry.');
         const registry = structuredClone(values[DESTINATION_REGISTRY]);
         const destinations = normalizedRegistryDestinations(registry.destinations);
         const selected = normalizeDefaultDestinationId(preferences.defaultDestinationId ?? registry.defaultDestinationId, destinations);
-        const routedProjects = normalizeProjectDefinitions(normalizedProjects, destinations);
+        projects = normalizeProjectDefinitions(normalizedProjects, destinations);
         registry.defaultDestinationId = selected;
         registry.destinations[selected] = { ...registry.destinations[selected], recentDays: normalized };
         set[DESTINATION_REGISTRY] = registry;
-        set[PROJECTS] = routedProjects;
+        set[PROJECTS] = projects;
+        config = registry.destinations[selected];
       } else {
         if (!values.config) throw new Error('Connect a repository before saving display settings');
-        set.config = { ...values.config, recentDays: normalized };
-        set[PROJECTS] = normalizedProjects;
+        config = { ...values.config, recentDays: normalized };
+        projects = normalizedProjects;
+        set.config = config;
+        set[PROJECTS] = projects;
       }
-      return { set, result: generation };
+      return {
+        set,
+        result: {
+          config, generation, revision,
+          preferences: {
+            recentDays: normalized, projects, otherProjectName: normalizedOtherProjectName,
+            otherProjectClient: normalizedOtherProjectClient, reportingUtc,
+            showQueueDiagnostics: showQueueDiagnostics === true, revision,
+          },
+        },
+      };
     });
   }
 

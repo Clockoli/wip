@@ -16,7 +16,7 @@ const state = {
   allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
   invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
-  preset: 'last-week', reportingUtc: false, calendarMonth: '', focusedDay: '', savingBasis: false,
+  preset: 'last-week', reportingUtc: false, settingsRevision: 0, calendarMonth: '', focusedDay: '', savingBasis: false,
   invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [],
 };
 
@@ -404,6 +404,7 @@ async function ensureReservedInvoice() {
     const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
     // Keep successful reservations for retries. A worker crash between commit and response can still leave a gap in v1, never a duplicate.
     state.invoiceReservedSequence = result.sequence;
+    if (Number.isSafeInteger(result.revision) && result.revision >= 0) state.settingsRevision = result.revision;
     if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey) throw new Error('Invoice changed while its number was being reserved. Try again.');
   }
   state.invoice = buildInvoice(invoiceFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
@@ -839,7 +840,8 @@ $('reporting-utc').addEventListener('change', async () => {
   const reportingUtc = $('reporting-utc').checked;
   state.savingBasis = true; $('reporting-utc').disabled = true; cancelPendingPeriod();
   try {
-    await send({ type: 'UPDATE_DISPLAY_PREFERENCES', payload: { reportingUtc } });
+    const result = await send({ type: 'UPDATE_DISPLAY_PREFERENCES', expectedRevision: state.settingsRevision, payload: { reportingUtc } });
+    if (Number.isSafeInteger(result.revision) && result.revision >= 0) state.settingsRevision = result.revision;
     state.reportingUtc = reportingUtc; renderReportingBasis(); await applyPeriod(true);
   } catch (error) { renderReportingBasis(); setError(error); }
   finally { state.savingBasis = false; $('reporting-utc').disabled = false; }
@@ -950,6 +952,7 @@ $('invoice-save-pdf').addEventListener('click', () => void printInvoice({ saveAs
 
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+  if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
   state.billing = { rates: preferences.rates || {}, invoicing: invoicingSettings(preferences) };
   state.projectDefinitions = preferences.projects || [];
   state.otherProjectName = preferences.otherProjectName || 'Other';
@@ -978,6 +981,7 @@ colorScheme.addEventListener('change', () => {
 async function initializePeriod() {
   try {
     const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
     state.reportingUtc = preferences.reportingUtc === true; renderReportingBasis();
     const initial = { ...periodRange('last-week', reportToday()), preset: 'last-week' };
     $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;

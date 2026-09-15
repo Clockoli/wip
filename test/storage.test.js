@@ -112,17 +112,17 @@ test('display preference updates recentDays and local projects without touching 
   const config = { owner: 'acme', repo: 'time', branch: 'main', recentDays: 7, repoId: 77 };
   await store.saveConfiguration(config, 'token-one', { recentCache: [{ id: 'accepted' }], pendingWrites: [{ id: 'pending' }] });
   const projects = [{ name: 'work', substrings: ['github.com/acme/'], client: '' }];
-  const generation = await store.updateDisplayPreferences({ recentDays: 14, projects, otherProjectName: 'General' });
-  assert.equal(generation, 2);
+  const result = await store.updateDisplayPreferences({ recentDays: 14, projects, otherProjectName: 'General' }, 0);
+  assert.equal(result.generation, 2);
   assert.deepEqual((await store.getConfigurationSnapshot()).config, { ...config, recentDays: 14 });
   assert.deepEqual((await store.getState()).recentCache, [{ id: 'accepted' }]);
   assert.deepEqual((await store.getState()).pendingWrites, [{ id: 'pending' }]);
   assert.deepEqual((await store.getLocalPreferences()).projects, projects);
   assert.equal((await store.getLocalPreferences()).otherProjectName, 'General');
-  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'General' });
+  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'General' }, 1);
   assert.deepEqual((await store.getLocalPreferences()).projects, [{ name: 'Other', substrings: ['example.com'], client: '' }]);
-  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'Other' }), /must differ/i);
-  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 0 }), /between 1 and 31/i);
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Other', substrings: ['example.com'] }], otherProjectName: 'Other' }, 2), /must differ/i);
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 0 }, 2), /between 1 and 31/i);
 });
 
 test('stale task loads cannot repopulate metadata after a configuration generation change', async () => {
@@ -436,23 +436,23 @@ test('invoicing save, export and import preserve project-to-client links without
     projects: [project], otherProjectName: 'General', otherProjectClient: '',
   });
   const billing = { rates: { alice: 10000 }, invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'client-1', name: 'Client' }] } };
-  await store.saveBillingSettings(billing, { expectedRevision: 0, projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' });
+  await store.saveBillingSettings(billing, { projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' }, 0);
   let preferences = await store.getLocalPreferences();
   assert.equal(preferences.projects[0].client, 'client-1');
   assert.equal(preferences.projects[0].destinationId, destinationId);
   assert.equal(preferences.otherProjectClient, 'client-1');
-  await store.saveBillingSettings(billing, { expectedRevision: 1, projectClients: { 'project-1': 'missing-client' }, otherProjectClient: 'missing-client' });
+  await store.saveBillingSettings(billing, { projectClients: { 'project-1': 'missing-client' }, otherProjectClient: 'missing-client' }, 1);
   preferences = await store.getLocalPreferences();
   assert.equal(preferences.projects[0].client, 'missing-client');
   assert.equal(preferences.otherProjectClient, 'missing-client');
-  await store.saveBillingSettings(billing, { expectedRevision: 2, projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' });
+  await store.saveBillingSettings(billing, { projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' }, 2);
   const afterValidSave = structuredClone(backend.values);
   await assert.rejects(
-    store.saveBillingSettings(billing, { expectedRevision: 3, projectClients: { missing: 'client-1' }, otherProjectClient: 'client-1' }),
+    store.saveBillingSettings(billing, { projectClients: { missing: 'client-1' }, otherProjectClient: 'client-1' }, 3),
     /unknown project/i,
   );
   await assert.rejects(
-    store.saveBillingSettings(billing, { expectedRevision: 2, projectClients: { 'project-1': '' }, otherProjectClient: '' }),
+    store.saveBillingSettings(billing, { projectClients: { 'project-1': '' }, otherProjectClient: '' }, 2),
     /changed in another page/i,
   );
   assert.deepEqual(backend.values, afterValidSave);
@@ -460,7 +460,7 @@ test('invoicing save, export and import preserve project-to-client links without
   assert.equal(exported.projects[0].client, 'client-1');
   assert.equal(exported.display.otherProjectClient, 'client-1');
 
-  await store.saveBillingSettings(billing, { expectedRevision: 3, projectClients: { 'project-1': '' }, otherProjectClient: '' });
+  await store.saveBillingSettings(billing, { projectClients: { 'project-1': '' }, otherProjectClient: '' }, 3);
   await store.importSettings(backup.text);
   preferences = await store.getLocalPreferences();
   assert.equal(preferences.projects[0].client, 'client-1');
@@ -469,6 +469,43 @@ test('invoicing save, export and import preserve project-to-client links without
   const restoredBackup = JSON.parse((await store.exportSettings()).text);
   assert.equal(restoredBackup.projects[0].client, 'client-1');
   assert.equal(restoredBackup.display.otherProjectClient, 'client-1');
+});
+
+test('stale display and billing saves cannot overwrite newer settings', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend), destinationId = 'github:42';
+  const destination = { id: destinationId, repoId: 42, owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 };
+  await backend.setMany({
+    dataVersion: 5, configurationGeneration: 1, settingsRevision: 0,
+    destinationRegistry: { version: 1, defaultDestinationId: destinationId, destinations: { [destinationId]: destination } },
+    projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId, client: '' }],
+  });
+  await store.saveBillingSettings({ invoicing: { seller: { name: 'New seller' } } }, {
+    projectClients: { 'project-1': 'client-1' }, otherProjectClient: '',
+  }, 0);
+  const afterNewerSave = structuredClone(backend.values);
+  await assert.rejects(store.updateDisplayPreferences({
+    recentDays: 14,
+    projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId, client: '' }],
+    otherProjectName: 'Other', otherProjectClient: '', defaultDestinationId: destinationId,
+  }, 0), /changed in another page/i);
+  await assert.rejects(store.saveBillingSettings({ rates: { stale: 10000 } }, null, 0), /changed in another page/i);
+  assert.deepEqual(backend.values, afterNewerSave);
+});
+
+test('rates and invoicing saves update only their owned billing section', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await store.saveBillingSettings({
+    rates: { alice: 10000 },
+    invoicing: { seller: { name: 'Seller' }, notes: 'Original', nextNumber: 3 },
+  });
+  await store.saveBillingSettings({ rates: { bob: 20000 } }, null, 1);
+  let preferences = await store.getLocalPreferences();
+  assert.deepEqual(preferences.rates, { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
+  assert.equal(preferences.invoicing.notes, 'Original');
+  await store.saveBillingSettings({ invoicing: { ...preferences.invoicing, notes: 'Updated' } }, null, 2);
+  preferences = await store.getLocalPreferences();
+  assert.deepEqual(preferences.rates, { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
+  assert.equal(preferences.invoicing.notes, 'Updated');
 });
 
 test('restoring an older backup never rewinds the invoice counter', async () => {
@@ -566,11 +603,11 @@ test('explicit project links suppress legacy projection and catch-all links pers
   await backend.setMany({ config: { recentDays: 7 }, projects: [{ name: 'Web', substrings: ['web/'], client: '' }], billingSettings: { invoicing: { clients: [{ id: 'a', projects: ['Web', 'Other'] }] } } });
   assert.equal((await store.getLocalPreferences()).projects[0].client, '');
   assert.equal((await store.getLocalPreferences()).otherProjectClient, '');
-  await store.updateDisplayPreferences({ recentDays: 7, projects: [], otherProjectName: 'Work', otherProjectClient: 'missing' });
+  await store.updateDisplayPreferences({ recentDays: 7, projects: [], otherProjectName: 'Work', otherProjectClient: 'missing' }, 0);
   const text = (await store.exportSettings()).text;
   const restored = new ChromeStore(new MemoryBackend()); await restored.importSettings(text);
   assert.equal((await restored.getLocalPreferences()).otherProjectClient, 'missing');
-  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 7, otherProjectClient: 'bad/id' }), /client/i);
+  await assert.rejects(() => store.updateDisplayPreferences({ recentDays: 7, otherProjectClient: 'bad/id' }, 1), /client/i);
 });
 
 test('a catch-all-only legacy assignment is projected without resurrecting an explicit unassignment', async () => {
@@ -587,8 +624,8 @@ test('a catch-all-only legacy assignment is projected without resurrecting an ex
 test('UTC display preference survives restart and v7 export without overwriting other display settings', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfig({ owner: 'acme', repo: 'time-data', recentDays: 14 });
-  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Work', substrings: ['example.com'] }], otherProjectName: 'General', showQueueDiagnostics: true });
-  await store.updateDisplayPreferences({ reportingUtc: true });
+  await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Work', substrings: ['example.com'] }], otherProjectName: 'General', showQueueDiagnostics: true }, 0);
+  await store.updateDisplayPreferences({ reportingUtc: true }, 1);
   const restarted = new ChromeStore(backend), preferences = await restarted.getLocalPreferences();
   assert.equal(preferences.reportingUtc, true); assert.equal(preferences.recentDays, 14);
   assert.equal(preferences.projects[0].name, 'Work'); assert.equal(preferences.otherProjectName, 'General'); assert.equal(preferences.showQueueDiagnostics, true);
@@ -598,8 +635,8 @@ test('UTC display preference survives restart and v7 export without overwriting 
   assert.equal((await restored.getLocalPreferences()).reportingUtc, true);
   delete parsed.display.reportingUtc; await restored.importSettings(JSON.stringify(parsed));
   assert.equal((await restored.getLocalPreferences()).reportingUtc, false);
-  await restarted.updateDisplayPreferences({ recentDays: 7 });
+  await restarted.updateDisplayPreferences({ recentDays: 7 }, 2);
   assert.equal((await restarted.getLocalPreferences()).reportingUtc, true);
-  await assert.rejects(() => restarted.updateDisplayPreferences({ reportingUtc: 'true' }), /true or false/);
+  await assert.rejects(() => restarted.updateDisplayPreferences({ reportingUtc: 'true' }, 3), /true or false/);
   assert.equal((await restarted.getLocalPreferences()).reportingUtc, true);
 });
