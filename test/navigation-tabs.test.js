@@ -22,7 +22,7 @@ test('every standalone page exposes one shared branded same-window navigation ro
     const nav = html.match(/<nav class="page-tabs"[\s\S]*?<\/nav>/)?.[0] || '';
     assert.ok(nav, `${current} must render page tabs`);
     assert.match(nav, /aria-label="Clockoli pages"/);
-    assert.match(nav, /class="page-brand"[^>]*>[\s\S]*clockoli-with-text\.svg/, `${current} must use the combined Clockoli logo and product name asset`);
+    assert.match(nav, /<a class="page-brand" href="https:\/\/clockoli\.com\/" target="_blank" rel="noreferrer" aria-label="Clockoli website">[\s\S]*clockoli-with-text\.svg/, `${current} must link the combined Clockoli logo and product name asset to the product website`);
     assert.match(nav, /<div class="page-tab-list">[\s\S]*<\/div>/, `${current} must keep page actions in one centered group`);
     assert.doesNotMatch(nav, /<span>CLOCKOLI<\/span>|clockoli\.svg/, `${current} must not reconstruct the combined brand from separate mark and text elements`);
     for (const [label, href] of Object.entries(hrefs)) {
@@ -31,7 +31,7 @@ test('every standalone page exposes one shared branded same-window navigation ro
     assert.equal((nav.match(/aria-current="page"/g) || []).length, 1, `${current} must have one active tab`);
     assert.equal((nav.match(/<svg viewBox="0 0 16 16" aria-hidden="true">/g) || []).length, 4, `${current} must reuse the four tracking-panel navigation icons`);
     assert.match(nav, /Top tasks<\/a>[\s\S]*Reports<\/a>[\s\S]*Activity<\/a>[\s\S]*Settings<\/a>/, `${current} must match the tracking-panel action order`);
-    assert.doesNotMatch(nav, /target\s*=/i, `${current} navigation must open in the same window`);
+    assert.doesNotMatch(nav.match(/<div class="page-tab-list">[\s\S]*<\/div>/)?.[0] || '', /target\s*=/i, `${current} page navigation must open in the same window`);
     assert.doesNotMatch(html, /class="hero"|class="app-header"|class="brand-logo"|class="mark"/, `${current} must not duplicate page branding below the navigation`);
   }
 });
