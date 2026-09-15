@@ -126,7 +126,8 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.ok(additional.indexOf('id="invoice-extra-lines"') < additional.indexOf('id="invoice-add-line"'));
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
-  assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;column-gap:\.3em/);
+  assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
+  assert.match(styles, /\.invoice-seller-name-gap\{display:block;flex:0 0 \.35em;width:\.35em;min-width:\.35em\}/);
   assert.match(styles, /\.invoice-document\.invoice-pdf-export\{[^}]*width:718px!important/);
   assert.match(styles, /\.invoice-pdf-export \.invoice-table\{[^}]*table-layout:fixed!important/);
   assert.match(styles, /\.invoice-pdf-export tr,[^{]+\{break-inside:avoid;page-break-inside:avoid\}/);

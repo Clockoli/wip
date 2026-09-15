@@ -532,8 +532,11 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   const [job] = page.pdfExports;
   assert.equal(job.source, page.nodes.get('invoice-preview').children[0]);
   const sellerName = job.source.children[0].children[0].children[0];
-  assert.deepEqual(sellerName.children.map(part => part.textContent), ['Sergey', 'Nikolaev']);
-  assert.equal(sellerName.children.every(part => part.className === 'invoice-seller-name-part'), true);
+  assert.deepEqual(sellerName.children.map(part => [part.className, part.textContent]), [
+    ['invoice-seller-name-part', 'Sergey'],
+    ['invoice-seller-name-gap', ''],
+    ['invoice-seller-name-part', 'Nikolaev'],
+  ]);
   assert.equal(job.source.classList.contains('invoice-pdf-export'), false);
   assert.equal(job.options.filename, 'Sergey-Nikolaev-INV-2026-0007.pdf');
   assert.equal(job.options.image.type, 'jpeg');
