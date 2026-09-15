@@ -524,7 +524,7 @@ export function settingsExportText({
   );
   return `${JSON.stringify({
     format: 'clockoli-settings', version: 6, exportedAt,
-    display: { recentDays, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true },
+    display: { recentDays, reportingUtc: normalizeReportingUtc(reportingUtc), otherProjectClient: normalizedOtherProjectClient, otherProjectName: normalizedOtherProjectName, showQueueDiagnostics: showQueueDiagnostics === true },
     projects: routedProjects,
     billing: normalizedBilling,
     destinations: destinationReferences,
@@ -572,7 +572,7 @@ export function parseSettingsImport(text) {
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
   const displayKeySets = value.version >= 7
     ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics']
-    : value.version === 6 && !routedExport
+    : value.version === 6
       ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics', 'otherProjectName,recentDays,showQueueDiagnostics']
       : value.version >= 5 ? ['otherProjectName,recentDays,showQueueDiagnostics']
         : value.version === 4 ? ['otherProjectName,recentDays'] : ['recentDays'];

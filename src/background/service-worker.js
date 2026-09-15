@@ -701,7 +701,11 @@ async function handle(message, sender) {
     return { preferences };
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
-  if (message.type === 'SAVE_BILLING_SETTINGS') return store.saveBillingSettings(message.payload || {});
+  if (message.type === 'SAVE_BILLING_SETTINGS') {
+    const result = await store.saveBillingSettings(message.payload || {}, message.projectLinks ?? null);
+    broadcastLocalPreferencesChanged(result.revision);
+    return result;
+  }
   if (message.type === 'RESERVE_INVOICE_NUMBER') return store.reserveInvoiceNumber();
   if (message.type === 'EXPORT_SETTINGS') return store.exportSettings();
   if (message.type === 'MARK_SETTINGS_EXPORTED') return { marked: await store.markSettingsExported(message.revision) };

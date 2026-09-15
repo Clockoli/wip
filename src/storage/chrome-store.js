@@ -849,13 +849,39 @@ export class ChromeStore {
     };
   }
 
-  async saveBillingSettings(value) {
+  async saveBillingSettings(value, projectLinks = null) {
     const billing = normalizeBillingSettings(value);
+    let normalizedLinks = null;
+    if (projectLinks !== null) {
+      if (!projectLinks || typeof projectLinks !== 'object' || Array.isArray(projectLinks)
+          || Object.keys(projectLinks).some(key => !['expectedRevision', 'projectClients', 'otherProjectClient'].includes(key))
+          || !Number.isSafeInteger(projectLinks.expectedRevision) || projectLinks.expectedRevision < 0
+          || !projectLinks.projectClients || typeof projectLinks.projectClients !== 'object' || Array.isArray(projectLinks.projectClients)) {
+        throw new Error('Project client links are invalid');
+      }
+      const normalizeClient = value => normalizeOtherProjectClient(value);
+      normalizedLinks = {
+        expectedRevision: projectLinks.expectedRevision,
+        projectClients: Object.fromEntries(Object.entries(projectLinks.projectClients).map(([id, client]) => [id, normalizeClient(client)])),
+        otherProjectClient: normalizeClient(projectLinks.otherProjectClient),
+      };
+    }
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
       const stored = invoicingSettings(values[BILLING_SETTINGS] || {}).nextNumber;
       if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
-      const revision = (Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0) + 1;
-      return { set: { ...preservedProjectClients(values), [BILLING_SETTINGS]: billing, [SETTINGS_REVISION]: revision }, result: { ...billing, revision, exportRecommended: true } };
+      const currentRevision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
+      if (normalizedLinks && normalizedLinks.expectedRevision !== currentRevision) throw new Error('Settings changed in another page. Reload settings and try again.');
+      const revision = currentRevision + 1;
+      const set = { ...preservedProjectClients(values), [BILLING_SETTINGS]: billing, [SETTINGS_REVISION]: revision };
+      if (normalizedLinks) {
+        const projects = values[PROJECTS] || [], storedIds = new Set(projects.map(project => project.id).filter(Boolean));
+        const unknown = Object.keys(normalizedLinks.projectClients).find(id => !storedIds.has(id));
+        if (unknown) throw new Error(`Project client link references an unknown project: ${unknown}`);
+        set[PROJECTS] = projects.map(project => Object.hasOwn(normalizedLinks.projectClients, project.id)
+          ? { ...project, client: normalizedLinks.projectClients[project.id] } : project);
+        set[OTHER_PROJECT_CLIENT] = normalizedLinks.otherProjectClient;
+      }
+      return { set, result: { ...billing, revision, exportRecommended: true } };
     });
   }
 

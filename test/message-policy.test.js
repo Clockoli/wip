@@ -23,6 +23,21 @@ test('invoice number reservation is extension-only and the dispatcher ignores pa
   assert.equal(calls, 1);
 });
 
+test('billing dispatcher forwards project client links only from extension pages', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [];
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    saveBillingSettings: async (...args) => { calls.push(args); return { revision: 8 }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'SAVE_BILLING_SETTINGS', payload: { rates: {} }, projectLinks: { expectedRevision: 4, projectClients: { 'project-1': 'client-1' }, otherProjectClient: '' } };
+  await context.handle(message, extension);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.projectLinks]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+  assert.equal(calls.length, 1);
+});
+
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_TASK_PARTICIPANTS', content, origin));

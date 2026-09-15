@@ -961,6 +961,16 @@ function projectsPayload() {
   }));
 }
 
+function projectClientLinksPayload() {
+  const rows = new Map([...$('projects-list').querySelectorAll('.project-row')].map(row => [row.dataset.projectId, row]));
+  return {
+    expectedRevision: localPreferences?.revision,
+    projectClients: Object.fromEntries((localPreferences?.projects || []).filter(project => project.id && rows.has(project.id))
+      .map(project => [project.id, rows.get(project.id).querySelector('.project-client').value])),
+    otherProjectClient: $('other-project-client').value,
+  };
+}
+
 function fillDestinationSelect(select, selectedId) {
   if (!select) return;
   const destinations = configuredDestinations(), known = new Set(destinations.map(destination => destination.id));
@@ -1402,6 +1412,7 @@ $('display-form').addEventListener('submit', async event => {
       showQueueDiagnostics: $('show-queue-diagnostics').checked,
     } });
     state.config = result.config;
+    localPreferences = result.preferences;
     renderDisplayPreferences(result.preferences);
     formFeedback('display-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('display-feedback', error.message || 'Could not save display settings.', 'error'); saveButtonFeedback(button, 'error', operation); }
@@ -1414,7 +1425,8 @@ $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {
     await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
-    renderBillingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
+    localPreferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    renderBillingPreferences(localPreferences);
     formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
@@ -1427,8 +1439,9 @@ $('invoicing-form').addEventListener('submit', async event => {
   for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
   let confirmationButton = null; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
   try {
-    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload() });
-    renderInvoicingPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
+    await send({ type: 'SAVE_BILLING_SETTINGS', payload: billingPayload(), projectLinks: projectClientLinksPayload() });
+    localPreferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
+    renderInvoicingPreferences(localPreferences);
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
     formFeedback('invoicing-feedback', ''); saveButtonFeedback(confirmationButton, 'saved', operation);
   } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }

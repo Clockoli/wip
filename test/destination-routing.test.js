@@ -130,7 +130,7 @@ test('settings v6 exports exact credential-free routing fields and parses refere
   assert.deepEqual(saved.security, { credentialsIncluded: false });
   assert.doesNotMatch(text, /token|password|authorization|installationId/i);
   assert.deepEqual(parseSettingsImport(text), {
-    recentDays: 9, projects, otherProjectName: 'General', showQueueDiagnostics: true,
+    recentDays: 9, projects, otherProjectName: 'General', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: true,
     billing: { rates: {} }, destinations, defaultDestinationId: 'github:42',
     repositoryReferencesVerified: false,
   });

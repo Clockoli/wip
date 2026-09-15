@@ -426,6 +426,51 @@ test('billable rates and settings export stay local, version changes, and import
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
 });
 
+test('invoicing save, export and import preserve project-to-client links without changing routes', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend), destinationId = 'github:42';
+  const destination = { id: destinationId, repoId: 42, owner: 'acme', repo: 'time', branch: 'clockoli/users/1', recentDays: 7 };
+  const project = { id: 'project-1', name: 'Work', substrings: ['github.com/acme/'], destinationId, client: '' };
+  await backend.setMany({
+    dataVersion: 5, configurationGeneration: 1,
+    destinationRegistry: { version: 1, defaultDestinationId: destinationId, destinations: { [destinationId]: destination } },
+    projects: [project], otherProjectName: 'General', otherProjectClient: '',
+  });
+  const billing = { rates: { alice: 10000 }, invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'client-1', name: 'Client' }] } };
+  await store.saveBillingSettings(billing, { expectedRevision: 0, projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' });
+  let preferences = await store.getLocalPreferences();
+  assert.equal(preferences.projects[0].client, 'client-1');
+  assert.equal(preferences.projects[0].destinationId, destinationId);
+  assert.equal(preferences.otherProjectClient, 'client-1');
+  await store.saveBillingSettings(billing, { expectedRevision: 1, projectClients: { 'project-1': 'missing-client' }, otherProjectClient: 'missing-client' });
+  preferences = await store.getLocalPreferences();
+  assert.equal(preferences.projects[0].client, 'missing-client');
+  assert.equal(preferences.otherProjectClient, 'missing-client');
+  await store.saveBillingSettings(billing, { expectedRevision: 2, projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' });
+  const afterValidSave = structuredClone(backend.values);
+  await assert.rejects(
+    store.saveBillingSettings(billing, { expectedRevision: 3, projectClients: { missing: 'client-1' }, otherProjectClient: 'client-1' }),
+    /unknown project/i,
+  );
+  await assert.rejects(
+    store.saveBillingSettings(billing, { expectedRevision: 2, projectClients: { 'project-1': '' }, otherProjectClient: '' }),
+    /changed in another page/i,
+  );
+  assert.deepEqual(backend.values, afterValidSave);
+  const backup = await store.exportSettings(), exported = JSON.parse(backup.text);
+  assert.equal(exported.projects[0].client, 'client-1');
+  assert.equal(exported.display.otherProjectClient, 'client-1');
+
+  await store.saveBillingSettings(billing, { expectedRevision: 3, projectClients: { 'project-1': '' }, otherProjectClient: '' });
+  await store.importSettings(backup.text);
+  preferences = await store.getLocalPreferences();
+  assert.equal(preferences.projects[0].client, 'client-1');
+  assert.equal(preferences.projects[0].destinationId, destinationId);
+  assert.equal(preferences.otherProjectClient, 'client-1');
+  const restoredBackup = JSON.parse((await store.exportSettings()).text);
+  assert.equal(restoredBackup.projects[0].client, 'client-1');
+  assert.equal(restoredBackup.display.otherProjectClient, 'client-1');
+});
+
 test('restoring an older backup never rewinds the invoice counter', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});

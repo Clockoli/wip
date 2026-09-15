@@ -528,6 +528,56 @@ test('both billing saves carry rates and invoicing so neither half is erased', a
   }
 });
 
+test('saving invoicing also persists current client links for stored projects', async () => {
+  const saved = {
+    ...preferences,
+    projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId: 'github:77', client: '' }],
+    otherProjectName: 'General', otherProjectClient: '', revision: 4,
+  };
+  const page = harness({ reply: request => request.type === 'GET_LOCAL_PREFERENCES' ? saved : {} });
+  page.context.savedPreferences = saved;
+  vm.runInContext('localPreferences = savedPreferences; renderLocalPreferences(savedPreferences);', page.context);
+  const projectClient = page.nodes.get('projects-list').querySelector('.project-client');
+  projectClient.value = 'client-1';
+  page.nodes.get('other-project-client').value = 'client-1';
+  await page.submit('invoicing-form');
+  const request = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
+    expectedRevision: saved.revision,
+    projectClients: { 'project-1': 'client-1' },
+    otherProjectClient: 'client-1',
+  });
+  assert.equal(request.payload.invoicing.clients[0].id, 'client-1');
+});
+
+test('a newly saved project is immediately included in the next invoicing link save', async () => {
+  let latest = { ...preferences, projects: [], revision: 0 };
+  const routedState = { ...connectedState, destinations: [{ id: 'github:77', repoId: 77, owner: 'acme', repo: 'time', branch: 'main' }], destinationRegistry: { defaultDestinationId: 'github:77' } };
+  const page = harness({ reply(request) {
+    if (request.type === 'UPDATE_DISPLAY_PREFERENCES') {
+      latest = { ...latest, ...request.payload, revision: 1 };
+      return { config: routedState.config, preferences: latest };
+    }
+    if (request.type === 'SAVE_BILLING_SETTINGS') return {};
+    if (request.type === 'GET_LOCAL_PREFERENCES') return { ...latest, revision: 2 };
+    return {};
+  } });
+  page.context.latestPreferences = latest;
+  page.context.routedState = routedState;
+  vm.runInContext('state = routedState; localPreferences = latestPreferences; renderLocalPreferences(latestPreferences);', page.context);
+  page.context.addProjectRow({ name: 'New project', substrings: ['new/'], destinationId: 'github:77', client: '' });
+  await page.submit('display-form');
+  const project = page.nodes.get('projects-list').querySelector('.project-row');
+  project.querySelector('.project-client').value = 'client-1';
+  await page.submit('invoicing-form');
+  const request = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
+    expectedRevision: 1,
+    projectClients: { [project.dataset.projectId]: 'client-1' },
+    otherProjectClient: '',
+  });
+});
+
 test('successful display save preserves an unsaved client row and other forms while refreshing project client names', async () => {
   const page = harness({ reply(request) {
     if (request.type === 'UPDATE_DISPLAY_PREFERENCES') return {

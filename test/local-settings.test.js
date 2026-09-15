@@ -106,15 +106,20 @@ test('routed v6 settings export round-trips invoicing and still accepts pre-invo
   };
   const text = settingsExportText({
     config: { recentDays: 9 }, billing, destinations, defaultDestinationId: 'github:42',
+    otherProjectName: 'General', otherProjectClient: 'client-1', reportingUtc: true,
     projects: [{ id: 'project-1', name: 'Work', substrings: ['github.com/acme/'], destinationId: 'github:42', client: 'client-1' }],
     exportedAt: '2026-09-14T12:00:00.000Z',
   });
   const exported = JSON.parse(text);
   assert.equal(exported.version, 6);
   assert.deepEqual(Object.keys(exported.billing).sort(), ['invoicing', 'rates']);
+  assert.equal(exported.display.otherProjectClient, 'client-1');
+  assert.equal(exported.display.reportingUtc, true);
   const imported = parseSettingsImport(text);
   assert.equal(imported.billing.invoicing.seller.name, 'Alice Example');
   assert.equal(imported.projects[0].client, 'client-1');
+  assert.equal(imported.otherProjectClient, 'client-1');
+  assert.equal(imported.reportingUtc, true);
   assert.equal(imported.repositoryReferencesVerified, false);
 
   delete exported.billing.invoicing;
