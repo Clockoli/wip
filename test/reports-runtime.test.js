@@ -534,7 +534,6 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   const sellerName = job.source.children[0].children[0].children[0];
   assert.deepEqual(sellerName.children.map(part => [part.className, part.textContent]), [
     ['invoice-seller-name-part', 'Sergey'],
-    ['invoice-seller-name-gap', ''],
     ['invoice-seller-name-part', 'Nikolaev'],
   ]);
   assert.equal(job.source.classList.contains('invoice-pdf-export'), false);

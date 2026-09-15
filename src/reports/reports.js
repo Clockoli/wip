@@ -123,10 +123,7 @@ function renderInvoiceDocument(container, invoice) {
   if (seller) {
     seller.className += ' invoice-seller';
     const name = seller.children[0], parts = String(invoice.seller.name || 'From').trim().split(/\s+/).filter(Boolean);
-    name.replaceChildren(...parts.flatMap((part, index) => [
-      ...(index ? [invoiceNode('span', 'invoice-seller-name-gap')] : []),
-      invoiceNode('span', 'invoice-seller-name-part', part),
-    ]));
+    name.replaceChildren(...parts.map(part => invoiceNode('span', 'invoice-seller-name-part', part)));
     heading.append(seller);
   }
   const identity = invoiceNode('div', 'invoice-identity'); identity.append(invoiceNode('h1', '', `INVOICE  ${invoice.number}`));
