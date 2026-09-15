@@ -447,7 +447,8 @@ test('v5 display settings preserve routed project identities and explicitly chan
   };
   const backend = new MemoryBackend(initial), store = new ChromeStore(backend);
   const projects = [{ id: 'two-project', name: 'Two', substrings: ['example.com/two'], destinationId: 'github:2' }];
-  await store.updateDisplayPreferences({ recentDays: 13, projects, otherProjectName: 'General', defaultDestinationId: 'github:2' }, 0);
+  const result = await store.updateDisplayPreferences({ recentDays: 13, projects, otherProjectName: 'General', defaultDestinationId: 'github:2' }, 0);
+  assert.equal(result.preferences.defaultDestinationId, 'github:2');
   assert.deepEqual((await store.getLocalPreferences()).projects, projects);
   assert.equal((await store.getLocalPreferences()).recentDays, 13);
   assert.equal((await store.getDestinationRegistry()).defaultDestinationId, 'github:2');

@@ -944,12 +944,13 @@ export class ChromeStore {
         [SHOW_QUEUE_DIAGNOSTICS]: showQueueDiagnostics === true,
         [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision,
       };
-      let config, projects;
+      let config, projects, defaultDestinationId = null;
       if (values.dataVersion === 5) {
         if (!values[DESTINATION_REGISTRY]) throw storageFormatError('Clockoli local data version 5 has no destination registry.');
         const registry = structuredClone(values[DESTINATION_REGISTRY]);
         const destinations = normalizedRegistryDestinations(registry.destinations);
         const selected = normalizeDefaultDestinationId(preferences.defaultDestinationId ?? registry.defaultDestinationId, destinations);
+        defaultDestinationId = selected;
         projects = normalizeProjectDefinitions(normalizedProjects, destinations);
         registry.defaultDestinationId = selected;
         registry.destinations[selected] = { ...registry.destinations[selected], recentDays: normalized };
@@ -968,7 +969,7 @@ export class ChromeStore {
         result: {
           config, generation, revision,
           preferences: {
-            recentDays: normalized, projects, otherProjectName: normalizedOtherProjectName,
+            recentDays: normalized, projects, defaultDestinationId, otherProjectName: normalizedOtherProjectName,
             otherProjectClient: normalizedOtherProjectClient, reportingUtc,
             showQueueDiagnostics: showQueueDiagnostics === true, revision,
           },

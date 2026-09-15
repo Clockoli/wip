@@ -593,6 +593,33 @@ test('a newly saved project is immediately included in the next invoicing link s
   });
 });
 
+test('changing the default destination remains selected and a following display save keeps it', async () => {
+  const destinations = [77, 78].map(repoId => ({ id: `github:${repoId}`, repoId, owner: 'acme', repo: `time-${repoId}`, branch: 'main' }));
+  const routedState = {
+    ...connectedState, config: destinations[0], destinations,
+    destinationRegistry: { defaultDestinationId: 'github:77', destinations: Object.fromEntries(destinations.map(destination => [destination.id, destination])) },
+  };
+  let revision = 0;
+  const page = harness({ reply(request) {
+    if (request.type !== 'UPDATE_DISPLAY_PREFERENCES') throw new Error(`Unexpected message: ${request.type}`);
+    revision += 1;
+    const config = destinations.find(destination => destination.id === request.payload.defaultDestinationId);
+    return { config, generation: revision + 1, revision, preferences: { ...preferences, ...request.payload, defaultDestinationId: config.id, revision } };
+  } });
+  page.context.routedState = routedState;
+  page.context.savedPreferences = { ...preferences, defaultDestinationId: 'github:77' };
+  vm.runInContext('state = routedState; renderLocalPreferences(savedPreferences); renderState();', page.context);
+  page.nodes.get('default-destination').value = 'github:78';
+  await page.submit('display-form');
+  assert.equal(page.nodes.get('default-destination').value, 'github:78');
+  assert.equal(page.requests[0].expectedRevision, 0);
+  assert.equal(page.requests[0].payload.defaultDestinationId, 'github:78');
+  await page.submit('display-form');
+  assert.equal(page.requests[1].expectedRevision, 1);
+  assert.equal(page.requests[1].payload.defaultDestinationId, 'github:78');
+  assert.equal(page.nodes.get('default-destination').value, 'github:78');
+});
+
 test('successful display save preserves an unsaved client row and other forms while refreshing project client names', async () => {
   const page = harness({ reply(request) {
     if (request.type === 'UPDATE_DISPLAY_PREFERENCES') return {
