@@ -127,7 +127,11 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
   assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
-  assert.match(styles, /\.invoice-seller-name-part:not\(:last-child\)\{margin-right:\.35em\}/);
+  assert.match(styles, /\.invoice-seller-name-canvas\{display:block\}/);
+  assert.doesNotMatch(styles, /\.invoice-seller-name-canvas\{[^}]*max-width/);
+  assert.match(styles, /\.invoice-seller\{[^}]*max-width:55%/);
+  assert.match(styles, /\.invoice-identity\{flex:none;/);
+  assert.match(styles, /\.invoice-identity h1\{[^}]*white-space:nowrap/);
   assert.match(styles, /\.invoice-document\.invoice-pdf-export\{[^}]*width:718px!important/);
   assert.match(styles, /\.invoice-pdf-export \.invoice-table\{[^}]*table-layout:fixed!important/);
   assert.match(styles, /\.invoice-pdf-export tr,[^{]+\{break-inside:avoid;page-break-inside:avoid\}/);

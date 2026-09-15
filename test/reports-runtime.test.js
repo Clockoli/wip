@@ -47,7 +47,23 @@ function harness(preferences = {}) {
     setAttribute(name, value) { this.attributes[name] = value; if (name === 'id') nodes.set(value, this); }
     removeAttribute(name) { delete this.attributes[name]; }
     contains(node) { return this === node || this.children.some(child => child.contains?.(node)); }
+    getBoundingClientRect() { return { width: this.rectWidth || 180 }; }
+    querySelectorAll(selector) {
+      const className = selector.startsWith('.') ? selector.slice(1) : '';
+      const matches = child => className && child.className.split(' ').includes(className);
+      return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]);
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
     addEventListener(type, handler) { this.listeners[type] = handler; }
+    getContext() {
+      if (this.tagName !== 'canvas') return null;
+      this.context ||= {
+        font: '', fillStyle: '', textBaseline: '',
+        measureText: text => ({ width: text.length * 10, actualBoundingBoxAscent: 20, actualBoundingBoxDescent: 5 }),
+        scale() {}, fillText: text => { this.drawnText = text; (this.drawnLines ||= []).push(text); },
+      };
+      return this.context;
+    }
     focus() { document.activeElement = this; }
     click() { downloads.push(this); }
     showModal() { this.open = true; }
@@ -66,7 +82,7 @@ function harness(preferences = {}) {
     const job = {};
     const worker = {
       set(options) { job.options = options; return worker; },
-      from(sourceNode) { job.source = sourceNode; return worker; },
+      from(sourceNode) { job.source = sourceNode; job.sellerNameCanvas = sourceNode.querySelector('.invoice-seller-name-canvas'); return worker; },
       async save() { pdfExports.push(job); },
     };
     return worker;
@@ -74,7 +90,7 @@ function harness(preferences = {}) {
   const context = vm.createContext({
     ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
-    matchMedia: () => ({ addEventListener() {} }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
+    matchMedia: () => ({ addEventListener() {} }), getComputedStyle: () => ({ fontStyle: 'normal', fontVariant: 'normal', fontWeight: '700', fontSize: '28px', fontFamily: 'sans-serif', lineHeight: '35px', color: '#000' }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
   });
   vm.runInContext(source.replace(/^import[\s\S]*?from '[^']+';\n/gm, ''), context);
@@ -526,12 +542,15 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   await page.fire('create-invoice'); await page.settle();
   const saving = page.fire('invoice-save-pdf');
   await page.reply({ sequence: 7 }); await saving;
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '');
   assert.equal(page.prints.length, 0);
   assert.equal(page.blobs.length, 0);
   assert.equal(page.downloads.length, 0);
   assert.equal(page.pdfExports.length, 1);
   const [job] = page.pdfExports;
   assert.equal(job.source, page.nodes.get('invoice-preview').children[0]);
+  assert.equal(job.sellerNameCanvas?.drawnText, 'Sergey Nikolaev');
+  assert.equal(job.sellerNameCanvas?.attributes['aria-label'], 'Sergey Nikolaev');
   const sellerName = job.source.children[0].children[0].children[0];
   assert.deepEqual(sellerName.children.map(part => [part.className, part.textContent]), [
     ['invoice-seller-name-part', 'Sergey'],
@@ -546,6 +565,23 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(job.options.pagebreak.avoid.includes('tr'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
 });
+
+test('PDF seller canvas wraps long names without horizontal compression and restores the preview DOM', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  const source = page.nodes.get('invoice-preview').children[0], heading = source.querySelector('.invoice-seller').children[0];
+  heading.rectWidth = 180;
+  const original = [...heading.children], longName = `Alpha ${'X'.repeat(40)} Omega Company`;
+  const restore = page.context.replaceSellerNameWithCanvas(source, longName), canvas = heading.querySelector('.invoice-seller-name-canvas');
+  assert.ok(canvas);
+  assert.ok(canvas.drawnLines.length > 2);
+  assert.ok(canvas.drawnLines.every(line => line.length * 10 <= 180));
+  assert.ok(Number.parseFloat(canvas.style.width) <= 180);
+  assert.equal(Number.parseFloat(canvas.style.height), canvas.drawnLines.length * 35);
+  restore();
+  assert.deepEqual(heading.children, original);
+});
+
 test('failed HTML-to-PDF export restores preview state and reports the error', async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();

@@ -169,11 +169,58 @@ function renderInvoiceDocument(container, invoice) {
   container.append(documentRoot);
 }
 
+function replaceSellerNameWithCanvas(source, value) {
+  const heading = source.querySelector?.('.invoice-seller')?.children[0], canvas = document.createElement('canvas');
+  const context = canvas.getContext?.('2d');
+  if (!heading || !context) return () => {};
+  const text = String(value || 'From').trim().replace(/\s+/g, ' ') || 'From';
+  const style = getComputedStyle(heading), fontSize = Number.parseFloat(style.fontSize) || 28;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.25, ratio = 1;
+  const font = `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  context.font = font;
+  const measured = context.measureText(text), maxWidth = Math.max(1, Math.ceil(heading.getBoundingClientRect?.().width || measured.width));
+  const lines = [], words = text.split(' '); let line = '';
+  const pushLongWord = word => {
+    const graphemes = typeof Intl.Segmenter === 'function'
+      ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(word)].map(item => item.segment) : [...word];
+    let chunk = '';
+    for (const grapheme of graphemes) {
+      const candidate = `${chunk}${grapheme}`;
+      if (chunk && context.measureText(candidate).width > maxWidth) { lines.push(chunk); chunk = grapheme; }
+      else chunk = candidate;
+    }
+    line = chunk;
+  };
+  for (const word of words) {
+    if (!line) {
+      if (context.measureText(word).width <= maxWidth) line = word; else pushLongWord(word);
+      continue;
+    }
+    const candidate = `${line} ${word}`;
+    if (context.measureText(candidate).width <= maxWidth) { line = candidate; continue; }
+    lines.push(line); line = '';
+    if (context.measureText(word).width <= maxWidth) line = word; else pushLongWord(word);
+  }
+  if (line) lines.push(line);
+  const width = Math.max(1, Math.ceil(Math.max(...lines.map(item => context.measureText(item).width))));
+  canvas.width = Math.ceil(width * ratio); canvas.height = Math.ceil(lineHeight * lines.length * ratio);
+  canvas.style.width = `${width}px`; canvas.style.height = `${lineHeight * lines.length}px`;
+  canvas.className = 'invoice-seller-name-canvas'; canvas.setAttribute('aria-label', text);
+  context.scale(ratio, ratio); context.font = font; context.fillStyle = style.color || '#000'; context.textBaseline = 'alphabetic';
+  const ascent = measured.actualBoundingBoxAscent || fontSize * .8, descent = measured.actualBoundingBoxDescent || fontSize * .2;
+  const baseline = (lineHeight - ascent - descent) / 2 + ascent;
+  lines.forEach((item, index) => context.fillText(item, 0, baseline + index * lineHeight));
+  const original = [...(heading.childNodes || heading.children)]; heading.replaceChildren(canvas);
+  return () => heading.replaceChildren(...original);
+}
+
 async function saveInvoicePdf(invoice) {
   const source = $('invoice-preview').children[0];
   if (!source || typeof globalThis.html2pdf !== 'function') throw new Error('PDF export is unavailable. Reload Clockoli and try again.');
   source.classList.add('invoice-pdf-export');
+  let restoreSellerName = () => {};
   try {
+    restoreSellerName = replaceSellerNameWithCanvas(source, invoice.seller?.name || 'From');
     await globalThis.html2pdf().set({
       margin: [10, 10, 10, 10],
       filename: invoicePdfFilename(invoice),
@@ -184,6 +231,7 @@ async function saveInvoicePdf(invoice) {
       pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.invoice-document-heading', '.invoice-parties', '.invoice-total-row', '.invoice-unbilled', '.invoice-footnote', '.invoice-terms', '.invoice-notes'] },
     }).from(source).save();
   } finally {
+    restoreSellerName();
     source.classList.remove('invoice-pdf-export');
   }
 }
