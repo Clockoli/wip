@@ -181,11 +181,11 @@ test('completed-record mutations update the mandatory task index atomically', as
   assert.ok(github.atomicWrites.every(write => write.changes.some(change => change.path === TASK_INDEX_PATH)));
 });
 
-test('task merge atomically replaces source URL and title across the selected range and active timer', async () => {
+test('task merge atomically replaces every queued source URL and title across the selected range and active timer', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
-  const sourceUrl = 'https://example.test/source', targetUrl = 'https://example.test/target';
+  const sourceUrl = 'https://example.test/source', targetUrl = 'https://example.test/target', secondSourceUrl = 'https://example.test/source-two', secondTargetUrl = 'https://example.test/target-two';
   const july = entry('2026-07-02T08:00:00.000Z', '2026-07-02T09:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
-  const august = entry('2026-08-03T08:00:00.000Z', '2026-08-03T10:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
+  const august = entry('2026-08-03T08:00:00.000Z', '2026-08-03T10:00:00.000Z', { taskUrl: secondSourceUrl, taskTitle: 'Second old task' });
   const outside = entry('2026-04-03T08:00:00.000Z', '2026-04-03T09:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
   seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([july]), 'july-sha');
   seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([august]), 'august-sha');
@@ -193,19 +193,23 @@ test('task merge atomically replaces source URL and title across the selected ra
   const running = active('2026-08-18T08:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
   seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
   const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
-  const result = await tracker.mergeTask({ sourceTaskUrl: sourceUrl, targetTaskUrl: targetUrl, targetTaskTitle: 'Canonical task', startDate: '2026-05-19', endDate: '2026-08-18' });
+  const result = await tracker.mergeTasks({ pairs: [
+    { sourceTaskUrl: sourceUrl, targetTaskUrl: targetUrl, targetTaskTitle: 'Canonical task' },
+    { sourceTaskUrl: secondSourceUrl, targetTaskUrl: secondTargetUrl, targetTaskTitle: 'Second canonical task' },
+  ], startDate: '2026-05-19', endDate: '2026-08-18' });
   assert.deepEqual(result, { mergedEntries: 2, mergedActive: true });
-  for (const month of ['2026-07', '2026-08']) {
-    const [saved] = parseMonthlyRecords(github.files.get(`times/${month}/alice.jsonl`).text, { user: 'alice', month });
-    assert.equal(saved.taskUrl, targetUrl); assert.equal(saved.taskTitle, 'Canonical task');
-  }
+  const [savedJuly] = parseMonthlyRecords(github.files.get('times/2026-07/alice.jsonl').text, { user: 'alice', month: '2026-07' });
+  const [savedAugust] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' });
+  assert.equal(savedJuly.taskUrl, targetUrl); assert.equal(savedJuly.taskTitle, 'Canonical task');
+  assert.equal(savedAugust.taskUrl, secondTargetUrl); assert.equal(savedAugust.taskTitle, 'Second canonical task');
   const [savedOutside] = parseMonthlyRecords(github.files.get('times/2026-04/alice.jsonl').text, { user: 'alice', month: '2026-04' });
   assert.equal(savedOutside.taskUrl, sourceUrl);
   const savedActive = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
   assert.equal(savedActive.taskUrl, targetUrl); assert.equal(savedActive.taskTitle, 'Canonical task');
   const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
   assert.equal(index.tasks[sourceUrl].sessionCount, 1);
-  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 10800, sessionCount: 2, recordIds: [july.id, august.id].sort() });
+  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });
+  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id] });
   assert.equal(github.atomicWrites.length, 1);
 });
 

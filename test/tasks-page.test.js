@@ -55,17 +55,21 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.doesNotMatch(js, /Saved in|task-repositories/);
 });
 
-test('Settings exposes searchable left-to-right task merging for the last three months', () => {
+test('Settings exposes two filtered task lists, people selection, and a queued atomic merge list', () => {
   const optionsHtml = fs.readFileSync(new URL('../src/options/options.html', import.meta.url), 'utf8');
   const optionsJs = fs.readFileSync(new URL('../src/options/options.js', import.meta.url), 'utf8');
   assert.match(optionsHtml, /id="merge-tasks"[\s\S]*<h2[^>]*>Merge tasks<\/h2>/);
-  assert.match(optionsHtml, /id="merge-task-source"[^>]*list="merge-task-options"/);
+  assert.match(optionsHtml, /id="merge-task-period"[\s\S]*one-month[\s\S]*three-months[\s\S]*all-time/);
+  assert.match(optionsHtml, /id="merge-people-all"/); assert.match(optionsHtml, /id="merge-people-none"/);
+  assert.match(optionsHtml, /id="merge-source-filter"/); assert.match(optionsHtml, /id="merge-source-list"/);
   assert.match(optionsHtml, /class="merge-task-arrow"[^>]*>→<\/span>/);
-  assert.match(optionsHtml, /id="merge-task-target"[^>]*list="merge-task-options"/);
-  assert.match(optionsHtml, /id="merge-tasks-submit"[^>]*>Merge tasks<\/button>/);
-  assert.match(optionsJs, /taskPeriodRange\('three-months'/);
-  assert.match(optionsJs, /type:\s*'LOAD_TASKS'/);
+  assert.match(optionsHtml, /id="merge-target-filter"/); assert.match(optionsHtml, /id="merge-target-list"/);
+  assert.match(optionsHtml, /id="merge-queue-list"/); assert.match(optionsHtml, /id="merge-tasks-submit"[^>]*>Merge<\/button>/);
+  assert.match(optionsJs, /taskPeriodRange\(\$\('merge-task-period'\)\.value/);
+  assert.match(optionsJs, /includeAllUsers: true/);
+  assert.match(optionsJs, /mergePairs\.push/);
   assert.match(optionsJs, /type:\s*'MERGE_TASKS'/);
+  assert.match(optionsJs, /pairs = mergePairs\.map/);
 });
 
 test('failed task switches reconcile from local tracker state without reloading reports', () => {

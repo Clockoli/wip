@@ -17,6 +17,10 @@ test('task periods are inclusive and default to the last two weeks', () => {
   assert.throws(() => taskPeriodRange('forever', '2026-08-20'), /period/i);
 });
 
+test('all-time task period starts at the first supported Clockoli date', () => {
+  assert.deepEqual(taskPeriodRange('all-time', '2026-08-20'), { startDate: '1970-01-01', endDate: '2026-08-20' });
+});
+
 test('tracked tasks deduplicate sessions by canonical issue or PR and sort by total time', () => {
   const issueOne = issue(1), pullTwo = issue(2, 'pull_request');
   const tasks = aggregateTrackedTasks([

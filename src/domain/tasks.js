@@ -54,12 +54,13 @@ export function aggregateTaskParticipants(records, {
 }
 
 export function taskPeriodRange(period, today) {
-  const days = PERIOD_DAYS[period];
-  if (!days) throw new Error('Invalid task period');
   const match = typeof today === 'string' ? today.match(/^(\d{4})-(\d{2})-(\d{2})$/) : null;
   if (!match) throw new Error('Invalid task period date');
   const end = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0);
   if (Number.isNaN(end.getTime()) || dateValue(end) !== today) throw new Error('Invalid task period date');
+  if (period === 'all-time') return { startDate: '1970-01-01', endDate: today };
+  const days = PERIOD_DAYS[period];
+  if (!days) throw new Error('Invalid task period');
   const start = new Date(end); start.setDate(start.getDate() - days + 1);
   return { startDate: dateValue(start), endDate: today };
 }

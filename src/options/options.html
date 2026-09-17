@@ -180,17 +180,19 @@
 
   <section id="merge-tasks" class="card" aria-labelledby="merge-tasks-title" hidden>
     <div class="card-heading">
-      <div><h2 id="merge-tasks-title">Merge tasks</h2><p>Replace every occurrence of one task from the last three months with another task. Descriptions, dates, durations, and people stay unchanged.</p></div>
+      <div><h2 id="merge-tasks-title">Merge tasks</h2><p>Choose task pairs to replace. Each time repository receives one atomic commit for the full merge list.</p></div>
     </div>
-    <form id="merge-tasks-form" novalidate>
-      <div class="merge-task-controls">
-        <label>Task to replace<input id="merge-task-source" list="merge-task-options" autocomplete="off" placeholder="Type part of a task name" required></label>
-        <span class="merge-task-arrow" aria-hidden="true">→</span>
-        <label>Replace with<input id="merge-task-target" list="merge-task-options" autocomplete="off" placeholder="Type part of a task name" required></label>
-      </div>
-      <datalist id="merge-task-options"></datalist>
-      <div class="actions"><button id="merge-tasks-submit" type="submit" disabled>Merge tasks</button><p id="merge-tasks-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
-    </form>
+    <div class="merge-task-settings">
+      <label>Period<select id="merge-task-period"><option value="one-month" selected>Last 30 days</option><option value="three-months">Last 3 months</option><option value="all-time">All time</option></select></label>
+      <section class="merge-people" aria-labelledby="merge-people-title"><div class="section-heading"><h3 id="merge-people-title">People</h3><span><button id="merge-people-all" class="text-button" type="button">Select all</button><button id="merge-people-none" class="text-button" type="button">Select none</button></span></div><div id="merge-people-list" class="merge-people-list"></div></section>
+    </div>
+    <div class="merge-task-columns">
+      <section class="merge-task-picker" aria-labelledby="merge-source-title"><h3 id="merge-source-title">Task to replace</h3><label class="visually-hidden" for="merge-source-filter">Filter tasks to replace</label><input id="merge-source-filter" type="search" placeholder="Filter by task name or URL"><div id="merge-source-list" class="merge-task-list" role="listbox" aria-label="Tasks to replace"></div></section>
+      <span class="merge-task-arrow" aria-hidden="true">→</span>
+      <section class="merge-task-picker" aria-labelledby="merge-target-title"><h3 id="merge-target-title">Replace with</h3><label class="visually-hidden" for="merge-target-filter">Filter replacement tasks</label><input id="merge-target-filter" type="search" placeholder="Filter by task name or URL"><div id="merge-target-list" class="merge-task-list" role="listbox" aria-label="Replacement tasks"></div></section>
+    </div>
+    <section class="merge-queue" aria-labelledby="merge-queue-title"><div class="section-heading"><h3 id="merge-queue-title">Merge list</h3><span id="merge-queue-count" class="badge">0 pairs</span></div><div id="merge-queue-list"></div><p id="merge-queue-empty" class="help">Select one task in each list to add a merge pair.</p></section>
+    <div class="actions"><button id="merge-tasks-submit" type="button" disabled>Merge</button><p id="merge-tasks-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
   </section>
 
   <details id="more-settings" class="more-settings">

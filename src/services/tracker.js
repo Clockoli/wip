@@ -1450,9 +1450,15 @@ export class TrackerService {
     }
   }
 
-  async mergeTask({ sourceTaskUrl, targetTaskUrl, targetTaskTitle = '', startDate, endDate }) {
-    const sourceUrl = this.validateTaskUrl(sourceTaskUrl), targetUrl = this.validateTaskUrl(targetTaskUrl);
-    if (sourceUrl === targetUrl) throw new Error('Choose two different tasks to merge');
+  async mergeTasks({ pairs, startDate, endDate }) {
+    if (!Array.isArray(pairs) || !pairs.length || pairs.length > 100) throw new Error('Choose one to one hundred task merges');
+    const replacements = new Map();
+    for (const pair of pairs) {
+      const sourceUrl = this.validateTaskUrl(pair?.sourceTaskUrl), targetUrl = this.validateTaskUrl(pair?.targetTaskUrl);
+      if (sourceUrl === targetUrl) throw new Error('Choose two different tasks to merge');
+      if (replacements.has(sourceUrl)) throw new Error('Each task can be replaced only once');
+      replacements.set(sourceUrl, { taskUrl: targetUrl, taskTitle: String(pair?.targetTaskTitle || '').trim().slice(0, 300) });
+    }
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('Sync pending changes before merging tasks.');
     const files = new Map();
@@ -1464,23 +1470,25 @@ export class TrackerService {
     for (const file of files.values()) {
       let changed = false;
       file.entries = file.entries.map(entry => {
-        if (entry.entryDate < startDate || entry.entryDate > endDate || taskUrlOf(entry) !== sourceUrl) return entry;
-        const updated = applyEntryEdits(entry, { taskUrl: targetUrl, taskTitle: targetTaskTitle }, editClock(this.clock, entry));
+        const replacement = replacements.get(taskUrlOf(entry));
+        if (entry.entryDate < startDate || entry.entryDate > endDate || !replacement) return entry;
+        const updated = applyEntryEdits(entry, replacement, editClock(this.clock, entry));
         removed.push(entry); added.push(updated); changed = true; return updated;
       });
       if (changed) touched.push(file);
     }
     const active = await this.readRemoteActive();
-    const mergeActive = Boolean(active && active.entryDate >= startDate && active.entryDate <= endDate && taskUrlOf(active) === sourceUrl);
+    const activeReplacement = active ? replacements.get(taskUrlOf(active)) : null;
+    const mergeActive = Boolean(active && active.entryDate >= startDate && active.entryDate <= endDate && activeReplacement);
     const updatedActive = mergeActive
-      ? applyActiveEdits(active, { taskUrl: targetUrl, taskTitle: targetTaskTitle }, this.clock()) : active;
+      ? applyActiveEdits(active, activeReplacement, this.clock()) : active;
     if (!touched.length && !mergeActive) return { mergedEntries: 0, mergedActive: false };
     const activePath = activeRecordPath(this.user);
     const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
     if (mergeActive) changes.push({ path: activePath, sha: active._sha, text: serializeActiveRecord(updatedActive) });
     try {
       const result = removed.length
-        ? await this.updateCompletedRecords(changes, `time: merge task ${this.user}`, { remove: removed, add: added })
+        ? await this.updateCompletedRecords(changes, `time: merge tasks ${this.user}`, { remove: removed, add: added })
         : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`);
       const replacements = touched.flatMap(file => parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],

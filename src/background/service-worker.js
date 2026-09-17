@@ -17,6 +17,7 @@ import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
+import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
 import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -413,7 +414,9 @@ async function loadTasks(message, sender) {
         github: githubForConfig(destination), cache: store,
         onProgress: progress => emitReportProgress(message.payload?.requestId, { ...progress, destinationId: destination.id }),
       });
-      const records = await reports.loadUserRange(message.payload || {}, user, { signal, includeStorageMetadata: true });
+      const records = message.payload?.includeAllUsers
+        ? await reports.loadRepositoryRange(message.payload || {}, { defaultBranch: destination.branch || 'main', signal, includeStorageMetadata: true })
+        : await reports.loadUserRange(message.payload || {}, user, { signal, includeStorageMetadata: true });
       const state = await tracker.getState();
       timerStates.set(destination.id, state);
       const issueValues = records.flatMap(record => record.issue ? [record.issue] : []);
@@ -437,12 +440,16 @@ async function loadTasks(message, sender) {
         ...(operation.entry ? { entry: { ...operation.entry, destinationId, timeRepository: destination?.label || `${destination?.owner}/${destination?.repo}` } } : {}),
       }));
     });
+    const availableUsers = [...new Set(loaded.records.map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    const requestedUsers = Array.isArray(message.payload?.selectedUsers) ? message.payload.selectedUsers : Object.values(currentUsers);
+    const selectedUsers = requestedUsers.filter(user => availableUsers.includes(user));
     return {
       configured: true,
       sourceRepositories: destinations.map(destination => destination.label),
       currentUsers,
+      availableUsers,
       tasks: aggregateTrackedTasks(loaded.records.map(withoutInternalMetadata), {
-        currentUsers: Object.values(currentUsers), metadata, active, pendingWrites,
+        currentUsers: selectedUsers, metadata, active, pendingWrites,
         startDate: message.payload?.startDate, endDate: message.payload?.endDate,
       }),
       active, pendingWrites,
@@ -850,25 +857,31 @@ async function handle(message, sender) {
     case 'MERGE_TASKS': {
       const snapshot = await configuredSnapshot({ localOnly: true });
       const destinations = selectReadDestinations(snapshot, { destinationIds: message.destinationIds });
-      const request = {
-        sourceTaskUrl: message.sourceTaskUrl,
-        targetTaskUrl: message.targetTaskUrl,
-        targetTaskTitle: message.targetTaskTitle,
-        startDate: message.startDate,
-        endDate: message.endDate,
-      };
+      const request = { pairs: message.pairs, startDate: message.startDate, endDate: message.endDate };
+      const selectedUsers = [...new Set((Array.isArray(message.selectedUsers) ? message.selectedUsers : [])
+        .map(user => String(user || '').trim()).filter(Boolean))];
+      if (!selectedUsers.length) throw new Error('Choose at least one person before merging tasks.');
       let mergedEntries = 0, mergedActive = false, completedDestinations = 0;
-      const targets = await Promise.all(destinations.map(async destination => ({
-        destination, tracker: await trackerForDestination(destination.id),
-      })));
-      const states = await Promise.all(targets.map(({ tracker }) => tracker.getState()));
-      if (states.some(state => state.pendingWrites?.length)) throw new Error('Sync pending changes before merging tasks.');
       const failures = [];
-      for (const { destination, tracker } of targets) {
+      for (const destination of destinations) {
         try {
-          const result = await tracker.mergeTask(request);
-          mergedEntries += result.mergedEntries;
-          mergedActive ||= result.mergedActive;
+          const currentUser = await destinationUser(destination, snapshot.auth);
+          const localTracker = await trackerForDestination(destination.id);
+          const state = await localTracker.getState();
+          if (state.pendingWrites?.length) throw new Error('Sync pending changes before merging tasks.');
+          const branches = await discoverUserStorageBranches(githubForConfig(destination));
+          const byLogin = new Map(branches.map(branch => [branch.login.toLowerCase(), branch]));
+          const targets = selectedUsers.map(user => {
+            if (user.toLowerCase() === currentUser.toLowerCase()) return { user: currentUser, tracker: localTracker };
+            const branch = byLogin.get(user.toLowerCase());
+            if (!branch) throw new Error(`Clockoli storage for ${user} is no longer available. Reload Settings.`);
+            const detachedStore = { getState: async () => ({ pendingWrites: [], recentCache: [] }), patchState: async () => {} };
+            return { user: branch.login, tracker: new TrackerService({ github: branch.github, store: detachedStore, user: branch.login, actorId: `github:${branch.id}`, actorName: branch.login, recentDays: destination.recentDays || 7 }) };
+          });
+          for (const { tracker } of targets) {
+            const result = await tracker.mergeTasks(request);
+            mergedEntries += result.mergedEntries; mergedActive ||= result.mergedActive;
+          }
           completedDestinations += 1;
         } catch (error) { failures.push({ destination, error }); }
       }

@@ -120,28 +120,26 @@ test('ready discovery populates both default options without selection writes an
   assert.equal(page.nodes.get('repository-list').children[0], row);
 });
 
-test('Merge tasks offers searchable recent tasks and sends the left identity to the right identity', async () => {
+test('Merge tasks queues selected left-to-right pairs and sends them together', async () => {
   const tasks = [
-    { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Old task', destinationIds: ['github:1'] },
-    { taskUrl: 'https://github.com/acme/app/issues/2', title: 'Canonical task', destinationIds: ['github:2'] },
+    { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Old task', totalSeconds: 3600, destinationIds: ['github:1'] },
+    { taskUrl: 'https://github.com/acme/app/issues/2', title: 'Canonical task', totalSeconds: 1800, destinationIds: ['github:2'] },
   ];
   const page = harness({ reply: request => request.type === 'MERGE_TASKS'
     ? { mergedEntries: 3, mergedActive: false, destinationCount: 1 }
-    : request.type === 'LOAD_TASKS' ? { tasks } : {} });
+    : request.type === 'LOAD_TASKS' ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
   page.render(connectedState);
+  page.nodes.get('merge-task-period').value = 'one-month';
+  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
   page.context.renderMergeTasks(tasks);
-  const source = page.nodes.get('merge-task-source'), target = page.nodes.get('merge-task-target');
-  source.value = 'Old task — https://github.com/acme/app/issues/1';
-  target.value = 'Canonical task — https://github.com/acme/app/issues/2';
-  source.listeners.input(); target.listeners.input();
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
-  await page.submit('merge-tasks-form');
+  await page.nodes.get('merge-tasks-submit').listeners.click();
   const request = page.requests.find(item => item.type === 'MERGE_TASKS');
   assert.deepEqual(JSON.parse(JSON.stringify(request.destinationIds)), ['github:1']);
-  assert.equal(request.sourceTaskUrl, tasks[0].taskUrl); assert.equal(request.targetTaskUrl, tasks[1].taskUrl);
-  assert.equal(request.targetTaskTitle, 'Canonical task');
-  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 3 entries into Canonical task/);
-  assert.equal(source.value, ''); assert.equal(target.value, '');
+  assert.deepEqual(JSON.parse(JSON.stringify(request.pairs)), [{ sourceTaskUrl: tasks[0].taskUrl, targetTaskUrl: tasks[1].taskUrl, targetTaskTitle: 'Canonical task' }]);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 1 task pair/);
 });
 
 test('repository search is shown only for five or more discovered repositories', () => {

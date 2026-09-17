@@ -87,24 +87,51 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
 });
 
-test('MERGE_TASKS rewrites source records in every selected destination', async () => {
+test('MERGE_TASKS applies every queued pair in one transaction per selected destination', async () => {
   const calls = [];
   const context = handlerContext({
-    configuredSnapshot: async () => ({ registry }),
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    destinationUser: async () => 'alice',
+    githubForConfig: () => ({}),
+    discoverUserStorageBranches: async () => [],
     trackerForDestination: async destinationId => ({
       getState: async () => ({ pendingWrites: [] }),
-      mergeTask: async request => { calls.push({ destinationId, request }); return { mergedEntries: 2, mergedActive: destinationId === 'github:2' }; },
+      mergeTasks: async request => { calls.push({ destinationId, request }); return { mergedEntries: 2, mergedActive: destinationId === 'github:2' }; },
     }),
   });
   const request = {
-    type: 'MERGE_TASKS', destinationIds: ['github:1', 'github:2'],
-    sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task',
+    type: 'MERGE_TASKS', destinationIds: ['github:1', 'github:2'], selectedUsers: ['alice'],
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }, { sourceTaskUrl: 'https://example.test/old-two', targetTaskUrl: 'https://example.test/new-two', targetTaskTitle: 'Newer task' }],
     startDate: '2026-05-19', endDate: '2026-08-18',
   };
   const result = await context.handle(request, extensionSender);
   assert.equal(result.mergedEntries, 4); assert.equal(result.mergedActive, true); assert.equal(result.destinationCount, 2);
   assert.deepEqual(calls.map(call => call.destinationId), ['github:1', 'github:2']);
-  assert.equal(calls[0].request.sourceTaskUrl, request.sourceTaskUrl);
+  assert.deepEqual(calls[0].request.pairs, request.pairs);
+});
+
+test('MERGE_TASKS writes selected other-user storage branches rather than only the current user branch', async () => {
+  const calls = [];
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    destinationUser: async () => 'alice',
+    githubForConfig: destination => ({ destinationId: destination.id }),
+    discoverUserStorageBranches: async github => [{ id: 42, login: 'bob', github: { destinationId: github.destinationId, branch: 'bob' } }],
+    TrackerService: class {
+      constructor({ github, user }) { this.github = github; this.user = user; }
+      async mergeTasks(request) { calls.push({ destinationId: this.github.destinationId, user: this.user, request }); return { mergedEntries: 1, mergedActive: false }; }
+    },
+    trackerForDestination: async destinationId => ({
+      getState: async () => ({ pendingWrites: [] }),
+      mergeTasks: async request => { calls.push({ destinationId, user: 'alice', request }); return { mergedEntries: 1, mergedActive: false }; },
+    }),
+  });
+  await context.handle({
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice', 'bob'],
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }],
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  }, extensionSender);
+  assert.deepEqual(calls.map(call => [call.destinationId, call.user]), [['github:1', 'alice'], ['github:1', 'bob']]);
 });
 
 test('extracted service-worker handler pins STOP to the active destination', async () => {
