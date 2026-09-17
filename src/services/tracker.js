@@ -3,7 +3,7 @@ import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTim
 import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
-import { entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
+import { entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 export class TrackerConflictError extends Error {
   constructor(message, reason = '') { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; this.reason = reason; }
@@ -264,6 +264,17 @@ function appendQueueDiagnostic(operation, message) {
   if (diagnostics.length > 60) diagnostics.splice(0, diagnostics.length - 60);
 }
 function monthFromPath(path, user) { return assertUserMonthlyRecordsPath(path, user).month; }
+function monthsInRange(startDate, endDate) {
+  const start = entryDateParts(startDate), end = entryDateParts(endDate);
+  if (startDate > endDate) throw new Error('Task merge end date must not precede start date');
+  const months = [];
+  for (let year = Number(start.year), month = Number(start.month); year < Number(end.year) || (year === Number(end.year) && month <= Number(end.month));) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month === 13) { year += 1; month = 1; }
+  }
+  return months;
+}
 function editClock(clock, entry) { return new Date(Math.max(clock().getTime(), new Date(entry.updatedAt).getTime())); }
 function localMidnight(date) {
   const [year, month, day] = date.split('-').map(Number);
@@ -1435,6 +1446,52 @@ export class TrackerService {
       return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while linked time edits were being saved. Reload.');
+      throw error;
+    }
+  }
+
+  async mergeTask({ sourceTaskUrl, targetTaskUrl, targetTaskTitle = '', startDate, endDate }) {
+    const sourceUrl = this.validateTaskUrl(sourceTaskUrl), targetUrl = this.validateTaskUrl(targetTaskUrl);
+    if (sourceUrl === targetUrl) throw new Error('Choose two different tasks to merge');
+    const state = await this.store.getState();
+    if ((state.pendingWrites ?? []).length) throw new Error('Sync pending changes before merging tasks.');
+    const files = new Map();
+    for (const month of monthsInRange(startDate, endDate)) {
+      const path = monthlyRecordsPath(this.user, `${month}-01`);
+      files.set(path, await this.readMonthly(path));
+    }
+    const removed = [], added = [], touched = [];
+    for (const file of files.values()) {
+      let changed = false;
+      file.entries = file.entries.map(entry => {
+        if (entry.entryDate < startDate || entry.entryDate > endDate || taskUrlOf(entry) !== sourceUrl) return entry;
+        const updated = applyEntryEdits(entry, { taskUrl: targetUrl, taskTitle: targetTaskTitle }, editClock(this.clock, entry));
+        removed.push(entry); added.push(updated); changed = true; return updated;
+      });
+      if (changed) touched.push(file);
+    }
+    const active = await this.readRemoteActive();
+    const mergeActive = Boolean(active && active.entryDate >= startDate && active.entryDate <= endDate && taskUrlOf(active) === sourceUrl);
+    const updatedActive = mergeActive
+      ? applyActiveEdits(active, { taskUrl: targetUrl, taskTitle: targetTaskTitle }, this.clock()) : active;
+    if (!touched.length && !mergeActive) return { mergedEntries: 0, mergedActive: false };
+    const activePath = activeRecordPath(this.user);
+    const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
+    if (mergeActive) changes.push({ path: activePath, sha: active._sha, text: serializeActiveRecord(updatedActive) });
+    try {
+      const result = removed.length
+        ? await this.updateCompletedRecords(changes, `time: merge task ${this.user}`, { remove: removed, add: added })
+        : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`);
+      const replacements = touched.flatMap(file => parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
+        user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
+      }));
+      const patch = {};
+      if (touched.length) patch.recentCache = replaceCachedFiles(state.recentCache, replacements, touched.map(file => file.path));
+      if (mergeActive) patch.activeCache = { ...updatedActive, _path: activePath, _sha: result.blobShas[activePath] };
+      await this.store.patchState(patch);
+      return { mergedEntries: removed.length, mergedActive: mergeActive };
+    } catch (error) {
+      if (isConflict(error)) throw new TrackerConflictError('Time data changed while tasks were being merged. Reload and try again.');
       throw error;
     }
   }

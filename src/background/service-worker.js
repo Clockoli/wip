@@ -847,6 +847,42 @@ async function handle(message, sender) {
       if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
       return (await context()).tracker.bulkAddTimes(text);
     }
+    case 'MERGE_TASKS': {
+      const snapshot = await configuredSnapshot({ localOnly: true });
+      const destinations = selectReadDestinations(snapshot, { destinationIds: message.destinationIds });
+      const request = {
+        sourceTaskUrl: message.sourceTaskUrl,
+        targetTaskUrl: message.targetTaskUrl,
+        targetTaskTitle: message.targetTaskTitle,
+        startDate: message.startDate,
+        endDate: message.endDate,
+      };
+      let mergedEntries = 0, mergedActive = false, completedDestinations = 0;
+      const targets = await Promise.all(destinations.map(async destination => ({
+        destination, tracker: await trackerForDestination(destination.id),
+      })));
+      const states = await Promise.all(targets.map(({ tracker }) => tracker.getState()));
+      if (states.some(state => state.pendingWrites?.length)) throw new Error('Sync pending changes before merging tasks.');
+      const failures = [];
+      for (const { destination, tracker } of targets) {
+        try {
+          const result = await tracker.mergeTask(request);
+          mergedEntries += result.mergedEntries;
+          mergedActive ||= result.mergedActive;
+          completedDestinations += 1;
+        } catch (error) { failures.push({ destination, error }); }
+      }
+      if (failures.length) {
+        const labels = failures.map(({ destination }) => destination.label || `${destination.owner}/${destination.repo}`).join(', ');
+        const completedLabel = `${completedDestinations} time ${completedDestinations === 1 ? 'repository' : 'repositories'}`;
+        const error = new Error(completedDestinations
+          ? `The merge finished in ${completedLabel} but could not finish in ${labels}. Retry to finish the remaining entries.`
+          : `Could not merge tasks in ${labels}. ${failures[0].error.message}`);
+        error.code = completedDestinations ? 'partial_task_merge' : failures[0].error.code;
+        throw error;
+      }
+      return { mergedEntries, mergedActive, destinationCount: completedDestinations };
+    }
     case 'DELETE_ENTRY': {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
@@ -885,9 +921,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
     ].includes(message?.type);
+    const taskMerge = message?.type === 'MERGE_TASKS';
     const attempt = () => direct ? handle(message, sender)
-      : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))
-        : executor.run(() => handle(message, sender));
+      : taskMerge ? acceptanceExecutor.run(() => executor.run(() => handle(message, sender)))
+        : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))
+          : executor.run(() => handle(message, sender));
     operation = withCurrentRepositoryRecovery(message, attempt);
   }
   operation.then(data => sendResponse({ ok: true, data })).catch(error => sendResponse({ ok: false, error: serializeError(error, message) }));

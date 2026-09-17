@@ -180,8 +180,18 @@ export function applyActiveEdits(active, edits = {}, now = new Date()) {
   validateActiveTimer(active);
   const nextStart = toIso(edits.startedAt ?? active.startedAt), updatedAt = toIso(now);
   if (new Date(nextStart).getTime() > new Date(updatedAt).getTime()) throw new Error('Active timer start must not be in the future');
+  const currentUrl = taskUrlOf(active), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);
+  const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = active;
+  const metadata = structuredClone(active.metadata);
+  if (taskUrl !== currentUrl) delete metadata.github;
+  const title = normalizeTaskTitle(edits.taskTitle ?? edits.issueTitle ?? (taskUrl === currentUrl ? (active.taskTitle ?? active.issueTitle) : ''));
   return validateActiveTimer({
-    ...active,
+    ...base,
+    metadata,
+    taskUrl,
+    taskTitle: title,
+    issueTitle: title,
+    ...(parseGitHubTaskUrl(taskUrl) ? { issue: parseGitHubTaskUrl(taskUrl) } : {}),
     entryDate: localDateInTimezone(nextStart, active.timezone),
     startedAt: nextStart,
     createdAt: nextStart,

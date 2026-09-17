@@ -13,6 +13,7 @@ import {
   activeDestinationId,
   requireConfiguredDestinationId,
   resolveStartDestinationId,
+  selectReadDestinations,
   syncPendingAll,
 } from '../src/background/destination-runtime.js';
 import { createUlid } from '../src/domain/ulid.js';
@@ -43,7 +44,7 @@ function handlerContext(overrides = {}) {
     URL, TextEncoder, Date, Map, AbortController,
     chrome: { runtime: { getURL: () => extensionOrigin }, action: { setIcon: async () => {} }, tabs: { create: async () => {} } },
     assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
-    activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, syncPendingAll,
+    activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll,
     createUlid, taskUrlOf,
     globalTrackerState: async () => ({ configured: true, active: null, recent: [], pendingWrites: [] }),
     requestPendingSync: () => {},
@@ -84,6 +85,26 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(reports, /includeStorageMetadata: true/);
   assert.match(tasks, /includeStorageMetadata: true/);
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
+});
+
+test('MERGE_TASKS rewrites source records in every selected destination', async () => {
+  const calls = [];
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ registry }),
+    trackerForDestination: async destinationId => ({
+      getState: async () => ({ pendingWrites: [] }),
+      mergeTask: async request => { calls.push({ destinationId, request }); return { mergedEntries: 2, mergedActive: destinationId === 'github:2' }; },
+    }),
+  });
+  const request = {
+    type: 'MERGE_TASKS', destinationIds: ['github:1', 'github:2'],
+    sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task',
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  };
+  const result = await context.handle(request, extensionSender);
+  assert.equal(result.mergedEntries, 4); assert.equal(result.mergedActive, true); assert.equal(result.destinationCount, 2);
+  assert.deepEqual(calls.map(call => call.destinationId), ['github:1', 'github:2']);
+  assert.equal(calls[0].request.sourceTaskUrl, request.sourceTaskUrl);
 });
 
 test('extracted service-worker handler pins STOP to the active destination', async () => {

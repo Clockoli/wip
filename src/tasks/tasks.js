@@ -231,10 +231,6 @@ function rebuildList(tasks) {
       const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
     }
     copy.append(url);
-    if (task.timeRepositories?.length) {
-      const repositories = document.createElement('div'); repositories.className = 'task-repositories';
-      repositories.textContent = `Saved in ${task.timeRepositories.join(', ')}`; copy.append(repositories);
-    }
     main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
     const total = document.createElement('span'); total.className = 'tracked-time'; total.setAttribute('aria-label', 'Accumulated time');

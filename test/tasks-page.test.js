@@ -52,6 +52,20 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
     'maximum-length task titles are limited to two result lines');
   assert.match(js, /title\.title = task\.title/,
     'the full clamped task title remains available without expanding the row');
+  assert.doesNotMatch(js, /Saved in|task-repositories/);
+});
+
+test('Settings exposes searchable left-to-right task merging for the last three months', () => {
+  const optionsHtml = fs.readFileSync(new URL('../src/options/options.html', import.meta.url), 'utf8');
+  const optionsJs = fs.readFileSync(new URL('../src/options/options.js', import.meta.url), 'utf8');
+  assert.match(optionsHtml, /id="merge-tasks"[\s\S]*<h2[^>]*>Merge tasks<\/h2>/);
+  assert.match(optionsHtml, /id="merge-task-source"[^>]*list="merge-task-options"/);
+  assert.match(optionsHtml, /class="merge-task-arrow"[^>]*>→<\/span>/);
+  assert.match(optionsHtml, /id="merge-task-target"[^>]*list="merge-task-options"/);
+  assert.match(optionsHtml, /id="merge-tasks-submit"[^>]*>Merge tasks<\/button>/);
+  assert.match(optionsJs, /taskPeriodRange\('three-months'/);
+  assert.match(optionsJs, /type:\s*'LOAD_TASKS'/);
+  assert.match(optionsJs, /type:\s*'MERGE_TASKS'/);
 });
 
 test('failed task switches reconcile from local tracker state without reloading reports', () => {
@@ -253,10 +267,10 @@ test('Top tasks keeps GitHub issue icons, uses favicons for other sites, and col
   }
 });
 
-test('Top tasks displays repository provenance while timer actions keep the task URL as identity', async () => {
+test('Top tasks hides repository provenance while timer actions keep the task URL as identity', async () => {
   const task = { ...taskA, destinationIds: ['github:1', 'github:2'], timeRepositories: ['alice/time', 'team/time'] };
   const page = await tasksHarness({ tasks: [task] });
-  assert.equal(page.rows()[0].querySelector('.task-repositories').textContent, 'Saved in alice/time, team/time');
+  assert.equal(page.rows()[0].querySelector('.task-repositories'), null);
   await page.rows()[0].querySelector('.timer-button').click(); await page.settle();
   const start = page.messages.find(message => message.type === 'START');
   assert.equal(start.taskUrl, task.taskUrl);

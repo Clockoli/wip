@@ -1,6 +1,7 @@
 import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
+import { taskPeriodRange } from '../domain/tasks.js';
 
 
 const $ = id => document.getElementById(id);
@@ -30,6 +31,7 @@ let repositoryListSignature = '';
 let repositoryDiscoveryKnown = false;
 let renderedOnboardingStep = null;
 let localPreferences = null;
+let mergeTasks = [];
 let recoveryAction = null;
 let settingsConnected = null;
 let backupReminderShown = false;
@@ -401,6 +403,7 @@ function renderState() {
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
+  $('merge-tasks').hidden = !state.config && destinations.length === 0;
   if (settingsConnected !== accountConnected) {
     $('more-settings').open = Boolean(accountConnected);
     settingsConnected = accountConnected;
@@ -1056,6 +1059,47 @@ async function refreshLocalPreferences() {
   renderLocalPreferences(await send({ type: 'GET_LOCAL_PREFERENCES' }));
 }
 
+function currentDateValue(now = new Date()) {
+  const pad = value => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+function mergeTaskLabel(task) {
+  return `${task.title || task.taskUrl} — ${task.taskUrl}`;
+}
+function selectedMergeTask(inputId) {
+  const value = $(inputId).value.trim();
+  return mergeTasks.find(task => mergeTaskLabel(task) === value) ?? null;
+}
+function updateMergeButton() {
+  const source = selectedMergeTask('merge-task-source'), target = selectedMergeTask('merge-task-target');
+  $('merge-tasks-submit').disabled = !source || !target || source.taskUrl === target.taskUrl;
+}
+function renderMergeTasks(tasks) {
+  mergeTasks = tasks.filter(task => task.taskUrl && task.destinationIds?.length)
+    .sort((left, right) => (left.title || left.taskUrl).localeCompare(right.title || right.taskUrl));
+  const options = mergeTasks.map(task => {
+    const option = document.createElement('option'); option.value = mergeTaskLabel(task); return option;
+  });
+  $('merge-task-options').replaceChildren(...options);
+  updateMergeButton();
+}
+async function refreshMergeTasks() {
+  if ($('merge-tasks').hidden) return;
+  const range = taskPeriodRange('three-months', currentDateValue());
+  try {
+    const result = await send({ type: 'LOAD_TASKS', payload: { ...range, requestId: `merge-tasks-${Date.now()}` } });
+    if (result.partial || result.conflicts?.length) {
+      renderMergeTasks([]);
+      $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.';
+      return;
+    }
+    renderMergeTasks(result.tasks || []);
+    $('merge-tasks-feedback').textContent = mergeTasks.length ? '' : 'No tasks were tracked in the last three months.';
+  } catch (error) {
+    renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message;
+  }
+}
+
 function ratesPayload() {
   const rates = {};
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
@@ -1499,6 +1543,33 @@ $('import-settings-file').addEventListener('change', async () => {
   finally { input.value = ''; input.disabled = false; }
 });
 
+for (const id of ['merge-task-source', 'merge-task-target']) $(id).addEventListener('input', updateMergeButton);
+$('merge-tasks-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const source = selectedMergeTask('merge-task-source'), target = selectedMergeTask('merge-task-target');
+  if (!source || !target) { formFeedback('merge-tasks-feedback', 'Choose both tasks from the list.', 'error'); return; }
+  if (source.taskUrl === target.taskUrl) { formFeedback('merge-tasks-feedback', 'Choose two different tasks.', 'error'); return; }
+  const button = $('merge-tasks-submit'); button.disabled = true; formFeedback('merge-tasks-feedback', 'Merging tasks…');
+  try {
+    const range = taskPeriodRange('three-months', currentDateValue());
+    const result = await send({
+      type: 'MERGE_TASKS', destinationIds: source.destinationIds,
+      sourceTaskUrl: source.taskUrl, targetTaskUrl: target.taskUrl, targetTaskTitle: target.title || '', ...range,
+    });
+    const destinationName = target.title || target.taskUrl;
+    const text = result.mergedEntries
+      ? `Merged ${result.mergedEntries} ${result.mergedEntries === 1 ? 'entry' : 'entries'}${result.mergedActive ? ' and the active timer' : ''} into ${destinationName}.`
+      : result.mergedActive ? `Merged the active timer into ${destinationName}.`
+        : `No entries for ${source.title || source.taskUrl} needed changing.`;
+    $('merge-task-source').value = ''; $('merge-task-target').value = '';
+    await refreshMergeTasks(); formFeedback('merge-tasks-feedback', text, 'success');
+  } catch (error) {
+    if (error.code === 'partial_task_merge') await refreshMergeTasks().catch(() => {});
+    formFeedback('merge-tasks-feedback', error.message || 'Could not merge tasks.', 'error');
+  }
+  finally { updateMergeButton(); }
+});
+
 $('settings-form').addEventListener('submit', async event => {
   event.preventDefault(); message('Validating the PAT and private repository…'); $('save').disabled = true;
   try {
@@ -1513,6 +1584,6 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).catch(error => message(error.message, 'error'));
+refreshState().then(refreshLocalPreferences).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
 
 mountRunningStatus($('running-status'), { send });

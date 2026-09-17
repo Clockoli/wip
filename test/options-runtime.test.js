@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
+import { taskPeriodRange } from '../src/domain/tasks.js';
 
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
@@ -49,7 +50,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
-    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings,
+    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange,
     ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
 
     ClockoliRecovery: { actionFor: () => null },
@@ -117,6 +118,30 @@ test('ready discovery populates both default options without selection writes an
   await page.context.discoverRepositories({ silent: true });
   assert.equal(page.nodes.get('setup-default-destination').children[0], option);
   assert.equal(page.nodes.get('repository-list').children[0], row);
+});
+
+test('Merge tasks offers searchable recent tasks and sends the left identity to the right identity', async () => {
+  const tasks = [
+    { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Old task', destinationIds: ['github:1'] },
+    { taskUrl: 'https://github.com/acme/app/issues/2', title: 'Canonical task', destinationIds: ['github:2'] },
+  ];
+  const page = harness({ reply: request => request.type === 'MERGE_TASKS'
+    ? { mergedEntries: 3, mergedActive: false, destinationCount: 1 }
+    : request.type === 'LOAD_TASKS' ? { tasks } : {} });
+  page.render(connectedState);
+  page.context.renderMergeTasks(tasks);
+  const source = page.nodes.get('merge-task-source'), target = page.nodes.get('merge-task-target');
+  source.value = 'Old task — https://github.com/acme/app/issues/1';
+  target.value = 'Canonical task — https://github.com/acme/app/issues/2';
+  source.listeners.input(); target.listeners.input();
+  assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
+  await page.submit('merge-tasks-form');
+  const request = page.requests.find(item => item.type === 'MERGE_TASKS');
+  assert.deepEqual(JSON.parse(JSON.stringify(request.destinationIds)), ['github:1']);
+  assert.equal(request.sourceTaskUrl, tasks[0].taskUrl); assert.equal(request.targetTaskUrl, tasks[1].taskUrl);
+  assert.equal(request.targetTaskTitle, 'Canonical task');
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 3 entries into Canonical task/);
+  assert.equal(source.value, ''); assert.equal(target.value, '');
 });
 
 test('repository search is shown only for five or more discovered repositories', () => {

@@ -178,6 +178,21 @@
     </form>
   </section>
 
+  <section id="merge-tasks" class="card" aria-labelledby="merge-tasks-title" hidden>
+    <div class="card-heading">
+      <div><h2 id="merge-tasks-title">Merge tasks</h2><p>Replace every occurrence of one task from the last three months with another task. Descriptions, dates, durations, and people stay unchanged.</p></div>
+    </div>
+    <form id="merge-tasks-form" novalidate>
+      <div class="merge-task-controls">
+        <label>Task to replace<input id="merge-task-source" list="merge-task-options" autocomplete="off" placeholder="Type part of a task name" required></label>
+        <span class="merge-task-arrow" aria-hidden="true">→</span>
+        <label>Replace with<input id="merge-task-target" list="merge-task-options" autocomplete="off" placeholder="Type part of a task name" required></label>
+      </div>
+      <datalist id="merge-task-options"></datalist>
+      <div class="actions"><button id="merge-tasks-submit" type="submit" disabled>Merge tasks</button><p id="merge-tasks-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
+    </form>
+  </section>
+
   <details id="more-settings" class="more-settings">
     <summary id="more-settings-toggle">More settings</summary>
 
