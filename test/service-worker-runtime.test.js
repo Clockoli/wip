@@ -87,7 +87,7 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
 });
 
-test('MERGE_TASKS applies every queued pair in one transaction per selected destination', async () => {
+test('MERGE_TASKS applies every queued pair only in the one selected destination', async () => {
   const calls = [];
   const context = handlerContext({
     configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
@@ -100,14 +100,23 @@ test('MERGE_TASKS applies every queued pair in one transaction per selected dest
     }),
   });
   const request = {
-    type: 'MERGE_TASKS', destinationIds: ['github:1', 'github:2'], selectedUsers: ['alice'],
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice'],
     pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }, { sourceTaskUrl: 'https://example.test/old-two', targetTaskUrl: 'https://example.test/new-two', targetTaskTitle: 'Newer task' }],
     startDate: '2026-05-19', endDate: '2026-08-18',
   };
   const result = await context.handle(request, extensionSender);
-  assert.equal(result.mergedEntries, 4); assert.equal(result.mergedActive, true); assert.equal(result.destinationCount, 2);
-  assert.deepEqual(calls.map(call => call.destinationId), ['github:1', 'github:2']);
+  assert.equal(result.mergedEntries, 2); assert.equal(result.mergedActive, false); assert.equal(result.destinationCount, 1);
+  assert.deepEqual(calls.map(call => call.destinationId), ['github:1']);
   assert.deepEqual(calls[0].request.pairs, request.pairs);
+});
+
+test('MERGE_TASKS rejects requests spanning multiple time repositories', async () => {
+  const context = handlerContext({ configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }) });
+  await assert.rejects(context.handle({
+    type: 'MERGE_TASKS', destinationIds: ['github:1', 'github:2'], selectedUsers: ['alice'],
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }],
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  }, extensionSender), /one time repository/i);
 });
 
 test('MERGE_TASKS writes selected other-user storage branches rather than only the current user branch', async () => {

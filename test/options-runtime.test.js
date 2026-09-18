@@ -123,23 +123,110 @@ test('ready discovery populates both default options without selection writes an
 test('Merge tasks queues selected left-to-right pairs and sends them together', async () => {
   const tasks = [
     { taskUrl: 'https://github.com/acme/app/issues/1', title: 'Old task', totalSeconds: 3600, destinationIds: ['github:1'] },
-    { taskUrl: 'https://github.com/acme/app/issues/2', title: 'Canonical task', totalSeconds: 1800, destinationIds: ['github:2'] },
+    { taskUrl: 'https://github.com/acme/app/issues/2', title: 'Canonical task', totalSeconds: 1800, destinationIds: ['github:1'] },
+    { taskUrl: 'https://github.com/acme/other/issues/3', title: 'Other repository', totalSeconds: 900, destinationIds: ['github:2'] },
   ];
   const page = harness({ reply: request => request.type === 'MERGE_TASKS'
     ? { mergedEntries: 3, mergedActive: false, destinationCount: 1 }
     : request.type === 'LOAD_TASKS' ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
-  page.render(connectedState);
+  page.render({
+    ...connectedState,
+    destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+      'github:1': { owner: 'acme', repo: 'time-one', label: 'acme/time-one' },
+      'github:2': { owner: 'acme', repo: 'time-two', label: 'acme/time-two' },
+    } },
+  });
   page.nodes.get('merge-task-period').value = 'one-month';
+  assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
   vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
   page.context.renderMergeTasks(tasks);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === tasks[2].taskUrl), false);
   page.context.selectMergeTask('source', tasks[0].taskUrl);
   page.context.selectMergeTask('target', tasks[1].taskUrl);
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
+  const queued = page.nodes.get('merge-queue-list').children[0];
+  assert.deepEqual(queued.children[0].children.map(node => node.textContent), ['Old task', tasks[0].taskUrl]);
+  assert.deepEqual(queued.children[2].children.map(node => node.textContent), ['Canonical task', tasks[1].taskUrl]);
+  assert.equal(queued.children[3].textContent, '✕');
+  assert.match(queued.children[3].attributes['aria-label'], /Remove merge pair/);
   await page.nodes.get('merge-tasks-submit').listeners.click();
   const request = page.requests.find(item => item.type === 'MERGE_TASKS');
   assert.deepEqual(JSON.parse(JSON.stringify(request.destinationIds)), ['github:1']);
   assert.deepEqual(JSON.parse(JSON.stringify(request.pairs)), [{ sourceTaskUrl: tasks[0].taskUrl, targetTaskUrl: tasks[1].taskUrl, targetTaskTitle: 'Canonical task' }]);
   assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 1 task pair/);
+});
+
+test('changing the merge repository clears stale candidates and scopes the next task load', async () => {
+  let releaseLoad;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? new Promise(resolve => { releaseLoad = () => resolve({ tasks: [], currentUsers: { [request.payload.destinationIds[0]]: 'octocat' }, availableUsers: ['octocat'] }); })
+    : {} });
+  page.render({
+    ...connectedState,
+    destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+      'github:1': { owner: 'acme', repo: 'time-one', label: 'acme/time-one' },
+      'github:2': { owner: 'acme', repo: 'time-two', label: 'acme/time-two' },
+    } },
+  });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  page.context.renderMergeTasks([{ taskUrl: 'https://example.test/stale', title: 'Stale task', destinationIds: ['github:1'] }]);
+  vm.runInContext("mergePairs = [{ source: { taskUrl: 'https://example.test/old' }, target: { taskUrl: 'https://example.test/new' } }]; mergePeople = new Set(['octocat']); renderMergeQueue();", page.context);
+  page.nodes.get('merge-task-destination').value = 'github:2';
+  const changing = page.nodes.get('merge-task-destination').listeners.change();
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/stale'), false);
+  assert.equal(page.nodes.get('merge-target-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/stale'), false);
+  assert.equal(page.nodes.get('merge-tasks-submit').disabled, true);
+  releaseLoad(); await changing;
+  const request = page.requests.filter(item => item.type === 'LOAD_TASKS').at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(request.payload.destinationIds)), ['github:2']);
+});
+
+test('removing the selected merge repository cannot carry its queued pair into the fallback repository', () => {
+  const page = harness();
+  page.render({
+    ...connectedState,
+    destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+      'github:1': { owner: 'acme', repo: 'time-one', label: 'acme/time-one' },
+      'github:2': { owner: 'acme', repo: 'time-two', label: 'acme/time-two' },
+    } },
+  });
+  page.context.renderMergeTasks([
+    { taskUrl: 'https://example.test/old', title: 'Old', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/new', title: 'New', destinationIds: ['github:1'] },
+  ]);
+  page.context.selectMergeTask('source', 'https://example.test/old');
+  page.context.selectMergeTask('target', 'https://example.test/new');
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 1);
+
+  page.render({
+    ...connectedState,
+    destinationRegistry: { defaultDestinationId: 'github:2', destinations: {
+      'github:2': { owner: 'acme', repo: 'time-two', label: 'acme/time-two' },
+    } },
+  });
+  assert.equal(page.nodes.get('merge-task-destination').value, 'github:2');
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(page.nodes.get('merge-tasks-submit').disabled, true);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/old'), false);
+});
+
+test('People multi-select filters checkboxes and Select all toggles every person', () => {
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks: [], currentUsers: { current: 'octocat' }, availableUsers: ['alice', 'bob', 'octocat'] } : {} });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
+  page.context.renderMergePeople(['alice', 'bob', 'octocat']);
+  const filter = page.nodes.get('merge-people-filter');
+  filter.listeners.focus();
+  assert.equal(page.nodes.get('merge-people-select').open, true);
+  filter.value = 'bo'; filter.listeners.input();
+  const labels = page.nodes.get('merge-people-list').children;
+  assert.deepEqual(labels.map(label => [label.children[0].value, label.hidden]), [['alice', true], ['bob', false], ['octocat', true]]);
+  page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople].sort())', page.context)), ['alice', 'bob', 'octocat']);
+  page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
+  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople])', page.context)), []);
 });
 
 test('repository search is shown only for five or more discovered repositories', () => {

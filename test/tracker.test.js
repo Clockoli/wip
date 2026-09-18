@@ -184,7 +184,11 @@ test('completed-record mutations update the mandatory task index atomically', as
 test('task merge atomically replaces every queued source URL and title across the selected range and active timer', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const sourceUrl = 'https://example.test/source', targetUrl = 'https://example.test/target', secondSourceUrl = 'https://example.test/source-two', secondTargetUrl = 'https://example.test/target-two';
-  const july = entry('2026-07-02T08:00:00.000Z', '2026-07-02T09:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
+  const july = entry('2026-07-02T08:00:00.000Z', '2026-07-02T09:00:00.000Z', {
+    taskUrl: sourceUrl, taskTitle: 'Old task', metadata: {
+      custom: { keep: true }, clockoli: { future: 'keep', task_identity_history: [{ url: 'https://example.test/original', title: 'Original task' }] },
+    },
+  });
   const august = entry('2026-08-03T08:00:00.000Z', '2026-08-03T10:00:00.000Z', { taskUrl: secondSourceUrl, taskTitle: 'Second old task' });
   const outside = entry('2026-04-03T08:00:00.000Z', '2026-04-03T09:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
   seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([july]), 'july-sha');
@@ -202,10 +206,20 @@ test('task merge atomically replaces every queued source URL and title across th
   const [savedAugust] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' });
   assert.equal(savedJuly.taskUrl, targetUrl); assert.equal(savedJuly.taskTitle, 'Canonical task');
   assert.equal(savedAugust.taskUrl, secondTargetUrl); assert.equal(savedAugust.taskTitle, 'Second canonical task');
+  assert.deepEqual(savedJuly.metadata, {
+    custom: { keep: true }, clockoli: {
+      future: 'keep', task_identity_history: [
+        { url: 'https://example.test/original', title: 'Original task' },
+        { url: sourceUrl, title: 'Old task' },
+      ],
+    },
+  });
+  assert.deepEqual(savedAugust.metadata.clockoli.task_identity_history, [{ url: secondSourceUrl, title: 'Second old task' }]);
   const [savedOutside] = parseMonthlyRecords(github.files.get('times/2026-04/alice.jsonl').text, { user: 'alice', month: '2026-04' });
   assert.equal(savedOutside.taskUrl, sourceUrl);
   const savedActive = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
   assert.equal(savedActive.taskUrl, targetUrl); assert.equal(savedActive.taskTitle, 'Canonical task');
+  assert.deepEqual(savedActive.metadata.clockoli.task_identity_history, [{ url: sourceUrl, title: 'Old task' }]);
   const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
   assert.equal(index.tasks[sourceUrl].sessionCount, 1);
   assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });

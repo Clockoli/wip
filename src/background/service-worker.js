@@ -856,7 +856,10 @@ async function handle(message, sender) {
     }
     case 'MERGE_TASKS': {
       const snapshot = await configuredSnapshot({ localOnly: true });
-      const destinations = selectReadDestinations(snapshot, { destinationIds: message.destinationIds });
+      const requestedDestinationIds = Array.isArray(message.destinationIds) ? message.destinationIds : [];
+      if (requestedDestinationIds.length !== 1) throw new Error('Choose exactly one time repository before merging tasks.');
+      const destinations = selectReadDestinations(snapshot, { destinationIds: requestedDestinationIds });
+      if (destinations.length !== 1) throw new Error('Choose exactly one time repository before merging tasks.');
       const request = { pairs: message.pairs, startDate: message.startDate, endDate: message.endDate };
       const selectedUsers = [...new Set((Array.isArray(message.selectedUsers) ? message.selectedUsers : [])
         .map(user => String(user || '').trim()).filter(Boolean))];

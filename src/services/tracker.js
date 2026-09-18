@@ -33,6 +33,14 @@ function isPermanentQueuedWriteFailure(error) {
     && ![404, 409].includes(status) && error?.code !== 'rate_limit';
 }
 function taskTitleOf(value) { return normalizePlainTitle(value?.taskTitle ?? value?.issueTitle); }
+function withTaskIdentityHistory(updated, previous) {
+  const metadata = structuredClone(updated.metadata ?? {});
+  const clockoli = metadata.clockoli && typeof metadata.clockoli === 'object' && !Array.isArray(metadata.clockoli)
+    ? structuredClone(metadata.clockoli) : {};
+  const history = Array.isArray(clockoli.task_identity_history) ? structuredClone(clockoli.task_identity_history) : [];
+  clockoli.task_identity_history = [...history, { url: taskUrlOf(previous), title: taskTitleOf(previous) }];
+  return { ...updated, metadata: { ...metadata, clockoli } };
+}
 function taskLabel(value) { const url = taskUrlOf(value), github = parseGitHubTaskUrl(url); return github ? `${github.owner}/${github.repo}#${github.number}` : url; }
 function trackedDurationLabel(value) {
   const total = Math.max(0, Math.floor(Number(value?.durationSeconds) || 0));
@@ -1472,7 +1480,7 @@ export class TrackerService {
       file.entries = file.entries.map(entry => {
         const replacement = replacements.get(taskUrlOf(entry));
         if (entry.entryDate < startDate || entry.entryDate > endDate || !replacement) return entry;
-        const updated = applyEntryEdits(entry, replacement, editClock(this.clock, entry));
+        const updated = withTaskIdentityHistory(applyEntryEdits(entry, replacement, editClock(this.clock, entry)), entry);
         removed.push(entry); added.push(updated); changed = true; return updated;
       });
       if (changed) touched.push(file);
@@ -1481,7 +1489,7 @@ export class TrackerService {
     const activeReplacement = active ? replacements.get(taskUrlOf(active)) : null;
     const mergeActive = Boolean(active && active.entryDate >= startDate && active.entryDate <= endDate && activeReplacement);
     const updatedActive = mergeActive
-      ? applyActiveEdits(active, activeReplacement, this.clock()) : active;
+      ? withTaskIdentityHistory(applyActiveEdits(active, activeReplacement, this.clock()), active) : active;
     if (!touched.length && !mergeActive) return { mergedEntries: 0, mergedActive: false };
     const activePath = activeRecordPath(this.user);
     const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
