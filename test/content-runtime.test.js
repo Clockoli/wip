@@ -1049,7 +1049,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
 });
 
 
-test('recent rows show durable titles and unified offset-preserving inline editing saves on Enter', async () => {
+test('recent rows expose durable titles and unified time-and-metadata editing triggers', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -1069,18 +1069,12 @@ test('recent rows show durable titles and unified offset-preserving inline editi
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
     querySelector: selector => selector === '.AppHeader-actions' ? actions : selector.includes('issue-title') ? issueTitleNode : null, addEventListener() {},
   };
-  let editAttempts = 0;
   const context = vm.createContext({
     location, document, chrome: { runtime: { lastError: null, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
-      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
-        editAttempts += 1;
-        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4).every(node => node.disabled), true);
-        assert.equal(createdNodes.filter(node => ['inline-task-url', 'inline-task-title', 'inline-description'].some(name => node.className.includes(name))).slice(-3).every(node => node.disabled), true);
-        callback(editAttempts === 1 ? { ok: false, error: { code: 'conflict', message: 'The monthly file changed.' } } : { ok: true, data: [] });
-      } else callback({ ok: true, data: {} });
+      else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
@@ -1097,24 +1091,10 @@ test('recent rows show durable titles and unified offset-preserving inline editi
   const titleDraft = createdNodes.findLast(node => node.className.includes('inline-task-title'));
   const descriptionDraft = createdNodes.findLast(node => node.className.includes('inline-description'));
   assert.equal(urlDraft.value, entry.issue.url); assert.equal(titleDraft.value, entry.issueTitle); assert.equal(descriptionDraft.value, 'Original note');
-  titleDraft.value = 'Edited deterministic ranking'; titleDraft.oninput({});
-  descriptionDraft.value = 'Preserve this draft'; descriptionDraft.oninput({});
-  let values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
-  assert.deepEqual(values.map(node => node.value), ['01', '00', '01', '58']);
-  const stopMinute = values.at(-1), stopHour = values.at(-2), stopDate = createdNodes.filter(node => node.className.includes('time-date')).at(-1);
-  stopDate.value = '2026-11-01'; stopDate.oninput({}); stopHour.value = '02'; stopHour.oninput({}); stopMinute.value = '00'; stopMinute.oninput({});
-  await descriptionDraft.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.findLast(node => node.className.includes('inline-task-title')).value, 'Edited deterministic ranking');
-  assert.equal(createdNodes.findLast(node => node.className.includes('inline-description')).value, 'Preserve this draft');
-  await createdNodes.findLast(node => node.className.includes('inline-description')).onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const editMessage = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.equal(editMessage.payload.entries.length, 1);
-  assert.equal(editMessage.payload.entries[0].edits.taskTitle, 'Edited deterministic ranking');
-  assert.equal(editMessage.payload.entries[0].edits.description, 'Preserve this draft');
-  assert.equal(editMessage.payload.entries[0].edits.startedAt, '2026-11-01T09:00:11.300Z');
-  assert.equal(editMessage.payload.entries[0].edits.endedAt, '2026-11-01T10:00:27.120Z');
-  assert.equal(createdNodes.some(node => node.textContent === 'Edit'), false, 'the separate Edit panel trigger is gone');
+  assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4).length, 4,
+    'a description click also exposes the direct time fields');
+  assert.match(source, /function beginRecordEdit\(entry\) \{ beginMetadataEdit\(entry, \{ focusTime: true \}\); \}/);
+  assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(\) => revealTimeEditor\(\)\)/);
 });
 
 test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {

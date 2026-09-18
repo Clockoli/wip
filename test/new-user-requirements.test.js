@@ -86,7 +86,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /scrollbar-gutter:stable/);
   assert.match(content, /Time tracker panel\. Scroll for more content/);
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
-  assert.match(content, /descriptionField\?\.focus/);
+  assert.match(content, /focusTime \? editor\?\.startPicker\?\.controls\?\.\[0\] : editor\?\.descriptionField/,
+    'the unified editor exposes both the time and metadata fields');
   assert.match(content, /timeLine = el\('div', undefined, 'inline-time-line'\)/);
   assert.match(content, /timeLine\.append\(startPicker\.node, separator, stopPicker\.node\)/);
   assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);

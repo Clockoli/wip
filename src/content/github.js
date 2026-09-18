@@ -1474,7 +1474,7 @@
     return { node: range, day, duration, unsaved, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
   }
 
-  function beginMetadataEdit(entry) {
+  function beginMetadataEdit(entry, { focusTime = false } = {}) {
     const key = entryKey(entry);
     activeInlineKey = key;
     const existing = inlineDrafts.get(key);
@@ -1487,12 +1487,18 @@
       }),
       metadataActive: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
     });
-    renderUi(); globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.descriptionField?.focus());
+    renderUi(); globalThis.requestAnimationFrame?.(() => {
+      const editor = inlineEditors.get(key);
+      (focusTime ? editor?.startPicker?.controls?.[0] : editor?.descriptionField)?.focus();
+    });
   }
+
+  function beginRecordEdit(entry) { beginMetadataEdit(entry, { focusTime: true }); }
 
   function recentRecord(entry, overlaps) {
     const key = entryKey(entry), overlapping = overlaps.has(key), draft = inlineDrafts.get(key);
     const record = el('div', undefined, 'entry-record');
+    if (draft?.metadataActive) record.classList.add('entry-editing');
     const warning = el('div', 'Overlaps another entry', 'overlap-warning');
     const setOverlap = active => {
       record.classList[active ? 'add' : 'remove']('entry-overlap');
@@ -1516,10 +1522,8 @@
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
-      const edit = button('Edit time', 'link-button entry-edit', async () => {
-        record.classList.add('entry-editing');
-        globalThis.requestAnimationFrame?.(() => editor?.startPicker?.controls?.[0]?.focus());
-      });
+      const revealTimeEditor = () => beginRecordEdit(entry);
+      const edit = button('Edit time', 'link-button entry-edit', async () => revealTimeEditor());
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(loadingRecent || !recentFresh);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
@@ -1552,8 +1556,8 @@
         }
         record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
       } else {
-        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async () => beginMetadataEdit(entry));
-        description.title = 'Edit URL, title, and description'; description.setAttribute('aria-label', entry.description ? `Edit description: ${entry.description}` : 'Add description and edit task details');
+        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async () => revealTimeEditor());
+        description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
     }
