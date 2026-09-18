@@ -34,7 +34,7 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
   for (const value of ['today', 'yesterday', 'this-week', 'last-week', 'this-month', 'last-month', 'custom']) {
     assert.match(content, new RegExp(`['\"]${value}['\"]`));
   }
-  assert.match(content, /Filter by URL or optional title/);
+  assert.match(content, /Search activity[\s\S]*URL or title/);
   assert.match(content, /View activity/);
   assert.match(content, /button\('Activity'/);
   assert.match(content, /BULK_ADD_TIMES/);

@@ -18,11 +18,12 @@ test('recent rows keep direct Start/Stop editing without wheel or step controls'
   assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown/);
 });
 
-test('inline range, duration, and contextual actions share the left-aligned row', () => {
-  assert.match(source, /timeRow\.append\(inline\.node, inline\.duration, actions\)/);
+test('Activity begins with a compact range and reveals direct time editing on demand', () => {
+  assert.match(source, /const time = el\('span', recentTimeText\(entry\), 'entry-time-range entry-time-display'\)/);
+  assert.match(source, /record\.classList\.add\('entry-editing'\)/);
+  assert.match(source, /timeRow\.append\(time, inline\.node, inline\.duration, actions\)/);
+  assert.match(source, /actions\.append\(edit, inline\.cancel, inline\.save, remove\)/);
   assert.match(source, /\.entry-time-row \{[^}]*justify-content:flex-start[^}]*white-space:nowrap/);
-  assert.doesNotMatch(source, /\.entry-actions \{[^}]*margin-left:auto/);
-  assert.match(source, /actions\.append\(inline\.cancel, inline\.save, remove\)/);
 });
 
 test('grouped inline save uses the durable queue route', () => {

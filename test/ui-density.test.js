@@ -11,13 +11,13 @@ function renderer(name, nextName) {
   return content.slice(start, end);
 }
 
-test('main tracker renders recent time as separate inset cards without divider lines', () => {
-  const menu = renderer('renderMenu()', 'renderUi()');
-  assert.doesNotMatch(menu, /className = 'divider'|el\('div', undefined, 'divider'\)/);
-  assert.doesNotMatch(content, /\.divider\s*\{/);
-  assert.match(content, /\.entry-record\s*\{[^}]*border:1px solid var\(--borderColor-default[^}]*border-radius:8px[^}]*background:var\(--bgColor-muted/s);
-  assert.match(content, /\.entry-record \+ \.entry-record\s*\{[^}]*margin-top:/s);
-  assert.doesNotMatch(content, /\.entry-record \+ \.entry-record\s*\{[^}]*border-top:/s);
+test('Activity renders compact scan-first rows with contextual controls', () => {
+  assert.match(content, /\.activity-list \{ border-top:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \{ position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \+ \.entry-record \{ margin-top:0/);
+  assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:0;[^}]*opacity:0/);
+  assert.match(content, /\.entry-editing \.inline-time-range \{ display:block/,
+    'direct time fields remain available only after the explicit edit action');
 });
 
 test('tracker panel omits the redundant Clockoli Time tracker Synced heading', () => {

@@ -93,8 +93,10 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /@media\(max-width:340px\) \{ \.entry-time-row \{ gap:3px \}[^}]*\.inline-time-line \{ gap:1px \}/,
     'the minimum supported panel width tightens spacing without wrapping the time range');
   assert.match(content, /\.entry-time-row \{[^}]*justify-content:flex-start[^}]*white-space:nowrap/);
-  assert.match(content, /timeRow\.append\(inline\.node, inline\.duration, actions\)/,
-    'Start/Stop, duration, and contextual actions share one left-aligned row');
+  assert.match(content, /timeRow\.append\(time, inline\.node, inline\.duration, actions\)/,
+    'Activity shows a compact range and keeps the direct editor in the same row after Edit time');
+  assert.match(content, /record\.classList\.add\('entry-editing'\)/,
+    'Edit time explicitly reveals the direct time fields');
   assert.match(content, /\.entry-actions\.dirty \.entry-edit,\.entry-actions\.dirty \.entry-delete \{ display:none \}/,
     'Save/Cancel replace full Edit/Delete while a direct time draft is dirty');
   assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);

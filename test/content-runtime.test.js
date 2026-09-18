@@ -1998,7 +1998,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   values[7].value = '15'; values[7].oninput({});
   assert.deepEqual(values.slice(0, 2).map(node => node.value), ['11', '15'], 'Y Start mirrors X Stop');
-  const filter = createdNodes.findLast(node => node.placeholder === 'Filter by URL or optional title');
+  const filter = createdNodes.findLast(node => node.placeholder === 'URL or title');
   filter.value = '/x'; filter.oninput({});
   const filteredValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
@@ -2013,8 +2013,10 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
 });
 
 
-test('each highlighted recent-entry block includes its task URL and title', () => {
-  assert.match(source, /function recentRecord\(entry, overlaps\)[\s\S]*identity\.append\(siteFavicon\(entry, 'entry-record-favicon'\), taskResult\(entry, 'entry-record-task-result'\)\)[\s\S]*record\.append\(identity\)/);
+test('each highlighted recent-entry block includes a titled task identity and canonical URL', () => {
+  assert.match(source, /function recentRecord\(entry, overlaps\)[\s\S]*taskIdentity = taskResult\(entry, 'entry-record-task-result'\)[\s\S]*taskIdentity\.classList\.add\('activity-task-result'\)[\s\S]*identity\.append\(siteFavicon\(entry, 'entry-record-favicon'\), taskIdentity\)[\s\S]*record\.append\(identity\)/);
+  assert.match(source, /\.activity-task-result \.task-title \{ order:-1/,
+    'Activity presents task title before its muted canonical URL');
   assert.doesNotMatch(source, /group\.append\(taskResult\(first, 'entry-task-result'\)\)/);
 });
 

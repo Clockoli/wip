@@ -1500,7 +1500,9 @@
     };
     setOverlap(overlapping);
     const identity = el('div', undefined, 'entry-record-task-identity');
-    identity.append(siteFavicon(entry, 'entry-record-favicon'), taskResult(entry, 'entry-record-task-result'));
+    const taskIdentity = taskResult(entry, 'entry-record-task-result');
+    taskIdentity.classList.add('activity-task-result');
+    identity.append(siteFavicon(entry, 'entry-record-favicon'), taskIdentity);
     record.append(identity);
     const title = record.querySelector('.task-title');
     if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
@@ -1514,12 +1516,18 @@
     } else {
       const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
+      const edit = button('Edit time', 'link-button entry-edit', async () => {
+        record.classList.add('entry-editing');
+        globalThis.requestAnimationFrame?.(() => editor?.startPicker?.controls?.[0]?.focus());
+      });
       const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
       const disabled = Boolean(loadingRecent || !recentFresh);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
-      for (const control of [inline.cancel, remove]) control.disabled = disabled;
-      inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
-      if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
+      for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
+      inline.setDisabled(disabled); actions.append(edit, inline.cancel, inline.save, remove);
+      if (!inline.save.hidden) actions.classList.add('dirty');
+      const time = el('span', recentTimeText(entry), 'entry-time-range entry-time-display');
+      timeRow.append(time, inline.node, inline.duration, actions);
       timeRow.append(inline.unsaved);
       if (draft?.metadataActive) {
         const metadata = el('div', undefined, 'inline-metadata-editor');
@@ -1544,7 +1552,7 @@
         }
         record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
       } else {
-        const description = button(entry.description || 'Add description', 'entry-description entry-description-editable', async () => beginMetadataEdit(entry));
+        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async () => beginMetadataEdit(entry));
         description.title = 'Edit URL, title, and description'; description.setAttribute('aria-label', entry.description ? `Edit description: ${entry.description}` : 'Add description and edit task details');
         record.append(description);
       }
@@ -1660,7 +1668,7 @@
       body.append(warning);
     }
     const toolbar = el('section', undefined, 'times-toolbar');
-    const filterLabel = el('label', 'Filter by URL or optional title'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Filter by URL or optional title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
+    const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
     const periodLabel = el('label', 'Period'), period = el('select'); period.setAttribute('aria-label', 'Time period');
     for (const [value, label] of [['last-three-days', 'Last 3 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']]) {
       const option = el('option', label); option.value = value; option.selected = timesPeriod === value; period.append(option);
@@ -1676,7 +1684,7 @@
       const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => loadSelectedTimes())); toolbar.append(custom);
     }
     body.append(toolbar);
-    const result = el('section', undefined, 'times-results');
+    const result = el('section', undefined, 'times-results activity-list');
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
@@ -2959,6 +2967,48 @@
       .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
  .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      /* Activity redesign: compact, scan-first list rows. */
+      :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .times-body { padding:24px }
+      :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
+      :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
+      :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:38px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .section-head { margin-bottom:14px }
+      :host(.times-surface) .section-head strong { font-size:20px; font-weight:600 }
+      :host(.times-surface) .entry { padding:0; margin:0 0 18px }
+      :host(.times-surface) .entry-date-header { margin:0 0 8px }
+      :host(.times-surface) .activity-list { border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .entry-record { position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
+      :host(.times-surface) .entry-record + .entry-record { margin-top:0 }
+      :host(.times-surface) .entry-record:hover { background:linear-gradient(90deg,var(--bgColor-default,var(--ck-bg)) 0,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 45%,var(--bgColor-default,var(--ck-bg))) 100%) }
+      :host(.times-surface) .entry-record.entry-overlap { padding:14px 76px 14px 0; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      :host(.times-surface) .entry-time-row { gap:8px; min-height:18px; margin:0 0 8px; font:600 13px/1.35 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); letter-spacing:-.15px }
+      :host(.times-surface) .entry-time-display { color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.times-surface) .inline-duration { margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-family:var(--fontStack-sansSerif,"Mona Sans VF",sans-serif); font-weight:500 }
+      :host(.times-surface) .inline-time-range { display:none }
+      :host(.times-surface) .entry-editing .entry-time-display { display:none }
+      :host(.times-surface) .entry-editing .inline-time-range { display:block }
+      :host(.times-surface) .entry-record-task-result.activity-task-result { display:flex; flex:1; flex-direction:column }
+      :host(.times-surface) .activity-task-result .task-title { order:-1; max-width:720px; margin:0; font-size:15px }
+      :host(.times-surface) .activity-task-result .task-url { width:max-content; max-width:100%; margin-top:2px; line-height:1.35 }
+      :host(.times-surface) .entry-record-task-identity { gap:9px }
+      :host(.times-surface) .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:4px }
+      :host(.times-surface) .entry-record-task-result { margin:0 }
+      :host(.times-surface) .entry-description-link { margin:5px 0 0 27px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
+      :host(.times-surface) .entry-description-link:hover { background:transparent; color:var(--fgColor-accent,var(--ck-accent)); text-decoration:underline }
+      :host(.times-surface) .entry-actions { position:absolute; top:12px; right:0; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
+      :host(.times-surface) .entry-record:hover .entry-actions,:host(.times-surface) .entry-record:focus-within .entry-actions,:host(.times-surface) .entry-actions-visible { opacity:1; transform:translateY(0); pointer-events:auto }
+      :host(.times-surface) .entry-actions .entry-edit,:host(.times-surface) .entry-actions .entry-delete { width:30px; height:30px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
+      :host(.times-surface) .entry-actions .entry-edit::after { content:'✎'; font-size:16px }
+      :host(.times-surface) .entry-actions .entry-delete::after { content:'×'; font-size:20px; font-weight:400; line-height:1 }
+      :host(.times-surface) .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.times-surface) .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
+      :host(.times-surface) .entry-actions.dirty .entry-edit,:host(.times-surface) .entry-actions.dirty .entry-delete { display:none }
+      :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
+      @media(hover:none) { :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } :host(.times-surface) .entry-record { padding-right:0 } }
+      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } :host(.times-surface) .entry-record { padding-right:0 } :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } }
+      @media(max-width:400px) { :host(.times-surface) .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
