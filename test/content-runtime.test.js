@@ -1199,7 +1199,7 @@ test('each recent record keeps task identity inside its highlighted time row', a
     schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
     entryDate: '2026-08-18', startedAt: start, endedAt: end,
     durationSeconds: (new Date(end) - new Date(start)) / 1000, description,
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: Number(id.at(-1)),
+    createdAt: end, updatedAt: end, timeRepository: 'acme/time', _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: Number(id.at(-1)),
   });
   const entries = [
     entry('record0', 7, '2026-08-18T12:00:00+00:00', '2026-08-18T12:30:00+00:00', 'Newest pass'),
@@ -1232,6 +1232,8 @@ test('each recent record keeps task identity inside its highlighted time row', a
   assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 7', 'Issue 8', 'Issue 7']);
   assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).map(node => node.textContent),
     [issue(7).url, issue(7).url, issue(8).url, issue(7).url], 'each highlighted row retains its canonical URL source line');
+  assert.equal(createdNodes.some(node => node.className.includes('time-repository-label')), false,
+    'Activity keeps repository provenance out of individual time rows');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
     'each record retains a separate time-detail row');
   assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
