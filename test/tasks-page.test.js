@@ -50,6 +50,8 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
     'the full untitled URL remains available without expanding the row');
   assert.match(css, /\.task-title\{[^}]*-webkit-line-clamp:2/,
     'maximum-length task titles are limited to two result lines');
+  assert.match(css, /\.task-copy:not\(\.untitled\) \.task-url\{[^}]*margin-top:4px/,
+    'a titled task keeps its muted URL visually separate from the title');
   assert.match(js, /title\.title = task\.title/,
     'the full clamped task title remains available without expanding the row');
   assert.doesNotMatch(js, /Saved in|task-repositories/);
