@@ -72,6 +72,21 @@ function validGitHubLogin(login) {
   try { validatePathSegment(login, 'user'); return true; } catch { return false; }
 }
 
+async function mapBounded(items, limit, operation) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 function normalizedIssueTitle(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 }
@@ -591,13 +606,17 @@ export class GitHubClient {
       if ((current.get(item.path) ?? null) !== (item.sha ?? null)) throw new GitHubConflictError();
     }
     const blobShas = {}, tree = [];
-    for (const change of changes) {
+    const blobs = await mapBounded(changes, 6, async change => {
       let sha = null;
       if (change.text !== null) {
         const blob = await this.request(`${base}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: change.text, encoding: 'utf-8' }) });
-        sha = blob.sha; blobShas[change.path] = sha;
+        sha = blob.sha;
       }
-      tree.push({ path: change.path, mode: '100644', type: 'blob', sha });
+      return { path: change.path, sha };
+    });
+    for (const blob of blobs) {
+      if (blob.sha !== null) blobShas[blob.path] = blob.sha;
+      tree.push({ path: blob.path, mode: '100644', type: 'blob', sha: blob.sha });
     }
     const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
     const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });

@@ -8,7 +8,7 @@ const sourceUsers = [
 ];
 const mappings = [
   { sourceUserId: 'source-a', githubLogin: 'ada' },
-  { sourceUserId: 'source-b', githubLogin: 'bob' },
+  { sourceUserId: 'source-b', skipped: true },
 ];
 const entries = [
   { userId: 'source-a', entryId: 'raw-a' },
@@ -16,32 +16,26 @@ const entries = [
 ];
 const resolved = [
   { sourceUserId: 'source-a', githubUser: { id: 1, login: 'ada' } },
-  { sourceUserId: 'source-b', githubUser: { id: 2, login: 'bob' } },
+  { sourceUserId: 'source-b', skipped: true },
 ];
 
 test('reports finite privacy-safe progress and preserves an allowlisted record-write failure reason', async () => {
   const progress = [];
   const result = await importClockifyOrganization({
-    sourceUsers, entries, mappings, github: {}, sourceBranch: 'main',
-    onProgress: event => progress.push(event),
+    sourceUsers, entries, mappings, github: {}, destinationUser: { id: 1, login: 'ada' },
+    onProgress: event => progress.push(event), now: () => 1_000,
     resolveMappings: async () => resolved,
-    provisionBranches: async () => resolved.map(mapping => ({
-      ...mapping, status: 'provisioned', branch: `clockoli/users/${mapping.githubUser.id}`,
-    })),
-    importRecords: async ({ githubUser }) => githubUser.id === 1
-      ? { status: 'failed', failureReason: 'storage_branch_incomplete' }
-      : { status: 'already_present', added: 0, alreadyPresent: 1 },
+    importRecords: async () => ({ status: 'failed', failureReason: 'storage_branch_incomplete' }),
   });
 
   assert.deepEqual(progress, [
-    { stage: 'resolving_identities', completed: 0, total: 2 },
-    { stage: 'resolving_identities', completed: 2, total: 2 },
-    { stage: 'preparing_storage', completed: 0, total: 2 },
-    { stage: 'preparing_storage', completed: 2, total: 2 },
-    { stage: 'writing_records', completed: 0, total: 2 },
-    { stage: 'writing_records', completed: 1, total: 2 },
-    { stage: 'writing_records', completed: 2, total: 2 },
-    { stage: 'completed', completed: 2, total: 2 },
+    { stage: 'resolving_identities', completed: 0, total: 2, elapsedMs: 0 },
+    { stage: 'resolving_identities', completed: 2, total: 2, elapsedMs: 0 },
+    { stage: 'preparing_storage', completed: 0, total: 1, elapsedMs: 0 },
+    { stage: 'preparing_storage', completed: 1, total: 1, elapsedMs: 0 },
+    { stage: 'writing_records', completed: 0, total: 1, elapsedMs: 0 },
+    { stage: 'writing_records', completed: 1, total: 1, elapsedMs: 0 },
+    { stage: 'completed', completed: 1, total: 1, elapsedMs: 0 },
   ]);
   assert.deepEqual(result[0], {
     sourceUserId: 'source-a', githubUser: { id: 1, login: 'ada' }, status: 'failed',

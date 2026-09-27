@@ -17,10 +17,18 @@ import { InstallationDiscoveryService, RepositoryInitializer } from '../services
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { normalizeClockifyDetailedReport } from '../addons/clockify/report-normalizer.js';
+import { normalizeClockifyDetailedCsv } from '../addons/clockify/csv-normalizer.js';
 import { createClockifyMigrationSessionService } from '../services/clockify-migration-session.js';
 import { createClockifyCaptureArmService } from '../services/clockify-capture-arm.js';
+import { createClockifyCaptureProfileService } from '../services/clockify-capture-profile.js';
+import { completeClockifyHistoryCapture } from '../services/clockify-history-capture-completion.js';
+import { createClockifyHistoryScanService } from '../services/clockify-history-scan.js';
+import { clockifyDetailedReportYear } from '../services/clockify-report-route.js';
+import { assertClockifyAnnualDataYear } from '../services/clockify-annual-data.js';
 import { importClockifyOrganization } from '../services/clockify-organization-import.js';
-import { removeClockifyImportedTestRecords } from '../services/clockify-import-cleanup.js';
+import { removeAllClockoliRecords, removeClockifyImportedTestRecords } from '../services/clockify-import-cleanup.js';
+import { resolveClockifyUrlSuggestions } from '../services/clockify-url-classifier.js';
+import { IndexedDbBackend } from '../storage/chrome-store.js';
 import { assertMessageAllowed, taskUrlForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
@@ -44,21 +52,22 @@ const pendingCredentialStore = {
 };
 const pendingCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store: pendingCredentialStore });
 const CLOCKIFY_MIGRATION_PROGRESS_PORT = 'CLOCKIFY_MIGRATION_PROGRESS_V1';
+const CLOCKIFY_CAPTURE_PARSE_PROGRESS = 'CLOCKIFY_CAPTURE_PARSE_PROGRESS';
+const CLOCKIFY_CAPTURE_PHASE = 'CLOCKIFY_CAPTURE_PHASE';
+const CLOCKIFY_CAPTURE_PHASES = new Set([
+  'saving_current_report', 'checking_task_projects', 'preparing_task_suggestions', 'saving_preview', 'opening_preview',
+]);
 const clockifyMigrationProgressPorts = new Map();
-const clockifyMigrationSession = createClockifyMigrationSessionService({
-  storageSession: {
-    async get(key) { return (await chrome.storage.session.get(key))[key]; },
-    async set(key, value) { await chrome.storage.session.set({ [key]: value }); },
-    async remove(key) { await chrome.storage.session.remove(key); },
-  },
+const clockifyMigrationBackend = new IndexedDbBackend();
+const clockifyMigrationStorage = Object.freeze({
+  async get(key) { return (await clockifyMigrationBackend.getMany([key]))[key]; },
+  async set(key, value) { await clockifyMigrationBackend.setMany({ [key]: value }); },
+  async remove(key) { await clockifyMigrationBackend.deleteMany([key]); },
 });
-const clockifyCaptureArm = createClockifyCaptureArmService({
-  storageSession: {
-    async get(key) { return (await chrome.storage.session.get(key))[key]; },
-    async set(key, value) { await chrome.storage.session.set({ [key]: value }); },
-    async remove(key) { await chrome.storage.session.remove(key); },
-  },
-});
+const clockifyMigrationSession = createClockifyMigrationSessionService({ storageSession: clockifyMigrationStorage });
+const clockifyCaptureArm = createClockifyCaptureArmService({ storageSession: clockifyMigrationStorage });
+const clockifyCaptureProfile = createClockifyCaptureProfileService({ storageSession: clockifyMigrationStorage });
+const clockifyHistoryScan = createClockifyHistoryScanService({ storageSession: clockifyMigrationStorage });
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 
@@ -69,6 +78,20 @@ function githubForConfig(config) {
     expectedRepositoryId: config.repoId || null,
     branchMode: config.branchMode || 'custom',
   });
+}
+
+async function clockifyUrlClassifierArtifact() {
+  const response = await fetch(chrome.runtime.getURL('src/assets/clockify-url-classifier-model-v1.json'));
+  if (!response.ok) throw new Error('Clockify URL classifier artifact is unavailable.');
+  return response.json();
+}
+
+async function resolveClockifyCapturedUrls(entries, config, { onCatalogReady = null } = {}) {
+  if (onCatalogReady !== null && typeof onCatalogReady !== 'function') throw new TypeError('Clockify URL-resolution phase callback is invalid.');
+  const catalog = await new InstallationDiscoveryService({ github: githubForConfig(config) }).discover();
+  onCatalogReady?.();
+  const modelArtifact = await clockifyUrlClassifierArtifact();
+  return resolveClockifyUrlSuggestions({ entries, repositories: catalog.repositories, modelArtifact });
 }
 
 async function remoteActiveProbe({ config, auth, state }) {
@@ -211,12 +234,61 @@ function isClockifyProgressRequestId(value) {
 }
 
 function emitClockifyMigrationProgress(requestId, progress) {
-  const stages = new Set(['resolving_identities', 'preparing_storage', 'writing_records', 'completed']);
+  const stages = new Set([
+    'resolving_identities', 'preparing_storage', 'verifying_storage', 'reading_existing_records',
+    'preparing_records', 'matching_replay_targets', 'normalizing_intervals', 'building_records', 'validating_output',
+    'writing_records', 'completed',
+  ]);
   const port = clockifyMigrationProgressPorts.get(requestId);
   if (!port || !stages.has(progress?.stage)
       || !Number.isSafeInteger(progress.completed) || !Number.isSafeInteger(progress.total)
       || progress.completed < 0 || progress.total < progress.completed) return;
-  try { port.postMessage({ type: 'CLOCKIFY_MIGRATION_PROGRESS', phase: progress.stage, completedUsers: progress.completed, totalUsers: progress.total }); } catch {}
+  try {
+    port.postMessage({
+      type: 'CLOCKIFY_MIGRATION_PROGRESS', phase: progress.stage, completedUsers: progress.completed, totalUsers: progress.total,
+      ...(Number.isSafeInteger(progress.elapsedMs) && progress.elapsedMs >= 0 ? { elapsedMs: progress.elapsedMs } : {}),
+    });
+  } catch {}
+}
+
+function emitClockifyCaptureParseProgress(tabId, progress) {
+  if (!Number.isInteger(tabId) || !Number.isSafeInteger(progress?.completedRows) || !Number.isSafeInteger(progress?.totalRows)
+      || progress.completedRows < 0 || progress.totalRows < progress.completedRows) return;
+  try {
+    chrome.tabs.sendMessage(tabId, {
+      type: CLOCKIFY_CAPTURE_PARSE_PROGRESS,
+      completedRows: progress.completedRows,
+      totalRows: progress.totalRows,
+    }, () => void chrome.runtime.lastError);
+  } catch {}
+}
+
+function emitClockifyCapturePhase(tabId, { phase, entryCount, year = null }) {
+  if (!Number.isInteger(tabId) || !CLOCKIFY_CAPTURE_PHASES.has(phase)
+      || !Number.isSafeInteger(entryCount) || entryCount < 0
+      || (year !== null && (!Number.isInteger(year) || year < 2000 || year > 2100))) return;
+  try {
+    chrome.tabs.sendMessage(tabId, {
+      type: CLOCKIFY_CAPTURE_PHASE, phase, entryCount, year,
+    }, () => void chrome.runtime.lastError);
+  } catch {}
+}
+
+function completeClockifyCapture({ tabId, year, data }) {
+  return completeClockifyHistoryCapture({
+    tabId, year, data,
+    appendHistory: (capturedYear, capturedData) => clockifyHistoryScan.append(capturedYear, capturedData),
+    armCapture: capturedTabId => clockifyCaptureArm.arm(capturedTabId),
+    disarmCapture: capturedTabId => clockifyCaptureArm.disarm(capturedTabId),
+    measure: (name, elapsedMs, count) => clockifyCaptureProfile.measure(name, elapsedMs, count),
+    configuredSnapshot,
+    resolveUrls: resolveClockifyCapturedUrls,
+    createPreview: preview => clockifyMigrationSession.create(preview),
+    peekPreview: () => clockifyMigrationSession.peek(),
+    openPreview: () => chrome.tabs.create({ url: chrome.runtime.getURL('src/clockify-migration/preview.html') }),
+    emitPhase: emitClockifyCapturePhase,
+    now: () => performance.now(),
+  });
 }
 
 chrome.runtime.onConnect.addListener(port => {
@@ -353,7 +425,9 @@ async function loadTimes(message, sender) {
       if (!await store.patchStateIfGeneration({ user }, generation)) throw new DOMException('Time load was superseded by a configuration change.', 'AbortError');
     }
     const reports = new ReportService({ github, cache: store, onProgress: progress => emitReportProgress(message.payload?.requestId, progress) });
-    const recent = await reports.loadUserRange(message.payload || {}, user, { includeStorageMetadata: true, signal: controller.signal }, {
+    const recent = await reports.loadRepositoryUserRange(message.payload || {}, {
+      defaultBranch: config.defaultBranch || branch, githubUserId: auth.githubUserId, user, includeStorageMetadata: true, signal: controller.signal,
+    }, {
       maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
     });
     controller.signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
@@ -402,7 +476,9 @@ async function loadTasks(message, sender) {
     const initialTimerState = await refreshTaskState(executor, store, tracker, generation, loadGuard);
     controller.signal.throwIfAborted();
     loadCoordinator.assertCurrent(loadEpoch);
-    const records = await reports.loadUserRange(message.payload || {}, user, { signal: controller.signal });
+    const records = await reports.loadRepositoryUserRange(message.payload || {}, {
+      defaultBranch: config.defaultBranch || branch, githubUserId: auth.githubUserId, user, signal: controller.signal,
+    });
     const issueValues = records.flatMap(record => record.issue ? [record.issue] : []);
     if (initialTimerState.active?.issue) issueValues.push(initialTimerState.active.issue);
     let issues = [...new Map(issueValues.map(issue => [issue.url, issue])).values()];
@@ -505,45 +581,135 @@ async function handle(message, sender) {
   if (message.type === 'OPEN_TASKS') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
+  if (message.type === 'CLOCKIFY_ARM_CSV_CAPTURE') {
+    if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify CSV capture arming requires a browser tab');
+    await Promise.all([clockifyHistoryScan.reset(), clockifyCaptureProfile.start(message.startedAt)]);
+    const discovery = await clockifyHistoryScan.start('csv');
+    await clockifyCaptureArm.arm(sender.tab.id);
+    return { armed: true, discovery };
+  }
   if (message.type === 'CLOCKIFY_ARM_CAPTURE') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture arming requires a browser tab');
+    await Promise.all([clockifyHistoryScan.reset(), clockifyCaptureProfile.start(message.startedAt)]);
+    const discovery = await clockifyHistoryScan.start('report');
     await clockifyCaptureArm.arm(sender.tab.id);
-    return { armed: true };
+    return { armed: true, discovery };
   }
   if (message.type === 'CLOCKIFY_IS_CAPTURE_ARMED') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture lookup requires a browser tab');
-    return { armed: await clockifyCaptureArm.isArmed(sender.tab.id) };
+    const armed = await clockifyCaptureArm.isArmed(sender.tab.id);
+    return { armed, history: armed ? await clockifyHistoryScan.status() : null };
   }
   if (message.type === 'CLOCKIFY_DISARM_CAPTURE') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture disarming requires a browser tab');
-    await clockifyCaptureArm.disarm(sender.tab.id);
+    await Promise.all([clockifyCaptureArm.disarm(sender.tab.id), clockifyHistoryScan.reset(), clockifyCaptureProfile.clear()]);
     return { disarmed: true };
+  }
+  if (message.type === 'CLOCKIFY_YEAR_OBSERVED') {
+    if (!Number.isSafeInteger(message.entryCount) || message.entryCount < 0 || !Number.isInteger(message.year) || !Number.isInteger(sender?.tab?.id)) {
+      throw new Error('Invalid Clockify report-year observation');
+    }
+    try {
+      const discovery = await clockifyHistoryScan.observeYear(message.year, message.entryCount);
+      await clockifyCaptureArm.arm(sender.tab.id);
+      return discovery.discovering ? { discovering: true, ...discovery } : { capturing: true, ...discovery };
+    } catch (error) {
+      await Promise.all([clockifyCaptureArm.disarm(sender.tab.id), clockifyHistoryScan.reset(), clockifyCaptureProfile.clear()]);
+      return { observed: false, reason: error instanceof Error ? error.message : 'unknown failure' };
+    }
+  }
+  if (message.type === 'CLOCKIFY_CAPTURED_CSV') {
+    if (typeof message.text !== 'string' || !Number.isInteger(sender?.tab?.id)) throw new Error('Invalid Clockify CSV capture');
+    try {
+      const captured = await normalizeClockifyDetailedCsv(message.text, {
+        profile: true,
+        onProgress: progress => emitClockifyCaptureParseProgress(sender.tab.id, progress),
+      });
+      const normalized = captured.data;
+      await Promise.all([
+        clockifyCaptureProfile.measure('csv_parse', captured.profile.parseMs, captured.profile.rowCount),
+        clockifyCaptureProfile.measure('csv_source_digest', captured.profile.sourceDigestMs, captured.profile.byteCount),
+        clockifyCaptureProfile.measure('csv_row_normalization', captured.profile.normalizeRowsMs, captured.profile.rowCount),
+      ]);
+      console.info('[Clockoli Clockify CSV profile]', JSON.stringify(captured.profile));
+      // The sender URL can be stale after Clockify's SPA route transition.
+      // Validate Chrome's current tab URL so an export cannot be attributed to
+      // the wrong annual scan step.
+      const tab = await chrome.tabs.get(sender.tab.id);
+      const year = clockifyDetailedReportYear(tab?.url || '');
+      const scan = await clockifyHistoryScan.status();
+      if (scan?.phase === 'discovering') {
+        const discovery = await clockifyHistoryScan.observeYear(year, normalized.entries.length);
+        await clockifyCaptureArm.arm(sender.tab.id);
+          return discovery.discovering ? { discovering: true, ...discovery } : { capturing: true, ...discovery };
+      }
+      if (scan?.phase !== 'capturing') throw new Error('Clockify CSV history capture plan is unavailable');
+      assertClockifyAnnualDataYear(normalized, year);
+      return completeClockifyCapture({ tabId: sender.tab.id, year, data: normalized });
+    } catch (error) {
+      await Promise.all([clockifyCaptureArm.disarm(sender.tab.id), clockifyHistoryScan.reset(), clockifyCaptureProfile.clear()]);
+      return { captured: false, stage: 'normalizing_csv', reason: error instanceof Error ? error.message : 'unknown failure' };
+    }
   }
   if (message.type === 'CLOCKIFY_CAPTURED_REPORT') {
     if (typeof message.text !== 'string') throw new Error('Invalid Clockify report capture');
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture requires a browser tab');
-    await clockifyCaptureArm.disarm(sender.tab.id);
     let stage = 'normalizing';
     try {
+      const profileStartedAt = performance.now();
       console.info('[Clockoli Clockify capture background]', stage);
       const normalized = normalizeClockifyDetailedReport(message.text);
-      stage = 'creating_preview_session';
+      const normalizedAt = performance.now();
+      const source = JSON.parse(message.text);
+      const expectedEntries = source?.totals?.[0]?.entriesCount;
+      if (!Number.isSafeInteger(expectedEntries) || expectedEntries < 0) throw new Error('Invalid Clockify report total');
+      // Runtime sender URLs are the document URL from when a content script
+      // was injected and can be stale after Clockify's SPA route transition.
+      // Read Chrome's current tab URL instead, then validate its exact annual
+      // Detailed Report range before using it as history-scan identity.
+      const tab = await chrome.tabs.get(sender.tab.id);
+      const year = clockifyDetailedReportYear(tab?.url || '');
+      const scan = await clockifyHistoryScan.status();
+      if (scan?.phase === 'discovering') {
+        stage = 'discovering_history';
+        const discovery = await clockifyHistoryScan.observeYear(year, expectedEntries);
+        await clockifyCaptureArm.arm(sender.tab.id);
+          return discovery.discovering ? { discovering: true, ...discovery } : { capturing: true, ...discovery };
+      }
+      if (scan?.phase !== 'capturing') throw new Error('Clockify history capture plan is unavailable');
+      assertClockifyAnnualDataYear(normalized, year);
+      const { skippedEntryCount = 0, ...normalizedPage } = normalized;
+      const pageIsFinal = source.timeentries.length < 200;
+      console.info('[Clockoli Clockify capture background]', JSON.stringify({
+        stage: 'append_page', tabId: sender.tab.id, expectedEntries, skippedEntryCount, pageEntries: normalizedPage.entries.length, pageIsFinal,
+      }));
+      const report = await clockifyCaptureArm.appendPage(sender.tab.id, normalizedPage, skippedEntryCount, pageIsFinal);
+      const appendedAt = performance.now();
+      console.info('[Clockoli Clockify capture background]', JSON.stringify({
+        event: 'page_profile', pageEntries: normalizedPage.entries.length, expectedEntries, pageIsFinal,
+        normalizeMs: normalizedAt - profileStartedAt, appendMs: appendedAt - normalizedAt,
+        totalMs: appendedAt - profileStartedAt,
+      }));
+      if (!report.complete) return { nextPage: true };
+      stage = 'collecting_history';
       console.info('[Clockoli Clockify capture background]', stage);
-      await clockifyMigrationSession.create(normalized);
-      stage = 'opening_preview';
-      console.info('[Clockoli Clockify capture background]', stage);
-      await chrome.tabs.create({ url: chrome.runtime.getURL('src/clockify-migration/preview.html') });
-      console.info('[Clockoli Clockify capture background]', 'preview_opened');
-      return { captured: true };
-    } catch {
+      return completeClockifyCapture({ tabId: sender.tab.id, year, data: report.data });
+    } catch (error) {
+      await clockifyCaptureArm.disarm(sender.tab.id);
+      await Promise.all([clockifyHistoryScan.reset(), clockifyCaptureProfile.clear()]);
       console.info('[Clockoli Clockify capture background]', `failed:${stage}`);
-      return { captured: false, stage };
+      const diagnostic = error instanceof Error && error.diagnostic && typeof error.diagnostic === 'object'
+        ? error.diagnostic : undefined;
+      return {
+        captured: false, stage, reason: error instanceof Error ? error.message : 'unknown failure',
+        ...(diagnostic ? { diagnostic } : {}),
+      };
     }
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_PREVIEW') {
     const preview = await clockifyMigrationSession.peek();
     if (!preview) throw new Error('The Clockify migration preview is unavailable or expired. Return to the Clockify report and capture it again.');
-    return { id: preview.id, users: preview.data.users, entries: preview.data.entries.length };
+    return { id: preview.id, users: preview.data.users, entries: preview.data.entries.length, profile: await clockifyCaptureProfile.read() };
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS') {
     const { config, auth } = await configuredSnapshot();
@@ -563,18 +729,35 @@ async function handle(message, sender) {
     const { config, auth } = await configuredSnapshot();
     if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before importing.');
     try {
+      const destinationUser = {
+        id: auth.githubUserId,
+        login: config.storageLogin || auth.githubLogin,
+      };
       const outcomes = await importClockifyOrganization({
         sourceUsers: data.users, entries: data.entries, mappings: payload.mappings,
-        github: githubForConfig(config), sourceBranch: config.branch || 'main',
+        github: githubForConfig(config), destinationUser,
         onProgress: progress => emitClockifyMigrationProgress(payload.requestId, progress),
       });
-      return { outcomes: outcomes.map(({ sourceUserId, status, added, alreadyPresent, failureReason, error }) => ({
-        sourceUserId, status,
-        ...(Number.isSafeInteger(added) ? { added } : {}),
-        ...(Number.isSafeInteger(alreadyPresent) ? { alreadyPresent } : {}),
-        ...(typeof failureReason === 'string' ? { failureReason } : {}),
-        ...(!failureReason && typeof error?.reason === 'string' ? { failureReason: error.reason } : {}),
-      })) };
+      return { outcomes: outcomes.map(({ sourceUserId, status, added, alreadyPresent, failureReason, repair, diagnostic, error }) => {
+        const safeDiagnostic = diagnostic?.stage === 'preparing_destination_record'
+          && ['destination_record_schema', 'destination_active_timer_schema', 'destination_duplicate_record_id', 'destination_source_identity', 'destination_record_identity', 'destination_time_context', 'destination_producer', 'destination_actor', 'destination_metadata', 'destination_description', 'destination_task', 'destination_record_validation'].includes(diagnostic.code)
+          ? { stage: diagnostic.stage, code: diagnostic.code, ...(typeof diagnostic.detail === 'string' && /^[A-Za-z][A-Za-z0-9 _:-]{0,120}$/.test(diagnostic.detail) ? { detail: diagnostic.detail } : {}) } : null;
+        const safeRepair = repair?.kind === 'monthly_partition_mismatch'
+          && typeof repair.path === 'string' && /^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.jsonl$/.test(repair.path)
+          && Number.isSafeInteger(repair.line) && repair.line > 0
+          && /^\d{4}-(?:0[1-9]|1[0-2])$/.test(repair.actualMonth)
+          && /^\d{4}-(?:0[1-9]|1[0-2])$/.test(repair.expectedMonth)
+          ? { kind: repair.kind, path: repair.path, line: repair.line, actualMonth: repair.actualMonth, expectedMonth: repair.expectedMonth } : null;
+        return {
+          sourceUserId, status,
+          ...(Number.isSafeInteger(added) ? { added } : {}),
+          ...(Number.isSafeInteger(alreadyPresent) ? { alreadyPresent } : {}),
+          ...(typeof failureReason === 'string' ? { failureReason } : {}),
+          ...(safeRepair ? { repair: safeRepair } : {}),
+          ...(safeDiagnostic ? { diagnostic: safeDiagnostic } : {}),
+          ...(!failureReason && typeof error?.reason === 'string' ? { failureReason: error.reason } : {}),
+        };
+      }) };
     } finally { clockifyMigrationProgressPorts.delete(payload.requestId); }
   }
   if (message.type === 'CLEANUP_CLOCKIFY_TEST_IMPORTS') {
@@ -584,6 +767,14 @@ async function handle(message, sender) {
     const { config, auth } = await configuredSnapshot();
     if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before cleaning imported records.');
     return removeClockifyImportedTestRecords({ github: githubForConfig(config) });
+  }
+  if (message.type === 'DELETE_ALL_CLOCKOLI_RECORDS') {
+    if (!message.payload || Object.keys(message.payload).length !== 1 || message.payload.confirmation !== 'DELETE_ALL_CLOCKOLI_RECORDS') {
+      throw new Error('Invalid Clockoli record-deletion confirmation');
+    }
+    const { config, auth } = await configuredSnapshot();
+    if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before deleting work records.');
+    return removeAllClockoliRecords({ github: githubForConfig(config) });
   }
   if (message.type === 'OPEN_TIMES') {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') }); return { ok: true };
@@ -724,7 +915,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type)
-      || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE'].includes(message?.type);
+      || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT'].includes(message?.type);
     const acceptsLocally = ['START', 'STOP', 'SWITCH_TASK'].includes(message?.type);
     const attempt = () => direct ? handle(message, sender)
       : acceptsLocally ? acceptanceExecutor.run(() => handle(message, sender))

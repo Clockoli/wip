@@ -3,18 +3,22 @@
 const SESSION_KEY = 'clockify-migration-preview';
 const SESSION_VERSION = 1;
 const MAX_USERS = 20_000;
-const MAX_ENTRIES = 20_000;
 const MAX_ID_LENGTH = 200;
 const MAX_NAME_LENGTH = 300;
 const MAX_TASK_LENGTH = 300;
 const MAX_DESCRIPTION_LENGTH = 2_000;
 const MAX_TAGS = 50;
 const MAX_TAG_LENGTH = 120;
-const MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS = 30 * 60 * 1000;
-const DEFAULT_CLOCKIFY_MIGRATION_SESSION_TTL_MS = 10 * 60 * 1000;
+// Mapping a large historical report requires reviewing each source person. Keep
+// the credential-free, single-use preview available long enough to do that
+// deliberately, while still bounding its lifetime in extension storage.
+const MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_CLOCKIFY_MIGRATION_SESSION_TTL_MS = 60 * 60 * 1000;
 const OPAQUE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const USER_KEYS = new Set(['userId', 'displayName', 'entryCount']);
-const ENTRY_KEYS = new Set(['provider', 'entryId', 'userId', 'startedAt', 'endedAt', 'timezone', 'duration', 'projectId', 'project', 'task', 'description', 'tags', 'billable']);
+const ENTRY_KEYS = new Set(['provider', 'entryId', 'userId', 'startedAt', 'endedAt', 'timezone', 'duration', 'projectId', 'project', 'task', 'description', 'tags', 'billable', 'resolvedIssue']);
+const RESOLVED_ISSUE_KEYS = new Set(['url', 'title']);
+const GITHUB_TASK_URL = /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*\/(?:issues|pull)\/\d{1,9}$/;
 
 function fail(message) { throw new Error(`Invalid Clockify migration session: ${message}`); }
 
@@ -35,11 +39,11 @@ function exactKeys(value, keys, label) {
   if (names.length !== keys.size || names.some(key => !keys.has(key))) fail(`${label} has unsupported fields`);
 }
 
-function denseArray(value, label, maximum) {
+function denseArray(value, label, maximum = Infinity) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || Object.getOwnPropertySymbols(value).length) fail(`${label} must be an inert array`);
   const length = dataProperty(value, 'length', label);
   const names = Object.getOwnPropertyNames(value);
-  if (!Number.isSafeInteger(length) || length < 0 || length > maximum || names.length !== length + 1) fail(`${label} must be a bounded dense data array`);
+  if (!Number.isSafeInteger(length) || length < 0 || length > maximum || names.length !== length + 1) fail(`${label} must be a dense data array`);
   const result = [];
   for (let index = 0; index < length; index += 1) result.push(dataProperty(value, String(index), label));
   return result;
@@ -76,7 +80,7 @@ function snapshotUser(value) {
 
 function snapshotEntry(value) {
   plainObject(value, 'entry');
-  exactKeys(value, ENTRY_KEYS, 'entry');
+  if (Object.getOwnPropertyNames(value).some(key => !ENTRY_KEYS.has(key))) fail('entry has unsupported fields');
   if (dataProperty(value, 'provider', 'entry') !== 'clockify') fail('invalid entry provider');
   const entryId = text(dataProperty(value, 'entryId', 'entry'), 'entry ID', MAX_ID_LENGTH);
   const userId = text(dataProperty(value, 'userId', 'entry'), 'entry user ID', MAX_ID_LENGTH);
@@ -89,6 +93,12 @@ function snapshotEntry(value) {
   if (new Set(tags).size !== tags.length) fail('duplicate entry tag');
   const billable = dataProperty(value, 'billable', 'entry');
   if (typeof billable !== 'boolean') fail('invalid entry billable flag');
+  const resolvedIssue = Object.hasOwn(value, 'resolvedIssue') ? dataProperty(value, 'resolvedIssue', 'entry') : null;
+  if (resolvedIssue !== null) {
+    plainObject(resolvedIssue, 'resolved issue');
+    exactKeys(resolvedIssue, RESOLVED_ISSUE_KEYS, 'resolved issue');
+    if (!GITHUB_TASK_URL.test(dataProperty(resolvedIssue, 'url', 'resolved issue'))) fail('invalid resolved issue URL');
+  }
   return {
     provider: 'clockify', entryId, userId, startedAt, endedAt, duration,
     timezone: validTimezone(dataProperty(value, 'timezone', 'entry')),
@@ -97,14 +107,15 @@ function snapshotEntry(value) {
     task: text(dataProperty(value, 'task', 'entry'), 'task', MAX_TASK_LENGTH, { empty: true }),
     description: text(dataProperty(value, 'description', 'entry'), 'description', MAX_DESCRIPTION_LENGTH, { empty: true }),
     tags, billable,
+    ...(resolvedIssue ? { resolvedIssue: { url: dataProperty(resolvedIssue, 'url', 'resolved issue'), title: text(dataProperty(resolvedIssue, 'title', 'resolved issue'), 'resolved issue title', MAX_TASK_LENGTH) } } : {}),
   };
 }
 
-function snapshotNormalized(value) {
+export function snapshotClockifyMigrationData(value) {
   plainObject(value, 'normalized preview');
   exactKeys(value, new Set(['users', 'entries']), 'normalized preview');
   const users = denseArray(dataProperty(value, 'users', 'normalized preview'), 'source users', MAX_USERS).map(snapshotUser);
-  const entries = denseArray(dataProperty(value, 'entries', 'normalized preview'), 'entries', MAX_ENTRIES).map(snapshotEntry);
+  const entries = denseArray(dataProperty(value, 'entries', 'normalized preview'), 'entries').map(snapshotEntry);
   const userCounts = new Map();
   for (const user of users) {
     if (userCounts.has(user.userId)) fail('duplicate source user ID');
@@ -151,11 +162,11 @@ function snapshotStored(value, now) {
   const expiresAt = dataProperty(value, 'expiresAt', 'stored preview');
   if (!validOpaqueId(id) || !Number.isSafeInteger(expiresAt) || expiresAt <= now) fail('stored preview is expired or malformed');
   if (expiresAt - now > MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS) fail('stored preview expiry is invalid');
-  return { id, expiresAt, data: snapshotNormalized(dataProperty(value, 'data', 'stored preview')) };
+  return { id, expiresAt, data: snapshotClockifyMigrationData(dataProperty(value, 'data', 'stored preview')) };
 }
 
 /**
- * `storageSession` is a narrow adapter around chrome.storage.session:
+ * `storageSession` is a narrow privileged extension-storage adapter:
  * `{ get(key), set(key, value), remove(key) }`. It intentionally has no
  * Chrome global dependency, so the security boundary is testable in isolation.
  */
@@ -173,7 +184,7 @@ export function createClockifyMigrationSessionService({ storageSession, now = ()
   return Object.freeze({
     create(normalized, { ttlMs = DEFAULT_CLOCKIFY_MIGRATION_SESSION_TTL_MS } = {}) {
       return exclusive(async () => {
-        const data = snapshotNormalized(normalized);
+        const data = snapshotClockifyMigrationData(normalized);
         const current = validNow(now);
         const ttl = validTtl(ttlMs);
         const id = randomUUID();
@@ -194,7 +205,13 @@ export function createClockifyMigrationSessionService({ storageSession, now = ()
         if (stored === undefined || stored === null) return null;
         let snapshot;
         try { snapshot = snapshotStored(stored, validNow(now)); }
-        catch { await discard(); return null; }
+        catch (error) {
+          // This diagnostic deliberately contains only the validator's fixed
+          // reason text; it never logs stored Clockify data.
+          console.warn('[Clockoli Clockify migration preview rejected]', error instanceof Error ? error.message : 'unknown validation error');
+          await discard();
+          return null;
+        }
         return { id: snapshot.id, data: snapshot.data };
       });
     },

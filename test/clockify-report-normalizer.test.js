@@ -50,7 +50,7 @@ test('accepts observed nullable task/tag variants and separates multiple source 
   });
 });
 
-test('accepts a bounded complete Detailed Report larger than the initial preview-sized limit', () => {
+test('accepts a complete Detailed Report larger than the initial preview-sized limit', () => {
   const entries = Array.from({ length: 10_001 }, (_, index) => ({
     ...entry,
     _id: `entry-${index}`,
@@ -78,6 +78,43 @@ test('rejects malformed timestamps, timezone, duration, credentials, unsupported
     [{ timeentries: [{ ...entry, tags: undefined, tagIds: ['tag-without-name'] }] }, /tag IDs/i],
     [{ timeEntries: [entry] }, /unknown/i],
   ]) assert.throws(() => normalize({ ...report, ...change }), expected);
+});
+
+test('attaches safe source-location details when an interval ends before its start', () => {
+  const invalid = {
+    ...entry,
+    timeInterval: { ...entry.timeInterval, end: '2026-08-26T08:15:00.000Z', duration: 0 },
+  };
+  assert.throws(
+    () => normalize({ ...report, timeentries: [invalid] }),
+    error => error?.message === 'Invalid Clockify Detailed Report: end timestamp must be after start timestamp'
+      && JSON.stringify(error.diagnostic) === JSON.stringify({
+        entryIndex: 0,
+        entryId: 'entry-9',
+        user: 'Ada',
+        project: 'Frontend',
+        task: 'Fix timer import',
+        start: '2026-08-26T08:15:00.123Z',
+        end: '2026-08-26T08:15:00.000Z',
+        duration: 0,
+        timezone: 'Europe/Berlin',
+      }),
+  );
+});
+
+test('omits a zero-length completed Clockify interval and reports its count for capture accounting', () => {
+  const zeroLength = {
+    ...entry,
+    _id: 'zero-length-entry',
+    timeInterval: { ...entry.timeInterval, end: entry.timeInterval.start, duration: 0 },
+  };
+  const result = normalize({
+    ...report,
+    timeentries: [entry, zeroLength],
+    totals: [{ ...report.totals[0], entriesCount: 2 }],
+  });
+  assert.deepEqual(result.entries.map(value => value.entryId), ['entry-9']);
+  assert.equal(result.skippedEntryCount, 1);
 });
 
 test('accepts only inert JSON text and rejects object, accessor, sparse, symbol, and proxy report data without executing code', () => {

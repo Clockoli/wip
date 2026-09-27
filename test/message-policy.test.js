@@ -55,7 +55,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
-  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES']) {
+  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES', 'DELETE_ALL_CLOCKOLI_RECORDS']) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
     assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
   }
@@ -127,7 +127,10 @@ test('extension-origin senders without a URL retain extension-page permissions',
 test('only the Clockify Detailed Report page can submit a sanitized capture', () => {
   const detailedReport = { url: 'https://app.clockify.me/reports/detailed?period=this-week', tab: { id: 12 } };
   const otherClockifyPage = { url: 'https://app.clockify.me/tracker', tab: { id: 13 } };
-  for (const type of ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_CAPTURED_REPORT']) {
+  for (const type of [
+    'CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE',
+    'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT',
+  ]) {
     assert.equal(assertMessageAllowed(type, detailedReport, origin), 'clockify');
     assert.throws(() => assertMessageAllowed(type, otherClockifyPage, origin), /not allowed/i);
     assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);

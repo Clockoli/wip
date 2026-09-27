@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { removeClockifyImportedTestRecords } from '../src/services/clockify-import-cleanup.js';
-import { emptyTaskIndex, applyTaskIndexChanges, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
+import { removeAllClockoliRecords, removeClockifyImportedTestRecords } from '../src/services/clockify-import-cleanup.js';
+import { emptyTaskIndex, applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
 import { serializeMonthlyRecords, parseMonthlyRecords } from '../src/domain/work-records.js';
 import { USER_METADATA_PATH, userBranchMetadataText, userStorageBranch } from '../src/services/user-storage-branch.js';
@@ -35,7 +35,7 @@ function fakeGitHub() {
 
 test('removes only marked Clockify placeholder records and updates the task index atomically', async () => {
   const { files, writes, client } = fakeGitHub();
-  const imported = record('01K2ABCDEF0123456789ABCDEF', 'https://clockoli.invalid/imported-work', true);
+  const imported = record('01K2ABCDEF0123456789ABCDEF', `https://clockoli.invalid/imported-work/${'a'.repeat(64)}`, true);
   const normal = record('01K2ABCDEF0123456789ABCDEE', 'https://example.com/work', false);
   files.set(USER_METADATA_PATH, { sha: 'user', text: userBranchMetadataText(user) });
   files.set('times/2026-09/ada.jsonl', { sha: 'times', text: serializeMonthlyRecords([imported, normal]) });
@@ -46,4 +46,20 @@ test('removes only marked Clockify placeholder records and updates the task inde
   assert.equal(writes[0].message, 'Remove Clockify test import records');
   assert.deepEqual(writes[0].changes.map(item => item.path).sort(), [TASK_INDEX_PATH, 'times/2026-09/ada.jsonl']);
   assert.deepEqual(parseMonthlyRecords(files.get('times/2026-09/ada.jsonl').text, { user: user.login, month: '2026-09', path: 'times/2026-09/ada.jsonl' }).map(item => item.id), [normal.id]);
+});
+
+test('removes every completed record on the configured personal branch and clears its task index atomically', async () => {
+  const { files, writes, client } = fakeGitHub();
+  const first = record('01K2ABCDEF0123456789ABCDEF', 'https://example.com/first', false);
+  const second = record('01K2ABCDEF0123456789ABCDEE', 'https://example.com/second', true);
+  files.set(USER_METADATA_PATH, { sha: 'user', text: userBranchMetadataText(user) });
+  files.set('times/2026-09/ada.jsonl', { sha: 'times', text: serializeMonthlyRecords([first, second]) });
+  files.set(TASK_INDEX_PATH, { sha: 'index', text: serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex(user.login), { add: [first, second] })) });
+
+  assert.deepEqual(await removeAllClockoliRecords({ github: client }), { recordsDeleted: 2 });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].message, 'Delete all Clockoli work records');
+  assert.deepEqual(writes[0].changes.map(item => item.path).sort(), [TASK_INDEX_PATH, 'times/2026-09/ada.jsonl']);
+  assert.equal(writes[0].changes.find(item => item.path === 'times/2026-09/ada.jsonl').text, null);
+  assert.deepEqual(parseTaskIndex(files.get(TASK_INDEX_PATH).text, { user: user.login }), emptyTaskIndex(user.login));
 });

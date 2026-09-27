@@ -94,6 +94,36 @@ test('GitHub client atomically updates multiple text files from one verified tre
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
 });
 
+test('GitHub client creates atomic-update blobs with bounded concurrency', async () => {
+  let inFlightBlobs = 0;
+  let maximumInFlightBlobs = 0;
+  let blobNumber = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [] });
+    if (url.endsWith('/git/blobs')) {
+      inFlightBlobs += 1;
+      maximumInFlightBlobs = Math.max(maximumInFlightBlobs, inFlightBlobs);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlightBlobs -= 1;
+      blobNumber += 1;
+      return response(201, { sha: `blob-${blobNumber}` });
+    }
+    if (url.endsWith('/git/trees')) return response(201, { sha: 'tree-new' });
+    if (url.endsWith('/git/commits')) return response(201, { sha: 'commit-new' });
+    if (url.endsWith('/git/refs/heads/main') && options.method === 'PATCH') return response(200, { object: { sha: 'commit-new' } });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', fetchImpl });
+  const changes = Array.from({ length: 12 }, (_, index) => ({ path: `times/2025-${String(index + 1).padStart(2, '0')}/ada.jsonl`, sha: null, text: `entry-${index}\n` }));
+
+  await client.updateTextsAtomic(changes, 'bulk import');
+
+  assert.ok(maximumInFlightBlobs > 1, 'blob creation should not serialize every destination month');
+  assert.ok(maximumInFlightBlobs <= 6, 'blob creation must remain bounded to avoid GitHub throttling');
+});
+
 test('atomic text update rejects a branch head changed after partition discovery', async () => {
   let writes = 0;
   const fetchImpl = async (url, options = {}) => {

@@ -3,6 +3,13 @@ const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const PROGRESS_LABELS = {
   resolving_identities: 'Verifying GitHub account mappings',
   preparing_storage: 'Preparing Clockoli storage',
+  verifying_storage: 'Verifying storage identity',
+  reading_existing_records: 'Reading destination records',
+  preparing_records: 'Preparing destination records',
+  matching_replay_targets: 'Matching prior imports',
+  normalizing_intervals: 'Resolving interval placement',
+  building_records: 'Building destination records',
+  validating_output: 'Validating atomic write',
   writing_records: 'Writing completed records',
   completed: 'Import completed',
 };
@@ -60,8 +67,9 @@ function showMessage(text, kind = 'error') {
   element.hidden = !text;
 }
 
+
 function renderProgress(progress) {
-  const element = $('progress');
+  const element = $('import-status');
   const label = PROGRESS_LABELS[progress?.phase];
   const completed = progress?.completedUsers;
   const total = progress?.totalUsers;
@@ -69,7 +77,13 @@ function renderProgress(progress) {
     element.hidden = true;
     return;
   }
-  element.textContent = total ? `${label}: ${completed} of ${total} people` : label;
+  const isCompleted = progress.phase === 'completed';
+  const phases = Object.keys(PROGRESS_LABELS);
+  const activeIndex = phases.indexOf(progress.phase);
+  $('import-status-title').textContent = isCompleted ? 'Migration complete' : 'Saving migration';
+  $('progress-current-step').textContent = `Step ${activeIndex + 1} of ${phases.length}: ${label}`;
+  $('import-progress').value = activeIndex + 1;
+  $('progress-summary').textContent = total ? (isCompleted ? `Imported ${completed} of ${total} people` : `Importing ${completed} of ${total} people`) : label;
   element.hidden = false;
 }
 
@@ -140,8 +154,14 @@ function renderOutcomes(users, outcomes) {
   };
   for (const outcome of outcomes) {
     const name = names.get(String(outcome?.sourceUserId || outcome?.userId || ''));
-    const label = outcome?.status === 'failed' && FAILURE_LABELS[outcome?.failureReason]
-      ? FAILURE_LABELS[outcome.failureReason] : labels[outcome?.status];
+    const repair = outcome?.repair;
+    const diagnostic = outcome?.diagnostic;
+    const label = diagnostic?.stage === 'preparing_destination_record'
+      ? `Clockoli failed while preparing the destination record. Code: ${diagnostic.code}.${diagnostic.detail ? ` Detail: ${diagnostic.detail}.` : ''} Nothing was written.`
+      : repair?.kind === 'monthly_partition_mismatch'
+      ? `Clockoli found a misplaced record in ${repair.path}, line ${repair.line}: its local month is ${repair.actualMonth}, not ${repair.expectedMonth}. Move it to the ${repair.actualMonth} monthly file, then retry.`
+      : outcome?.status === 'failed' && FAILURE_LABELS[outcome?.failureReason]
+        ? FAILURE_LABELS[outcome.failureReason] : labels[outcome?.status];
     if (!name || !label) continue;
     const item = document.createElement('li'); item.textContent = `${name}: ${label}`; root.append(item);
   }
@@ -151,6 +171,7 @@ function renderOutcomes(users, outcomes) {
 function initialize() {
   let preview = null;
   let submitting = false;
+  let finished = false;
   const form = $('mapping-form');
   const confirmation = $('confirmation');
   const importButton = $('import');
@@ -161,7 +182,7 @@ function initialize() {
     const state = mappingState(preview?.users || [], inputs.map(input => input.value), skipped, confirmation.checked);
     const duplicateLogins = inputs.map((input, index) => skipped[index] ? '' : input.value.trim().toLowerCase());
     inputs.forEach((input, index) => input.setAttribute('aria-invalid', String(Boolean(input.value.trim()) && duplicateLogins.indexOf(duplicateLogins[index]) !== duplicateLogins.lastIndexOf(duplicateLogins[index]))));
-    importButton.disabled = !state.valid || submitting;
+    importButton.disabled = !state.valid || submitting || finished;
     return state;
   };
 
@@ -174,7 +195,7 @@ function initialize() {
       if (!subscribed && message?.type === 'CLOCKIFY_MIGRATION_PROGRESS_SUBSCRIBED' && Object.keys(message).length === 1) {
         subscribed = true; clearTimeout(timeout); resolve({ requestId, port }); return;
       }
-      if (subscribed && message?.type === 'CLOCKIFY_MIGRATION_PROGRESS' && Object.keys(message).length === 4) renderProgress(message);
+      if (subscribed && message?.type === 'CLOCKIFY_MIGRATION_PROGRESS' && (Object.keys(message).length === 4 || Object.keys(message).length === 5)) renderProgress(message);
     });
     port.onDisconnect.addListener(() => { if (subscribed && submitting) showMessage('Import is continuing; waiting for the final result…', ''); });
     port.postMessage({ type: 'SUBSCRIBE_CLOCKIFY_MIGRATION_PROGRESS', requestId });
@@ -185,20 +206,22 @@ function initialize() {
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const state = updateValidity();
-    if (!state.valid || submitting) return;
-    submitting = true; importButton.disabled = true; showMessage('Importing completed time…', '');
+    if (!state.valid || submitting || finished) return;
+    submitting = true; importButton.disabled = true; importButton.textContent = 'Saving migration…'; showMessage('Importing completed time…', '');
     renderProgress({ phase: 'resolving_identities', completedUsers: 0, totalUsers: preview.users.length });
+    $('import-status').scrollIntoView({ block: 'nearest' });
     let progress;
     try {
       progress = await openProgressPort();
       const data = await send({ type: 'CONFIRM_CLOCKIFY_MIGRATION', payload: { id: preview.id, mappings: state.mappings, requestId: progress.requestId } });
       renderOutcomes(preview.users, data?.outcomes || data);
+      finished = true; importButton.textContent = 'Migration imported';
       showMessage(outcomeMessage(data?.outcomes || data), 'success');
     } catch (error) {
-      $('progress').hidden = true;
+      $('import-status').hidden = true;
+      importButton.textContent = 'Import completed time';
       showMessage(error.message || 'Could not confirm the migration.');
-      submitting = false; updateValidity();
-    } finally { submitting = false; try { progress?.port.disconnect(); } catch {} }
+    } finally { submitting = false; try { progress?.port.disconnect(); } catch {} updateValidity(); }
   });
 
   (async () => {

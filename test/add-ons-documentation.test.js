@@ -35,13 +35,16 @@ test('first-party packaged add-ons have a constrained, user-disclosed contract',
   assert.match(addOns, /tokens, cookies, request headers, request bodies, report-task markers, and raw provider responses are never collected or retained/i);
   assert.match(addOns, /content adapter is untrusted/i);
   assert.match(addOns, /revalidates and normalizes/i);
-  assert.match(addOns, /session-only preview/i);
-  assert.match(addOns, /chrome\.storage\.session.*privileged extension code/i);
+  assert.match(addOns, /native Export menu.*Save as CSV/i);
+  assert.match(addOns, /does not invoke Clockify APIs directly/i);
+  assert.match(addOns, /preview expires after one hour/i);
+  assert.match(addOns, /temporary, privileged extension IndexedDB storage/i);
+  assert.match(addOns, /not constrained by `chrome\.storage\.session`’s quota/i);
   assert.match(addOns, /content scripts do not access extension storage/i);
   assert.match(addOns, /explicitly map each person.*explicitly skip/i);
-  assert.match(addOns, /does not invoke Clockify Export/i);
-  assert.match(addOns, /does not invoke Clockify Export or issue direct provider requests/i);
-  assert.match(addOns, /`clockoli\/users\/\{github-id\}`/);
+
+  assert.match(addOns, /branch already configured for the signed-in Clockoli user/i);
+  assert.match(addOns, /never creates or switches to an additional branch/i);
 
   assert.match(readme, /docs\/add-ons\.md/);
   assert.match(documentationIndex, /add-ons\.md/i);

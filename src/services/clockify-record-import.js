@@ -3,14 +3,31 @@ import { localDateInTimezone } from '../domain/records.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { parseMonthlyRecords, monthlyRecordsPath, serializeMonthlyRecords } from '../domain/work-records.js';
 import { createDeterministicUlid } from '../domain/ulid.js';
-import { userStorageBranch, parseUserBranchMetadata, USER_METADATA_PATH } from './user-storage-branch.js';
+import { parseUserBranchMetadata, USER_METADATA_PATH } from './user-storage-branch.js';
 
 const PROVENANCE_FIELD = 'clockoli_import';
 const PROVENANCE_KEY = 'provenance_sha256';
 const IMPORT_PRODUCER = Object.freeze({ kind: 'importer', name: 'clockoli', version: '1' });
+const SUGGESTED_GITHUB_URL = /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/(?:issues|pull)\/[1-9][0-9]{0,8}$/;
+const DESTINATION_READ_CONCURRENCY = 6;
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 function isConflict(error) { return error?.status === 409 || error?.code === 'conflict'; }
+
+async function mapBounded(items, limit, operation) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 function preparationFailureReason(error) {
   const message = String(error?.message || '');
@@ -31,6 +48,25 @@ function githubWriteFailureReason(error) {
   return 'github_write_failed';
 }
 
+function safeFailureDiagnostic(stage, error) {
+  if (stage !== 'preparing_records' || preparationFailureReason(error) !== 'invalid_imported_record') return null;
+  const message = String(error?.message || '');
+  const code = /Unsupported time entry schema/.test(message) ? 'destination_record_schema'
+    : /Unsupported active timer schema/.test(message) ? 'destination_active_timer_schema'
+    : /Duplicate imported work record ID/.test(message) ? 'destination_duplicate_record_id'
+    : /Invalid imported entry|Invalid imported project identity/.test(message) ? 'destination_source_identity'
+    : /Imported duration does not match exact timestamps|Invalid imported interval/.test(message) ? 'destination_time_context'
+    : /identity|entry ID|record ID/i.test(message) ? 'destination_record_identity'
+    : /timestamp|date|timezone|createdAt|updatedAt|endedAt|startedAt|duration/i.test(message) ? 'destination_time_context'
+    : /producer/i.test(message) ? 'destination_producer'
+    : /actor|user/i.test(message) ? 'destination_actor'
+    : /metadata|metrics/i.test(message) ? 'destination_metadata'
+    : /description/i.test(message) ? 'destination_description'
+    : /task URL|task title/i.test(message) ? 'destination_task'
+    : 'destination_record_validation';
+  const detail = /^[A-Za-z][A-Za-z0-9 _:-]{0,120}$/.test(message) ? message : null;
+  return { stage: 'preparing_destination_record', code, ...(detail ? { detail } : {}) };
+}
 function failureReason(stage, error) {
   if (stage === 'overlapping_intervals' || error?.code === 'overlapping_intervals') return 'overlapping_intervals';
   if (stage === 'verifying_storage') return 'storage_branch_incomplete';
@@ -67,35 +103,75 @@ function provenanceOf(entry) {
   return entry?.metadata?.[PROVENANCE_FIELD]?.[PROVENANCE_KEY];
 }
 
-function taskIdentityPairs(candidate) {
-  const pairs = [{ url: clockifyProjectTaskUrl(candidate), title: clockifyTaskTitle(candidate) }];
-  if (candidate.resolvedIssue?.url && candidate.resolvedIssue?.title) {
-    pairs.unshift({ url: candidate.resolvedIssue.url, title: candidate.resolvedIssue.title });
-  }
-  return pairs;
+function validResolvedIssue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.url === 'string' && SUGGESTED_GITHUB_URL.test(value.url)
+    && typeof value.title === 'string' && value.title.trim();
 }
 
-function replayIdentityMatches(record, candidate, githubUser) {
-  return record?.producer?.kind === IMPORT_PRODUCER.kind
-    && record?.producer?.name === IMPORT_PRODUCER.name
-    && record?.user === githubUser.login
-    && record?.actor?.kind === 'human'
-    && record?.actor?.id === `github:${githubUser.id}`
-    && record?.entryDate === localDateInTimezone(candidate.startedAt, candidate.timezone)
-    && record?.durationSeconds === candidate.duration
-    && taskIdentityPairs(candidate).some(identity => record?.taskUrl === identity.url && record?.taskTitle === identity.title);
+function clockifyProjectTaskUrl(entry) {
+  if (typeof entry?.projectId !== 'string' || !entry.projectId) throw new Error('Invalid imported project identity');
+  return `https://app.clockify.me/reports/detailed?project=${encodeURIComponent(entry.projectId)}`;
+}
+
+function clockifyTaskTitle(entry) {
+  const project = normalizeTaskTitle(entry?.project);
+  const task = normalizeTaskTitle(entry?.task);
+  return normalizeTaskTitle([project, task].filter(Boolean).join(' — '));
+}
+
+function replayIdentityKey(entryDate, duration, taskUrl, taskTitle) {
+  return [entryDate, duration, taskUrl, taskTitle].join('|');
+}
+
+function candidateReplayIdentityKeys(entry) {
+  const entryDate = localDateInTimezone(entry.startedAt, entry.timezone);
+  return [
+    replayIdentityKey(entryDate, entry.duration, entry.resolvedIssue.url, entry.resolvedIssue.title),
+    replayIdentityKey(entryDate, entry.duration, clockifyProjectTaskUrl(entry), clockifyTaskTitle(entry)),
+  ];
+}
+
+function recordReplayIdentityKey(record) {
+  return replayIdentityKey(record.entryDate, record.durationSeconds, record.taskUrl, record.taskTitle);
+}
+
+function addToIndex(index, key, value) {
+  const values = index.get(key);
+  if (values) values.push(value);
+  else index.set(key, [value]);
 }
 
 function replayTargets(candidates, files, githubUser) {
   const records = [...files.values()].flatMap(file => file.entries.map((record, index) => ({ file, index, record })));
+  const recordsByProvenance = new Map();
+  const recordsByIdentity = new Map();
+  for (const item of records) {
+    const provenance = provenanceOf(item.record);
+    if (typeof provenance === 'string') addToIndex(recordsByProvenance, provenance, item);
+    if (item.record?.producer?.kind === IMPORT_PRODUCER.kind
+      && item.record?.producer?.name === IMPORT_PRODUCER.name
+      && item.record?.user === githubUser.login
+      && item.record?.actor?.kind === 'human'
+      && item.record?.actor?.id === `github:${githubUser.id}`) {
+      addToIndex(recordsByIdentity, recordReplayIdentityKey(item.record), item);
+    }
+  }
+  const candidateIdentityKeys = new Map();
+  const candidateCountsByIdentity = new Map();
+  for (const candidate of candidates) {
+    const keys = candidateReplayIdentityKeys(candidate);
+    candidateIdentityKeys.set(candidate, keys);
+    for (const key of keys) candidateCountsByIdentity.set(key, (candidateCountsByIdentity.get(key) ?? 0) + 1);
+  }
   const targets = new Map();
   for (const candidate of candidates) {
-    const provenanceMatches = records.filter(item => provenanceOf(item.record) === candidate.provenance);
-    const identityMatches = records.filter(item => replayIdentityMatches(item.record, candidate, githubUser));
+    const provenanceMatches = recordsByProvenance.get(candidate.provenance) ?? [];
+    const identityKeys = candidateIdentityKeys.get(candidate);
+    const identityMatches = [...new Set(identityKeys.flatMap(key => recordsByIdentity.get(key) ?? []))];
     const matches = provenanceMatches.length ? provenanceMatches : identityMatches;
     if (matches.length !== 1) continue;
-    const matchingCandidates = candidates.filter(other => replayIdentityMatches(matches[0].record, other, githubUser));
-    if (!provenanceMatches.length && matchingCandidates.length !== 1) continue;
+    if (!provenanceMatches.length && candidateCountsByIdentity.get(recordReplayIdentityKey(matches[0].record)) !== 1) continue;
     targets.set(candidate.provenance, matches[0]);
   }
   return targets;
@@ -110,9 +186,10 @@ function sameImportedRecord(record, replacement) {
     && provenanceOf(record) === provenanceOf(replacement);
 }
 
-function intervalsOverlap(left, right) {
-  return new Date(left.startedAt).getTime() < new Date(right.endedAt).getTime()
-    && new Date(right.startedAt).getTime() < new Date(left.endedAt).getTime();
+function collapseRecordsById(records) {
+  const byId = new Map();
+  for (const record of records) byId.set(record.id, record);
+  return [...byId.values()];
 }
 
 function overlappingIntervalsError() {
@@ -121,12 +198,46 @@ function overlappingIntervalsError() {
   return error;
 }
 
+function firstIntervalAtOrAfter(intervals, startedAt) {
+  let lower = 0;
+  let upper = intervals.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (intervals[middle].startedAt < startedAt) lower = middle + 1;
+    else upper = middle;
+  }
+  return lower;
+}
+
+function firstOverlap(intervals, startedAt, endedAt) {
+  const index = firstIntervalAtOrAfter(intervals, startedAt);
+  const previous = intervals[index - 1];
+  if (previous && startedAt < previous.endedAt) return previous;
+  const next = intervals[index];
+  return next && next.startedAt < endedAt ? next : null;
+}
+
+function insertInterval(intervals, interval) {
+  intervals.splice(firstIntervalAtOrAfter(intervals, interval.startedAt), 0, interval);
+}
+
+function verifyNonOverlappingAdditions(additions) {
+  let previousEnd = -Infinity;
+  for (const { record } of [...additions].sort((left, right) => left.record.startedAt.localeCompare(right.record.startedAt)
+    || left.record.endedAt.localeCompare(right.record.endedAt))) {
+    const startedAt = new Date(record.startedAt).getTime();
+    const endedAt = new Date(record.endedAt).getTime();
+    if (startedAt < previousEnd) throw overlappingIntervalsError();
+    previousEnd = Math.max(previousEnd, endedAt);
+  }
+}
+
 // Existing Clockoli intervals remain fixed. Every imported interval that
 // collides with either source or existing time moves forward in source order,
 // preserving its reported duration and never changing existing Clockoli time.
 function normalizeImportedIntervals(candidates, fixedIntervals = []) {
   const candidateProvenance = new Set(candidates.map(candidate => candidate.provenance));
-  const fixed = fixedIntervals
+  const occupied = fixedIntervals
     .filter(record => !candidateProvenance.has(provenanceOf(record)))
     .map(record => ({ startedAt: new Date(record.startedAt).getTime(), endedAt: new Date(record.endedAt).getTime() }))
     .filter(interval => Number.isFinite(interval.startedAt) && Number.isFinite(interval.endedAt) && interval.startedAt < interval.endedAt)
@@ -146,39 +257,16 @@ function normalizeImportedIntervals(candidates, fixedIntervals = []) {
       let startedAt = sourceStart;
       let endedAt = startedAt + durationMilliseconds;
       for (;;) {
-        const overlap = [...fixed, ...normalized.map(interval => ({
-          startedAt: new Date(interval.startedAt).getTime(), endedAt: new Date(interval.endedAt).getTime(),
-        }))].find(interval => startedAt < interval.endedAt && interval.startedAt < endedAt);
+        const overlap = firstOverlap(occupied, startedAt, endedAt);
         if (!overlap) break;
         startedAt = overlap.endedAt;
         endedAt = startedAt + durationMilliseconds;
       }
-      normalized.push({ ...candidate, startedAt: new Date(startedAt).toISOString(), endedAt: new Date(endedAt).toISOString() });
+      const interval = { startedAt, endedAt };
+      insertInterval(occupied, interval);
+      normalized.push({ ...candidate, startedAt: new Date(interval.startedAt).toISOString(), endedAt: new Date(interval.endedAt).toISOString() });
   }
   return normalized;
-}
-
-// The project identifier gives an imported task a stable URL identity. The
-// project and task names remain the human-facing title in Clockoli.
-function clockifyProjectTaskUrl(entry) {
-  if (typeof entry?.projectId !== 'string' || !entry.projectId) throw new Error('Invalid imported project identity');
-  return `https://app.clockify.me/reports/detailed?project=${encodeURIComponent(entry.projectId)}`;
-}
-
-function clockifyTaskTitle(entry) {
-  const project = normalizeTaskTitle(entry?.project);
-  const task = normalizeTaskTitle(entry?.task);
-  return normalizeTaskTitle([project, task].filter(Boolean).join(' — '));
-}
-
-async function resolveClockifyIssue(github, entry) {
-  if (typeof github?.resolveRepositoryIssue !== 'function') return null;
-  const project = normalizeTaskTitle(entry?.project);
-  const match = normalizeTaskTitle(entry?.task).match(/^#([1-9]\d*)\s+(.+)$/);
-  if (!project || !match) return null;
-  try {
-    return await github.resolveRepositoryIssue({ repository: project, number: Number(match[1]), title: match[2] });
-  } catch { return null; }
 }
 
 async function readRequired(github, path, label) {
@@ -197,8 +285,8 @@ function completedRecord({ entry, githubUser, id, now }) {
     id,
     actor: { kind: 'human', id: `github:${githubUser.id}`, name: githubUser.login },
     producer: IMPORT_PRODUCER,
-    taskUrl: entry.resolvedIssue?.url ?? clockifyProjectTaskUrl(entry),
-    taskTitle: entry.resolvedIssue?.title ?? clockifyTaskTitle(entry),
+    taskUrl: entry.resolvedIssue.url,
+    taskTitle: entry.resolvedIssue.title,
     startedAt,
     entryDate,
     timezone: entry.timezone,
@@ -212,42 +300,47 @@ function completedRecord({ entry, githubUser, id, now }) {
 }
 
 /**
- * Imports one already-mapped Clockify user into that user's pre-provisioned branch.
+ * Imports one mapped Clockify user into Clockoli's configured writer branch.
  * The normalized source entry is never copied into storage; only its opaque digest is.
  */
-export async function importClockifyCompletedRecords({ github, githubUser, entries, idFactory, now } = {}) {
+export async function importClockifyCompletedRecords({ github, githubUser, entries, idFactory, now, onProfile } = {}) {
   let stage = 'validating_request';
+  const startedAt = performance.now();
+  const profile = name => {
+    if (typeof onProfile === 'function') onProfile({ stage: name, elapsedMs: Math.round(performance.now() - startedAt) });
+  };
   try {
-    if (!github || typeof github.forBranch !== 'function' || !validGithubUser(githubUser) || !Array.isArray(entries)) {
+    if (!github || !validGithubUser(githubUser) || !Array.isArray(entries)) {
       throw new Error('Invalid Clockify import request');
     }
-    const branch = userStorageBranch(githubUser.id);
-    const personalGithub = github.forBranch(branch, 'custom');
-    if (!personalGithub || typeof personalGithub.getText !== 'function' || typeof personalGithub.updateTextsAtomic !== 'function') {
-      throw new Error('Invalid personal GitHub client');
-    }
-
-    // Fail closed: importing never creates or repairs personal storage branches.
+    // Fail closed: migration uses the already-configured Clockoli writer branch
+    // and never creates or switches to another branch.
+    const storageGithub = github;
     stage = 'verifying_storage';
-    const metadataFile = await readRequired(personalGithub, USER_METADATA_PATH, 'user branch metadata');
+    profile(stage);
+    const metadataFile = await readRequired(storageGithub, USER_METADATA_PATH, 'user branch metadata');
     const metadata = parseUserBranchMetadata(metadataFile.text);
     if (metadata.id !== githubUser.id || metadata.login.toLowerCase() !== githubUser.login.toLowerCase()) {
       throw new Error('Clockoli user branch identity does not match mapped user');
     }
-    const indexFile = await readRequired(personalGithub, TASK_INDEX_PATH, 'task index');
+    const indexFile = await readRequired(storageGithub, TASK_INDEX_PATH, 'task index');
     const taskIndex = parseTaskIndex(indexFile.text, { user: githubUser.login });
 
     stage = 'preparing_records';
+    profile(stage);
     const seenProvenance = new Set();
     const candidates = [];
     for (const rawEntry of entries) {
+      if (!validResolvedIssue(rawEntry.resolvedIssue)) throw new Error('Invalid imported task URL suggestion');
       const provenance = await sha256(normalizedIdentity(rawEntry, githubUser.id));
       if (seenProvenance.has(provenance)) continue;
       seenProvenance.add(provenance);
       const deterministicId = idFactory
         ? await idFactory(rawEntry.startedAt, provenance)
         : await createDeterministicUlid(new Date(rawEntry.startedAt).getTime(), provenance);
-      candidates.push({ ...rawEntry, provenance, id: deterministicId, resolvedIssue: await resolveClockifyIssue(github, rawEntry) });
+      candidates.push({
+        ...rawEntry, provenance, id: deterministicId,
+      });
     }
 
     const byPath = new Map();
@@ -260,19 +353,39 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
 
     const files = new Map();
     stage = 'reading_existing_records';
-    for (const path of byPath.keys()) {
+    profile(stage);
+    const loadedFiles = await mapBounded([...byPath.keys()], DESTINATION_READ_CONCURRENCY, async path => {
       try {
-        const file = await personalGithub.getText(path);
-        files.set(path, { path, sha: file.sha, entries: parseMonthlyRecords(file.text, { user: githubUser.login, path, sha: file.sha }) });
+        const file = await storageGithub.getText(path);
+        return { path, sha: file.sha, entries: parseMonthlyRecords(file.text, { user: githubUser.login, path, sha: file.sha }) };
       } catch (error) {
-        if (!isNotFound(error)) throw error;
-        files.set(path, { path, sha: null, entries: [] });
+        if (isNotFound(error)) return { path, sha: null, entries: [] };
+        if (error?.repair?.kind === 'monthly_partition_mismatch') {
+          const wrapped = new Error('Clockoli monthly storage partition is invalid');
+          wrapped.repair = { ...error.repair, path };
+          throw wrapped;
+        }
+        throw error;
+      }
+    });
+    for (const file of loadedFiles) files.set(file.path, file);
+
+    profile('matching_replay_targets');
+    const uniqueCandidatesByProvenance = new Map();
+    for (const candidate of candidates) {
+      const prior = uniqueCandidatesByProvenance.get(candidate.provenance);
+      if (!prior) { uniqueCandidatesByProvenance.set(candidate.provenance, candidate); continue; }
+      if (prior.startedAt !== candidate.startedAt || prior.endedAt !== candidate.endedAt || prior.id !== candidate.id) {
+        throw new Error('Duplicate imported provenance has conflicting records');
       }
     }
-
-    const targets = replayTargets(candidates, files, githubUser);
+    const uniqueCandidates = [...uniqueCandidatesByProvenance.values()];
+    const recordsById = new Map();
+    for (const file of files.values()) for (let index = 0; index < file.entries.length; index += 1) recordsById.set(file.entries[index].id, { file, index, record: file.entries[index] });
+    const targets = replayTargets(uniqueCandidates, files, githubUser);
+    profile('normalizing_intervals');
     const replacedRecords = new Set([...targets.values()].map(target => target.record));
-    const normalizedCandidates = normalizeImportedIntervals(candidates,
+    const normalizedCandidates = normalizeImportedIntervals(uniqueCandidates,
       [...files.values()].flatMap(file => file.entries).filter(record => !replacedRecords.has(record)));
     for (const candidate of normalizedCandidates) {
       const path = monthlyRecordsPath(githubUser.login, localDateInTimezone(candidate.startedAt, candidate.timezone));
@@ -284,6 +397,7 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
     const additions = [];
     const replacements = [];
     stage = 'preparing_records';
+    profile('building_records');
     for (const candidate of normalizedCandidates) {
       const path = monthlyRecordsPath(githubUser.login, localDateInTimezone(candidate.startedAt, candidate.timezone));
       const file = files.get(path);
@@ -295,7 +409,15 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
           continue;
         }
         if (provenanceOf(target.record) === candidate.provenance) alreadyPresent += 1;
-        target.file.entries[target.index] = replacement;
+        const replacementPath = monthlyRecordsPath(githubUser.login, replacement.entryDate);
+        if (replacementPath === target.file.path) {
+          target.file.entries[target.index] = replacement;
+        } else {
+          target.file.entries.splice(target.index, 1);
+          const destination = files.get(replacementPath);
+          if (!destination) throw new Error('Generated replacement record has no monthly partition');
+          destination.entries.push(replacement);
+        }
         replacements.push({ previous: target.record, record: replacement });
         updated += 1;
         continue;
@@ -304,7 +426,7 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
       if (existingIndex !== -1) {
         alreadyPresent += 1;
         const existing = file.entries[existingIndex];
-        const taskTitle = candidate.resolvedIssue?.title ?? clockifyTaskTitle(candidate);
+        const taskTitle = candidate.resolvedIssue.title;
         const description = String(candidate.description ?? '');
         if ((taskTitle && existing.taskTitle !== taskTitle) || (description && existing.description !== description)) {
           file.entries[existingIndex] = validateEntry({
@@ -318,42 +440,74 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
         continue;
       }
       const record = completedRecord({ entry: candidate, githubUser, id: candidate.id, now });
-      additions.push({ path, record });
+      const idTarget = recordsById.get(record.id);
+      if (idTarget) {
+        const replacementPath = monthlyRecordsPath(githubUser.login, record.entryDate);
+        idTarget.file.entries.splice(idTarget.index, 1);
+        const destination = files.get(replacementPath);
+        if (!destination) throw new Error('Generated replacement record has no monthly partition');
+        destination.entries.push(record);
+        replacements.push({ previous: idTarget.record, record });
+        updated += 1;
+      } else {
+        additions.push({ path, record });
+      }
     }
 
     if (!additions.length && !updated) return { status: 'already_present', added: 0, alreadyPresent };
 
-    for (let index = 0; index < additions.length; index += 1) {
-      const record = additions[index].record;
-      if (additions.slice(0, index).some(previous => intervalsOverlap(previous.record, record))) {
-        throw overlappingIntervalsError();
-      }
-    }
+    profile('validating_output');
+    verifyNonOverlappingAdditions(additions);
 
+    const additionsById = new Map();
+    for (const addition of additions) additionsById.set(addition.record.id, addition);
+    const uniqueAdditions = [...additionsById.values()];
     const usedIds = new Set([...files.values()].flatMap(file => file.entries.map(entry => entry.id)));
-    for (const { record } of additions) {
+    for (const { record } of uniqueAdditions) {
       if (usedIds.has(record.id)) throw new Error('Duplicate imported work record ID');
       usedIds.add(record.id);
     }
-    for (const { path, record } of additions) files.get(path).entries.push(record);
+    for (const { record } of uniqueAdditions) {
+      const path = monthlyRecordsPath(githubUser.login, record.entryDate);
+      const file = files.get(path);
+      if (!file) throw new Error('Generated destination record has no monthly partition');
+      file.entries.push(record);
+    }
+    for (const file of files.values()) file.entries = collapseRecordsById(file.entries);
     for (const file of files.values()) serializeMonthlyRecords(file.entries); // validate complete output before writing
 
+    const removalRecords = collapseRecordsById(replacements.map(item => item.previous));
+    const knownIndexIds = new Set(Object.values(taskIndex.tasks).flatMap(summary => summary.recordIds));
+    const removalIds = new Set(removalRecords.map(record => record.id));
+    const indexedRecords = collapseRecordsById([...replacements.map(item => item.record), ...uniqueAdditions.map(item => item.record)])
+      .filter(record => !knownIndexIds.has(record.id) || removalIds.has(record.id));
     const nextIndex = applyTaskIndexChanges(taskIndex, {
-      remove: replacements.map(item => item.previous),
-      add: [...replacements.map(item => item.record), ...additions.map(item => item.record)],
+      remove: removalRecords,
+      add: indexedRecords,
     });
-    const changes = [...files.values()].map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
+    const changes = [...files.values()].map(file => {
+      const text = serializeMonthlyRecords(file.entries);
+      parseMonthlyRecords(text, { user: githubUser.login, path: file.path, sha: file.sha });
+      return { path: file.path, sha: file.sha, text };
+    });
     if (additions.length || replacements.length) changes.push({ path: TASK_INDEX_PATH, sha: indexFile.sha, text: serializeTaskIndex(nextIndex) });
     stage = 'writing_records';
-    await personalGithub.updateTextsAtomic(changes, `Import completed work records (${additions.length})`, {
+    profile(stage);
+    await storageGithub.updateTextsAtomic(changes, `Import completed work records (${uniqueAdditions.length})`, {
       guards: [{ path: USER_METADATA_PATH, sha: metadataFile.sha }],
     });
+    profile('records_written');
     return { status: 'imported', added: additions.length, alreadyPresent };
   } catch (error) {
     // Import failures are intentionally reduced to a stable UI reason. Keep a
     // source-data-free diagnostic for the privileged runtime console.
     console.warn('Clockify import failed', { stage, error: String(error?.message || error) });
-    return isConflict(error) ? { status: 'conflict' } : { status: 'failed', failureReason: failureReason(stage, error) };
+    profile(`failed:${stage}`);
+    const repair = error?.repair?.kind === 'monthly_partition_mismatch' ? error.repair : null;
+    const diagnostic = safeFailureDiagnostic(stage, error);
+    return isConflict(error) ? { status: 'conflict' } : {
+      status: 'failed', failureReason: failureReason(stage, error), ...(repair ? { repair } : {}), ...(diagnostic ? { diagnostic } : {}),
+    };
   }
 }
 

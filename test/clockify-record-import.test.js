@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { importClockifyCompletedRecords } from '../src/services/clockify-record-import.js';
-import { emptyTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
+import { applyTaskIndexChanges, emptyTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../src/domain/task-index.js';
 import { USER_METADATA_PATH, userBranchMetadataText, userStorageBranch } from '../src/services/user-storage-branch.js';
 import { parseMonthlyRecords, serializeMonthlyRecords } from '../src/domain/work-records.js';
 
@@ -15,11 +15,15 @@ function entry(day, suffix) {
     timezone: 'America/Los_Angeles', duration: 3600,
     projectId: 'raw-project-3', project: 'Private Project Name', task: 'Private Task Name',
     description: 'Private provider description', tags: ['private-tag'], billable: true,
+    resolvedIssue: {
+      url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13',
+      title: 'manticoresoftware/Private-Project-Name/Private-provider-description',
+    },
   };
 }
 
 class FakeGitHub {
-  constructor() { this.clients = []; this.files = new Map(); this.writes = []; this.conflict = false; }
+  constructor() { this.owner = 'manticoresoftware'; this.clients = []; this.files = new Map(); this.writes = []; this.conflict = false; }
   forBranch(name, mode) {
     this.clients.push({ name, mode });
     return {
@@ -44,18 +48,22 @@ class FakeGitHub {
 
 function prepared() {
   const github = new FakeGitHub();
+  const configuredBranchClient = github.forBranch(branch, 'custom');
+  github.getText = configuredBranchClient.getText;
+  github.updateTextsAtomic = configuredBranchClient.updateTextsAtomic;
+  github.clients = [];
   github.seed(USER_METADATA_PATH, userBranchMetadataText(githubUser));
   github.seed(TASK_INDEX_PATH, serializeTaskIndex(emptyTaskIndex(githubUser.login)));
   return github;
 }
 function factory() { return ids.shift(); }
 
-test('imports exact records to only the mapped personal branch across affected months with useful Clockify names', async () => {
+test('imports exact records into the configured Clockoli writer branch across affected months with useful Clockify names', async () => {
   const github = prepared();
   const input = [entry('2026-08-31', 'a'), entry('2026-09-01', 'b')];
   const result = await importClockifyCompletedRecords({ github, githubUser, entries: input, idFactory: factory });
   assert.deepEqual(result, { status: 'imported', added: 2, alreadyPresent: 0 });
-  assert.deepEqual(github.clients, [{ name: branch, mode: 'custom' }]);
+  assert.deepEqual(github.clients, []);
   assert.equal(github.writes.length, 1);
   const write = github.writes[0];
   assert.deepEqual(write.changes.map(change => change.path).sort(), [
@@ -67,9 +75,8 @@ test('imports exact records to only the mapped personal branch across affected m
   assert.equal(august.endedAt, input[0].endedAt);
   assert.equal(august.timezone, input[0].timezone);
   assert.equal(august.durationSeconds, input[0].duration);
-  assert.equal(august.taskUrl, 'https://app.clockify.me/reports/detailed?project=raw-project-3');
-  assert.notEqual(august.taskUrl, 'https://clockoli.invalid/imported-work');
-  assert.equal(august.taskTitle, 'Private Project Name — Private Task Name');
+  assert.equal(august.taskUrl, 'https://github.com/manticoresoftware/clockoli-issues/issues/13');
+  assert.equal(august.taskTitle, 'manticoresoftware/Private-Project-Name/Private-provider-description');
   assert.equal(august.description, 'Private provider description');
   const serialized = `${write.message}\n${write.changes.map(change => change.text).join('\n')}`;
   for (const forbidden of ['raw-entry-a', 'raw-user-77', 'private-tag']) {
@@ -77,6 +84,19 @@ test('imports exact records to only the mapped personal branch across affected m
   }
   assert.match(august.metadata.clockoli_import.provenance_sha256, /^[a-f0-9]{64}$/);
 });
+
+test('returns a safe exact repair target when an existing monthly file contains a record from another month', async () => {
+  const github = prepared();
+  const source = entry('2026-08-18', 'misplaced');
+  await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: factory });
+  const path = 'times/2026-08/ada.jsonl';
+  const record = JSON.parse(github.files.get(path).text);
+  record.activity.local_date = '2026-09-01';
+  github.seed(path, `${JSON.stringify(record)}\n`);
+  const result = await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: factory });
+  assert.deepEqual(result, { status: 'failed', failureReason: 'storage_data_unreadable', repair: { kind: 'monthly_partition_mismatch', path: 'times/2026-08/ada.jsonl', line: 1, actualMonth: '2026-09', expectedMonth: '2026-08' } });
+});
+
 
 test('same provenance already present and duplicate input perform no write', async () => {
   const github = prepared();
@@ -108,16 +128,43 @@ test('replays a shifted prior Clockify import by title, project, date, author, a
   const [replayed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
   assert.equal(replayed.startedAt, source.startedAt);
   assert.equal(replayed.endedAt, source.endedAt);
-  assert.equal(replayed.taskTitle, 'Private Project Name — Private Task Name');
-  assert.equal(replayed.taskUrl, 'https://app.clockify.me/reports/detailed?project=raw-project-3');
+  assert.equal(replayed.taskTitle, 'manticoresoftware/Private-Project-Name/Private-provider-description');
+  assert.equal(replayed.taskUrl, 'https://github.com/manticoresoftware/clockoli-issues/issues/13');
   assert.equal(replayed.durationSeconds, source.duration);
   assert.equal(replayed.actor.id, 'github:42');
   assert.match(replayed.metadata.clockoli_import.provenance_sha256, /^[a-f0-9]{64}$/);
 });
 
-test('replays a shifted generic-project import after the task is later resolved as a GitHub issue', async () => {
+test('replays a pre-resolver Clockify project identity after an entry gains a GitHub URL', async () => {
   const github = prepared();
-  const source = { ...entry('2026-08-18', 'resolved-replay'), project: 'clockoli-issues', task: '#13 Create a migration plugin for Clockify' };
+  const source = entry('2026-08-18', 'pre-resolver-replay');
+  await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' });
+  const path = 'times/2026-08/ada.jsonl';
+  const [shifted] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
+  delete shifted.metadata.clockoli_import;
+  shifted.taskUrl = 'https://app.clockify.me/reports/detailed?project=raw-project-3';
+  shifted.taskTitle = 'Private Project Name — Private Task Name';
+  shifted.startedAt = '2026-08-18T08:30:00.000Z';
+  shifted.endedAt = '2026-08-18T09:30:00.000Z';
+  shifted.updatedAt = shifted.endedAt;
+  github.seed(path, serializeMonthlyRecords([shifted]), github.files.get(path).sha);
+  github.seed(TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex(githubUser.login), { add: [shifted] })), github.files.get(TASK_INDEX_PATH).sha);
+
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), {
+    status: 'imported', added: 0, alreadyPresent: 0,
+  });
+  const [replayed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
+  assert.equal(replayed.startedAt, source.startedAt);
+  assert.equal(replayed.taskUrl, source.resolvedIssue.url);
+});
+
+test('replays a shifted generic-project import after the local classifier supplies a GitHub URL', async () => {
+  const github = prepared();
+  const source = {
+    ...entry('2026-08-18', 'resolved-replay'), project: 'clockoli-issues', task: '#13 Create a migration plugin for Clockify', resolvedIssue: {
+      url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13', title: 'Create a migration plugin for Clockify',
+    },
+  };
   await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' });
   const path = 'times/2026-08/ada.jsonl';
   const [shifted] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
@@ -126,11 +173,11 @@ test('replays a shifted generic-project import after the task is later resolved 
   shifted.endedAt = '2026-08-18T09:30:00.000Z';
   shifted.updatedAt = shifted.endedAt;
   github.seed(path, serializeMonthlyRecords([shifted]), github.files.get(path).sha);
-  github.resolveRepositoryIssue = async () => ({
+  const resolved = { ...source, resolvedIssue: {
     url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13', title: 'Create a migration plugin for Clockify',
-  });
+  } };
 
-  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), {
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [resolved], idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), {
     status: 'imported', added: 0, alreadyPresent: 0,
   });
   const [replayed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
@@ -154,19 +201,125 @@ test('imports a Clockify interval whose millisecond timestamps round to its repo
   assert.equal(record.durationSeconds, source.duration);
 });
 
-test('uses a verified same-owner GitHub issue when a Clockify project and task identify it exactly', async () => {
+test('imports a large set of non-overlapping completed records without quadratic interval rescans', { timeout: 5_000 }, async () => {
   const github = prepared();
-  github.resolveRepositoryIssue = async request => {
-    assert.deepEqual(request, { repository: 'clockoli-issues', number: 13, title: 'Create a migration plugin for Clockify' });
-    return { url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13', title: 'Create a migration plugin for Clockify' };
+  const source = Array.from({ length: 5_000 }, (_, index) => {
+    const startedAt = new Date(Date.UTC(2020, 0, 1, 0, index * 2)).toISOString();
+    const endedAt = new Date(Date.UTC(2020, 0, 1, 0, index * 2 + 1)).toISOString();
+    return {
+      ...entry('2020-01-01', `scale-${index}`),
+      startedAt,
+      endedAt,
+      timezone: 'UTC',
+      duration: 60,
+      resolvedIssue: {
+        url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13',
+        title: 'Scale test',
+      },
+    };
+  });
+
+  const result = await importClockifyCompletedRecords({ github, githubUser, entries: source });
+
+  assert.deepEqual(result, { status: 'imported', added: 5_000, alreadyPresent: 0 });
+  assert.equal(github.writes.length, 1);
+});
+
+test('profiles replay matching separately from interval normalization', async () => {
+  const github = prepared();
+  const profiles = [];
+  await importClockifyCompletedRecords({
+    github, githubUser, entries: [entry('2026-08-18', 'profile')],
+    idFactory: () => '01K2ABCDEF0123456789ABCDEF', onProfile: profile => profiles.push(profile.stage),
+  });
+
+  const replayMatching = profiles.indexOf('matching_replay_targets');
+  const intervalNormalization = profiles.indexOf('normalizing_intervals');
+  const buildingRecords = profiles.indexOf('building_records');
+  assert.notEqual(replayMatching, -1);
+  assert.notEqual(intervalNormalization, -1);
+  assert.notEqual(buildingRecords, -1);
+  assert.ok(replayMatching < intervalNormalization);
+  assert.ok(intervalNormalization < buildingRecords);
+});
+
+test('replays a large imported set through indexed provenance lookups', { timeout: 5_000 }, async () => {
+  const github = prepared();
+  const source = Array.from({ length: 4_000 }, (_, index) => {
+    const startedAt = new Date(Date.UTC(2020, 0, 1, 0, index * 2)).toISOString();
+    const endedAt = new Date(Date.UTC(2020, 0, 1, 0, index * 2 + 1)).toISOString();
+    return {
+      ...entry('2020-01-01', `replay-scale-${index}`),
+      startedAt,
+      endedAt,
+      timezone: 'UTC',
+      duration: 60,
+      resolvedIssue: {
+        url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13',
+        title: `Replay scale ${index}`,
+      },
+    };
+  });
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: source }), {
+    status: 'imported', added: 4_000, alreadyPresent: 0,
+  });
+
+  const startedAt = performance.now();
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: source }), {
+    status: 'already_present', added: 0, alreadyPresent: 4_000,
+  });
+  assert.ok(performance.now() - startedAt < 3_000, 'replay matching must not rescan every record for every source entry');
+});
+
+test('reads affected monthly destination files with bounded concurrency', async () => {
+  const github = prepared();
+  const originalGetText = github.getText.bind(github);
+  let inFlight = 0;
+  let maximumInFlight = 0;
+  github.getText = async path => {
+    if (path.startsWith('times/')) {
+      inFlight += 1;
+      maximumInFlight = Math.max(maximumInFlight, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlight -= 1;
+    }
+    return originalGetText(path);
   };
-  const source = { ...entry('2026-08-18', 'issue'), project: 'clockoli-issues', task: '#13 Create a migration plugin for Clockify' };
+  const entries = Array.from({ length: 12 }, (_, month) => entry(`2025-${String(month + 1).padStart(2, '0')}-01`, `month-${month}`));
+
+  const result = await importClockifyCompletedRecords({ github, githubUser, entries });
+
+  assert.deepEqual(result, { status: 'imported', added: 12, alreadyPresent: 0 });
+  assert.ok(maximumInFlight > 1, 'affected monthly files should not be read serially');
+  assert.ok(maximumInFlight <= 6, 'destination reads must remain bounded to avoid GitHub throttling');
+});
+
+test('uses a local classifier suggestion without querying the GitHub task entity', async () => {
+  const github = prepared();
+  const source = { ...entry('2026-08-18', 'issue'), project: 'clockoli-issues', task: '#13 Create a migration plugin for Clockify', resolvedIssue: {
+    url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13', title: 'Create a migration plugin for Clockify',
+  } };
   assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), {
     status: 'imported', added: 1, alreadyPresent: 0,
   });
   const record = parseMonthlyRecords(github.files.get('times/2026-08/ada.jsonl').text, { user: 'ada', path: 'times/2026-08/ada.jsonl' })[0];
   assert.equal(record.taskUrl, 'https://github.com/manticoresoftware/clockoli-issues/issues/13');
   assert.equal(record.taskTitle, 'Create a migration plugin for Clockify');
+});
+
+test('rejects an unresolved Clockify entry instead of inventing a task URL', async () => {
+  const github = prepared();
+  github.owner = 'manticoresoftware';
+  const source = {
+    ...entry('2026-08-18', 'unresolved'),
+    project: 'NexusRepo', task: '', description: 'https://app.clockify.me/reports/detailed?project=123 Fixed last block encoding',
+  };
+  delete source.resolvedIssue;
+
+  assert.deepEqual(await importClockifyCompletedRecords({
+    github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF',
+  }), { status: 'failed', failureReason: 'invalid_imported_task' });
+  assert.equal(github.writes.length, 0);
 });
 
 test('refreshes blank legacy imported labels from the same Clockify provenance without changing time', async () => {
@@ -186,7 +339,7 @@ test('refreshes blank legacy imported labels from the same Clockify provenance w
   const [refreshed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
   assert.equal(refreshed.startedAt, source.startedAt);
   assert.equal(refreshed.endedAt, source.endedAt);
-  assert.equal(refreshed.taskTitle, 'Private Project Name — Private Task Name');
+  assert.equal(refreshed.taskTitle, 'manticoresoftware/Private-Project-Name/Private-provider-description');
   assert.equal(refreshed.description, 'Private provider description');
 });
 
@@ -198,7 +351,11 @@ test('moves an imported interval after existing completed Clockoli time without 
     entries: [{ ...entry('2026-08-18', 'existing'), task: 'Different task' }],
     idFactory: () => '01K2ABCDEF0123456789ABCDEF',
   });
-  const overlapping = { ...entry('2026-08-18', 'overlap'), startedAt: '2026-08-18T08:30:00.000Z', endedAt: '2026-08-18T09:30:00.000Z' };
+  const overlapping = {
+    ...entry('2026-08-18', 'overlap'), startedAt: '2026-08-18T08:30:00.000Z', endedAt: '2026-08-18T09:30:00.000Z', resolvedIssue: {
+      url: 'https://github.com/manticoresoftware/clockoli-issues/issues/14', title: 'Different imported task',
+    },
+  };
   assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [overlapping], idFactory: () => '01K2ABCDEF0123456789ABCDEG' }), {
     status: 'imported', added: 1, alreadyPresent: 0,
   });

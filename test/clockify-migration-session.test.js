@@ -49,9 +49,9 @@ test('creates a bounded credential-free session snapshot and consumes it exactly
   data.users[0].displayName = 'Changed after handoff';
   data.entries[0].tags.push('changed');
 
-  assert.deepEqual(created, { id: firstId, expiresAt: 601_000 });
+  assert.deepEqual(created, { id: firstId, expiresAt: 3_601_000 });
   assert.deepEqual(storage.values.get(SESSION_KEY), {
-    version: 1, id: firstId, expiresAt: 601_000, data: normalized(),
+    version: 1, id: firstId, expiresAt: 3_601_000, data: normalized(),
   });
   assert.doesNotMatch(JSON.stringify(storage.values.get(SESSION_KEY)), /reportText|authorization|cookie|token|email/i);
 
@@ -64,13 +64,13 @@ test('creates a bounded credential-free session snapshot and consumes it exactly
   assert.deepEqual(await handoff.consume(firstId), null);
 });
 
-test('replaces the sole active session and never permits a TTL longer than thirty minutes', async () => {
+test('replaces the sole active session and never permits a TTL longer than two hours', async () => {
   const storage = sessionStorage();
   const handoff = service(storage, { ids: [firstId, secondId] });
   await handoff.create(normalized());
   const created = await handoff.create(normalized(), { ttlMs: MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS });
 
-  assert.deepEqual(created, { id: secondId, expiresAt: 1_801_000 });
+  assert.deepEqual(created, { id: secondId, expiresAt: 7_201_000 });
   assert.equal(await handoff.consume(firstId), null);
   assert.deepEqual(await handoff.consume(secondId), normalized());
   await assert.rejects(() => handoff.create(normalized(), { ttlMs: MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS + 1 }), /TTL/i);

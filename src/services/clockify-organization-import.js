@@ -1,16 +1,9 @@
 import { resolveClockifyUserMappings } from './clockify-identity-mapping.js';
-import { provisionClockifyUserBranches } from './clockify-user-branch-provisioning.js';
 import { importClockifyCompletedRecords } from './clockify-record-import.js';
 import { validateClockifyUserMapping } from '../addons/clockify/user-mapping.js';
-import { userStorageBranch } from './user-storage-branch.js';
 
 const RESOLUTION_FAILURE_MESSAGE = 'Could not resolve all mapped GitHub users.';
-const PROVISION_FAILURE_MESSAGE = "Could not prepare this user's Clockoli storage branch.";
 const IMPORT_STATUSES = new Set(['imported', 'already_present', 'conflict', 'failed']);
-const PROVISION_FAILURE_REASONS = new Set([
-  'github_rate_limited', 'github_authentication', 'github_permission', 'repository_or_branch_not_found',
-  'github_conflict', 'github_validation', 'storage_branch_unavailable',
-]);
 const IMPORT_FAILURE_REASONS = new Set([
   'storage_branch_incomplete', 'storage_data_unreadable',
   'invalid_imported_interval', 'invalid_imported_task', 'invalid_imported_description',
@@ -110,6 +103,21 @@ function validateEntryAssociation(sourceUsers, entries) {
   return normalizedEntries;
 }
 
+function safeRepair(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { kind, path, line, actualMonth, expectedMonth } = value;
+  if (kind !== 'monthly_partition_mismatch' || !/^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.jsonl$/.test(path)
+    || !Number.isSafeInteger(line) || line < 1 || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(actualMonth) || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(expectedMonth)) return null;
+  return { kind, path, line, actualMonth, expectedMonth };
+}
+
+function safeDiagnostic(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowed = new Set(['destination_record_schema', 'destination_active_timer_schema', 'destination_duplicate_record_id', 'destination_source_identity', 'destination_record_identity', 'destination_time_context', 'destination_producer', 'destination_actor', 'destination_metadata', 'destination_description', 'destination_task', 'destination_record_validation']);
+  const detail = typeof value.detail === 'string' && /^[A-Za-z][A-Za-z0-9 _:-]{0,120}$/.test(value.detail) ? value.detail : null;
+  return value.stage === 'preparing_destination_record' && allowed.has(value.code) ? { stage: value.stage, code: value.code, ...(detail ? { detail } : {}) } : null;
+}
+
 function safeOutcome(mapping, outcome) {
   const base = { sourceUserId: mapping.sourceUserId, githubUser: { ...mapping.githubUser } };
   const status = outcome?.status;
@@ -122,136 +130,83 @@ function safeOutcome(mapping, outcome) {
   }
   if (status === 'failed') {
     const reason = outcome.failureReason;
-    return { ...base, status, failureReason: IMPORT_FAILURE_REASONS.has(reason) ? reason : 'record_write_failed' };
+    const repair = safeRepair(outcome.repair);
+    const diagnostic = safeDiagnostic(outcome.diagnostic);
+    return { ...base, status, failureReason: IMPORT_FAILURE_REASONS.has(reason) ? reason : 'record_write_failed', ...(repair ? { repair } : {}), ...(diagnostic ? { diagnostic } : {}) };
   }
   return { ...base, status };
 }
 
-function emitProgress(onProgress, stage, completed, total) {
+function emitProgress(onProgress, stage, completed, total, elapsedMs = null) {
   if (typeof onProgress !== 'function') return;
-  try { onProgress({ stage, completed, total }); } catch { /* progress observers cannot interrupt writes */ }
+  try { onProgress({ stage, completed, total, ...(Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}) }); } catch { /* progress observers cannot interrupt writes */ }
 }
 
-function canonicalProvisionOutcome(outcome) {
-  if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome) || Object.getPrototypeOf(outcome) !== Object.prototype) return false;
-  for (const key of ['sourceUserId', 'githubUser', 'status']) {
-    const descriptor = Object.getOwnPropertyDescriptor(outcome, key);
-    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return false;
-  }
-  const sourceUserId = Object.getOwnPropertyDescriptor(outcome, 'sourceUserId').value;
-  const status = Object.getOwnPropertyDescriptor(outcome, 'status').value;
-  if (typeof sourceUserId !== 'string' || !sourceUserId || (status !== 'provisioned' && status !== 'failed')) return false;
-  const githubUser = Object.getOwnPropertyDescriptor(outcome, 'githubUser').value;
-  if (!githubUser || typeof githubUser !== 'object' || Array.isArray(githubUser) || Object.getPrototypeOf(githubUser) !== Object.prototype) return false;
-  const id = Object.getOwnPropertyDescriptor(githubUser, 'id');
-  const login = Object.getOwnPropertyDescriptor(githubUser, 'login');
-  if (!id || !Object.hasOwn(id, 'value') || !login || !Object.hasOwn(login, 'value')) return false;
-  if (status === 'provisioned') {
-    const branch = Object.getOwnPropertyDescriptor(outcome, 'branch');
-    if (!branch || !Object.hasOwn(branch, 'value')) return false;
-    return { sourceUserId, githubUser: { id: id.value, login: login.value }, status, branch: branch.value };
-  }
-  const error = Object.getOwnPropertyDescriptor(outcome, 'error')?.value;
-  const reason = error && typeof error === 'object' && !Array.isArray(error)
-    ? Object.getOwnPropertyDescriptor(error, 'reason')?.value : null;
-  return {
-    sourceUserId, githubUser: { id: id.value, login: login.value }, status,
-    failureReason: PROVISION_FAILURE_REASONS.has(reason) ? reason : 'storage_branch_unavailable',
-  };
+function configuredGithubUser(value) {
+  return Number.isSafeInteger(value?.id) && value.id > 0
+    && typeof value.login === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(value.login);
 }
 
-function canonicalProvisionOutcomes(provisioned) {
-  if (!Array.isArray(provisioned) || Object.getPrototypeOf(provisioned) !== Array.prototype) return [];
-  const length = Object.getOwnPropertyDescriptor(provisioned, 'length')?.value;
-  const keys = Reflect.ownKeys(provisioned);
-  if (!Number.isSafeInteger(length) || keys.length !== length + 1 || !keys.includes('length')) return [];
-  const outcomes = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(provisioned, String(index));
-    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return [];
-    const outcome = canonicalProvisionOutcome(descriptor.value);
-    if (outcome) outcomes.push(outcome);
-  }
-  return outcomes;
+function sameGithubUser(left, right) {
+  return left.id === right.id && left.login.toLowerCase() === right.login.toLowerCase();
 }
 
-function isVerifiedProvision(outcome, mapping) {
-  return outcome.sourceUserId === mapping.sourceUserId
-    && outcome.status === 'provisioned'
-    && outcome.branch === userStorageBranch(mapping.githubUser.id)
-    && outcome.githubUser.id === mapping.githubUser.id && outcome.githubUser.login === mapping.githubUser.login;
-}
-
-/** Resolve mappings, prepare isolated branches, and import exact private subsets. */
-export async function importClockifyOrganization({ sourceUsers, entries, mappings, github, sourceBranch,
-  resolveMappings = resolveClockifyUserMappings, provisionBranches = provisionClockifyUserBranches,
-  importRecords = importClockifyCompletedRecords, onProgress } = {}) {
-  // This happens before the first await or remote collaborator invocation.
+/**
+ * Import Clockify records only into the branch currently configured for the
+ * signed-in Clockoli user. Clockify has no Git branch model; migration must
+ * never create a second storage branch or write another user into this branch.
+ */
+export async function importClockifyOrganization({ sourceUsers, entries, mappings, github, destinationUser,
+  resolveMappings = resolveClockifyUserMappings, importRecords = importClockifyCompletedRecords, onProgress,
+  now = () => performance.now() } = {}) {
+  const startedAt = now();
+  const elapsed = () => Math.max(0, Math.round(now() - startedAt));
   const snapshot = { sourceUsers: snapshotData(sourceUsers, 'source users'), entries: snapshotData(entries, 'entries') };
   const normalizedEntries = validateEntryAssociation(snapshot.sourceUsers, snapshot.entries);
   const sourceUserTotal = snapshot.sourceUsers.length;
+  if (!configuredGithubUser(destinationUser)) throw new Error('The configured Clockoli user is unavailable. Reconnect GitHub and try again.');
 
   let verifiedMappings;
-  emitProgress(onProgress, 'resolving_identities', 0, sourceUserTotal);
+  emitProgress(onProgress, 'resolving_identities', 0, sourceUserTotal, elapsed());
   try {
     const resolved = await resolveMappings({ sourceUsers: snapshot.sourceUsers, mappings, github });
     verifiedMappings = validateClockifyUserMapping(snapshot.sourceUsers, resolved);
   } catch {
     throw new Error(RESOLUTION_FAILURE_MESSAGE);
   }
-  emitProgress(onProgress, 'resolving_identities', sourceUserTotal, sourceUserTotal);
+  emitProgress(onProgress, 'resolving_identities', sourceUserTotal, sourceUserTotal, elapsed());
 
-  const importedMappings = verifiedMappings.filter(mapping => !mapping.skipped);
-  const importedTotal = importedMappings.length;
-  const importedSourceIds = new Set(importedMappings.map(mapping => mapping.sourceUserId));
-  const importedSourceUsers = snapshot.sourceUsers.filter(user => importedSourceIds.has(user.userId));
-  let provisioned;
-  let provisionOutcomes;
-  let provisionCompleted = 0;
-  emitProgress(onProgress, 'preparing_storage', 0, importedTotal);
-  try {
-    provisioned = await provisionBranches({
-      sourceUsers: importedSourceUsers, mappings: importedMappings, github, sourceBranch,
-      onProgress: event => {
-        const completed = event?.completed;
-        if (Number.isSafeInteger(completed) && completed >= provisionCompleted && completed <= importedTotal) {
-          provisionCompleted = completed;
-          emitProgress(onProgress, 'preparing_storage', completed, importedTotal);
-        }
-      },
-    });
-  } catch { provisioned = []; }
-  if (provisionCompleted < importedTotal) emitProgress(onProgress, 'preparing_storage', importedTotal, importedTotal);
-  try { provisionOutcomes = canonicalProvisionOutcomes(provisioned); }
-  catch { provisionOutcomes = []; }
-  const entriesBySourceId = new Map(importedMappings.map(mapping => [mapping.sourceUserId, []]));
-  for (const entry of normalizedEntries) if (entriesBySourceId.has(entry.userId)) entriesBySourceId.get(entry.userId).push(entry);
-
-  const outcomes = [];
-  let recordsCompleted = 0;
-  emitProgress(onProgress, 'writing_records', recordsCompleted, importedTotal);
-  for (const mapping of importedMappings) {
-    const provision = provisionOutcomes.find(outcome => isVerifiedProvision(outcome, mapping));
-    if (!provision) {
-      const provisionOutcome = provisionOutcomes.find(outcome => outcome.sourceUserId === mapping.sourceUserId);
-      outcomes.push({
-        sourceUserId: mapping.sourceUserId,
-        githubUser: { ...mapping.githubUser },
-        status: 'failed',
-        failureReason: provisionOutcome?.failureReason || 'storage_branch_unavailable',
-        error: { message: PROVISION_FAILURE_MESSAGE, reason: provisionOutcome?.failureReason || 'storage_branch_unavailable' },
-      });
-      recordsCompleted += 1;
-      emitProgress(onProgress, 'writing_records', recordsCompleted, importedTotal);
-      continue;
-    }
-    let imported;
-    try { imported = await importRecords({ github, githubUser: { ...mapping.githubUser }, entries: entriesBySourceId.get(mapping.sourceUserId) }); }
-    catch { imported = { status: 'failed' }; }
-    outcomes.push(safeOutcome(mapping, imported));
-    recordsCompleted += 1;
-    emitProgress(onProgress, 'writing_records', recordsCompleted, importedTotal);
+  const selectedMappings = verifiedMappings.filter(mapping => !mapping.skipped);
+  if (selectedMappings.some(mapping => !sameGithubUser(mapping.githubUser, destinationUser))) {
+    throw new Error('Clockify migration can import only entries mapped to the configured Clockoli user.');
   }
-  emitProgress(onProgress, 'completed', importedTotal, importedTotal);
+  if (selectedMappings.length > 1) {
+    throw new Error('Clockify migration requires at most one source user for the configured Clockoli user.');
+  }
+  const mapping = selectedMappings[0];
+  emitProgress(onProgress, 'preparing_storage', mapping ? 0 : 1, 1, elapsed());
+  emitProgress(onProgress, 'preparing_storage', 1, 1, elapsed());
+  if (!mapping) {
+    emitProgress(onProgress, 'writing_records', 0, 0, elapsed());
+    emitProgress(onProgress, 'completed', 0, 0, elapsed());
+    return [];
+  }
+
+  const selectedEntries = normalizedEntries.filter(entry => entry.userId === mapping.sourceUserId);
+  emitProgress(onProgress, 'writing_records', 0, 1, elapsed());
+  let imported;
+  try {
+    const request = { github, githubUser: { ...destinationUser }, entries: selectedEntries };
+    if (importRecords === importClockifyCompletedRecords) {
+      request.onProfile = profile => emitProgress(onProgress,
+        profile.stage === 'records_written' ? 'writing_records' : profile.stage,
+        0, 1, profile.elapsedMs);
+    }
+    imported = await importRecords(request);
+  }
+  catch { imported = { status: 'failed' }; }
+  const outcomes = [safeOutcome(mapping, imported)];
+  emitProgress(onProgress, 'writing_records', 1, 1, elapsed());
+  emitProgress(onProgress, 'completed', 1, 1, elapsed());
   return outcomes;
 }

@@ -8,6 +8,19 @@ export const DEFAULT_PRODUCER = Object.freeze({
   kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.30',
 });
 
+const TIMEZONE_FORMATTER_CACHE_LIMIT = 64;
+const timezoneValidationFormatters = new Map();
+const localDateFormatters = new Map();
+
+function cachedTimezoneFormatter(cache, timezone, create) {
+  const existing = cache.get(timezone);
+  if (existing) return existing;
+  if (cache.size >= TIMEZONE_FORMATTER_CACHE_LIMIT) cache.clear();
+  const formatter = create();
+  cache.set(timezone, formatter);
+  return formatter;
+}
+
 export function normalizeTaskTitle(value) {
   return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 300);
 }
@@ -33,7 +46,10 @@ export function toIso(value) {
 export function normalizeTimezone(value) {
   const timezone = value === undefined ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : value;
   if (typeof timezone !== 'string' || !timezone || timezone !== timezone.trim()) throw new Error('Invalid IANA timezone');
-  try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0)); }
+  try {
+    cachedTimezoneFormatter(timezoneValidationFormatters, timezone,
+      () => new Intl.DateTimeFormat('en-US', { timeZone: timezone })).format(new Date(0));
+  }
   catch { throw new Error('Invalid IANA timezone'); }
   return timezone;
 }
@@ -41,9 +57,10 @@ export function normalizeTimezone(value) {
 export function localDateInTimezone(value, timezone) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error('Invalid timestamp');
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: normalizeTimezone(timezone), year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  const normalizedTimezone = normalizeTimezone(timezone);
+  const parts = Object.fromEntries(cachedTimezoneFormatter(localDateFormatters, normalizedTimezone, () => new Intl.DateTimeFormat('en-CA', {
+    timeZone: normalizedTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  })).formatToParts(date).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
   return entryDateValue({ year: parts.year, month: parts.month, day: parts.day });
 }
 

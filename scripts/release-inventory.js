@@ -19,16 +19,21 @@ function normalizeRelative(value) {
 
 function localReferences(file, text) {
   const references = [];
+  const runtimeReferences = [];
   const extension = path.extname(file);
   if (extension === '.js') {
     for (const match of text.matchAll(/^\s*import\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gm)) references.push(match[1]);
+    for (const match of text.matchAll(/chrome\.runtime\.getURL\(["']([^"']+)["']\)/g)) runtimeReferences.push(match[1]);
   } else if (extension === '.html') {
     for (const match of text.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.css') {
     for (const match of text.matchAll(/url\(\s*["']?([^"')\s]+)["']?\s*\)/g)) references.push(match[1]);
     for (const match of text.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)["']?\s*\)?/g)) references.push(match[1]);
   }
-  return references.map(normalizeRelative).filter(Boolean).map(reference => path.posix.normalize(path.posix.join(path.posix.dirname(file), reference)));
+  return [
+    ...references.map(normalizeRelative).filter(Boolean).map(reference => path.posix.normalize(path.posix.join(path.posix.dirname(file), reference))),
+    ...runtimeReferences.map(normalizeRelative).filter(Boolean),
+  ];
 }
 
 function manifestEntries(manifest) {

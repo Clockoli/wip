@@ -83,7 +83,11 @@ test('v1 parser rejects old text blocks, malformed JSONL, duplicates, and wrong 
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify(completed)}\n\n`, context()), /blank/i);
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify(completed)}\n${JSON.stringify(completed)}\n`, context()), /duplicate/i);
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...completed, activity: { ...completed.activity, state: 'running', ended_at: null } })}\n`, context()), /completed/i);
-  assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...completed, activity: { ...completed.activity, local_date: '2026-09-01' } })}\n`, context()), /month|partition/i);
+  const misplaced = { ...completed, activity: { ...completed.activity, local_date: '2026-09-01' } };
+  let partitionError;
+  try { parseMonthlyRecords(`${JSON.stringify(misplaced)}\n`, context()); } catch (error) { partitionError = error; }
+  assert.match(partitionError.message, /month|partition/i);
+  assert.deepEqual(partitionError.repair, { kind: 'monthly_partition_mismatch', line: 1, actualMonth: '2026-09', expectedMonth: '2026-08' });
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...completed, schema_version: 2 })}\n`, context()), /schema/i);
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...completed, id: `8${completed.id.slice(1)}` })}\n`, context()), /entry ID/i);
   assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...completed, activity: { ...completed.activity, timezone: '' } })}\n`, context()), /timezone/i);

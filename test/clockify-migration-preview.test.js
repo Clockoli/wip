@@ -22,6 +22,10 @@ test('Clockify migration preview is an extension page with Clockoli navigation a
   assert.match(html, /id="confirmation" type="checkbox" required/);
   assert.match(html, /id="import"[^>]*disabled/);
   assert.match(html, /id="outcomes"[^>]*hidden/);
+  assert.match(html, /id="import-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="progress-current-step"/);
+  assert.match(html, /id="import-progress"[^>]*max="11"/);
+  assert.doesNotMatch(html, /class="migration-stages"/);
   assert.match(html, /id="message"[^>]*role="alert"[^>]*aria-live="assertive"/);
   assert.match(html, /<script type="module" src="preview\.js"><\/script>/);
   const previewCard = html.slice(html.indexOf('<main>'), html.indexOf('</main>'));
@@ -33,7 +37,12 @@ test('preview uses only the narrow callback message contract and neither storage
   assert.match(source, /chrome\.runtime\.sendMessage\(request, response =>/);
   assert.match(source, /CLOCKIFY_MIGRATION_PROGRESS/);
   assert.match(source, /Preparing Clockoli storage/);
+  assert.match(source, /Reading destination records/);
   assert.match(source, /Writing completed records/);
+  assert.match(source, /Step \$\{activeIndex \+ 1\} of \$\{phases.length\}/);
+  assert.doesNotMatch(source, /toFixed\(1\).*s/);
+  assert.doesNotMatch(source, /migration-stages/);
+  assert.doesNotMatch(source, /Migrate click to mapping window ready/);
   assert.match(source, /chrome\.runtime\.lastError/);
   assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|localStorage|sessionStorage|chrome\.storage|github\.com|clockify\.me)\b/i);
 });
@@ -61,13 +70,31 @@ test('mapping state requires every manual GitHub login, makes target logins one-
       { sourceUserId: 'clockify-2', githubLogin: 'BLAIR' },
     ],
   });
+  assert.deepEqual(mappingState(users, ['octocat', ''], [false, true], true), {
+    valid: true,
+    mappings: [
+      { sourceUserId: 'clockify-1', githubLogin: 'octocat' },
+      { sourceUserId: 'clockify-2', skipped: true },
+    ],
+  });
+  assert.deepEqual(mappingState(users, ['octocat'], [false], true), { valid: false, mappings: [] });
+  assert.deepEqual(mappingState([], [], [], true), { valid: false, mappings: [] });
 });
 
-test('preview styling keeps errors inline in the card header and supports manual mapping rows', () => {
+test('preview styling keeps errors inline, shows current import progress, and supports manual mapping rows', () => {
   assert.match(css, /\.card-header-message\.error/);
   assert.match(css, /\.mapping-row/);
+  assert.doesNotMatch(css, /\.migration-stages/);
+  assert.match(css, /\.migration-progress progress/);
+  assert.doesNotMatch(css, /data-elapsed/);
   assert.match(css, /@media\(max-width:700px\)/);
   assert.doesNotMatch(css, /position\s*:\s*(?:fixed|absolute)/i);
+});
+
+test('completed migration state is presented as a finished success, not an active step', () => {
+  assert.match(source, /isCompleted \? 'Migration complete' : 'Saving migration'/);
+  assert.match(source, /isCompleted \? `Imported \$\{completed\} of \$\{total\} people`/);
+
 });
 
 test('preview does not tell users to manually resolve an automatic import overlap', () => {

@@ -168,6 +168,23 @@ export class ReportService {
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }
 
+  async loadRepositoryUserRange(range, { defaultBranch = null, githubUserId = null, user, signal, includeStorageMetadata = false, budgets = {} } = {}) {
+    const validatedUser = validatePathSegment(user, 'user');
+    if (!defaultBranch || !Number.isSafeInteger(githubUserId) || githubUserId <= 0
+        || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+      return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    }
+    const defaultGithub = this.github.forBranch(defaultBranch, 'default');
+    const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
+    const mappedUser = users.find(candidate => candidate.id === githubUserId
+      && candidate.login.toLowerCase() === validatedUser.toLowerCase());
+    if (!mappedUser) return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    return new ReportService({
+      github: mappedUser.github, cache: this.cache, concurrency: this.concurrency,
+      onProgress: this.onProgress, requestLimiter: this.requestLimiter,
+    }).loadUserRange(range, mappedUser.login, { signal, includeStorageMetadata }, budgets);
+  }
+
   async loadRepositoryTask(taskUrl, { defaultBranch = null, signal, budgets = {} } = {}) {
     const canonicalTaskUrl = normalizeTaskUrl(taskUrl);
     const maxUsers = budgetValue(budgets.maxUsers, DEFAULT_TASK_USER_BUDGET, 'user');

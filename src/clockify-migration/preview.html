@@ -47,7 +47,12 @@
           <a href="../options/options.html">Back to Settings</a>
         </div>
       </form>
-      <p id="progress" class="migration-progress" role="status" aria-live="polite" hidden></p>
+      <section id="import-status" class="migration-progress" aria-labelledby="import-status-title" role="status" aria-live="polite" hidden>
+        <h2 id="import-status-title">Saving migration</h2>
+        <p id="progress-current-step"></p>
+        <progress id="import-progress" max="11" value="0">0%</progress>
+        <p id="progress-summary"></p>
+      </section>
       <ul id="outcomes" class="outcomes" aria-live="polite" hidden></ul>
     </div>
   </section>
