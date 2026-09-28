@@ -175,6 +175,8 @@ function initialize() {
   const form = $('mapping-form');
   const confirmation = $('confirmation');
   const importButton = $('import');
+  const mappingView = $('mapping-view');
+  const migrationView = $('migration-view');
 
   const updateValidity = () => {
     const inputs = [...document.querySelectorAll('.mapping-login input')];
@@ -208,8 +210,9 @@ function initialize() {
     const state = updateValidity();
     if (!state.valid || submitting || finished) return;
     submitting = true; importButton.disabled = true; importButton.textContent = 'Saving migration…'; showMessage('Importing completed time…', '');
+    mappingView.hidden = true; migrationView.hidden = false;
+    migrationView.scrollIntoView({ block: 'start' });
     renderProgress({ phase: 'resolving_identities', completedUsers: 0, totalUsers: preview.users.length });
-    $('import-status').scrollIntoView({ block: 'nearest' });
     let progress;
     try {
       progress = await openProgressPort();

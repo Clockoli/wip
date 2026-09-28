@@ -9,6 +9,8 @@ const descriptor = await readFile(new URL('../src/addons/clockify/descriptor.js'
 test('Settings renders descriptor-driven Clockify migration enablement controls and explicit messages', () => {
   assert.match(source, /id="addons-settings"/);
   assert.match(source, /id="clockify-addon-enabled"/);
+  assert.equal((source.match(/id="addons-settings"/g) || []).length, 1);
+  assert.equal((source.match(/id="clockify-addon-enabled"/g) || []).length, 1);
 
   assert.match(descriptor, /https:\/\/app\.clockify\.me\/\*/);
   assert.match(descriptor, /import_completed_records/);

@@ -100,24 +100,27 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /type: 'CLOCKIFY_CAPTURED_CSV'/);
 });
 
-test('Migrate is a high-contrast primary action within the green banner', () => {
+test('CSV migration is a high-contrast primary action within the green banner', () => {
   assert.match(source, /background: '#fff'/);
   assert.match(source, /border: '1px solid rgba\(255, 255, 255, 0\.82\)'/);
   assert.match(source, /color: '#0f6b3a'/);
   assert.match(source, /boxShadow: '0 8px 18px rgba\(4, 46, 25, 0\.28\)'/);
+  assert.match(source, /actionLabel\.textContent = 'CSV migration'/);
+  assert.match(source, /button\.style\.color = '#fff';/);
 });
 
-test('the right-side Clockoli action is a labelled Migrate button and preserves an explicit cancel state', () => {
+test('the CSV action has a descriptive label and preserves an explicit cancel state', () => {
   assert.match(source, /button\.setAttribute\('aria-label', 'Migrate Clockify history into Clockoli'\)/);
-  assert.match(source, /actionLabel\.textContent = 'Migrate'/);
+  assert.match(source, /actionLabel\.textContent = 'CSV migration'/);
   assert.match(source, /function setCaptureButtonLabel\(button, label\)/);
-  assert.match(source, /setCaptureButtonLabel\(button, 'Cancel capture'\)/);
-  assert.match(source, /setCaptureButtonLabel\(button, 'Migrate'\)/);
+  assert.match(source, /setCaptureButtonLabel\(button, 'Cancel CSV migration'\)/);
+  assert.match(source, /setCaptureButtonLabel\(button, 'CSV migration'\)/);
 });
 
-test('Clockify offers a secondary page-by-page migration action that arms the report capture transport', () => {
+test('Clockify offers a secondary Page to page migration action that arms the report capture transport', () => {
   assert.match(source, /PAGE_BUTTON_ID = 'clockoli-clockify-detailed-page-migration'/);
-  assert.match(source, /Migrate page by page/);
+  assert.match(source, /Page to page migration/);
+  assert.match(source, /Cancel page to page migration/);
   assert.match(source, /startCapture\(button, 'report'\)/);
   assert.match(source, /transport === 'report' \? 'CLOCKIFY_ARM_CAPTURE' : 'CLOCKIFY_ARM_CSV_CAPTURE'/);
   assert.match(source, /function requestYearPages\(button, year\) \{[\s\S]*requestReportYear\(year, 'report'\);/);
@@ -195,6 +198,7 @@ test('Clockify discovery retries a transient native report failure within its ex
   assert.match(source, /\['report_response_not_success', 'report_request_failed'\]\.includes\(code\) && Number\.isInteger\(discoveryYear\)/);
   assert.match(source, /clearTimeout\(discoveryRetryTimer\);/);
 });
+
 
 test('Clockify adapter reloads a one-page report after the explicit capture gesture', () => {
   assert.match(source, /one_page_report_reload/);

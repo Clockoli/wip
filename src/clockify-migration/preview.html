@@ -12,11 +12,13 @@
 <div class="page-tabs-shell">
   <nav class="page-tabs" aria-label="Clockoli pages">
     <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli-with-text.svg" alt=""></a>
-    <a class="page-tab" href="../times/times.html">Activity</a>
-    <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
-    <a class="page-tab" href="../reports/reports.html">Reports</a>
-    <a class="page-tab" href="../options/options.html">Settings</a>
-    <a class="page-tab" href="preview.html" aria-current="page">Migration</a>
+    <div class="page-tab-list">
+      <a class="page-tab" href="../times/times.html">Activity</a>
+      <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
+      <a class="page-tab" href="../reports/reports.html">Reports</a>
+      <a class="page-tab" href="../options/options.html">Settings</a>
+      <a class="page-tab" href="preview.html" aria-current="page">Migration</a>
+    </div>
   </nav>
 </div>
 <main>
@@ -31,29 +33,37 @@
 
     <div id="loading" class="loading" aria-live="polite">Loading migration preview…</div>
     <div id="preview" hidden>
-      <p class="summary"><strong id="entry-count">0</strong> completed time entries are ready to review.</p>
-      <p class="privacy-note">This preview comes from the open Clockify tab. Clockoli does not store Clockify credentials.</p>
+      <section id="mapping-view" aria-labelledby="mapping-title">
+        <h2 id="mapping-title">Map Clockify people</h2>
+        <p class="summary"><strong id="entry-count">0</strong> completed time entries are ready to review.</p>
+        <p class="privacy-note">This preview comes from the open Clockify tab. Clockoli does not store Clockify credentials.</p>
 
-      <form id="mapping-form" novalidate>
-        <fieldset>
-          <legend>Manual GitHub account mapping</legend>
-          <p class="help">GitHub logins for people with access to this Clockoli repository are suggested as you type. Choose and confirm each mapping manually, or explicitly skip a person who should not be imported. Each GitHub login can be used only once.</p>
-          <datalist id="github-login-suggestions"></datalist>
-          <div id="source-users"></div>
-        </fieldset>
-        <label class="confirmation"><input id="confirmation" type="checkbox" required> I confirm that every GitHub login is correct and authorize this migration.</label>
-        <div class="actions">
-          <button id="import" type="submit" disabled>Import completed time</button>
-          <a href="../options/options.html">Back to Settings</a>
-        </div>
-      </form>
-      <section id="import-status" class="migration-progress" aria-labelledby="import-status-title" role="status" aria-live="polite" hidden>
-        <h2 id="import-status-title">Saving migration</h2>
-        <p id="progress-current-step"></p>
-        <progress id="import-progress" max="11" value="0">0%</progress>
-        <p id="progress-summary"></p>
+        <form id="mapping-form" novalidate>
+          <fieldset>
+            <legend>Manual GitHub account mapping</legend>
+            <p class="help">GitHub logins for people with access to this Clockoli repository are suggested as you type. Choose and confirm each mapping manually, or explicitly skip a person who should not be imported. Each GitHub login can be used only once.</p>
+            <datalist id="github-login-suggestions"></datalist>
+            <div id="source-users"></div>
+          </fieldset>
+          <label class="confirmation"><input id="confirmation" type="checkbox" required> I confirm that every GitHub login is correct and authorize this migration.</label>
+          <div class="actions">
+            <button id="import" type="submit" disabled>Import completed time</button>
+            <a href="../options/options.html">Back to Settings</a>
+          </div>
+        </form>
       </section>
-      <ul id="outcomes" class="outcomes" aria-live="polite" hidden></ul>
+
+      <section id="migration-view" aria-labelledby="migration-title" hidden>
+        <h2 id="migration-title">Migration</h2>
+        <p class="privacy-note">Clockoli is saving the confirmed mapping. Progress and the final result appear here.</p>
+        <section id="import-status" class="migration-progress" aria-labelledby="import-status-title" role="status" aria-live="polite" hidden>
+          <h3 id="import-status-title">Saving migration</h3>
+          <p id="progress-current-step"></p>
+          <progress id="import-progress" max="11" value="0">0%</progress>
+          <p id="progress-summary"></p>
+        </section>
+        <ul id="outcomes" class="outcomes" aria-live="polite" hidden></ul>
+      </section>
     </div>
   </section>
 </main>

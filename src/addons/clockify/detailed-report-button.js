@@ -437,6 +437,7 @@
     }, delay);
   }
 
+
   function createButton() {
     const button = document.createElement('button');
     button.id = BUTTON_ID;
@@ -459,7 +460,7 @@
     logo.style.display = 'block';
     const actionLabel = document.createElement('span');
     actionLabel.className = 'clockoli-capture-action-label';
-    actionLabel.textContent = 'Migrate';
+    actionLabel.textContent = 'CSV migration';
     Object.assign(actionLabel.style, { fontSize: '13px', fontWeight: '700', lineHeight: '18px', whiteSpace: 'nowrap' });
     button.append(logo, actionLabel);
 
@@ -485,7 +486,7 @@
     button.setAttribute('aria-label', 'Migrate Clockify history page by page into Clockoli');
     button.title = 'Migrate Clockify history page by page without downloading CSV files';
     button.setAttribute('data-clockoli-ui', 'clockify-detailed-report');
-    button.textContent = 'Migrate page by page';
+    button.textContent = 'Page to page migration';
     Object.assign(button.style, {
       alignItems: 'center', background: 'transparent', border: '1px solid rgba(255, 255, 255, 0.82)', borderRadius: '10px', color: '#fff',
       cursor: 'pointer', display: 'inline-flex', flex: '0 0 auto', fontSize: '13px', fontWeight: '700', height: '42px', justifyContent: 'center',
@@ -681,22 +682,29 @@
       pageButton.disabled = armed && !pageCaptureActive;
       pageButton.style.cursor = armed && !pageCaptureActive ? 'not-allowed' : 'pointer';
       pageButton.style.opacity = armed && !pageCaptureActive ? '0.6' : '1';
-      pageButton.textContent = pageCaptureActive ? 'Cancel capture' : 'Migrate page by page';
+      pageButton.textContent = pageCaptureActive ? 'Cancel page to page migration' : 'Page to page migration';
+      pageButton.style.background = pageCaptureActive ? '#0f6b3a' : 'transparent';
+      pageButton.style.color = '#fff';
+      pageButton.style.boxShadow = pageCaptureActive
+        ? '0 0 0 2px rgba(255, 255, 255, 0.36), 0 6px 16px rgba(4, 46, 25, 0.28)'
+        : 'none';
     }
     const status = statusElement();
     if (armed) {
       button.setAttribute('aria-label', 'Clockoli migration capture is armed. Click to cancel.');
       button.title = 'Clockoli migration capture is armed. Click to cancel.';
-      setCaptureButtonLabel(button, 'Cancel capture');
+      setCaptureButtonLabel(button, 'Cancel CSV migration');
       button.style.background = '#0f6b3a';
+      button.style.color = '#fff';
       button.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.36), 0 6px 16px rgba(4, 46, 25, 0.28)';
       renderCaptureStatus(status, message || CAPTURE_PARSING_MESSAGE, true);
       renderCaptureProgress(status, true, captureHistory);
     } else {
       button.setAttribute('aria-label', 'Migrate Clockify history into Clockoli');
       button.title = 'Migrate Clockify history into Clockoli';
-      setCaptureButtonLabel(button, 'Migrate');
+      setCaptureButtonLabel(button, 'CSV migration');
       button.style.background = '#fff';
+      button.style.color = '#0f6b3a';
       button.style.boxShadow = '0 8px 18px rgba(4, 46, 25, 0.28)';
       renderCaptureStatus(status, message, false);
       renderCaptureProgress(status, false);
@@ -839,8 +847,11 @@
       const request = armRequest;
       chrome.runtime.sendMessage({ type: 'CLOCKIFY_CAPTURED_CSV', text: event.data.text }, response => {
         if (armRequest !== request || armedButton !== button) return;
-        if (chrome.runtime.lastError || !response?.ok) {
-          setCaptureState(button, false, 'Clockoli preview failed while reading the CSV export.');
+        if (chrome.runtime.lastError) {
+          setCaptureState(button, false, 'Clockoli could not contact the extension background. Code: BACKGROUND_UNAVAILABLE.');
+        } else if (!response?.ok) {
+          const code = typeof response?.error?.code === 'string' ? response.error.code : 'error';
+          setCaptureState(button, false, `Clockoli preview failed in background. Code: ${code.toUpperCase()}.`);
         } else if (response.data?.discovering && Number.isInteger(response.data.nextYear)) {
           discoveryYear = response.data.nextYear;
           setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
@@ -857,7 +868,7 @@
         } else if (response.data?.captured) {
           setCaptureState(button, false, 'Clockoli preview opened.');
         } else {
-          setCaptureState(button, false, 'Clockoli preview failed while reading the CSV export.');
+          setCaptureState(button, false, 'Clockoli preview failed in background. Code: INVALID_RESPONSE.');
         }
       });
       return;

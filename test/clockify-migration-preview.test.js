@@ -19,6 +19,10 @@ test('Clockify migration preview is an extension page with Clockoli navigation a
   assert.match(html, /id="entry-count"/);
   assert.match(html, /id="source-users"/);
   assert.match(html, /id="mapping-form"/);
+  assert.match(html, /<section id="mapping-view" aria-labelledby="mapping-title">/);
+  assert.match(html, /<section id="migration-view" aria-labelledby="migration-title" hidden>/);
+  assert.match(html, /<h2 id="mapping-title">Map Clockify people<\/h2>/);
+  assert.match(html, /<h2 id="migration-title">Migration<\/h2>/);
   assert.match(html, /id="confirmation" type="checkbox" required/);
   assert.match(html, /id="import"[^>]*disabled/);
   assert.match(html, /id="outcomes"[^>]*hidden/);
@@ -30,6 +34,14 @@ test('Clockify migration preview is an extension page with Clockoli navigation a
   assert.match(html, /<script type="module" src="preview\.js"><\/script>/);
   const previewCard = html.slice(html.indexOf('<main>'), html.indexOf('</main>'));
   assert.doesNotMatch(previewCard, /email|range|duration|month|project|task|description/i);
+});
+
+test('confirmation switches from the mapping view to a dedicated migration progress and result view', () => {
+  assert.match(source, /const mappingView = \$\('mapping-view'\);/);
+  assert.match(source, /const migrationView = \$\('migration-view'\);/);
+  assert.match(source, /mappingView\.hidden = true; migrationView\.hidden = false;/);
+  assert.match(source, /migrationView\.scrollIntoView\(\{ block: 'start' \}\)/);
+  assert.doesNotMatch(html.slice(html.indexOf('id="mapping-view"'), html.indexOf('</section>', html.indexOf('id="mapping-view"'))), /id="import-status"/);
 });
 
 test('preview uses only the narrow callback message contract and neither storage nor provider lookup', () => {
