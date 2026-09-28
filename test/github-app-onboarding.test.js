@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { InstallationDiscoveryService, RepositoryInitializer } from '../src/services/github-app-onboarding.js';
+import { InstallationDiscoveryService, RepositoryInitializer, RepositoryInspectionService } from '../src/services/github-app-onboarding.js';
 
 function notFound() { const error = new Error('not found'); error.status = 404; error.code = 'not_found'; return error; }
 function conflict() { const error = new Error('conflict'); error.status = 409; error.code = 'conflict'; return error; }
@@ -548,4 +548,132 @@ test('repository initialization makes the first commit automatically when the se
   assert.equal(writes.length, 1);
   assert.equal(writes[0].path, '.clockoli/config.json');
   assert.deepEqual(JSON.parse(writes[0].text).users, { '123': 'alice' });
+});
+
+test('repository inspection is read-only and classifies every onboarding state and action', async () => {
+  const memberMarker = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z',
+    createdBy: { id: 1, login: 'owner' }, users: { '1': 'owner', '123': 'alice' },
+  };
+  const joinableMarker = { ...memberMarker, users: { '1': 'owner' } };
+  const scenarios = [
+    ['initialized_member', { marker: memberMarker }, { canAdd: true, canJoin: false, canInitialize: false }],
+    ['initialized_joinable', { marker: joinableMarker }, { canAdd: false, canJoin: true, canInitialize: false }],
+    ['uninitialized', {}, { canAdd: false, canJoin: false, canInitialize: true }],
+    ['empty', { empty: true }, { canAdd: false, canJoin: false, canInitialize: true }],
+    ['incompatible', { markerText: '{bad json' }, { canAdd: false, canJoin: false, canInitialize: false }],
+    ['unavailable', { private: false }, { canAdd: false, canJoin: false, canInitialize: false }],
+  ];
+  for (const [state, setup, actions] of scenarios) {
+    let writes = 0;
+    const github = {
+      validateRepository: async () => repository(77, {
+        owner: { id: 10, login: 'owner', type: 'User' },
+        private: setup.private !== false, default_branch: setup.empty ? null : 'main',
+        permissions: { push: true, admin: false },
+      }),
+      validateBranch: async () => ({}),
+      getText: async () => {
+        if (setup.marker || setup.markerText) return { sha: 'marker', text: setup.markerText || JSON.stringify(setup.marker) };
+        throw notFound();
+      },
+      listRepositoryEntries: async () => [],
+      putText: async () => { writes += 1; }, putInitialText: async () => { writes += 1; },
+    };
+    const candidate = {
+      repoId: 77, owner: 'owner', repo: 'time', ownerType: 'User', defaultBranch: setup.empty ? '' : 'main',
+      private: setup.private !== false, archived: false, disabled: false,
+      appPermissions: { contents: 'write' }, userPermissions: { push: true, admin: false }, reasons: setup.private === false ? ['private_required'] : [],
+    };
+    const inspected = await new RepositoryInspectionService({ github }).inspect({ id: 123, login: 'alice' }, candidate);
+    assert.equal(inspected.state, state);
+    assert.equal(inspected.ownership, 'personal');
+    assert.deepEqual({ canAdd: inspected.canAdd, canJoin: inspected.canJoin, canInitialize: inspected.canInitialize }, actions);
+    assert.equal(writes, 0);
+  }
+});
+
+test('repository inspection treats the discovery empty-branch reason as initializable, not unavailable', async () => {
+  const candidate = {
+    repoId: 77, owner: 'owner', repo: 'time', ownerType: 'User', defaultBranch: '', private: true,
+    archived: false, disabled: false, appPermissions: { contents: 'write' }, userPermissions: { push: true, admin: false },
+    reasons: ['initialized_default_branch_required'],
+  };
+  const github = {
+    validateRepository: async () => repository(77, { default_branch: null }),
+    getText: async () => { throw new Error('must not inspect a branch in an empty repository'); },
+  };
+  const inspected = await new RepositoryInspectionService({ github }).inspect({ id: 123, login: 'alice' }, candidate);
+  assert.equal(inspected.state, 'empty');
+  assert.equal(inspected.canInitialize, true);
+  assert.equal(inspected.eligible, true);
+});
+
+test('repository inspection uses fresh repository admin permission and fails closed when access disappeared', async () => {
+  const organization = {
+    repoId: 77, owner: 'acme', repo: 'time', ownerType: 'Organization', defaultBranch: 'main', private: true,
+    archived: false, disabled: false, appPermissions: { contents: 'write' }, userPermissions: { push: true, admin: true }, reasons: [],
+  };
+  const nonAdmin = await new RepositoryInspectionService({ github: {
+    validateRepository: async () => repository(77, {
+      owner: { id: 10, login: 'acme', type: 'Organization' }, default_branch: null,
+      permissions: { push: true, admin: false },
+    }),
+  } }).inspect({ id: 123, login: 'alice' }, organization);
+  assert.equal(nonAdmin.state, 'empty');
+  assert.equal(nonAdmin.admin, false);
+  assert.equal(nonAdmin.canInitialize, false);
+  assert.equal(nonAdmin.eligible, false);
+
+  let markerReads = 0;
+  const inaccessible = await new RepositoryInspectionService({ github: {
+    validateRepository: async () => { throw notFound(); },
+    getText: async () => { markerReads += 1; throw notFound(); },
+  } }).inspect({ id: 123, login: 'alice' }, organization);
+  assert.equal(inaccessible.state, 'unavailable');
+  assert.equal(inaccessible.inspectionError, 'repository_access_required');
+  assert.equal(markerReads, 0);
+});
+
+test('organization initialization requires admin and join never initializes an unmarked repository', async () => {
+  for (const action of ['join', 'initialize']) {
+    let writes = 0;
+    const github = {
+      validateRepository: async () => ({ ...repository(77, { owner: { id: 10, login: 'acme', type: 'Organization' } }), permissions: { push: true, admin: false } }),
+      validateBranch: async () => ({}), getText: async () => { throw notFound(); }, listRepositoryEntries: async () => [],
+      putText: async () => { writes += 1; }, putInitialText: async () => { writes += 1; },
+    };
+    await assert.rejects(
+      () => new RepositoryInitializer({ github }).execute(action, { id: 123, login: 'alice' }, { expectedRepositoryId: 77 }),
+      error => error.code === (action === 'join' ? 'repository_not_initialized' : 'repository_admin_required'),
+    );
+    assert.equal(writes, 0);
+  }
+});
+
+test('explicit initialize by an organization admin writes once, while member add writes no marker', async () => {
+  const initializationWrites = [];
+  const adminGithub = {
+    validateRepository: async () => ({ ...repository(77, { owner: { id: 10, login: 'acme', type: 'Organization' } }), permissions: { push: true, admin: true } }),
+    validateBranch: async () => ({}), getText: async () => { throw notFound(); }, listRepositoryEntries: async () => [],
+    putText: async (...args) => { initializationWrites.push(args); return { sha: 'marker' }; },
+  };
+  const initialized = await new RepositoryInitializer({ github: adminGithub }).execute('initialize', { id: 123, login: 'alice' }, { expectedRepositoryId: 77 });
+  assert.equal(initialized.status, 'write_verified');
+  assert.equal(initializationWrites.length, 1);
+
+  let memberWrites = 0;
+  const marker = {
+    repositoryFormatVersion: 1, createdAt: '2026-08-20T00:00:00Z',
+    createdBy: { id: 123, login: 'alice' }, users: { '123': 'alice' },
+  };
+  const memberGithub = {
+    validateRepository: async () => repository(77), validateBranch: async () => ({}),
+    getText: async () => ({ sha: 'marker', text: JSON.stringify(marker) }),
+    putText: async () => { memberWrites += 1; },
+  };
+  const added = await new RepositoryInitializer({ github: memberGithub }).execute('add', { id: 123, login: 'renamed' }, { expectedRepositoryId: 77 });
+  assert.equal(added.status, 'access_checked');
+  assert.equal(added.storageLogin, 'alice');
+  assert.equal(memberWrites, 0);
 });

@@ -2,8 +2,8 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const MANIFEST = 'manifest.json';
-const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html', 'src/clockify-migration/preview.html'];
-const PACKAGED_ADDON_ENTRIES = ['src/addons/registry.js'];
+const VIRTUAL_RESOURCES = new Set(['_favicon/*']);
+const RUNTIME_PAGE_ENTRIES = ['src/clockify-migration/preview.html', 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
 const SECRET_PATTERNS = [
   { label: 'GitHub token', pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b/ },
@@ -19,21 +19,16 @@ function normalizeRelative(value) {
 
 function localReferences(file, text) {
   const references = [];
-  const runtimeReferences = [];
   const extension = path.extname(file);
   if (extension === '.js') {
-    for (const match of text.matchAll(/^\s*import\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/gm)) references.push(match[1]);
-    for (const match of text.matchAll(/chrome\.runtime\.getURL\(["']([^"']+)["']\)/g)) runtimeReferences.push(match[1]);
+    for (const match of text.matchAll(/(?<![\w$.])(?:from\s+|import\s+)["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.html') {
     for (const match of text.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.css') {
     for (const match of text.matchAll(/url\(\s*["']?([^"')\s]+)["']?\s*\)/g)) references.push(match[1]);
     for (const match of text.matchAll(/@import\s+(?:url\(\s*)?["']?([^"')\s;]+)["']?\s*\)?/g)) references.push(match[1]);
   }
-  return [
-    ...references.map(normalizeRelative).filter(Boolean).map(reference => path.posix.normalize(path.posix.join(path.posix.dirname(file), reference))),
-    ...runtimeReferences.map(normalizeRelative).filter(Boolean),
-  ];
+  return references.map(normalizeRelative).filter(Boolean).map(reference => path.posix.normalize(path.posix.join(path.posix.dirname(file), reference)));
 }
 
 function manifestEntries(manifest) {
@@ -47,7 +42,7 @@ function manifestEntries(manifest) {
     ...(manifest.content_scripts || []).flatMap(item => [...(item.js || []), ...(item.css || [])]),
     ...(manifest.web_accessible_resources || []).flatMap(item => item.resources || []),
   ];
-  return entries.filter(Boolean);
+  return entries.filter(entry => entry && !VIRTUAL_RESOURCES.has(entry));
 }
 
 function assertRuntimePath(file) {
@@ -61,7 +56,7 @@ function assertRuntimePath(file) {
 
 export async function releaseInventory(root) {
   const manifest = JSON.parse(await readFile(path.join(root, MANIFEST), 'utf8'));
-  const pending = [...manifestEntries(manifest), ...PACKAGED_ADDON_ENTRIES];
+  const pending = [...manifestEntries(manifest)];
   const files = new Set([MANIFEST]);
   while (pending.length) {
     const file = pending.shift();

@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { releaseInventory, validateReleaseInventory } from '../scripts/release-inventory.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+test('release manifest does not expose an unused chrome.storage surface', async () => {
+  const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.permissions.includes('storage'), false);
+});
 
 const EXPECTED_RUNTIME_INVENTORY = [
   'manifest.json',
@@ -40,6 +46,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/assets/clockoli-48.png',
   'src/assets/clockoli-with-text.svg',
   'src/auth/github-app-auth.js',
+  'src/background/destination-runtime.js',
   'src/background/message-policy.js',
   'src/background/serial-executor.js',
   'src/background/service-worker.js',
@@ -49,7 +56,9 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/clockify-migration/preview.js',
   'src/config/github-app.js',
   'src/content/github.js',
+  'src/content/task-timeline-component.js',
   'src/domain/bulk-time.js',
+  'src/domain/invoicing.js',
   'src/domain/local-settings.js',
   'src/domain/records.js',
   'src/domain/recovery-actions.js',
@@ -63,8 +72,6 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/options/options.css',
   'src/options/options.html',
   'src/options/options.js',
-  'src/popup/popup.css',
-  'src/popup/popup.html',
   'src/reports/reports.css',
   'src/reports/reports.html',
   'src/reports/reports.js',
@@ -92,11 +99,15 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/storage/chrome-store.js',
   'src/styles/github-primer.css',
   'src/styles/page-tabs.css',
+  'src/styles/running-status.css',
   'src/tasks/tasks.css',
   'src/tasks/tasks.html',
   'src/tasks/tasks.js',
   'src/times/times.css',
   'src/times/times.html',
+  'src/ui/running-status.js',
+  'src/vendor/html2pdf.LICENSE.txt',
+  'src/vendor/html2pdf.bundle.min.js',
 ];
 
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {

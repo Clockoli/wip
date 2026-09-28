@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildInvoice } from '../src/domain/invoicing.js';
 import {
   billableMinorForRecord, normalizeBillingSettings, rateMinorForUser,
 } from '../src/domain/local-settings.js';
@@ -10,6 +11,14 @@ const effectiveRates = {
     { amountMinorPerHour: 12500, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-07-01', endDate: '' },
   ],
 };
+
+test('an invoice splits one task and person at a mid-period rate change', () => {
+  const records = ['2026-06-30', '2026-07-01'].map(entryDate => ({ user: 'alice', taskUrl: 'https://example.com/task', taskTitle: 'Task', entryDate, durationSeconds: 1800 }));
+  const invoice = buildInvoice(records, { rates: effectiveRates, startDate: '2026-06-01', endDate: '2026-07-31', issueDate: '2026-08-01' });
+  assert.deepEqual(invoice.lines.map(line => [line.rateMinorPerHour, line.rateCurrency, line.seconds, line.amountMinor]), [[10000, 'USD', 1800, 5000], [12500, 'USD', 1800, 6250]]);
+  assert.equal(new Set(invoice.lines.map(line => line.key)).size, 2);
+  assert.equal(invoice.totalMinor, 11250);
+});
 
 test('effective-dated rates select the inclusive period by record date', () => {
   assert.equal(rateMinorForUser('ALICE', effectiveRates, '2026-06-30'), 10000);

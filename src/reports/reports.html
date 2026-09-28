@@ -6,62 +6,142 @@
   <title>Reports · Clockoli</title>
   <link rel="stylesheet" href="reports.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
+  <link rel="stylesheet" href="../styles/running-status.css">
+  <link rel="license" href="../vendor/html2pdf.LICENSE.txt">
 </head>
 <body>
   <div class="page-tabs-shell">
     <nav class="page-tabs" aria-label="Clockoli pages">
-      <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli-with-text.svg" alt=""></a>
-      <a class="page-tab" href="../times/times.html">Activity</a>
-      <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
-      <a class="page-tab" href="../reports/reports.html" aria-current="page">Reports</a>
-      <a class="page-tab" href="../options/options.html">Settings</a>
+      <a class="page-brand" href="https://clockoli.com/" target="_blank" rel="noreferrer" aria-label="Clockoli website"><img src="../assets/clockoli-with-text.svg" alt="Clockoli"></a>
+      <div class="page-tab-list">
+        <a class="page-tab" href="../tasks/tasks.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z"/></svg>Top tasks</a>
+        <a class="page-tab" href="../reports/reports.html" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z"/></svg>Reports</a>
+        <a class="page-tab" href="../times/times.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z"/></svg>Activity</a>
+        <a class="page-tab" href="../options/options.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"/></svg>Settings</a>
+      </div>
     </nav>
   </div>
+  <div id="running-status"></div>
   <main>
-    <section class="card period-card" aria-labelledby="period-heading">
-      <div>
+    <section id="period-card" class="card period-card" hidden aria-labelledby="period-heading">
+      <div class="period-picker">
         <h2 id="period-heading">Reporting period</h2>
-        <p class="muted">Entries are included by their Start date.</p>
-      </div>
-      <div class="period-controls">
-        <label>Period
-          <select id="period">
-            <option value="this-week">This week</option>
-            <option value="last-week" selected>Last week</option>
-            <option value="this-month">This month</option>
-            <option value="last-month">Last month</option>
-            <option value="this-quarter">This quarter</option>
-            <option value="last-quarter">Last quarter</option>
-            <option value="this-year">This year</option>
-            <option value="last-year">Last year</option>
-            <option value="custom">Custom period</option>
-          </select>
-        </label>
-        <div id="custom-period" class="custom-period" hidden>
-          <label>Start <input id="start-date" type="date" required></label>
-          <label>End <input id="end-date" type="date" required></label>
-          <button id="apply-period" class="button secondary" type="button">Apply</button>
+        <button id="period-trigger" class="button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-popover">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 0v2H2a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1h-2V0h-1v2H5V0H4ZM2 6h12v8H2V6Zm0-3h12v2H2V3Z"/></svg>
+          <span id="period-label">Last week</span>
+        </button>
+        <div id="period-popover" role="dialog" aria-labelledby="period-heading" hidden>
+          <div class="period-shortcuts" role="group" aria-label="Date range presets">
+            <button id="preset-today" class="text-button" type="button">Today</button>
+            <button id="preset-yesterday" class="text-button" type="button">Yesterday</button>
+            <button id="preset-last-7-days" class="text-button" type="button">Last 7 days</button>
+            <button id="preset-last-30-days" class="text-button" type="button">Last 30 days</button>
+            <button id="preset-this-week" class="text-button" type="button">This week</button>
+            <button id="preset-last-week" class="text-button" type="button" aria-current="true">Last week</button>
+            <button id="preset-this-month" class="text-button" type="button">This month</button>
+            <button id="preset-last-month" class="text-button" type="button">Last month</button>
+            <button id="preset-this-quarter" class="text-button" type="button">This quarter</button>
+            <button id="preset-last-quarter" class="text-button" type="button">Last quarter</button>
+            <button id="preset-this-year" class="text-button" type="button">This year</button>
+            <button id="preset-last-year" class="text-button" type="button">Last year</button>
+          </div>
+          <div class="period-calendar">
+            <div class="period-fields">
+              <label>Start <input id="start-date" type="date" required></label>
+              <label>End <input id="end-date" type="date" required></label>
+            </div>
+            <div class="calendar-heading">
+              <button id="calendar-previous" class="text-button" type="button" aria-label="Previous month">‹</button>
+              <span id="calendar-month" aria-live="polite"></span>
+              <button id="calendar-next" class="text-button" type="button" aria-label="Next month">›</button>
+            </div>
+            <div role="grid" aria-labelledby="calendar-month">
+              <div class="calendar-weekdays" role="row">
+                <span role="columnheader" aria-label="Monday">M</span><span role="columnheader" aria-label="Tuesday">T</span><span role="columnheader" aria-label="Wednesday">W</span><span role="columnheader" aria-label="Thursday">T</span><span role="columnheader" aria-label="Friday">F</span><span role="columnheader" aria-label="Saturday">S</span><span role="columnheader" aria-label="Sunday">S</span>
+              </div>
+              <div id="calendar-grid" role="rowgroup"></div>
+            </div>
+          </div>
+          <div class="period-footer">
+            <span id="period-timezone"></span>
+            <label class="period-utc"><input id="reporting-utc" type="checkbox" role="switch">UTC</label>
+          </div>
         </div>
+      </div>
+      <div class="export-controls" aria-label="Timesheet downloads">
+        <a id="download-csv" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download CSV timesheet">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h4.69c.46 0 .9.18 1.23.51l2.82 2.82c.33.33.51.77.51 1.23v9.69A1.75 1.75 0 0 1 12.25 16h-7.5A1.75 1.75 0 0 1 3 14.25V1.75Zm1.5 0v12.5c0 .14.11.25.25.25h7.5c.14 0 .25-.11.25-.25V5H9.75A1.75 1.75 0 0 1 8 3.25V1.5H4.75a.25.25 0 0 0-.25.25ZM9.5 1.56v1.69c0 .14.11.25.25.25h1.69L9.5 1.56Z"/></svg>
+          <span>CSV</span>
+        </a>
+        <a id="download-json" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download JSON timesheet">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 1.5A2.25 2.25 0 0 0 3 3.75v2c0 .83-.67 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c.83 0 1.5.67 1.5 1.5v2a2.25 2.25 0 0 0 2.25 2.25H6a.75.75 0 0 0 0-1.5h-.75a.75.75 0 0 1-.75-.75v-2A3 3 0 0 0 3.63 8 3 3 0 0 0 4.5 5.75v-2A.75.75 0 0 1 5.25 3H6a.75.75 0 0 0 0-1.5h-.75Zm5.5 0A2.25 2.25 0 0 1 13 3.75v2c0 .83.67 1.5 1.5 1.5a.75.75 0 0 1 0 1.5c-.83 0-1.5.67-1.5 1.5v2a2.25 2.25 0 0 1-2.25 2.25H10a.75.75 0 0 1 0-1.5h.75a.75.75 0 0 0 .75-.75v-2A3 3 0 0 1 12.37 8a3 3 0 0 1-.87-2.25v-2a.75.75 0 0 0-.75-.75H10a.75.75 0 0 1 0-1.5h.75Z"/></svg>
+          <span>JSON</span>
+        </a>
+        <a id="download-pdf" class="export-link disabled" aria-disabled="true" href="#" aria-label="Print report">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0A1.75 1.75 0 0 0 3 1.75V5h1.5V1.75a.25.25 0 0 1 .25-.25h6.5a.25.25 0 0 1 .25.25V5H13V1.75A1.75 1.75 0 0 0 11.25 0h-6.5ZM3 10.5v3.75C3 15.216 3.784 16 4.75 16h6.5A1.75 1.75 0 0 0 13 14.25V10.5h-1.5v3.75a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25V10.5H3ZM1.75 5A1.75 1.75 0 0 0 0 6.75v3.5C0 11.216.784 12 1.75 12H3v-1.5H1.75a.25.25 0 0 1-.25-.25v-3.5a.25.25 0 0 1 .25-.25h12.5a.25.25 0 0 1 .25.25v3.5a.25.25 0 0 1-.25.25H13V12h1.25A1.75 1.75 0 0 0 16 10.25v-3.5A1.75 1.75 0 0 0 14.25 5H13V1.5H3V5H1.75Z"/></svg>
+          <span>Print</span>
+        </a>
+        <a id="create-invoice" class="export-link disabled" aria-disabled="true" href="#" aria-label="Create invoice">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.75 0A1.75 1.75 0 0 0 2 1.75v12.5C2 15.216 2.784 16 3.75 16h8.5A1.75 1.75 0 0 0 14 14.25V4.56c0-.46-.18-.9-.51-1.23L10.67.51A1.74 1.74 0 0 0 9.44 0H3.75ZM3.5 1.75a.25.25 0 0 1 .25-.25H9v2.75C9 5.216 9.784 6 10.75 6h1.75v8.25a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25V1.75Zm7 .81 1.94 1.94h-1.69a.25.25 0 0 1-.25-.25V2.56ZM5 8.25a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 5 8.25Zm0 3a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Z"/></svg>
+          <span>Create invoice</span>
+        </a>
       </div>
     </section>
 
+    <dialog id="invoice-dialog" aria-labelledby="invoice-dialog-title">
+      <div class="invoice-dialog-heading"><div><h2 id="invoice-dialog-title">Create invoice</h2><p class="muted">Preview and print an invoice from the current report filters.</p></div><button id="invoice-close" class="button secondary" type="button">Close</button></div>
+      <div class="invoice-controls">
+        <p id="invoice-billing-period" class="invoice-billing-period" role="status" aria-live="polite"></p>
+        <label>Client<select id="invoice-client"><option value="">No client</option></select></label>
+        <label>Currency<select id="invoice-currency"></select></label>
+        <label>Group lines by<select id="invoice-group-by"><option value="task" selected>Task</option><option value="day">Day and task</option></select></label>
+        <label>Issue date<input id="invoice-issue-date" type="date" required></label>
+        <div class="invoice-projects-control">
+          <div class="section-heading"><span>Projects</span><span id="invoice-project-count" class="muted"></span></div>
+          <div id="invoice-projects" class="facet-list" role="group" aria-label="Projects billed by this invoice"></div>
+          <p id="invoice-project-warning" class="notice" role="status" aria-live="polite" hidden></p>
+        </div>
+      </div>
+      <div class="invoice-additional-control" role="group" aria-labelledby="invoice-additional-label">
+        <div class="section-heading"><span id="invoice-additional-label">Additional lines</span></div>
+        <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
+        <div id="invoice-extra-lines"></div>
+        <button id="invoice-add-line" class="button secondary" type="button">Add line</button>
+      </div>
+      <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
+      <section class="invoice-preview-region" aria-labelledby="invoice-preview-title">
+        <div class="section-heading invoice-preview-heading"><h3 id="invoice-preview-title">Preview</h3></div>
+        <div id="invoice-preview" class="invoice-preview" aria-live="polite"><p class="invoice-preview-empty">Choose a client and currency to preview the invoice.</p></div>
+      </section>
+      <div class="invoice-actions">
+        <button id="invoice-print" class="button secondary" type="button" disabled>Print</button>
+        <button id="invoice-save-pdf" class="button primary" type="button" disabled>Save as PDF</button>
+      </div>
+    </dialog>
+
     <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="partial-status" class="notice" role="status" hidden></div>
     <div id="loading" class="notice loading-notice" role="status" aria-live="polite" hidden>
-      <div class="loading-copy"><strong id="loading-label">Connecting to GitHub…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
+      <div class="loading-copy"><strong id="loading-label">Loading time data…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
       <progress id="loading-progress" max="100" value="10">10%</progress>
     </div>
     <div id="setup" class="notice" hidden>
-      Configure a private time-data repository before opening reports.
-      <button id="setup-settings" class="button primary" type="button">Open Settings</button>
+      Choose where Clockoli should save your time before opening reports.
+      <button id="setup-settings" class="button primary" type="button">Set up Clockoli</button>
     </div>
 
     <section id="report-content" hidden>
-      <div class="summary-grid" aria-label="Report summary">
-        <article class="summary-card"><span>Tracked</span><strong id="summary-time">0m</strong></article>
-        <article class="summary-card"><span>Billable</span><strong id="summary-money">Unrated</strong></article>
-        <article class="summary-card"><span>Entries</span><strong id="summary-entries">0</strong></article>
-        <article class="summary-card"><span>People</span><strong id="summary-people">0</strong></article>
-        <article class="summary-card"><span>Sources</span><strong id="summary-repositories">0</strong></article>
+      <div class="report-summary" aria-label="Report summary">
+        <div class="summary-totals">
+          <strong id="summary-time">0m</strong>
+          <p id="summary-billable" class="muted" hidden>Billable <span id="summary-money">Unrated</span></p>
+        </div>
+        <p id="summary-counts" class="muted"></p>
+      </div>
+      <div id="report-empty" class="notice" role="status" hidden>
+        <p id="empty-message"></p>
+        <a id="add-time" href="../times/times.html" hidden>Add time</a>
+        <button id="reset-filters" class="text-button" type="button" hidden>Reset filters</button>
       </div>
 
       <section id="print-timesheet" class="print-timesheet" aria-label="Printable timesheet">
@@ -69,8 +149,9 @@
         <section aria-labelledby="print-detail-heading"><h3 id="print-detail-heading">Time by day, person and task</h3><table id="print-detail-table"></table></section>
         <section aria-labelledby="print-task-heading"><h3 id="print-task-heading">Total time by task</h3><table id="print-task-table"></table></section>
       </section>
+      <section id="print-invoice" class="print-invoice" aria-label="Printable invoice"></section>
 
-      <div class="reports-layout">
+      <div id="reports-layout" class="reports-layout">
         <aside class="filters card" aria-label="Report filters">
           <section>
             <div class="section-heading"><h2>People</h2><button id="people-all" class="text-button" type="button">Select all</button></div>
@@ -78,83 +159,74 @@
             <div id="people-facet" class="facet-list"></div>
           </section>
           <section>
+            <div class="section-heading"><h2>Projects</h2><button id="projects-all" class="text-button" type="button">Select all</button></div>
+            <input id="projects-search" class="facet-search" type="search" placeholder="Search projects" aria-label="Search projects">
+            <div id="projects-facet" class="facet-list"></div>
+          </section>
+          <section>
             <div class="section-heading"><h2>Sources</h2><button id="repositories-all" class="text-button" type="button">Select all</button></div>
             <input id="repositories-search" class="facet-search" type="search" placeholder="Search sources" aria-label="Search sources">
             <div id="repositories-facet" class="facet-list"></div>
           </section>
+          <section>
+            <div class="section-heading"><h2>Time repositories</h2><button id="timeRepositories-all" class="text-button" type="button">Select all</button></div>
+            <input id="timeRepositories-search" class="facet-search" type="search" placeholder="Search time repositories" aria-label="Search time repositories">
+            <div id="timeRepositories-facet" class="facet-list"></div>
+          </section>
         </aside>
 
         <div class="report-main">
-          <section class="card analytics-card" aria-labelledby="analytics-heading">
-            <div class="section-heading analytics-heading">
-              <div><h2 id="analytics-heading">Analytics</h2><p id="filtered-summary" class="muted"></p></div>
-              <div class="dimension-controls" aria-label="Chart configuration">
-                <label>Vertical axis
-                  <select id="metric">
-                    <option value="total-time" selected>Total time</option>
-                    <option value="avg-time">Avg time</option>
-                    <option value="billable-amount">Billable amount</option>
-                    <option value="task-count">Task count</option>
-                  </select>
-                </label>
-                <label id="billable-currency-control" hidden>Currency
-                  <select id="billable-currency" aria-label="Billable currency"></select>
-                </label>
-                <label>Horizontal axis
-                  <select id="horizontal-axis">
-                    <option value="day" selected>Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                    <option value="person">Person</option>
-                    <option value="repository">Source</option>
-                    <option value="task">Task URL / title</option>
-                  </select>
-                </label>
-                <label>Stack by
-                  <select id="stack-by">
-                    <option value="day">Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                    <option value="person" selected>Person</option>
-                    <option value="repository">Source</option>
-                    <option value="task">Task URL / title</option>
-                  </select>
-                </label>
+          <section id="analytics-card" class="card analytics-card" aria-label="Analytics chart">
+            <div id="chart-options" class="chart-options" aria-label="Chart configuration">
+              <div class="chart-top-controls">
+                  <label class="axis-select metric-select"><span class="visually-hidden">Vertical axis</span>
+                    <select id="metric" aria-label="Vertical axis">
+                      <option value="total-time" selected>Total time</option>
+                      <option value="avg-time">Avg time</option>
+                      <option value="billable-amount">Billable amount</option>
+                      <option value="task-count">Task count</option>
+                    </select>
+                  </label>
+                  <label id="billable-currency-control" class="currency-select" hidden>Currency
+                    <select id="billable-currency" aria-label="Billable currency"></select>
+                  </label>
+                  <label>Stack by
+                    <select id="stack-by">
+                      <option value="day">Day</option>
+                      <option value="week">Week</option>
+                      <option value="month">Month</option>
+                      <option value="person" selected>Person</option>
+                      <option value="repository">Source</option>
+                      <option value="time-repository">Time repository</option>
+                      <option value="task">Task URL / title</option>
+                    </select>
+                  </label>
               </div>
             </div>
             <div id="analytics-chart" class="chart" aria-live="polite"></div>
+            <label class="axis-select horizontal-axis-select"><span class="visually-hidden">Horizontal axis</span>
+              <select id="horizontal-axis" aria-label="Horizontal axis">
+                <option value="day" selected>Day</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="person">Person</option>
+                <option value="repository">Source</option>
+                <option value="time-repository">Time repository</option>
+                <option value="task">Task URL / title</option>
+              </select>
+            </label>
             <div id="chart-legend" class="legend" aria-label="Chart legend"></div>
             <details id="analytics-details" class="data-table-details">
               <summary>View analytics data table</summary>
               <div class="table-scroll"><table id="analytics-table"></table></div>
             </details>
           </section>
-
-          <section class="card export-card" aria-labelledby="export-heading">
-            <div>
-              <h2 id="export-heading">Timesheet</h2>
-              <p class="muted">Download the current period and facet selection.</p>
-            </div>
-            <div class="export-controls" aria-label="Timesheet downloads">
-              <a id="download-csv" class="export-link" href="#" aria-label="Download CSV timesheet">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h4.69c.46 0 .9.18 1.23.51l2.82 2.82c.33.33.51.77.51 1.23v9.69A1.75 1.75 0 0 1 12.25 16h-7.5A1.75 1.75 0 0 1 3 14.25V1.75Zm1.5 0v12.5c0 .14.11.25.25.25h7.5c.14 0 .25-.11.25-.25V5H9.75A1.75 1.75 0 0 1 8 3.25V1.5H4.75a.25.25 0 0 0-.25.25ZM9.5 1.56v1.69c0 .14.11.25.25.25h1.69L9.5 1.56Z"/></svg>
-                <span>CSV</span>
-              </a>
-              <a id="download-json" class="export-link" href="#" aria-label="Download JSON timesheet">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 1.5A2.25 2.25 0 0 0 3 3.75v2c0 .83-.67 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c.83 0 1.5.67 1.5 1.5v2a2.25 2.25 0 0 0 2.25 2.25H6a.75.75 0 0 0 0-1.5h-.75a.75.75 0 0 1-.75-.75v-2A3 3 0 0 0 3.63 8 3 3 0 0 0 4.5 5.75v-2A.75.75 0 0 1 5.25 3H6a.75.75 0 0 0 0-1.5h-.75Zm5.5 0A2.25 2.25 0 0 1 13 3.75v2c0 .83.67 1.5 1.5 1.5a.75.75 0 0 1 0 1.5c-.83 0-1.5.67-1.5 1.5v2a2.25 2.25 0 0 1-2.25 2.25H10a.75.75 0 0 1 0-1.5h.75a.75.75 0 0 0 .75-.75v-2A3 3 0 0 1 12.37 8a3 3 0 0 1-.87-2.25v-2a.75.75 0 0 0-.75-.75H10a.75.75 0 0 1 0-1.5h.75Z"/></svg>
-                <span>JSON</span>
-              </a>
-              <a id="download-pdf" class="export-link" href="#" aria-label="Print report or save as PDF">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0A1.75 1.75 0 0 0 3 1.75V5h1.5V1.75a.25.25 0 0 1 .25-.25h6.5a.25.25 0 0 1 .25.25V5H13V1.75A1.75 1.75 0 0 0 11.25 0h-6.5ZM3 10.5v3.75C3 15.216 3.784 16 4.75 16h6.5A1.75 1.75 0 0 0 13 14.25V10.5h-1.5v3.75a.25.25 0 0 1-.25.25h-6.5a.25.25 0 0 1-.25-.25V10.5H3ZM1.75 5A1.75 1.75 0 0 0 0 6.75v3.5C0 11.216.784 12 1.75 12H3v-1.5H1.75a.25.25 0 0 1-.25-.25v-3.5a.25.25 0 0 1 .25-.25h12.5a.25.25 0 0 1 .25.25v3.5a.25.25 0 0 1-.25.25H13V12h1.25A1.75 1.75 0 0 0 16 10.25v-3.5A1.75 1.75 0 0 0 14.25 5H1.75Z"/></svg>
-                <span>PDF</span>
-              </a>
-            </div>
-          </section>
         </div>
       </div>
     </section>
   </main>
   <script src="../domain/recovery-actions.js"></script>
-<script type="module" src="reports.js"></script>
+  <script src="../vendor/html2pdf.bundle.min.js"></script>
+  <script type="module" src="reports.js"></script>
 </body>
 </html>

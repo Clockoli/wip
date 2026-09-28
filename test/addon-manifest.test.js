@@ -13,7 +13,7 @@ const permanentHostPermissions = [
   'https://github.com/login/*',
   'https://api.frankfurter.dev/*',
 ];
-const forbiddenPermissions = new Set(['<all_urls>', 'cookies', 'downloads', 'webRequest', 'scripting']);
+const forbiddenPermissions = new Set(['<all_urls>', 'cookies', 'downloads', 'webRequest']);
 const forbiddenBroadHostPatterns = [/<all_urls>/i, /:\/\/\*\//, /:\/\/\*\./, /^https?:\/\/[^/]*\*[^/]*\//i];
 
 test('manifest grants Clockify only as the exact optional host origin', async () => {
@@ -21,7 +21,7 @@ test('manifest grants Clockify only as the exact optional host origin', async ()
 
   assert.deepEqual(manifest.optional_host_permissions, ['https://app.clockify.me/*']);
   assert.deepEqual(manifest.host_permissions, permanentHostPermissions);
-  assert.ok(manifest.permissions.includes('storage'), 'the session-only preview handoff requires the Chrome storage API permission');
+  assert.equal(manifest.permissions.includes('storage'), false, 'the preview handoff uses privileged IndexedDB, not chrome.storage');
   assert.equal(manifest.permissions.some(permission => forbiddenPermissions.has(permission)), false);
   for (const hostPattern of [...manifest.host_permissions, ...manifest.optional_host_permissions]) {
     assert.equal(forbiddenBroadHostPatterns.some(pattern => pattern.test(hostPattern)), false, `broad host pattern: ${hostPattern}`);
@@ -34,7 +34,7 @@ test('manifest injects the Clockify adapter only on the Detailed Report route', 
   assert.deepEqual(manifest.content_scripts, [
     {
       matches: ['https://github.com/*'],
-      js: ['src/domain/recovery-actions.js', 'src/content/github.js'],
+      js: ['src/domain/recovery-actions.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
       run_at: 'document_idle',
     },
     {

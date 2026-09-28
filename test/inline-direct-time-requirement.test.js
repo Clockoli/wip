@@ -18,18 +18,28 @@ test('recent rows keep direct Start/Stop editing without wheel or step controls'
   assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown/);
 });
 
-test('inline range, duration, and contextual actions share the left-aligned row', () => {
-  assert.match(source, /timeRow\.append\(inline\.node, inline\.duration, actions\)/);
+test('Activity begins with a compact range and reveals direct time editing on demand', () => {
+  assert.match(source, /const time = el\('span', recentTimeText\(entry\), 'entry-time-range entry-time-display'\)/);
+  assert.match(source, /record\.classList\.add\('entry-editing'\)/);
+  assert.match(source, /timeRow\.append\(time, inline\.node, inline\.duration, actions\)/);
+  assert.match(source, /actions\.append\(edit, inline\.cancel, inline\.save, remove\)/);
   assert.match(source, /\.entry-time-row \{[^}]*justify-content:flex-start[^}]*white-space:nowrap/);
-  assert.doesNotMatch(source, /\.entry-actions \{[^}]*margin-left:auto/);
-  assert.match(source, /actions\.append\(inline\.cancel, inline\.save, remove\)/);
 });
 
-test('grouped inline save is exposed only through the needed message route', () => {
-  assert.equal(assertMessageAllowed('EDIT_ENTRIES', contentSender, origin), 'content');
-  assert.equal(assertMessageAllowed('EDIT_ENTRIES', extensionSender, origin), 'extension');
+test('grouped inline save uses the durable queue route', () => {
+  assert.equal(assertMessageAllowed('QUEUE_ENTRIES_EDIT', contentSender, origin), 'content');
+  assert.equal(assertMessageAllowed('QUEUE_ENTRIES_EDIT', extensionSender, origin), 'extension');
+  assert.match(source, /type: 'QUEUE_ENTRIES_EDIT'/);
+  assert.doesNotMatch(source, /type: 'EDIT_ENTRIES'/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', contentSender, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', extensionSender, origin), /not allowed/i);
-  assert.match(serviceWorker, /case 'EDIT_ENTRIES': return tracker\.editEntries\(message\.payload\)/);
+  assert.match(serviceWorker, /case 'QUEUE_ENTRIES_EDIT': \{[\s\S]*destinationIdForCompletedMutation\(message\.type, message\.payload, sender, extensionOrigin\)[\s\S]*const \{ destinationId: _destinationId, \.\.\.payload \} = message\.payload;[\s\S]*trackerForDestination\(destinationId\)\)\.queueEntriesEdit\(payload\)[\s\S]*requestPendingSync\(\)[\s\S]*return \{ \.\.\.result, destinationId \}/);
   assert.doesNotMatch(serviceWorker, /case 'MOVE_BOUNDARY'/);
+});
+
+test('legacy queued-edit conflicts remain recoverable when the page projection has only a stage', () => {
+  assert.match(source, /\['editEntry', 'editEntries'\]\.includes\(item\.operation \?\? item\.stage\)/);
+  assert.match(source, /Saved edit needs review/);
+  assert.match(source, /Retry saved edit/);
+  assert.match(source, /Discard queued edit/);
 });

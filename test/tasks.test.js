@@ -17,6 +17,10 @@ test('task periods are inclusive and default to the last two weeks', () => {
   assert.throws(() => taskPeriodRange('forever', '2026-08-20'), /period/i);
 });
 
+test('all-time task period starts at the first supported Clockoli date', () => {
+  assert.deepEqual(taskPeriodRange('all-time', '2026-08-20'), { startDate: '1970-01-01', endDate: '2026-08-20' });
+});
+
 test('tracked tasks deduplicate sessions by canonical issue or PR and sort by total time', () => {
   const issueOne = issue(1), pullTwo = issue(2, 'pull_request');
   const tasks = aggregateTrackedTasks([
@@ -32,6 +36,19 @@ test('tracked tasks deduplicate sessions by canonical issue or PR and sort by to
     { url: pullTwo.url, seconds: 3600, sessions: 1, title: 'Improve reports' },
     { url: issueOne.url, seconds: 1800, sessions: 2, title: 'Fix search' },
   ]);
+});
+
+test('tracked tasks aggregate current users by URL with sorted destination provenance', () => {
+  const task = issue(1);
+  const sharedId = '01K2ABCDEF0123456789ABCDE0';
+  const tasks = aggregateTrackedTasks([
+    { ...record(task, 600, '2026-08-18', 'alice'), id: sharedId, destinationId: 'github:1', timeRepository: 'alice/time', duplicateDestinations: ['github:1', 'github:2'] },
+    { ...record(task, 900, '2026-08-19', 'alice-alt'), id: '01K2ABCDEF0123456789ABCDE1', destinationId: 'github:2', timeRepository: 'team/time' },
+  ], { currentUsers: ['alice', 'alice-alt'] });
+  assert.deepEqual(tasks, [{
+    taskUrl: task.url, issue: task, title: '', totalSeconds: 1500, sessionCount: 2,
+    destinationIds: ['github:1', 'github:2'], timeRepositories: ['alice/time', 'team/time'],
+  }]);
 });
 
 test('persisted record titles are used without display-time metadata resolution', () => {
@@ -53,11 +70,12 @@ test('active-only work is included without baking elapsed time into completed to
   const activeIssue = issue(9, 'pull_request', 'api');
   const tasks = aggregateTrackedTasks([], {
     user: 'alice',
-    active: { user: 'alice', issue: activeIssue, startedAt: '2026-08-20T10:00:00.000Z', issueTitle: 'Running review' },
+    active: { user: 'alice', issue: activeIssue, startedAt: '2026-08-20T10:00:00.000Z', issueTitle: 'Running review', destinationId: 'github:2', timeRepository: 'team/time' },
     metadata: new Map([[activeIssue.url, { title: 'Running review' }]]),
   });
   assert.deepEqual(tasks, [{
     taskUrl: activeIssue.url, issue: activeIssue, title: 'Running review', totalSeconds: 0, sessionCount: 0,
+    destinationIds: ['github:2'], timeRepositories: ['team/time'],
     activeStartedAt: '2026-08-20T10:00:00.000Z',
   }]);
 });
@@ -111,9 +129,10 @@ test('locally accepted pending completions participate in Top tasks without doub
     user: 'alice', taskUrl, taskTitle: 'Pending task', startedAt: '2026-08-20T10:00:00Z',
     endedAt: '2026-08-20T11:00:00Z', durationSeconds: 3600, description: 'done',
   };
-  const pendingWrites = [{ operation: 'completeTimer', entry: pendingEntry }];
+  const pendingWrites = [{ operation: 'completeTimer', destinationId: 'github:2', timeRepository: 'team/time', entry: pendingEntry }];
   assert.deepEqual(aggregateTrackedTasks([], { user: 'alice', pendingWrites }), [{
     taskUrl, title: 'Pending task', totalSeconds: 3600, sessionCount: 1,
+    destinationIds: ['github:2'], timeRepositories: ['team/time'],
   }]);
   assert.equal(aggregateTrackedTasks([pendingEntry], { user: 'alice', pendingWrites })[0].totalSeconds, 3600);
   const winner = { ...pendingEntry, endedAt: '2026-08-20T10:55:00Z', durationSeconds: 3300, description: 'first Stop' };

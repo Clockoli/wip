@@ -234,3 +234,27 @@ test('every destructive Delete control receives the complete Primer danger varia
     assert.match(css, /\.danger:disabled\s*,\s*\.danger-outline:disabled\s*\{[^}]*button-danger-borderColor-rest[^}]*button-danger-bgColor-disabled[^}]*button-danger-fgColor-disabled/, `${surface} Delete lacks danger disabled state`);
   }
 });
+
+test('extension-page stylesheets only reference custom properties the shared theme defines', () => {
+  // --task-color is set per row by tasks.js; everything else must come from the theme or the sheet itself.
+  const runtimeProvided = new Set(['--task-color']);
+  const declared = css => new Set(css.match(/--[A-Za-z0-9-]+(?=\s*:)/g) ?? []);
+  const themeTokens = declared(primer);
+  const sheets = [
+    ...documentStyles,
+    ['src/styles/page-tabs.css', read('src/styles/page-tabs.css')],
+    ['src/styles/running-status.css', read('src/styles/running-status.css')],
+  ];
+  for (const [path, css] of sheets) {
+    const local = declared(css);
+    // Only usages without a fallback break the whole declaration when the token is missing.
+    const required = css.match(/var\(\s*(--[A-Za-z0-9-]+)\s*\)/g) ?? [];
+    for (const usage of required) {
+      const name = usage.match(/--[A-Za-z0-9-]+/)[0];
+      assert.ok(
+        themeTokens.has(name) || local.has(name) || runtimeProvided.has(name),
+        `${path} uses undefined custom property ${name}`,
+      );
+    }
+  }
+});

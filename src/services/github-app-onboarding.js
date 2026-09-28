@@ -110,6 +110,7 @@ export class InstallationDiscoveryService {
           ownerId: positiveInteger(repo?.owner?.id, 'repository owner ID'),
           owner: String(repo.owner.login || ''),
           ownerType: String(repo.owner.type || ''),
+          ownership: repo.owner.type === 'User' ? 'personal' : repo.owner.type === 'Organization' ? 'organization' : 'unknown',
           repo: String(repo.name || ''),
           fullName: String(repo.full_name || ''),
           private: repo.private === true && (!repo.visibility || repo.visibility === 'private'),
@@ -119,6 +120,7 @@ export class InstallationDiscoveryService {
           defaultBranch: String(repo.default_branch || ''),
           appPermissions: { ...installation.permissions },
           userPermissions: { ...(repo.permissions || {}) },
+          admin: repo.permissions?.admin === true,
           eligible: reasons.every(reason => reason === 'initialized_default_branch_required'),
           needsInitialization: reasons.includes('initialized_default_branch_required'),
           reasons,
@@ -240,6 +242,80 @@ async function validateExistingFiles(github, entries) {
   }
 }
 
+function inspectionResult(repository, state, { storageLogin = '', errorCode = '' } = {}) {
+  const ownership = repository.ownerType === 'User' ? 'personal'
+    : repository.ownerType === 'Organization' ? 'organization' : 'unknown';
+  const canInitialize = ['empty', 'uninitialized'].includes(state)
+    && (ownership === 'personal' || (ownership === 'organization' && repository.userPermissions?.admin === true));
+  return {
+    ...repository,
+    ownership,
+    admin: repository.userPermissions?.admin === true,
+    state,
+    storageLogin,
+    canAdd: state === 'initialized_member',
+    canJoin: state === 'initialized_joinable',
+    canInitialize,
+    eligible: state === 'initialized_member' || state === 'initialized_joinable' || canInitialize,
+    ...(errorCode ? { inspectionError: errorCode } : {}),
+  };
+}
+
+export class RepositoryInspectionService {
+  constructor({ github }) { this.github = github; }
+
+  async inspect(user, repository) {
+    if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validLogin(user?.login)) {
+      return inspectionResult(repository, 'unavailable', { errorCode: 'invalid_github_response' });
+    }
+    if (repository.appPermissions?.contents !== 'write' || !['User', 'Organization'].includes(repository.ownerType)) {
+      return inspectionResult(repository, 'unavailable', { errorCode: repository.reasons?.[0] || 'repository_unavailable' });
+    }
+    try {
+      const fresh = await this.github.validateRepository();
+      if (fresh?.id !== repository.repoId) {
+        return inspectionResult(repository, 'unavailable', { errorCode: 'repository_identity_changed' });
+      }
+      const inspectedRepository = {
+        ...repository,
+        ownerType: String(fresh.owner?.type || ''),
+        private: fresh.private === true && (!fresh.visibility || fresh.visibility === 'private'),
+        archived: fresh.archived === true,
+        disabled: fresh.disabled === true,
+        defaultBranch: String(fresh.default_branch || ''),
+        userPermissions: { ...(fresh.permissions || {}) },
+      };
+      const reasons = repositoryReasons(fresh, true);
+      const blockingReason = reasons.find(reason => reason !== 'initialized_default_branch_required');
+      if (blockingReason || !['User', 'Organization'].includes(inspectedRepository.ownerType)) {
+        return inspectionResult(inspectedRepository, 'unavailable', { errorCode: blockingReason || 'repository_unavailable' });
+      }
+      if (!inspectedRepository.defaultBranch) return inspectionResult(inspectedRepository, 'empty');
+      let file = null;
+      try { file = await this.github.getText(MARKER_PATH); }
+      catch (error) { if (!isNotFound(error)) throw error; }
+      if (file) {
+        const marker = parseMarker(file.text);
+        const storageLogin = marker.users[String(user.id)] || '';
+        return inspectionResult(inspectedRepository, storageLogin ? 'initialized_member' : 'initialized_joinable', { storageLogin });
+      }
+      const entries = this.github.listRepositoryEntries
+        ? await this.github.listRepositoryEntries()
+        : await this.github.listRepositoryFiles();
+      await validateExistingFiles(this.github, entries);
+      return inspectionResult(inspectedRepository, 'uninitialized');
+    } catch (error) {
+      if (['incompatible_storage_format', 'storage_layout_budget'].includes(error?.code)) {
+        return inspectionResult(repository, 'incompatible', { errorCode: error.code });
+      }
+      const errorCode = isNotFound(error) ? 'repository_access_required'
+        : ['authentication', 'permission', 'org_approval_required', 'rate_limit', 'private_required', 'user_write_required', 'repository_unavailable', 'invalid_github_response'].includes(error?.code)
+          ? error.code : 'repository_unavailable';
+      return inspectionResult(repository, 'unavailable', { errorCode });
+    }
+  }
+}
+
 function markerText(user, storageLogin, now) {
   return `${JSON.stringify({
     repositoryFormatVersion: REPOSITORY_FORMAT_VERSION,
@@ -265,7 +341,21 @@ export class RepositoryInitializer {
     this.now = now;
   }
 
-  async initialize(user, { expectedRepositoryId, selectedBranch, branchMode = 'default', requiredStorageLogin = '' } = {}) {
+  async execute(action, user, options = {}) {
+    if (!['add', 'join', 'initialize'].includes(action)) {
+      throw new OnboardingError('Choose whether to add, join, or initialize the repository.', 'repository_action_required');
+    }
+    return this.#apply(action, user, options);
+  }
+
+  async add(user, options = {}) { return this.execute('add', user, options); }
+  async join(user, options = {}) { return this.execute('join', user, options); }
+  async initializeRepository(user, options = {}) { return this.execute('initialize', user, options); }
+
+  // Temporary compatibility for callers predating explicit onboarding actions.
+  async initialize(user, options = {}) { return this.#apply('legacy', user, options); }
+
+  async #apply(action, user, { expectedRepositoryId, selectedBranch, branchMode = 'default', requiredStorageLogin = '' } = {}) {
     if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validLogin(user?.login)) throw new OnboardingError('GitHub returned an invalid user identity.', 'invalid_github_response');
     const storageLogin = requiredStorageLogin || user.login;
     if (!validLogin(storageLogin)) throw new OnboardingError('The existing Clockoli storage login is invalid.', 'incompatible_storage_format');
@@ -284,6 +374,9 @@ export class RepositoryInitializer {
       return fresh;
     };
     let repository = await validateFreshRepository({ allowEmpty: true });
+    if (action === 'initialize' && repository.owner?.type === 'Organization' && repository.permissions?.admin !== true) {
+      throw new OnboardingError('Organization repository initialization requires GitHub administrator permission.', 'repository_admin_required');
+    }
     const initializeEmptyRepository = async () => {
       const text = markerText(user, storageLogin, this.now);
       parseMarker(text);
@@ -298,10 +391,16 @@ export class RepositoryInitializer {
         throw initializationError;
       }
     };
-    if (!repository.default_branch && branchMode === 'default') return initializeEmptyRepository();
+    if (!repository.default_branch && branchMode === 'default') {
+      if (action === 'join') throw new OnboardingError('Join requires an existing valid Clockoli repository marker.', 'repository_not_initialized');
+      if (action === 'add') throw new OnboardingError('This GitHub account is not registered in the Clockoli repository.', 'repository_membership_required');
+      return initializeEmptyRepository();
+    }
     try { await this.github.validateBranch(); }
     catch (error) {
-      if (isNotFound(error) && branchMode === 'default') return initializeEmptyRepository();
+      if (isNotFound(error) && branchMode === 'default' && !['add', 'join'].includes(action)) return initializeEmptyRepository();
+      if (isNotFound(error) && action === 'join') throw new OnboardingError('Join requires an existing valid Clockoli repository marker.', 'repository_not_initialized');
+      if (isNotFound(error) && action === 'add') throw new OnboardingError('This GitHub account is not registered in the Clockoli repository.', 'repository_membership_required');
       if (isNotFound(error) && selectedBranch && selectedBranch !== repository.default_branch) {
         throw new OnboardingError('The existing custom branch is unavailable to the Clockoli GitHub App. Resolve the branch or choose another repository.', 'custom_branch_unverified');
       }
@@ -320,6 +419,10 @@ export class RepositoryInitializer {
       if (!file) {
         await validateExistingFiles(this.github, this.github.listRepositoryEntries ? await this.github.listRepositoryEntries() : await this.github.listRepositoryFiles());
         await validateFreshRepository();
+        if (action === 'join') throw new OnboardingError('Join requires an existing valid Clockoli repository marker.', 'repository_not_initialized');
+        if (action === 'add') throw new OnboardingError('This GitHub account is not registered in the Clockoli repository.', 'repository_membership_required');
+      } else if (action === 'initialize') {
+        throw new OnboardingError('This repository is already initialized for Clockoli.', 'repository_already_initialized');
       }
 
       let marker;
@@ -333,11 +436,13 @@ export class RepositoryInitializer {
 
       const userId = String(user.id);
       if (marker.users[userId]) {
+        if (action === 'join') throw new OnboardingError('This GitHub account is already registered in the Clockoli repository.', 'repository_already_joined');
         if (requiredStorageLogin && marker.users[userId] !== requiredStorageLogin) {
           throw new OnboardingError('The repository maps this GitHub account to a different immutable storage login.', 'storage_login_conflict');
         }
         return result('access_checked', marker.users[userId], repository, selectedBranch);
       }
+      if (action === 'add') throw new OnboardingError('This GitHub account is not registered in the Clockoli repository.', 'repository_membership_required');
       const occupied = Object.entries(marker.users).find(([id, login]) => id !== userId && login.toLowerCase() === storageLogin.toLowerCase());
       if (occupied) throw new OnboardingError('This repository path is already assigned to another GitHub account.', 'storage_login_conflict');
       marker.users = { ...marker.users, [userId]: storageLogin };

@@ -1,12 +1,17 @@
-.page-tabs-shell,.page-tabs{box-sizing:border-box}
-.page-tabs-shell{border-bottom:1px solid var(--borderColor-default);background:var(--bgColor-default)}
-.page-tabs{display:flex;align-items:stretch;width:min(1440px,100%);margin:0 auto;padding:0 24px;overflow-x:auto;scrollbar-width:thin;white-space:nowrap}
-.page-brand{display:inline-flex;flex:0 0 auto;align-items:center;margin-right:22px;padding:7px 0;text-decoration:none}
+.page-tabs-shell,.page-tabs,.page-tab{box-sizing:border-box}
+.page-tabs-shell{border-bottom:1px solid var(--borderColor-muted,var(--borderColor-default));background:var(--bgColor-default)}
+.page-tabs{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;width:100%;min-height:48px;margin:0;padding:8px clamp(16px,3vw,48px);white-space:nowrap}
+.page-brand{display:inline-flex;grid-column:1;align-items:center;justify-self:start;padding:0;text-decoration:none}
 .page-brand img{display:block;width:auto;height:32px;object-fit:contain}
 .page-brand:hover{color:var(--fgColor-default);text-decoration:none}
-.page-tab{flex:0 0 auto;margin-bottom:-1px;padding:13px 14px 11px;border-bottom:2px solid transparent;color:var(--fgColor-muted);font:600 14px/1.5 var(--fontStack-sansSerif);text-decoration:none}
-.page-tab:hover{color:var(--fgColor-default);text-decoration:none}
-.page-tab[aria-current="page"]{border-bottom-color:var(--borderColor-accent-emphasis);color:var(--fgColor-default)}
+.page-tab-list{display:flex;grid-column:2;align-items:center;gap:2px;margin:0}
+.page-tab{display:inline-flex;align-items:center;gap:6px;padding:5px 7px;border:1px solid transparent;border-radius:6px;color:var(--fgColor-muted);font:600 14px/1.5 var(--fontStack-sansSerif);text-decoration:none}
+.page-tab svg{width:16px;height:16px;fill:currentColor}
+.page-tab:hover{border-color:var(--button-invisible-borderColor-hover,transparent);background:var(--button-invisible-bgColor-hover,rgba(175,184,193,.2));color:var(--fgColor-default);text-decoration:none}
+.page-tab[aria-current="page"]{background:var(--button-default-bgColor-selected,var(--bgColor-muted));color:var(--fgColor-default)}
 .page-brand:focus-visible,.page-tab:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:-4px}
-@media(max-width:640px){.page-tabs{padding:0 4px}.page-brand{margin-right:4px}.page-brand img{width:auto;height:20px}.page-tab{padding-inline:4px;font-size:12px}}
+@media(max-width:640px){.page-tabs{display:flex;flex-wrap:wrap;padding:8px 12px;gap:6px}.page-brand{width:100%}.page-brand img{height:24px}.page-tab-list{max-width:100%;margin:0;overflow-x:auto}.page-tab{padding-inline:5px;font-size:12px}}
+@media(max-width:400px){.page-tab-list{gap:0}.page-tab{gap:2px;padding-inline:2px;font-size:11px}.page-tab svg{width:13px;height:13px}}
 @media print{.page-tabs-shell{display:none}}
+/* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
+@media(prefers-color-scheme:dark){.page-brand img{filter:saturate(1.4) brightness(2.1)}}

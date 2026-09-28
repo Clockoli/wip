@@ -15,6 +15,21 @@ function response(status, body = null, headers = {}) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body };
 }
 
+test('GitHub client emits safe per-request timing diagnostics without authorization data', async () => {
+  const diagnostics = [];
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time-data',
+    requestDiagnostics: event => diagnostics.push(event),
+    fetchImpl: async () => response(200, { login: 'alice', id: 1 }),
+  });
+  await client.getAuthenticatedUser();
+  assert.deepEqual(diagnostics.map(({ method, path, status }) => ({ method, path, status })), [
+    { method: 'GET', path: '/user', status: 200 },
+  ]);
+  assert.equal(Number.isFinite(diagnostics[0].durationMs), true);
+  assert.equal(JSON.stringify(diagnostics).includes('secret'), false);
+});
+
 test('GitHub client encodes unicode text and uses SHA for update/delete', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
@@ -219,7 +234,9 @@ test('setup rejects public repositories and 422 is validation, not a concurrency
   const publicRepo = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(200, { private: false, permissions: { push: true } }) });
   await assert.rejects(() => publicRepo.validateRepository(), /private/i);
   const invalid = new GitHubClient({ token: 'x', owner: 'a', repo: 'b', fetchImpl: async () => response(422, { message: 'Invalid request' }) });
-  await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), GitHubValidationError);
+  await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), error => (
+    error instanceof GitHubValidationError && error.message === 'Invalid request'
+  ));
   await assert.rejects(() => invalid.putText('x.txt', 'text', 'm'), error => !(error instanceof GitHubConflictError));
 });
 
@@ -649,6 +666,30 @@ test('documented branch-policy rejections map to choose while genuine ref races 
   );
 });
 
+test('write destination validation cache expires exactly after five minutes', async () => {
+  let now = 0;
+  let repositoryReads = 0;
+  let branchReads = 0;
+  const repository = { id: 77, full_name: 'acme/time', private: true, archived: false, disabled: false, default_branch: 'main', permissions: { push: true } };
+  const client = new GitHubClient({
+    token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: 77,
+    validationCache: new Map(), now: () => new Date(now),
+    fetchImpl: async (url, options = {}) => {
+      if (!options.method && url.endsWith('/repos/acme/time')) { repositoryReads += 1; return response(200, repository); }
+      if (!options.method && url.endsWith('/branches/main')) { branchReads += 1; return response(200, { name: 'main' }); }
+      if (options.method === 'PUT') return response(201, { content: { sha: 'next' }, commit: { sha: 'commit' } });
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+  await client.putText('active/alice.json', 'Start: now\n', 'start');
+  now = (5 * 60 * 1000) - 1;
+  await client.putText('active/alice.json', 'Start: later\n', 'start');
+  now = 5 * 60 * 1000;
+  await client.putText('active/alice.json', 'Start: latest\n', 'start');
+  assert.equal(repositoryReads, 2);
+  assert.equal(branchReads, 2);
+});
+
 test('runtime mutations fail closed when stable repository identity has not been upgraded', async () => {
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time', branch: 'main', expectedRepositoryId: null, fetchImpl: async () => { throw new Error('must not reach GitHub'); } });
   await assert.rejects(() => client.putText('active/alice.json', 'Start: now\n', 'start'), error => error.code === 'repository_identity_unverified');
@@ -786,4 +827,14 @@ test('GitHub client creates a user branch from a source ref and discovers bounde
   assert.deepEqual(payload, { ref: 'refs/heads/clockoli/users/123', sha });
   assert.deepEqual(await client.listBranches('clockoli/users/'), ['clockoli/users/123', 'clockoli/users/456']);
   assert.equal(client.forBranch('clockoli/users/123').repositoryKey, 'acme/time-data@clockoli/users/123');
+});
+
+test('rate-limit errors expose an absolute retry time for status projections', async () => {
+  for (const [headers, expected] of [
+    [{ 'retry-after': '60' }, '2026-09-05T10:01:00.000Z'],
+    [{ 'x-ratelimit-reset': String(Date.parse('2026-09-05T10:42:00Z') / 1000) }, '2026-09-05T10:42:00.000Z'],
+  ]) {
+    const client = new GitHubClient({ token: 'test', now: () => new Date('2026-09-05T10:00:00Z'), fetchImpl: async () => response(429, {}, headers) });
+    await assert.rejects(() => client.request('/user'), error => error.code === 'rate_limit' && error.retryAt === expected);
+  }
 });

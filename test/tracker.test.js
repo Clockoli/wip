@@ -95,6 +95,9 @@ function entry(startedAt, endedAt, override = {}) {
     metadata: {}, metrics: {}, createdAt: startedAt, updatedAt: endedAt, ...override,
   };
 }
+function stripInternalForTest(value) {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !['_path', '_sha', '_index', '_pending'].includes(key)));
+}
 function seedText(github, path, text, sha = 'seed') { github.files.set(path, { sha, text }); }
 function ensureTaskIndexFixture(github) {
   if (github.files.has(TASK_INDEX_PATH)) return;
@@ -123,6 +126,35 @@ function service(options = {}) {
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
 }
 
+test('queued start/stop preparation is side-effect free and keeps destination metadata out of work JSON', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const running = { ...active(), _path: 'active/alice.json', _sha: 'active-sha', destinationId: 'must-not-persist' };
+  store.value.activeCache = running;
+  const stopped = tracker.prepareQueuedStop(running, 'done');
+  const started = tracker.prepareQueuedStart('https://example.test/next', 'Next', '', {
+    blockedBy: { destinationId: 'github:1', operationId: stopped.operation.id },
+  });
+  assert.equal(stopped.operation.nextActive, undefined);
+  assert.equal(started.operation.stage, 'awaitSourceCompletion');
+  assert.equal(started.operation.blockedBy.destinationId, 'github:1');
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.id, running.id);
+  assert.doesNotMatch(serializeActiveRecord(started.pendingActive), /destination/i);
+  assert.doesNotMatch(serializeMonthlyRecords([stopped.pendingEntry]), /destination/i);
+});
+
+test('sync leaves an await-source start untouched without attempting a remote write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  store.value.pendingWrites = [{
+    id: 'blocked', operation: 'startTimer', stage: 'awaitSourceCompletion', status: 'pending', retryCount: 0,
+    nextActive: stripInternalForTest(active('2026-08-18T09:00:00.000Z')),
+    blockedBy: { destinationId: 'github:1', operationId: 'source' }, queuedAt: '2026-08-18T09:00:00.000Z', lastError: '',
+  }];
+  const remaining = await tracker.syncPending();
+  assert.equal(remaining[0].stage, 'awaitSourceCompletion');
+  assert.deepEqual(github.writes, []);
+});
+
 test('completed-record mutations update the mandatory task index atomically', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');
@@ -149,6 +181,52 @@ test('completed-record mutations update the mandatory task index atomically', as
   assert.ok(github.atomicWrites.every(write => write.changes.some(change => change.path === TASK_INDEX_PATH)));
 });
 
+test('task merge atomically replaces every queued source URL and title across the selected range and active timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const sourceUrl = 'https://example.test/source', targetUrl = 'https://example.test/target', secondSourceUrl = 'https://example.test/source-two', secondTargetUrl = 'https://example.test/target-two';
+  const july = entry('2026-07-02T08:00:00.000Z', '2026-07-02T09:00:00.000Z', {
+    taskUrl: sourceUrl, taskTitle: 'Old task', metadata: {
+      custom: { keep: true }, clockoli: { future: 'keep', task_identity_history: [{ url: 'https://example.test/original', title: 'Original task' }] },
+    },
+  });
+  const august = entry('2026-08-03T08:00:00.000Z', '2026-08-03T10:00:00.000Z', { taskUrl: secondSourceUrl, taskTitle: 'Second old task' });
+  const outside = entry('2026-04-03T08:00:00.000Z', '2026-04-03T09:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
+  seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([july]), 'july-sha');
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([august]), 'august-sha');
+  seedText(github, 'times/2026-04/alice.jsonl', serializeMonthlyRecords([outside]), 'april-sha');
+  const running = active('2026-08-18T08:00:00.000Z', { taskUrl: sourceUrl, taskTitle: 'Old task' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00Z') });
+  const result = await tracker.mergeTasks({ pairs: [
+    { sourceTaskUrl: sourceUrl, targetTaskUrl: targetUrl, targetTaskTitle: 'Canonical task' },
+    { sourceTaskUrl: secondSourceUrl, targetTaskUrl: secondTargetUrl, targetTaskTitle: 'Second canonical task' },
+  ], startDate: '2026-05-19', endDate: '2026-08-18' });
+  assert.deepEqual(result, { mergedEntries: 2, mergedActive: true });
+  const [savedJuly] = parseMonthlyRecords(github.files.get('times/2026-07/alice.jsonl').text, { user: 'alice', month: '2026-07' });
+  const [savedAugust] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' });
+  assert.equal(savedJuly.taskUrl, targetUrl); assert.equal(savedJuly.taskTitle, 'Canonical task');
+  assert.equal(savedAugust.taskUrl, secondTargetUrl); assert.equal(savedAugust.taskTitle, 'Second canonical task');
+  assert.deepEqual(savedJuly.metadata, {
+    custom: { keep: true }, clockoli: {
+      future: 'keep', task_identity_history: [
+        { url: 'https://example.test/original', title: 'Original task' },
+        { url: sourceUrl, title: 'Old task' },
+      ],
+    },
+  });
+  assert.deepEqual(savedAugust.metadata.clockoli.task_identity_history, [{ url: secondSourceUrl, title: 'Second old task' }]);
+  const [savedOutside] = parseMonthlyRecords(github.files.get('times/2026-04/alice.jsonl').text, { user: 'alice', month: '2026-04' });
+  assert.equal(savedOutside.taskUrl, sourceUrl);
+  const savedActive = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(savedActive.taskUrl, targetUrl); assert.equal(savedActive.taskTitle, 'Canonical task');
+  assert.deepEqual(savedActive.metadata.clockoli.task_identity_history, [{ url: sourceUrl, title: 'Old task' }]);
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(index.tasks[sourceUrl].sessionCount, 1);
+  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });
+  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id] });
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('start writes one readable active text file with its durable issue title', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.start(issue, 'Ranking regression', 'Investigating');
@@ -160,6 +238,535 @@ test('start writes one readable active text file with its durable issue title', 
   assert.equal(JSON.parse(file.text).schema_version, 1);
   assert.equal(parseActiveRecord(file.text, { user: 'alice' }).issueTitle, 'Ranking regression');
   assert.equal(parseActiveRecord(file.text, { user: 'alice' }).issue.number, 123);
+});
+
+test('queued completed-entry edit updates local cache immediately and saves later in FIFO order', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0,
+    original: {
+      id: original.id, taskUrl: original.taskUrl, taskTitle: original.taskTitle,
+      issueUrl: original.taskUrl, issueTitle: original.taskTitle,
+      startedAt: original.startedAt, endedAt: original.endedAt, description: original.description,
+    },
+    edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+
+  assert.equal(accepted.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.recentCache[0].endedAt, '2026-08-18T10:00:00.000Z');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].endedAt, '2026-08-18T10:00:00.000Z');
+})
+
+test('queued completed-entry deletion disappears locally immediately and syncs later', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntryDelete({
+    path, originalSha: 'monthly-sha', index: 0, original,
+  });
+
+  assert.equal(accepted.pending, true);
+  assert.ok(accepted.operationId);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].operation, 'deleteEntry');
+  assert.deepEqual(store.value.recentCache, []);
+  const menuWhilePending = await tracker.loadMenuData();
+  assert.deepEqual(menuWhilePending.recent, [], 'a remote refresh must not resurrect a locally deleted queued entry');
+  assert.equal(menuWhilePending.pendingCount, 1);
+
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
+})
+
+test('sync compacts superseded queued edits for the same completed entry into one remote write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { startedAt: '2026-08-18T08:15:00.000Z', endedAt: '2026-08-18T09:30:00.000Z' },
+  });
+  const first = structuredClone(store.value.pendingWrites[0]);
+  store.value.pendingWrites.push({
+    ...structuredClone(first), id: deterministicRecordId('2026-08-18T12:00:01.000Z'), queuedAt: '2026-08-18T12:00:01.000Z',
+    request: {
+      ...structuredClone(first.request),
+      original: stripInternalForTest(store.value.recentCache[0]),
+      edits: { endedAt: '2026-08-18T10:00:00.000Z', description: 'Final edit' },
+    },
+  });
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.startedAt, '2026-08-18T08:15:00.000Z');
+  assert.equal(saved.endedAt, '2026-08-18T10:00:00.000Z');
+  assert.equal(saved.description, 'Final edit');
+});
+
+test('queue compaction uses the latest accepted snapshot instead of combining incompatible timestamps', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { startedAt: '2026-08-18T08:50:00.000Z' },
+  });
+  const first = structuredClone(store.value.pendingWrites[0]);
+  store.value.pendingWrites.push({
+    ...structuredClone(first), id: deterministicRecordId('2026-08-18T12:00:01.000Z'), queuedAt: '2026-08-18T12:00:01.000Z',
+    request: {
+      ...structuredClone(first.request), original: structuredClone(original),
+      edits: { endedAt: '2026-08-18T08:10:00.000Z' },
+    },
+  });
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.startedAt, original.startedAt);
+  assert.equal(saved.endedAt, '2026-08-18T08:10:00.000Z');
+});
+
+test('sync repairs an inverted interval persisted by the previous compaction algorithm from the optimistic cache', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const intended = { ...original, endedAt: '2026-08-18T08:10:00.000Z', durationSeconds: 600 };
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...intended, _path: path, _sha: 'monthly-sha', _index: 0, _pending: true }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { description: 'placeholder' },
+  });
+  Object.assign(store.value.pendingWrites[0], {
+    status: 'conflict', conflictReason: 'queued_write_validation',
+    request: {
+      path, originalSha: 'monthly-sha', index: 0, original,
+      edits: { startedAt: '2026-08-18T08:50:00.000Z', endedAt: intended.endedAt },
+    },
+  });
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.startedAt, intended.startedAt);
+  assert.equal(saved.endedAt, intended.endedAt);
+});
+
+test('sync does not discard a malformed saved edit when only a fresh remote cache snapshot remains', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { description: 'placeholder' } });
+  Object.assign(store.value.pendingWrites[0], {
+    status: 'conflict', conflictReason: 'queued_write_validation',
+    request: {
+      path, originalSha: 'monthly-sha', index: 0, original,
+      edits: { startedAt: '2026-08-18T08:50:00.000Z', endedAt: '2026-08-18T08:10:00.000Z' },
+    },
+  });
+  store.value.recentCache[0] = { ...original, _path: path, _sha: 'monthly-sha', _index: 0 };
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'queued_write_validation');
+  assert.equal(github.atomicWrites.length, 0);
+
+  const retried = await tracker.resolvePendingConflict(store.value.pendingWrites[0].id);
+
+  assert.deepEqual(retried, { resolved: false });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'queued_write_validation');
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('sync keeps only the latest queued start adjustment for one active timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt }, startedAt: '2026-08-18T09:00:00.000Z' });
+  const first = structuredClone(store.value.pendingWrites[0]);
+  store.value.pendingWrites.push({
+    ...structuredClone(first), id: deterministicRecordId('2026-08-18T12:00:01.000Z'), queuedAt: '2026-08-18T12:00:01.000Z',
+    original: { id: original.id, startedAt: '2026-08-18T09:00:00.000Z' }, startedAt: '2026-08-18T09:30:00.000Z',
+  });
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.writes.filter(write => write.path === 'active/alice.json').length, 1);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt, '2026-08-18T09:30:00.000Z');
+});
+
+test('queued running start and description edits coalesce and persist together', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt }, startedAt: '2026-08-18T09:00:00.000Z' });
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: '2026-08-18T09:00:00.000Z' }, description: 'Saved on blur' });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(store.value.pendingWrites[0].description, 'Saved on blur');
+
+  await tracker.syncPending();
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(saved.startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(saved.description, 'Saved on blur');
+});
+
+test('restart compaction preserves active fields changed by separate persisted edits', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await tracker.queueActiveStartEdit({
+    original: { id: original.id, startedAt: original.startedAt },
+    startedAt: '2026-08-18T09:00:00.000Z',
+  });
+  const later = {
+    ...structuredClone(store.value.pendingWrites[0]),
+    id: deterministicRecordId('2026-08-18T12:00:01.000Z'),
+    queuedAt: '2026-08-18T12:00:01.000Z',
+    original: { id: original.id, startedAt: '2026-08-18T09:00:00.000Z' },
+    description: 'Saved after restart',
+  };
+  delete later.startedAt;
+  store.value.pendingWrites.push(later);
+
+  await tracker.syncPending();
+
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(github.writes.filter(write => write.path === 'active/alice.json').length, 1);
+  assert.equal(saved.startedAt, '2026-08-18T09:00:00.000Z');
+  assert.equal(saved.description, 'Saved after restart');
+});
+
+test('queue compaction never crosses a timer lifecycle barrier', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:30:00.000Z' } });
+  const first = structuredClone(store.value.pendingWrites[0]);
+  store.value.pendingWrites.push(
+    { operation: 'completeTimer', id: deterministicRecordId('2026-08-18T12:00:01.000Z'), status: 'pending', stage: 'verifyActive' },
+    { ...structuredClone(first), id: deterministicRecordId('2026-08-18T12:00:02.000Z'), queuedAt: '2026-08-18T12:00:02.000Z', request: { ...structuredClone(first.request), edits: { endedAt: '2026-08-18T10:00:00.000Z' } } },
+  );
+
+  const compacted = await tracker.compactPendingQueue();
+
+  assert.equal(compacted.length, 3);
+  assert.deepEqual(compacted.map(operation => operation.operation), ['editEntry', 'completeTimer', 'editEntry']);
+});
+
+test('enqueue-time single-entry coalescing never crosses a timer lifecycle barrier', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const firstAccepted = await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:30:00.000Z' } });
+  store.value.pendingWrites.push({ operation: 'completeTimer', id: deterministicRecordId('2026-08-18T12:00:01.000Z'), status: 'pending', stage: 'verifyActive' });
+
+  const secondAccepted = await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original: stripInternalForTest(store.value.recentCache[0]),
+    edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+
+  assert.deepEqual(store.value.pendingWrites.map(operation => operation.operation), ['editEntry', 'completeTimer', 'editEntry']);
+  assert.notEqual(secondAccepted.operationId, firstAccepted.operationId);
+  assert.equal(secondAccepted.operationId, store.value.pendingWrites[2].id);
+  assert.equal(store.value.pendingWrites[0].request.edits.endedAt, '2026-08-18T09:30:00.000Z');
+  assert.equal(store.value.pendingWrites[2].request.edits.endedAt, '2026-08-18T10:00:00.000Z');
+});
+
+test('enqueue-time linked-entry coalescing never crosses a timer lifecycle barrier', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const firstAccepted = await tracker.queueEntriesEdit({ entries: [{ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:30:00.000Z' } }] });
+  store.value.pendingWrites.push({ operation: 'completeTimer', id: deterministicRecordId('2026-08-18T12:00:01.000Z'), status: 'pending', stage: 'verifyActive' });
+
+  const secondAccepted = await tracker.queueEntriesEdit({ entries: [{
+    path, originalSha: 'monthly-sha', index: 0, original: stripInternalForTest(store.value.recentCache[0]),
+    edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  }] });
+
+  assert.deepEqual(store.value.pendingWrites.map(operation => operation.operation), ['editEntries', 'completeTimer', 'editEntries']);
+  assert.notEqual(secondAccepted.operationId, firstAccepted.operationId);
+  assert.equal(secondAccepted.operationId, store.value.pendingWrites[2].id);
+  assert.equal(store.value.pendingWrites[0].request.entries[0].edits.endedAt, '2026-08-18T09:30:00.000Z');
+  assert.equal(store.value.pendingWrites[2].request.entries[0].edits.endedAt, '2026-08-18T10:00:00.000Z');
+});
+
+test('sync preserves the final optimistic cache while a later edit remains behind a blocked lifecycle barrier', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:30:00.000Z' } });
+  store.value.pendingWrites.push({
+    operation: 'completeTimer', id: deterministicRecordId('2026-08-18T12:00:01.000Z'),
+    status: 'conflict', stage: 'verifyActive', conflictReason: 'active_changed_no_completion',
+  });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original: stripInternalForTest(store.value.recentCache[0]),
+    edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+
+  await tracker.syncPending();
+
+  assert.deepEqual(store.value.pendingWrites.map(operation => operation.operation), ['completeTimer', 'editEntry']);
+  assert.equal(store.value.recentCache[0].endedAt, '2026-08-18T10:00:00.000Z');
+  assert.equal(store.value.recentCache[0]._pending, true);
+  const [persisted] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(persisted.endedAt, '2026-08-18T09:30:00.000Z');
+});
+
+test('later queued edit follows an earlier cross-month move after its lifecycle barrier clears', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const august = 'times/2026-08/alice.jsonl', september = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-08-31T23:00:00.000Z', '2026-08-31T23:30:00.000Z');
+  seedText(github, august, serializeMonthlyRecords([original]), 'august-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: august, _sha: 'august-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-09-01T12:00:00.000Z') });
+  await tracker.queueEntryEdit({
+    path: august, originalSha: 'august-sha', index: 0, original,
+    edits: { startedAt: '2026-09-01T00:00:00.000Z', endedAt: '2026-09-01T00:30:00.000Z' },
+  });
+  const barrierId = deterministicRecordId('2026-09-01T12:00:01.000Z');
+  store.value.pendingWrites.push({
+    operation: 'completeTimer', id: barrierId, status: 'conflict', stage: 'verifyActive',
+    conflictReason: 'active_changed_no_completion',
+  });
+  await tracker.queueEntryEdit({
+    path: august, originalSha: 'august-sha', index: 0, original: stripInternalForTest(store.value.recentCache[0]),
+    edits: { endedAt: '2026-09-01T01:00:00.000Z' },
+  });
+
+  await tracker.syncPending();
+  store.value.pendingWrites = store.value.pendingWrites.filter(operation => operation.id !== barrierId);
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has(august), false);
+  const [persisted] = parseMonthlyRecords(github.files.get(september).text, { user: 'alice', month: '2026-09' });
+  assert.equal(persisted.startedAt, '2026-09-01T00:00:00.000Z');
+  assert.equal(persisted.endedAt, '2026-09-01T01:00:00.000Z');
+});
+
+test('queued entry edit automatically rebases onto the latest Activity file without surfacing a conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+  const remotelyUpdated = { ...original, description: 'Edited elsewhere', updatedAt: '2026-08-18T11:00:00.000Z' };
+  seedText(github, path, serializeMonthlyRecords([remotelyUpdated]), 'newer-sha');
+
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.endedAt, '2026-08-18T10:00:00.000Z');
+  assert.equal(saved.description, 'Edited elsewhere');
+});
+
+test('rebase that makes a saved edit interval invalid stops as a terminal conflict without writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { endedAt: '2026-08-18T08:30:00.000Z' },
+  });
+  const remotelyUpdated = {
+    ...original,
+    startedAt: '2026-08-18T08:45:00.000Z',
+    durationSeconds: 900,
+    updatedAt: '2026-08-18T11:00:00.000Z',
+  };
+  seedText(github, path, serializeMonthlyRecords([remotelyUpdated]), 'newer-sha');
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'queued_write_validation');
+  assert.equal(github.atomicWrites.length, 0);
+  const [persisted] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(persisted.startedAt, remotelyUpdated.startedAt);
+  assert.equal(persisted.endedAt, remotelyUpdated.endedAt);
+});
+
+test('a persisted queued-entry conflict is automatically retried on the next background sync', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T10:00:00.000Z' },
+  });
+  store.value.pendingWrites[0].status = 'conflict';
+  store.value.pendingWrites[0].conflictReason = 'queued_entry_edit_conflict';
+  const remotelyUpdated = { ...original, description: 'Edited elsewhere', updatedAt: '2026-08-18T11:00:00.000Z' };
+  seedText(github, path, serializeMonthlyRecords([remotelyUpdated]), 'newer-sha');
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.endedAt, '2026-08-18T10:00:00.000Z');
+  assert.equal(saved.description, 'Edited elsewhere');
+});
+
+test('queued entry edit conflict can be discarded without changing current Activity data', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  const accepted = await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { description: 'Discard me' } });
+  seedText(github, path, serializeMonthlyRecords([]), 'newer-sha');
+  await tracker.syncPending();
+
+  assert.deepEqual(await tracker.resolvePendingConflict(accepted.operationId, 'discard_queued_edit'), { resolved: true, discarded: true });
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' }), []);
+});
+
+test('queued linked-entry edits update local cache together and persist in one atomic write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const first = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const second = entry('2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [
+    { ...first, _path: path, _sha: 'monthly-sha', _index: 0 },
+    { ...second, _path: path, _sha: 'monthly-sha', _index: 1 },
+  ];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'monthly-sha', index: 0, original: first, edits: { endedAt: '2026-08-18T09:01:00.000Z' } },
+    { path, originalSha: 'monthly-sha', index: 1, original: second, edits: { startedAt: '2026-08-18T09:01:00.000Z' } },
+  ] });
+
+  assert.equal(accepted.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  const coalesced = await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'monthly-sha', index: 0, original: first, edits: { endedAt: '2026-08-18T09:02:00.000Z' } },
+  ] });
+  assert.equal(coalesced.operationId, accepted.operationId);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].request.entries.length, 2);
+  assert.equal(store.value.recentCache[0].endedAt, '2026-08-18T09:02:00.000Z');
+  assert.equal(store.value.recentCache[1].startedAt, '2026-08-18T09:01:00.000Z');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].endedAt, '2026-08-18T09:02:00.000Z');
+  assert.equal(saved[1].startedAt, '2026-08-18T09:01:00.000Z');
+});
+
+test('running timer start can be adjusted with SHA protection and preserves an active record', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  const updated = await tracker.editActiveStart({
+    original: { id: original.id, startedAt: original.startedAt },
+    startedAt: '2026-08-18T09:30:00.000Z',
+  });
+
+  assert.equal(updated.startedAt, '2026-08-18T09:30:00.000Z');
+  assert.equal(updated.createdAt, updated.startedAt);
+  assert.equal(updated.updatedAt, '2026-08-18T12:00:00.000Z');
+  assert.equal(github.writes.at(-1).path, 'active/alice.json');
+  assert.equal(github.writes.at(-1).sha, 'active-sha');
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt, updated.startedAt);
+  assert.equal(store.value.activeCache.startedAt, updated.startedAt);
+  assert.equal(github.files.has('times/2026-08/alice.jsonl'), false);
+});
+
+test('running timer start rejects stale and future edits', async () => {
+  const github = new FakeGitHub(), original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  const tracker = service({ github, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+
+  await assert.rejects(() => tracker.editActiveStart({
+    original: { id: original.id, startedAt: '2026-08-18T07:00:00.000Z' }, startedAt: '2026-08-18T09:00:00.000Z',
+  }), TrackerConflictError);
+  await assert.rejects(() => tracker.editActiveStart({
+    original: { id: original.id, startedAt: original.startedAt }, startedAt: '2026-08-18T12:01:00.000Z',
+  }), /future/i);
 });
 
 test('switching tasks stops the active timer before starting the selected task', async () => {
@@ -577,6 +1184,25 @@ test('editing one entry rewrites its monthly file once and preserves the other r
   assert.equal(saved._index, 1); assert.equal(saved.durationSeconds, 5400);
 });
 
+test('moving a completed entry to the latest permitted interval persists both timestamps', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  const target = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', { issue: pull });
+  seedText(github, path, serializeMonthlyRecords([target]), 'daily');
+
+  const [saved] = await service({ github }).editEntries({ entries: [{
+    path, originalSha: 'daily', index: 0,
+    original: { id: target.id, taskUrl: target.taskUrl, taskTitle: target.taskTitle, issueUrl: target.taskUrl, issueTitle: target.taskTitle, startedAt: target.startedAt, endedAt: target.endedAt, description: target.description },
+    edits: { startedAt: '2026-08-18T22:30:00.000Z', endedAt: '2026-08-18T23:30:00.000Z' },
+  }] });
+
+  assert.equal(saved.startedAt, '2026-08-18T22:30:00.000Z');
+  assert.equal(saved.endedAt, '2026-08-18T23:30:00.000Z');
+  const [persisted] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(persisted.startedAt, saved.startedAt);
+  assert.equal(persisted.endedAt, saved.endedAt);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('edit locates the intended record after its array position changed', async () => {
   const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
   const intended = entry('2026-08-18T15:13:17.000Z', '2026-08-18T16:13:17.000Z', { description: 'target' });
@@ -746,6 +1372,8 @@ test('menu data reports the complete current-day total even when recent rows are
   const data = await service({ github, store, recentDays: 1, clock: () => new Date(localTimestamp(2026, 7, 18, 12)) }).loadMenuData(50);
   assert.equal(data.recent.length, 50);
   assert.equal(data.todaySeconds, 56 * 60);
+  assert.equal(data.todayTrackedMs, (56 * 60 + 3600) * 1000);
+  assert.equal(data.weekTrackedMs, (56 * 60 + 3600) * 1000);
   assert.equal(data.reportDate, '2026-08-18');
   assert.deepEqual(data.summaries.map(({ key, seconds }) => [key, seconds]), [
     ['today', 56 * 60], ['this-week', 56 * 60], ['last-week', 0], ['this-month', 56 * 60],
@@ -971,6 +1599,41 @@ test('a local Stop is accepted while an earlier Start is still writing to GitHub
   assert.equal(github.files.has('active/alice.json'), false);
 });
 
+test('a local Stop stays stopped when an earlier active edit finishes remotely', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const timer = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(timer), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, {
+    user: 'alice', path: 'active/alice.json', sha: 'active-sha',
+  });
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T10:00:00.000Z') });
+  await tracker.queueActiveStartEdit({
+    original: { id: timer.id, startedAt: timer.startedAt },
+    startedAt: '2026-08-18T08:30:00.000Z', description: 'Edited while running',
+  });
+
+  let releaseEdit, editWriteBegan;
+  const began = new Promise(resolve => { editWriteBegan = resolve; });
+  const release = new Promise(resolve => { releaseEdit = resolve; });
+  const originalPut = github.putText.bind(github);
+  github.putText = async (...args) => {
+    if (args[2] === 'timer: edit start alice') { editWriteBegan(); await release; }
+    return originalPut(...args);
+  };
+
+  const editSync = tracker.syncPending();
+  await began;
+  const stopped = await tracker.stop('Stopped during active edit', { background: true });
+  assert.equal(stopped.pending, true);
+  assert.equal(store.value.activeCache, null, 'Stop is projected immediately while the edit write is pending');
+  releaseEdit(); await editSync;
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['completeTimer']);
+  assert.equal(store.value.activeCache, null, 'the older edit completion cannot resurrect the stopped timer');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
 test('remote active refresh cannot overwrite a timer accepted while its read is pending', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z', { issue: pull })), 'remote-sha');
@@ -1065,20 +1728,54 @@ test('queued switch resumes from startNext after a service-worker restart', asyn
   assert.equal(adopted.taskTitle, 'Remote title');
 });
 
-test('queued switch preserves a newer remote timer instead of showing its optimistic target', async () => {
+test('queued switch replaces an older remote timer with its later queued start', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');
   store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
   const tracker = service({ github, store });
   await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
-  const newer = active('2026-08-18T08:30:00.000Z', { taskUrl: 'https://example.com/other', issue: undefined });
-  seedText(github, 'active/alice.json', serializeActiveRecord(newer), 'newer-sha');
+  const older = active('2026-08-18T08:30:00.000Z', { taskUrl: 'https://example.com/other', issue: undefined });
+  seedText(github, 'active/alice.json', serializeActiveRecord(older), 'older-sha');
   await tracker.syncPending();
-  assert.equal(store.value.pendingWrites[0].status, 'conflict');
-  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
-  assert.equal(github.files.has('times/2026-08/alice.jsonl'), false);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/next');
+  assert.equal(store.value.activeCache._pending, undefined);
+  assert.equal(github.writes.at(-1).sha, 'older-sha');
+  assert.equal(github.files.has('times/2026-08/alice.jsonl'), true);
 });
 
+
+test('persisted startNext conflict is automatically reconsidered under the later-start-wins policy', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  await tracker.start('https://example.com/queued', 'Queued', '', { background: true });
+  const operation = store.value.pendingWrites[0];
+  operation.status = 'conflict';
+  operation.retryCount = 5847;
+  operation.lastError = 'Another timer started before the queued task switch completed. The queued target was preserved for recovery.';
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:30:00.000Z', { taskUrl: 'https://example.com/older', issue: undefined })), 'older-sha');
+
+  await tracker.syncPending();
+
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/queued');
+  assert.equal(store.value.activeCache._pending, undefined);
+  assert.equal(github.writes.at(-1).sha, 'older-sha');
+});
+
+test('queued switch adopts a newer remote timer and unblocks the queue automatically', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const newer = active('2026-08-18T09:30:00.000Z', { taskUrl: 'https://example.com/other', issue: undefined });
+  const tracker = service({ github, store });
+  await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
+  seedText(github, 'active/alice.json', serializeActiveRecord(newer), 'newer-sha');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
+  assert.equal(store.value.activeCache._sha, 'newer-sha');
+  assert.equal(store.value.activeCache._pending, undefined);
+});
 
 test('queued switch reconciles to a remote timer that races with startNext', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
@@ -1096,9 +1793,8 @@ test('queued switch reconciles to a remote timer that races with startNext', asy
   const tracker = service({ github, store });
   await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
   await tracker.syncPending();
-  assert.equal(store.value.pendingWrites[0].stage, 'startNext');
-  assert.equal(store.value.pendingWrites[0].status, 'conflict');
-  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/other');
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/next');
   assert.equal(store.value.activeCache._pending, undefined);
 });
 
@@ -1114,6 +1810,80 @@ test('background Start durably queues locally before any GitHub request', async 
   await tracker.syncPending();
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(store.value.activeCache._pending, undefined);
+});
+
+test('discarding a queued active timer removes it without creating a completed entry', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const started = await tracker.start('https://example.com/discard-me', 'Discard me', '', { background: true });
+
+  const discarded = await tracker.discardActive({ background: true });
+
+  assert.equal(discarded.id, started.id);
+  assert.equal(discarded.pending, true);
+  assert.equal(store.value.activeCache, null, 'discard is accepted locally before GitHub synchronization');
+  assert.deepEqual(store.value.pendingWrites.map(operation => operation.operation), ['startTimer', 'discardActive']);
+  assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0);
+
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal([...github.files.keys()].some(path => path.startsWith('times/')), false);
+});
+
+test('discarding a persisted active timer deletes only its active file and saves no time', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.json', serializeActiveRecord(active()), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, {
+    user: 'alice', path: 'active/alice.json', sha: 'active-sha',
+  });
+  const tracker = service({ github, store });
+
+  await tracker.discardActive({ background: true });
+  assert.equal(store.value.activeCache, null);
+  assert.equal(github.files.has('active/alice.json'), true, 'remote deletion waits for queued synchronization');
+
+  await tracker.syncPending();
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.deletes.length, 1);
+  assert.equal([...github.files.keys()].some(path => path.startsWith('times/')), false);
+});
+
+test('queued background Start adopts an already-created matching timer after any GitHub create rejection', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  await tracker.start('https://example.com/already-started', 'Already started', '', { background: true });
+  const target = store.value.pendingWrites[0].nextActive;
+  seedText(github, 'active/alice.json', serializeActiveRecord(target), 'remote-target-sha');
+  github.putText = async (path, text, message, sha) => {
+    if (path === 'active/alice.json' && !sha) {
+      const error = new Error('A different GitHub validation response.');
+      error.status = 422; error.code = 'validation';
+      throw error;
+    }
+    throw new Error('unexpected write');
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache._sha, 'remote-target-sha');
+  assert.equal(store.value.activeCache._pending, undefined);
+});
+
+test('queued background Start turns a permanent GitHub rejection into a conflict without retrying', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  github.putText = async () => {
+    const error = new Error('GitHub rejected the request');
+    error.status = 422; error.code = 'validation';
+    throw error;
+  };
+  const tracker = service({ github, store });
+  await tracker.start('https://example.com/rejected-start', 'Rejected start', '', { background: true });
+  await tracker.syncPending();
+  const [operation] = store.value.pendingWrites;
+  assert.equal(operation.status, 'conflict');
+  assert.equal(operation.conflictReason, 'queued_write_validation');
+  assert.equal(operation.retryCount, 1);
+  assert.match(operation.lastError, /GitHub rejected starting this queued timer/);
+  await tracker.syncPending();
+  assert.equal(operation.retryCount, 1, 'a terminal validation rejection must not increment retries again');
 });
 
 test('background Stop durably queues locally before any GitHub request', async () => {
@@ -1141,14 +1911,14 @@ test('queued background Start survives a service-worker restart', async () => {
   assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).taskUrl, 'https://example.com/restarted-start');
 });
 
-test('queued background Start preserves a timer created remotely before synchronization', async () => {
+test('queued background Start replaces an older timer created remotely before synchronization', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   await service({ github, store }).start('https://example.com/local-target', 'Local target', '', { background: true });
   const remote = active('2026-08-18T08:30:00.000Z', { taskUrl: 'https://example.com/remote-timer', issue: undefined });
   seedText(github, 'active/alice.json', serializeActiveRecord(remote), 'remote-sha');
   await service({ github, store }).syncPending();
-  assert.equal(store.value.pendingWrites[0].status, 'conflict');
-  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/remote-timer');
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.taskUrl, 'https://example.com/local-target');
   assert.equal(store.value.activeCache._pending, undefined);
 });
 
@@ -1289,4 +2059,171 @@ test('menu data deduplicates a concurrent Stop loser against the persisted winne
   const menu = await tracker.loadMenuData();
   assert.equal(menu.recent.length, 1);
   assert.equal(menu.todaySeconds, winner.durationSeconds);
+});
+
+test('live menu totals cover the complete ISO week across months with a one-day recent window', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const sunday = entry(localTimestamp(2026, 7, 30, 8), localTimestamp(2026, 7, 30, 9));
+  const monday = entry(localTimestamp(2026, 7, 31, 8), localTimestamp(2026, 7, 31, 9));
+  const today = entry(localTimestamp(2026, 8, 1, 8), localTimestamp(2026, 8, 1, 9));
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([sunday, monday]));
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords([today]));
+  store.value.activeCache = active(localTimestamp(2026, 8, 1, 10), { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  let now = new Date(localTimestamp(2026, 8, 1, 11));
+  const tracker = service({ github, store, recentDays: 1, clock: () => now });
+  const data = await tracker.loadMenuData();
+  assert.equal(data.recent.length, 1);
+  assert.equal(data.todayTrackedMs, 2 * 3_600_000);
+  assert.equal(data.weekTrackedMs, 3 * 3_600_000);
+  assert.equal(data.active.entryDate, '2026-09-01');
+  assert.equal(data.active.timezone, store.value.activeCache.timezone);
+  assert.deepEqual(store.value.summaryCache, {
+    reportDate: '2026-09-01',
+    weekEntries: [
+      ...parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08', path: 'times/2026-08/alice.jsonl', sha: 'seed' }).filter(value => value.id === monday.id),
+      ...parseMonthlyRecords(github.files.get('times/2026-09/alice.jsonl').text, { user: 'alice', month: '2026-09', path: 'times/2026-09/alice.jsonl', sha: 'seed' }),
+    ], computedAt: now.getTime(),
+  });
+  now = new Date(now.getTime() + 1000);
+  const reads = github.reads.length;
+  const restarted = service({ github, store, recentDays: 1, clock: () => now });
+  const cached = await restarted.getCachedSummary();
+  assert.equal(cached.todayTrackedMs, data.todayTrackedMs + 1000);
+  assert.equal(cached.weekTrackedMs, data.weekTrackedMs + 1000);
+  assert.equal(github.reads.length, reads);
+  assert.equal((await tracker.loadMenuData()).todayTrackedMs, data.todayTrackedMs + 1000);
+});
+
+test('cached summary includes only the running timer whose local date is in the requested range', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), hourMs = 3_600_000;
+  const now = new Date(2026, 0, 1, 1);
+  store.value.summaryCache = {
+    reportDate: '2026-01-01', weekEntries: [
+      { id: 'today', entryDate: '2026-01-01', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:00:00.999Z', _sha: 'today-sha' },
+      { id: 'yesterday', entryDate: '2025-12-31', startedAt: '2025-12-31T00:00:00.999Z', endedAt: '2025-12-31T01:00:00Z', _sha: 'yesterday-sha' },
+    ], computedAt: now.getTime(),
+  };
+  const tracker = service({ github, store, clock: () => now });
+  const startedAt = new Date(now.getTime() - 2 * hourMs).toISOString();
+  for (const [entryDate, todayRunningMs, weekRunningMs] of [
+    ['2026-01-01', 2 * hourMs, 2 * hourMs],
+    ['2025-12-31', 0, 2 * hourMs],
+    ['2025-12-28', 0, 0],
+    ['2026-01-02', 0, 0],
+  ]) {
+    store.value.activeCache = active(startedAt, { entryDate, _sha: 'persisted-active' });
+    assert.deepEqual(await tracker.getCachedSummary(), {
+      todayTrackedMs: 999 + todayRunningMs, weekTrackedMs: hourMs + weekRunningMs, remoteWriteConfirmed: true,
+    });
+  }
+  store.value.pendingWrites = [{ id: 'new-write', status: 'pending' }];
+  assert.equal((await tracker.getCachedSummary()).remoteWriteConfirmed, false);
+  store.value.pendingWrites = [];
+  store.value.activeCache._pending = true;
+  assert.equal((await tracker.getCachedSummary()).remoteWriteConfirmed, false);
+  store.value.activeCache = null;
+  assert.equal((await tracker.getCachedSummary()).remoteWriteConfirmed, true);
+  for (const summaryCache of [null, { ...store.value.summaryCache, reportDate: '2025-12-31' }]) {
+    store.value.summaryCache = summaryCache;
+    assert.deepEqual(await tracker.getCachedSummary(), { todayTrackedMs: null, weekTrackedMs: null, remoteWriteConfirmed: false });
+  }
+  assert.deepEqual(github.reads, []);
+  assert.deepEqual(github.metadataReads, []);
+  assert.deepEqual(github.writes, []);
+});
+
+test('recovery projection survives restart and confirms remote saves only with persisted SHA evidence', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  assert.equal((await tracker.getRecoveryState()).remoteWriteConfirmed, false);
+  await tracker.start(issue, 'Task', '', { background: true });
+  assert.equal((await tracker.getRecoveryState()).pendingCount, 1);
+  assert.equal((await tracker.getRecoveryState()).remoteWriteConfirmed, false);
+  await tracker.syncPending();
+  assert.equal((await service({ github, store }).getRecoveryState()).remoteWriteConfirmed, true);
+  await tracker.stop('', { background: true });
+  await tracker.syncPending();
+  assert.equal((await service({ github, store }).getRecoveryState()).remoteWriteConfirmed, true);
+  store.value.pendingWrites = [{ id: 'blocked', operation: 'editEntry', status: 'conflict', stage: 'editEntry', conflictReason: 'queued_entry_missing', request: { privateField: 'must stay privileged' }, lastError: 'private diagnostic' }];
+  assert.deepEqual(await tracker.getRecoveryState(), {
+    pendingCount: 1, remoteWriteConfirmed: false,
+    pendingWrites: [{ id: 'blocked', operation: 'editEntry', status: 'conflict', stage: 'editEntry', conflictReason: 'queued_entry_missing' }],
+  });
+});
+
+test('ISO-week totals include prior local days across a year boundary and exclude a prior-week active timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const monday = entry(localTimestamp(2025, 11, 29, 8), localTimestamp(2025, 11, 29, 9));
+  seedText(github, 'times/2025-12/alice.jsonl', serializeMonthlyRecords([monday]));
+  store.value.activeCache = active(localTimestamp(2025, 11, 31, 23), { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  const tracker = service({ github, store, recentDays: 1, clock: () => new Date(localTimestamp(2026, 0, 1, 1)) });
+  let data = await tracker.loadMenuData();
+  assert.equal(data.todayTrackedMs, 0);
+  assert.equal(data.weekTrackedMs, 3 * 3_600_000);
+  assert.equal(data.active.entryDate, '2025-12-31');
+  store.value.activeCache = active(localTimestamp(2025, 11, 28, 23));
+  data = await tracker.loadMenuData();
+  assert.equal(data.todayTrackedMs, 0);
+  assert.equal(data.weekTrackedMs, 3_600_000);
+});
+
+test('millisecond summary projections preserve sub-second record durations', async () => {
+  const github = new FakeGitHub();
+  const startedAt = new Date(localTimestamp(2026, 7, 18, 8));
+  const endedAt = new Date(startedAt.getTime() + 999);
+  const record = entry(startedAt.toISOString(), endedAt.toISOString(), { entryDate: '2026-08-18', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([record]));
+  const data = await service({ github, clock: () => new Date(localTimestamp(2026, 7, 18, 12)) }).loadMenuData();
+  assert.equal(data.todayTrackedMs, 999);
+  assert.equal(data.weekTrackedMs, 999);
+});
+
+for (const linked of [false, true]) {
+  test(`menu and cached week totals preserve queued ${linked ? 'linked' : 'single'} edits outside Recent`, async () => {
+    const github = new FakeGitHub(), store = new MemoryStore();
+    const path = 'times/2026-08/alice.jsonl';
+    const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+    seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+    const tracker = service({ github, store, recentDays: 1, clock: () => new Date('2026-08-18T12:00:00Z') });
+    await tracker.loadMenuData();
+    const request = { path, originalSha: 'monthly-sha', index: 0, original, edits: { startedAt: '2026-08-18T07:00:00.000Z' } };
+    if (linked) await tracker.queueEntriesEdit({ entries: [request] });
+    else await tracker.queueEntryEdit(request);
+    assert.equal((await tracker.getCachedSummary()).todayTrackedMs, 7_200_000);
+    const menu = await tracker.loadMenuData();
+    assert.equal(menu.recent[0].startedAt, request.edits.startedAt);
+    assert.equal(menu.recent[0]._pending, true);
+    assert.equal(menu.todayTrackedMs, 7_200_000);
+    assert.equal(menu.weekTrackedMs, 7_200_000);
+    assert.equal(menu.pendingCount, 1);
+    assert.equal(store.value.recentCache[0]._pending, true);
+    const nextDay = service({ github, store, recentDays: 1, clock: () => new Date('2026-08-19T12:00:00Z') });
+    const nextMenu = await nextDay.loadMenuData();
+    assert.deepEqual(nextMenu.recent, []);
+    assert.equal(nextMenu.weekTrackedMs, 7_200_000);
+    const reads = github.reads.length;
+    assert.equal((await nextDay.getCachedSummary()).weekTrackedMs, 7_200_000);
+    assert.equal(github.reads.length, reads);
+  });
+}
+
+test('menu refresh applies both sides of an accepted linked boundary edit in one projection', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const previous = entry('2026-08-18T06:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const current = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([previous, current]), 'monthly-sha');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00Z') });
+  await tracker.loadMenuData();
+  await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'monthly-sha', index: 0, original: previous, edits: { endedAt: '2026-08-18T07:00:00.000Z' } },
+    { path, originalSha: 'monthly-sha', index: 1, original: current, edits: { startedAt: '2026-08-18T07:00:00.000Z' } },
+  ] });
+  const menu = await tracker.loadMenuData();
+  assert.equal(menu.pendingCount, 1);
+  assert.equal(menu.recent.find(value => value.id === previous.id).endedAt, '2026-08-18T07:00:00.000Z');
+  assert.equal(menu.recent.find(value => value.id === current.id).startedAt, '2026-08-18T07:00:00.000Z');
+  assert.ok(menu.recent.every(value => value._pending));
+  assert.equal(menu.todayTrackedMs, 10_800_000);
+  assert.equal(menu.weekTrackedMs, 10_800_000);
+  const restarted = service({ github, store, clock: () => new Date('2026-08-18T12:00:00Z') });
+  assert.equal((await restarted.getCachedSummary()).todayTrackedMs, 10_800_000);
 });

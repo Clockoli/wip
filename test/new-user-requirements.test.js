@@ -10,30 +10,48 @@ const popupHtml = await readFile(new URL('src/popup/popup.html', root), 'utf8');
 const content = await readFile(new URL('src/content/github.js', root), 'utf8');
 const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
-test('repository access step has one GitHub action and mode-specific instructions', () => {
-  assert.doesNotMatch(optionsHtml, /Check for repository access now|id="refresh-repositories"/i);
-  assert.match(optionsHtml, /id="repository-setup-step"/);
-  assert.match(optionsHtml, /id="repository-access-instruction"/);
-  assert.match(optionsJs, /repositoryChoiceMode === 'create'/);
-  assert.match(optionsJs, /clockoli-data/);
-  assert.match(optionsJs, /existing private data repository/);
-  assert.match(optionsHtml, /id="install-app"[^>]*>Grant repository access<\/a>/);
+test('repository-first setup requests App access only for the concrete target', () => {
+  assert.doesNotMatch(optionsHtml, /id="repository-setup-step"|id="repository-access-step"|id="choose-existing-repository"|id="choose-empty-repository"/);
+  assert.match(optionsHtml, /id="repository-access-panel"[^>]*hidden/);
+  assert.equal((optionsHtml.match(/id="install-app"/g) || []).length, 1);
+  assert.match(optionsHtml, /id="install-app"[^>]*>Grant access<\/a>/);
+  const access = optionsJs.slice(optionsJs.indexOf('function renderRepositoryAccess()'), optionsJs.indexOf('function repositoryActionKey('));
+  assert.match(access, /Boolean\(repositoryTarget\).*discoveryStatus === 'ready' && !selectedRepository/);
+  assert.match(access, /app_contents_write_required/);
+  assert.match(access, /if \(!\(missing \|\| needsAppWrite\)\) closeRepositoryAccess\(\)/);
+  assert.doesNotMatch(access, /showModal/);
+  assert.match(access, /installation\?\.settingsUrl \|\| state\?\.installationUrl/);
+  assert.match(access, /Its existence is not confirmed/);
+  assert.doesNotMatch(optionsJs, /repositoryChoiceMode|function isCreationMode/);
 });
 
-test('repository choice consistently explains data storage and adapts to one eligible repository', () => {
+test('repository discovery honors an explicit dirty target and never confirms writes automatically', () => {
   assert.match(optionsHtml, /id="repository-step-instruction"/);
-  assert.match(optionsHtml, /separate from the repositories whose tasks you track/);
-  assert.doesNotMatch(optionsHtml, /issues or pull requests you track/);
-  assert.match(optionsJs, /singleEligibleRepository/);
-  assert.match(optionsJs, /radio\.hidden = singleEligibleRepository/);
-  assert.match(optionsJs, /repository-step-instruction/);
-  assert.match(optionsJs, /repository-choice-legend/);
+  assert.match(optionsHtml, /Ready repositories are available automatically, regardless of who owns them/i);
+  assert.match(optionsHtml, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/);
+  const render = optionsJs.slice(optionsJs.indexOf('function renderRepositories(result)'), optionsJs.indexOf('function reviewSelectedRepository()'));
+  assert.match(render, /selectedRepository = repositoryInputDirty \? null : repositoryTarget/);
+  assert.match(render, /repository\.fullName\.toLowerCase\(\) === repositoryTarget\.toLowerCase\(\)\) \|\| null/);
+  assert.match(render, /updateRepositoryConfirmation\(\)/);
+  assert.doesNotMatch(render, /send\(|SELECT_REPOSITORY|confirmRepositoryAction\(/);
+  const confirmation = optionsJs.slice(optionsJs.indexOf('function updateRepositoryConfirmation()'), optionsJs.indexOf('function repositoryInspectionStatus('));
+  assert.match(confirmation, /closeRepositoryConfirmation\(\)/);
+  const close = optionsJs.slice(optionsJs.indexOf('function closeRepositoryConfirmation()'), optionsJs.indexOf('async function discoverRepositories('));
+  assert.match(close, /hidden = true/);
+  assert.match(close, /pendingConfirmation = null/);
 });
 
-test('repository controls align and change access is a regular secondary button', () => {
-  assert.match(optionsHtml, /id="change-repository-access"[^>]*class="secondary"[^>]*>Change repository access<\/button>/);
-  assert.match(optionsCss, /\.repository-option input\[type=radio\]\{[^}]*margin-top:/);
-  assert.match(optionsCss, /\.repository-option\.single/);
+test('repository controls offer explicit checking, informational links, default and Finish', () => {
+  assert.match(optionsHtml, /id="repository-target-form"/);
+  assert.match(optionsHtml, /Repository URL or owner\/name<input id="repository-target"/);
+  assert.match(optionsHtml, /id="check-repository-target"[^>]*type="submit"[^>]*>Check repository<\/button>/);
+  assert.doesNotMatch(optionsHtml, /id="refresh-repositories"|id="connect-repository"/);
+  assert.doesNotMatch(optionsJs, /radio\.type = 'radio'/);
+  assert.match(optionsCss, /\.repository-icon/);
+  assert.match(optionsJs, /name\.href = `https:\/\/github\.com\/\$\{repository.fullName\}`/);
+  assert.match(optionsJs, /status\.textContent = repositoryInspectionStatus\(repository\)/);
+  assert.match(optionsHtml, /Default time repository<select id="setup-default-destination"/);
+  assert.match(optionsHtml, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
 });
 
 
@@ -68,15 +86,18 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /scrollbar-gutter:stable/);
   assert.match(content, /Time tracker panel\. Scroll for more content/);
   assert.match(content, /menu\.classList\.toggle\('has-more'/);
-  assert.match(content, /descriptionField\?\.focus/);
+  assert.match(content, /focusTime \? editor\?\.startPicker\?\.controls\?\.\[0\] : editor\?\.descriptionField/,
+    'the unified editor exposes both the time and metadata fields');
   assert.match(content, /timeLine = el\('div', undefined, 'inline-time-line'\)/);
   assert.match(content, /timeLine\.append\(startPicker\.node, separator, stopPicker\.node\)/);
   assert.match(content, /\.inline-time-line \{[^}]*display:flex[^}]*flex-wrap:nowrap[^}]*white-space:nowrap/);
   assert.match(content, /@media\(max-width:340px\) \{ \.entry-time-row \{ gap:3px \}[^}]*\.inline-time-line \{ gap:1px \}/,
     'the minimum supported panel width tightens spacing without wrapping the time range');
   assert.match(content, /\.entry-time-row \{[^}]*justify-content:flex-start[^}]*white-space:nowrap/);
-  assert.match(content, /timeRow\.append\(inline\.node, inline\.duration, actions\)/,
-    'Start/Stop, duration, and contextual actions share one left-aligned row');
+  assert.match(content, /timeRow\.append\(time, inline\.node, inline\.duration, actions\)/,
+    'Activity shows a compact range and keeps the direct editor in the same row after Edit time');
+  assert.match(content, /record\.classList\.add\('entry-editing'\)/,
+    'Edit time explicitly reveals the direct time fields');
   assert.match(content, /\.entry-actions\.dirty \.entry-edit,\.entry-actions\.dirty \.entry-delete \{ display:none \}/,
     'Save/Cancel replace full Edit/Delete while a direct time draft is dirty');
   assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);
@@ -105,11 +126,12 @@ test('tracker copy and navigation use URL tasks without item terminology', () =>
 });
 
 test('opening the tracker renders cached entries and refreshes them without a second open', () => {
-  assert.match(serviceWorker, /configured: true, active, recent: state\.recent/);
-  assert.match(content, /if \(!recentLoaded && Array\.isArray\(data\?\.recent\) && data\.recent\.length\) applyMenuData\(data\.recent, false\)/);
+  assert.match(serviceWorker, /async function globalTrackerState[\s\S]*const recent = \[\.\.\.states\][\s\S]*const result = \{ configured: true, active, recent, pendingWrites \}/);
+  assert.match(serviceWorker, /message\.type === 'GET_PAGE_STATE'[\s\S]*globalTrackerState\(\{ refresh: Boolean\(message\.refresh\), includeSummary: pageState \}\)[\s\S]*return \{\s*\.\.\.state/);
+  assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
-  assert.match(content, /inlineMutation \|\| loadingRecent \|\| !recentFresh/);
-  assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
+  assert.match(content, /loadingRecent \|\| !recentFresh/);
+  assert.match(content, /if \(\(menuOpen \|\| fullWidthPopupOpen\) && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
   assert.doesNotMatch(content, /Open the menu again to load entries/);
 });
 
@@ -122,6 +144,6 @@ test('direct time input preserves editing without wheel or plus/minus controls',
 
 test('main-panel time drafts link crossed neighboring boundaries before save', () => {
   assert.match(content, /linkCrossedTimeBoundaries/);
-  assert.match(content, /EDIT_ENTRIES/);
+  assert.match(content, /QUEUE_ENTRIES_EDIT/);
   assert.doesNotMatch(content, /Stop time must not be before Start time\./);
 });

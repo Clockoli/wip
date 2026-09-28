@@ -11,21 +11,20 @@ function renderer(name, nextName) {
   return content.slice(start, end);
 }
 
-test('main tracker renders recent time as separate inset cards without divider lines', () => {
-  const menu = renderer('renderMenu()', 'renderNavigationMenu()');
-  assert.doesNotMatch(menu, /className = 'divider'|el\('div', undefined, 'divider'\)/);
-  assert.doesNotMatch(content, /\.divider\s*\{/);
-  assert.match(content, /\.entry-record\s*\{[^}]*border:1px solid var\(--borderColor-default[^}]*border-radius:8px[^}]*background:var\(--bgColor-muted/s);
-  assert.match(content, /\.entry-record \+ \.entry-record\s*\{[^}]*margin-top:/s);
-  assert.doesNotMatch(content, /\.entry-record \+ \.entry-record\s*\{[^}]*border-top:/s);
+test('Activity renders compact scan-first rows with contextual controls', () => {
+  assert.match(content, /\.activity-list \{ border-top:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \{ position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \+ \.entry-record \{ margin-top:0/);
+  assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:0;[^}]*opacity:0/);
+  assert.match(content, /\.entry-editing \.inline-time-range \{ display:block/,
+    'direct time fields remain available only after the explicit edit action');
 });
 
 test('tracker panel omits the redundant Clockoli Time tracker Synced heading', () => {
-  const menu = renderer('renderMenu()', 'renderNavigationMenu()');
+  const menu = renderer('renderMenu()', 'renderUi()');
   assert.doesNotMatch(menu, /el\('strong', 'Clockoli'\)|'Time tracker', 'muted'|const syncText/);
   assert.doesNotMatch(menu, /heading\.append/);
-  assert.match(content, /\.menu \{[^}]*right:-24px;[^}]*width:min\(420px,calc\(100vw - 24px\)\)/);
-  assert.match(content, /\.navigation-menu \{[^}]*right:-24px;/);
+  assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*width:100vw[^}]*max-width:none/s);
 });
 
 test('Activity defaults to Last 3 days and puts filter before period on one row', () => {
@@ -38,11 +37,12 @@ test('Activity defaults to Last 3 days and puts filter before period on one row'
   assert.match(content, /\.times-filter\s*\{[^}]*grid-column:auto/s);
 });
 
-test('GitHub navigation uses distinct semantic icons and updated page names', () => {
-  const menu = renderer('renderNavigationMenu()', 'renderUi()');
-  assert.match(menu, /button\('Top tasks'/);
-  assert.match(menu, /button\('Activity'/);
-  assert.match(menu, /tasks\.prepend\(icon\('checklist', TASKS_PATH\)\)/);
-  assert.match(menu, /activity\.prepend\(icon\('history', ACTIVITY_PATH\)\)/);
-  assert.doesNotMatch(menu, /STOPWATCH_PATH/);
+test('GitHub header has no separate navigation dropdown', () => {
+  assert.doesNotMatch(content, /renderNavigationMenu|navigation-menu|trigger-menu|TRIANGLE_PATH/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await toggleFullWidthPopup\(\)/);
+});
+
+test('shared tracking navigation fits all actions at 320px without a hidden horizontal scroller', () => {
+  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \{[^}]*display:grid[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible/s);
+  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \.reports-button \{[^}]*min-width:0[^}]*justify-content:center[^}]*font-size:10px[^}]*white-space:nowrap/s);
 });

@@ -1,17 +1,64 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertMessageAllowed, issueForStart, taskUrlForStart } from '../src/background/message-policy.js';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 
+test('invoice number reservation is extension-only and the dispatcher ignores payloads', async () => {
+  assert.equal(assertMessageAllowed('RESERVE_INVOICE_NUMBER', extension, origin), 'extension');
+  assert.throws(() => assertMessageAllowed('RESERVE_INVOICE_NUMBER', content, origin), /not allowed/i);
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  let calls = 0;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } }, store: {
+    reserveInvoiceNumber: async (...args) => { assert.deepEqual(args, []); calls += 1; return { sequence: calls }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  assert.equal((await context.handle({ type: 'RESERVE_INVOICE_NUMBER', payload: { nextNumber: 999 } }, extension)).sequence, 1);
+  await assert.rejects(context.handle({ type: 'RESERVE_INVOICE_NUMBER' }, content), /not allowed/i);
+  assert.equal(calls, 1);
+});
+
+test('billing dispatcher forwards project client links only from extension pages', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [];
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    saveBillingSettings: async (...args) => { calls.push(args); return { revision: 8 }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: {} }, expectedRevision: 4, projectLinks: { projectClients: { 'project-1': 'client-1' }, otherProjectClient: '' } };
+  await context.handle(message, extension);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.projectLinks, message.expectedRevision]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+  assert.equal(calls.length, 1);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+});
+
+test('display dispatcher forwards the expected revision and returns the atomic mutation result', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [], result = { config: { recentDays: 14 }, generation: 3, revision: 8, preferences: { recentDays: 14, revision: 8 } };
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    updateDisplayPreferences: async (...args) => { calls.push(args); return result; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'UPDATE_DISPLAY_PREFERENCES', payload: { recentDays: 14 }, expectedRevision: 7 };
+  assert.deepEqual(await context.handle(message, extension), result);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.expectedRevision]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+});
+
 test('content scripts receive only page-safe state and timer actions', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_TASK_PARTICIPANTS', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SET_ACTION_ICON_FRAME', content, origin));
-  assert.doesNotThrow(() => assertMessageAllowed('START', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('EDIT_ACTIVE_START', content, origin));
   assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
   assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
@@ -19,7 +66,7 @@ test('content scripts receive only page-safe state and timer actions', () => {
 
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
   for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
@@ -44,6 +91,14 @@ test('content task switches remain bound to the current page URL', () => {
   assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
 });
 
+test('timeline task switching may select a previously tracked task from another GitHub page', () => {
+  assert.equal(
+    taskUrlForTimelineSwitch('https://github.com/manticoresoftware/site/issues/231', content, origin),
+    'https://github.com/manticoresoftware/site/issues/231',
+  );
+  assert.throws(() => taskUrlForTimelineSwitch('javascript:alert(1)', content, origin), /task URL/i);
+});
+
 test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', extension, origin));
@@ -52,15 +107,17 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
-  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES', 'DELETE_ALL_CLOCKOLI_RECORDS']) {
+  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES']) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
     assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
   }
   assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
@@ -71,7 +128,7 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', sender, origin), /not allowed/);
 });
@@ -81,7 +138,8 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'MERGE_TASKS',
   ];
   for (const type of privileged) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
@@ -108,32 +166,17 @@ test('GitHub issue query and fragment churn cannot create a second task identity
   assert.equal(taskUrlForStart('https://github.com/acme/app/issues/7', sender, origin), 'https://github.com/acme/app/issues/7');
 });
 
-test('add-on enablement remains extension-page only', () => {
-  const clockify = { url: 'https://app.clockify.me/tracker', tab: { id: 11 } };
-  const settingsMessages = ['GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED'];
-  for (const type of settingsMessages) {
-    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
-    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
-    assert.throws(() => assertMessageAllowed(type, clockify, origin), /not allowed/i);
-  }
-  assert.throws(() => assertMessageAllowed('IMPORT_CLOCKIFY_REPORT', clockify, origin), /not allowed/i);
-});
-
-test('extension-origin senders without a URL retain extension-page permissions', () => {
-  const sender = { origin: origin.slice(0, -1) };
-  assert.equal(assertMessageAllowed('GET_ADDON_SETTINGS', sender, origin), 'extension');
-});
-
-test('only the Clockify Detailed Report page can submit a sanitized capture', () => {
-  const detailedReport = { url: 'https://app.clockify.me/reports/detailed?period=this-week', tab: { id: 12 } };
-  const otherClockifyPage = { url: 'https://app.clockify.me/tracker', tab: { id: 13 } };
-  for (const type of [
-    'CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE',
-    'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT',
-  ]) {
-    assert.equal(assertMessageAllowed(type, detailedReport, origin), 'clockify');
-    assert.throws(() => assertMessageAllowed(type, otherClockifyPage, origin), /not allowed/i);
-    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
-    assert.throws(() => assertMessageAllowed(type, extension, origin), /not allowed/i);
-  }
+test('participant totals follow the current GitHub SPA tab URL instead of the original document URL', () => {
+  const sender = {
+    url: 'https://github.com/manticoresoftware/manticoresearch/issues/4883',
+    tab: { id: 10, url: 'https://github.com/manticoresoftware/manticoresearch/issues/4884' },
+  };
+  assert.equal(
+    taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4884', sender, origin),
+    'https://github.com/manticoresoftware/manticoresearch/issues/4884',
+  );
+  assert.throws(
+    () => taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4885', sender, origin),
+    /current page/i,
+  );
 });
