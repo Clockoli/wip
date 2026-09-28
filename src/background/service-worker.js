@@ -37,6 +37,7 @@ import { withRepositoryRecovery } from '../services/repository-operation-recover
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
 import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
+import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
@@ -59,7 +60,6 @@ const pendingCredentialStore = {
   rotateGitHubAppAuth: (...args) => store.rotatePendingGitHubAppAuth(...args),
 };
 const pendingCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store: pendingCredentialStore });
-const CLOCKIFY_MIGRATION_PROGRESS_PORT = 'CLOCKIFY_MIGRATION_PROGRESS_V1';
 const clockifyMigrationProgressPorts = new Map();
 const clockifyMigrationBackend = new IndexedDbBackend();
 const clockifyMigrationStorage = Object.freeze({
@@ -73,45 +73,7 @@ const clockifyHistoryScan = createClockifyHistoryScanService({ storageSession: c
 
 function isNotFound(error) { return error?.status === 404 || error?.code === 'not_found'; }
 
-function isClockifyProgressRequestId(value) {
-  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function emitClockifyMigrationProgress(requestId, progress) {
-  const port = clockifyMigrationProgressPorts.get(requestId);
-  if (!port || !progress || typeof progress !== 'object') return;
-  const { stage, completed, total, elapsedMs } = progress;
-  if (typeof stage !== 'string' || !Number.isSafeInteger(completed) || !Number.isSafeInteger(total)
-      || completed < 0 || total < completed) return;
-  try {
-    port.postMessage({
-      type: 'CLOCKIFY_MIGRATION_PROGRESS',
-      phase: stage,
-      completedUsers: completed,
-      totalUsers: total,
-      ...(Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
-    });
-  } catch {
-    if (clockifyMigrationProgressPorts.get(requestId) === port) clockifyMigrationProgressPorts.delete(requestId);
-  }
-}
-
-chrome.runtime.onConnect.addListener(port => {
-  const previewUrl = chrome.runtime.getURL('src/clockify-migration/preview.html');
-  if (port.name !== CLOCKIFY_MIGRATION_PROGRESS_PORT || port.sender?.id !== chrome.runtime.id || port.sender?.url !== previewUrl) {
-    port.disconnect(); return;
-  }
-  let requestId = null;
-  port.onMessage.addListener(message => {
-    if (requestId || !message || typeof message !== 'object' || Array.isArray(message)
-        || Object.keys(message).length !== 2 || message.type !== 'SUBSCRIBE_CLOCKIFY_MIGRATION_PROGRESS'
-        || !isClockifyProgressRequestId(message.requestId)) { port.disconnect(); return; }
-    requestId = message.requestId;
-    clockifyMigrationProgressPorts.set(requestId, port);
-    port.postMessage({ type: 'CLOCKIFY_MIGRATION_PROGRESS_SUBSCRIBED' });
-  });
-  port.onDisconnect.addListener(() => { if (requestId && clockifyMigrationProgressPorts.get(requestId) === port) clockifyMigrationProgressPorts.delete(requestId); });
-});
+registerClockifyMigrationProgressPort(chrome.runtime, clockifyMigrationProgressPorts);
 
 function githubForConfig(config) {
   return new GitHubClient({
@@ -824,17 +786,17 @@ async function handle(message, sender) {
         || !isClockifyProgressRequestId(payload.requestId) || !clockifyMigrationProgressPorts.has(payload.requestId)) {
       throw new Error('Invalid Clockify migration confirmation');
     }
-    const data = await clockifyMigrationSession.consume(payload.id);
-    if (!data) throw new Error('The Clockify migration confirmation expired. Return to the report and capture it again.');
     const { config, auth } = await configuredSnapshot();
     if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before importing.');
+    const data = await clockifyMigrationSession.consume(payload.id);
+    if (!data) throw new Error('The Clockify migration confirmation expired. Return to the report and capture it again.');
     const outcomes = await importClockifyOrganization({
       sourceUsers: data.users,
       entries: data.entries,
       mappings: payload.mappings,
       github: githubForConfig(config),
       destinationUser: { id: auth.githubUserId, login: config.storageLogin || auth.githubLogin },
-      onProgress: progress => emitClockifyMigrationProgress(payload.requestId, progress),
+      onProgress: progress => emitClockifyMigrationProgress(clockifyMigrationProgressPorts, payload.requestId, progress),
     });
     return { outcomes };
   }

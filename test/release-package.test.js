@@ -46,6 +46,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/assets/clockoli-48.png',
   'src/assets/clockoli-with-text.svg',
   'src/auth/github-app-auth.js',
+  'src/background/clockify-migration-progress.js',
   'src/background/destination-runtime.js',
   'src/background/message-policy.js',
   'src/background/serial-executor.js',
