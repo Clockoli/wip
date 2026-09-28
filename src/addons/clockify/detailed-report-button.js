@@ -18,7 +18,7 @@
   const CAPTURE_PARSE_PROGRESS_MESSAGE = 'CLOCKIFY_CAPTURE_PARSE_PROGRESS';
   const CAPTURE_PHASE_MESSAGE = 'CLOCKIFY_CAPTURE_PHASE';
   const CAPTURE_PHASES = new Set([
-    'saving_current_report', 'checking_task_projects', 'preparing_task_suggestions', 'saving_preview', 'opening_preview',
+    'saving_current_report', 'saving_preview', 'opening_preview',
   ]);
   const BRIDGE_ARM_ATTRIBUTE = 'data-clockoli-clockify-capture-arm';
   const RECEIVER_READY_ATTRIBUTE = 'data-clockoli-clockify-capture-receiver-ready';
@@ -43,6 +43,7 @@
   let discoveryRetryCount = 0;
   let captureTransport = 'csv';
   let armRequest = 0;
+  let csvEmailExportAttempts = 0;
 
   function log() {}
 
@@ -63,6 +64,7 @@
     captureParsingProgress = null;
     capturePhase = null;
     discoveryYear = null;
+    csvEmailExportAttempts = 0;
     document.documentElement?.removeAttribute(BRIDGE_ARM_ATTRIBUTE);
     EVENT_TARGET.dispatchEvent(new CustomEvent(DISARM_EVENT));
     chrome.runtime.sendMessage({ type: 'CLOCKIFY_DISARM_CAPTURE' }, () => void chrome.runtime.lastError);
@@ -347,6 +349,18 @@
       if (csv) {
         EVENT_TARGET.dispatchEvent(new CustomEvent(CSV_CAPTURE_INTENT_EVENT));
         csv.click();
+        const request = armRequest;
+        setTimeout(() => {
+          if (armedButton !== button || armRequest !== request || !/report will be sent to your email/i.test(String(document.body?.innerText || ''))) return;
+          csvEmailExportAttempts += 1;
+          pageControl(['CLOSE', 'CANCEL'])?.click();
+          if (csvEmailExportAttempts >= 3) {
+            disarmBridge();
+            setCaptureState(button, false, 'Clockify offered email delivery instead of a CSV download. Code: CSV_EMAIL_EXPORT_UNAVAILABLE.');
+            return;
+          }
+          setTimeout(() => exportCurrentYearCsv(button, deadline), 500);
+        }, 1_000);
         return;
       }
       if (Date.now() < deadline) { setTimeout(selectCsv, 100); return; }
@@ -649,8 +663,7 @@
     const entries = `${entryCount.toLocaleString()} entries`;
     const yearLabel = Number.isInteger(year) ? ` · ${year}` : '';
     if (phase === 'saving_current_report') return `Saving parsed Clockify report · ${entries}${yearLabel}`;
-    if (phase === 'checking_task_projects') return `Checking available task projects · ${entries}`;
-    if (phase === 'preparing_task_suggestions') return `Preparing task suggestions for preview · ${entries}`;
+
     if (phase === 'saving_preview') return `Saving the migration preview · ${entries}`;
     return `Opening the migration preview · ${entries}`;
   }

@@ -135,9 +135,10 @@ test('replays a shifted prior Clockify import by title, project, date, author, a
   assert.match(replayed.metadata.clockoli_import.provenance_sha256, /^[a-f0-9]{64}$/);
 });
 
-test('replays a pre-resolver Clockify project identity after an entry gains a GitHub URL', async () => {
+test('replays a legacy Clockify report identity into the generated task identity', async () => {
   const github = prepared();
   const source = entry('2026-08-18', 'pre-resolver-replay');
+  delete source.resolvedIssue;
   await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' });
   const path = 'times/2026-08/ada.jsonl';
   const [shifted] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
@@ -155,7 +156,7 @@ test('replays a pre-resolver Clockify project identity after an entry gains a Gi
   });
   const [replayed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
   assert.equal(replayed.startedAt, source.startedAt);
-  assert.equal(replayed.taskUrl, source.resolvedIssue.url);
+  assert.equal(replayed.taskUrl, 'manticoresoftware/Private-Project-Name/Private-Task-Name');
 });
 
 test('replays a shifted generic-project import after the local classifier supplies a GitHub URL', async () => {
@@ -294,20 +295,19 @@ test('reads affected monthly destination files with bounded concurrency', async 
   assert.ok(maximumInFlight <= 6, 'destination reads must remain bounded to avoid GitHub throttling');
 });
 
-test('uses a local classifier suggestion without querying the GitHub task entity', async () => {
+test('imports an unresolved Clockify entry with its deterministic Clockify project identity', async () => {
   const github = prepared();
-  const source = { ...entry('2026-08-18', 'issue'), project: 'clockoli-issues', task: '#13 Create a migration plugin for Clockify', resolvedIssue: {
-    url: 'https://github.com/manticoresoftware/clockoli-issues/issues/13', title: 'Create a migration plugin for Clockify',
-  } };
+  const source = { ...entry('2026-08-18', 'issue'), project: 'NexusRepo', task: 'Fixed last block encoding' };
+  delete source.resolvedIssue;
   assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), {
     status: 'imported', added: 1, alreadyPresent: 0,
   });
   const record = parseMonthlyRecords(github.files.get('times/2026-08/ada.jsonl').text, { user: 'ada', path: 'times/2026-08/ada.jsonl' })[0];
-  assert.equal(record.taskUrl, 'https://github.com/manticoresoftware/clockoli-issues/issues/13');
-  assert.equal(record.taskTitle, 'Create a migration plugin for Clockify');
+  assert.equal(record.taskUrl, 'manticoresoftware/NexusRepo/Fixed-last-block-encoding');
+  assert.equal(record.taskTitle, 'NexusRepo — Fixed last block encoding');
 });
 
-test('rejects an unresolved Clockify entry instead of inventing a task URL', async () => {
+test('does not derive a GitHub URL from an unresolved Clockify entry', async () => {
   const github = prepared();
   github.owner = 'manticoresoftware';
   const source = {
@@ -318,8 +318,10 @@ test('rejects an unresolved Clockify entry instead of inventing a task URL', asy
 
   assert.deepEqual(await importClockifyCompletedRecords({
     github, githubUser, entries: [source], idFactory: () => '01K2ABCDEF0123456789ABCDEF',
-  }), { status: 'failed', failureReason: 'invalid_imported_task' });
-  assert.equal(github.writes.length, 0);
+  }), { status: 'imported', added: 1, alreadyPresent: 0 });
+  const record = parseMonthlyRecords(github.files.get('times/2026-08/ada.jsonl').text, { user: 'ada', path: 'times/2026-08/ada.jsonl' })[0];
+  assert.equal(record.taskUrl, 'manticoresoftware/NexusRepo/https-app-clockify-me-reports-detailed-project-123-Fixed-last-block-encoding');
+  assert.doesNotMatch(record.taskUrl, /github\.com/);
 });
 
 test('refreshes blank legacy imported labels from the same Clockify provenance without changing time', async () => {

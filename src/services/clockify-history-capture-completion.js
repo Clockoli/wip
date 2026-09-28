@@ -7,20 +7,20 @@ function validData(value) {
     && Array.isArray(value.users) && Array.isArray(value.entries);
 }
 function validDependencies(value) {
-  return ['appendHistory', 'armCapture', 'disarmCapture', 'measure', 'configuredSnapshot', 'resolveUrls', 'createPreview', 'peekPreview', 'openPreview', 'emitPhase', 'now']
+  return ['appendHistory', 'armCapture', 'disarmCapture', 'measure', 'configuredSnapshot', 'createPreview', 'peekPreview', 'openPreview', 'emitPhase', 'now']
     .every(name => typeof value[name] === 'function');
 }
 
 /**
  * Advances a complete, normalized annual Clockify report through the one shared
- * history, URL-suggestion, preview-session, and preview-tab pipeline. Capture
+ * history, preview-session, and preview-tab pipeline. Capture
  * transports differ only in how they produce `data`.
  */
 export async function completeClockifyHistoryCapture({ tabId, year, data, ...dependencies }) {
   if (!validTabId(tabId) || !validYear(year) || !validData(data) || !validDependencies(dependencies)) fail('invalid dependencies');
   const {
     appendHistory, armCapture, disarmCapture, measure, configuredSnapshot,
-    resolveUrls, createPreview, peekPreview, openPreview, emitPhase, now,
+    createPreview, peekPreview, openPreview, emitPhase, now,
   } = dependencies;
   const entryCount = data.entries.length;
 
@@ -37,21 +37,14 @@ export async function completeClockifyHistoryCapture({ tabId, year, data, ...dep
 
   const { config, auth } = await configuredSnapshot();
   if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before creating a Clockify preview.');
-  const aggregateEntryCount = history.data.entries.length;
-  emitPhase(tabId, { phase: 'checking_task_projects', entryCount: aggregateEntryCount, year });
-  const resolveStartedAt = now();
-  const resolvedEntries = await resolveUrls(history.data.entries, config, {
-    onCatalogReady: () => emitPhase(tabId, { phase: 'preparing_task_suggestions', entryCount: aggregateEntryCount, year }),
-  });
-  await measure('task_url_resolution', now() - resolveStartedAt, aggregateEntryCount);
-
-  emitPhase(tabId, { phase: 'saving_preview', entryCount: resolvedEntries.length, year });
+  const previewEntries = history.data.entries;
+  emitPhase(tabId, { phase: 'saving_preview', entryCount: previewEntries.length, year });
   const previewSessionStartedAt = now();
-  await createPreview({ users: history.data.users, entries: resolvedEntries });
+  await createPreview({ users: history.data.users, entries: previewEntries });
   if (!await peekPreview()) throw new Error('Clockify preview is unavailable immediately after it was created.');
-  await measure('preview_session_write', now() - previewSessionStartedAt, resolvedEntries.length);
+  await measure('preview_session_write', now() - previewSessionStartedAt, previewEntries.length);
 
-  emitPhase(tabId, { phase: 'opening_preview', entryCount: resolvedEntries.length, year });
+  emitPhase(tabId, { phase: 'opening_preview', entryCount: previewEntries.length, year });
   const previewTabStartedAt = now();
   const previewTab = await openPreview();
   if (!Number.isInteger(previewTab?.id)) throw new Error('Clockify preview tab could not be opened.');

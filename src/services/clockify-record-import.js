@@ -110,6 +110,15 @@ function validResolvedIssue(value) {
 }
 
 function clockifyProjectTaskUrl(entry) {
+  if (typeof entry?.organization !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(entry.organization)) throw new Error('Invalid imported project identity');
+  const project = normalizeTaskTitle(entry.project).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!project || project.length > 100) throw new Error('Invalid imported project identity');
+  const title = normalizeTaskTitle(entry.task || entry.description || entry.project).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!title || title.length > 300) throw new Error('Invalid imported task identity');
+  return `${entry.organization}/${project}/${title}`;
+}
+
+function legacyClockifyProjectTaskUrl(entry) {
   if (typeof entry?.projectId !== 'string' || !entry.projectId) throw new Error('Invalid imported project identity');
   return `https://app.clockify.me/reports/detailed?project=${encodeURIComponent(entry.projectId)}`;
 }
@@ -120,6 +129,12 @@ function clockifyTaskTitle(entry) {
   return normalizeTaskTitle([project, task].filter(Boolean).join(' — '));
 }
 
+function importedTaskIdentity(entry) {
+  return validResolvedIssue(entry?.resolvedIssue)
+    ? entry.resolvedIssue
+    : { url: clockifyProjectTaskUrl(entry), title: clockifyTaskTitle(entry) };
+}
+
 function replayIdentityKey(entryDate, duration, taskUrl, taskTitle) {
   return [entryDate, duration, taskUrl, taskTitle].join('|');
 }
@@ -127,8 +142,8 @@ function replayIdentityKey(entryDate, duration, taskUrl, taskTitle) {
 function candidateReplayIdentityKeys(entry) {
   const entryDate = localDateInTimezone(entry.startedAt, entry.timezone);
   return [
-    replayIdentityKey(entryDate, entry.duration, entry.resolvedIssue.url, entry.resolvedIssue.title),
-    replayIdentityKey(entryDate, entry.duration, clockifyProjectTaskUrl(entry), clockifyTaskTitle(entry)),
+    replayIdentityKey(entryDate, entry.duration, importedTaskIdentity(entry).url, importedTaskIdentity(entry).title),
+    replayIdentityKey(entryDate, entry.duration, legacyClockifyProjectTaskUrl(entry), clockifyTaskTitle(entry)),
   ];
 }
 
@@ -280,13 +295,14 @@ async function readRequired(github, path, label) {
 function completedRecord({ entry, githubUser, id, now }) {
   const startedAt = entry.startedAt;
   const entryDate = localDateInTimezone(startedAt, entry.timezone);
+  const taskIdentity = importedTaskIdentity(entry);
   const active = buildActiveTimer({
     user: githubUser.login,
     id,
     actor: { kind: 'human', id: `github:${githubUser.id}`, name: githubUser.login },
     producer: IMPORT_PRODUCER,
-    taskUrl: entry.resolvedIssue.url,
-    taskTitle: entry.resolvedIssue.title,
+    taskUrl: taskIdentity.url,
+    taskTitle: taskIdentity.title,
     startedAt,
     entryDate,
     timezone: entry.timezone,
@@ -331,7 +347,6 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
     const seenProvenance = new Set();
     const candidates = [];
     for (const rawEntry of entries) {
-      if (!validResolvedIssue(rawEntry.resolvedIssue)) throw new Error('Invalid imported task URL suggestion');
       const provenance = await sha256(normalizedIdentity(rawEntry, githubUser.id));
       if (seenProvenance.has(provenance)) continue;
       seenProvenance.add(provenance);
@@ -339,7 +354,7 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
         ? await idFactory(rawEntry.startedAt, provenance)
         : await createDeterministicUlid(new Date(rawEntry.startedAt).getTime(), provenance);
       candidates.push({
-        ...rawEntry, provenance, id: deterministicId,
+        ...rawEntry, organization: github.owner, provenance, id: deterministicId,
       });
     }
 
@@ -426,15 +441,10 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
       if (existingIndex !== -1) {
         alreadyPresent += 1;
         const existing = file.entries[existingIndex];
-        const taskTitle = candidate.resolvedIssue.title;
-        const description = String(candidate.description ?? '');
-        if ((taskTitle && existing.taskTitle !== taskTitle) || (description && existing.description !== description)) {
-          file.entries[existingIndex] = validateEntry({
-            ...existing,
-            taskTitle: taskTitle || existing.taskTitle,
-            issueTitle: taskTitle || existing.issueTitle,
-            description: description || existing.description,
-          });
+        const replacement = completedRecord({ entry: candidate, githubUser, id: existing.id, now });
+        if (!sameImportedRecord(existing, replacement)) {
+          file.entries[existingIndex] = replacement;
+          replacements.push({ previous: existing, record: replacement });
           updated += 1;
         }
         continue;

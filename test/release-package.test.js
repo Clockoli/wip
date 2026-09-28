@@ -33,7 +33,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/assets/action-spin/clockoli-32-5.png',
   'src/assets/action-spin/clockoli-32-6.png',
   'src/assets/action-spin/clockoli-32-7.png',
-  'src/assets/clockify-url-classifier-model-v1.json',
+
   'src/assets/clockoli-128.png',
   'src/assets/clockoli-16.png',
   'src/assets/clockoli-32.png',
@@ -79,7 +79,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/clockify-organization-import.js',
   'src/services/clockify-record-import.js',
   'src/services/clockify-report-route.js',
-  'src/services/clockify-url-classifier.js',
+
   'src/services/configuration.js',
   'src/services/exchange-rates.js',
   'src/services/github-app-onboarding.js',

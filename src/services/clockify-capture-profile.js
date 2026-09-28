@@ -1,7 +1,7 @@
 const PROFILE_KEY = 'clockify-migration-capture-profile-v1';
 const PROFILE_VERSION = 2;
 const PROFILE_TTL_MS = 2 * 60 * 60 * 1000;
-const MEASURES = new Set(['csv_parse', 'csv_source_digest', 'csv_row_normalization', 'history_append', 'task_url_resolution', 'preview_session_write', 'preview_tab_create']);
+const MEASURES = new Set(['csv_parse', 'csv_source_digest', 'csv_row_normalization', 'history_append', 'preview_session_write', 'preview_tab_create']);
 
 function fail(message) { throw new Error(`Invalid Clockify capture profile: ${message}`); }
 

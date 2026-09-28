@@ -1,2 +1,0 @@
-# Offline only: required to train/export the Clockify resolver model.
-catboost==1.2.8

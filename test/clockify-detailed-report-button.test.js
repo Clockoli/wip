@@ -169,15 +169,14 @@ test('Clockify capture fills its determinate bar only from the background-confir
   assert.doesNotMatch(source, /%\s*(?:complete|imported|captured)/i);
 });
 
-test('Clockify capture names real post-parse preparation phases without exposing report data', () => {
+test('Clockify capture saves the unmodified migration preview without URL-inference phases', () => {
   assert.match(source, /CAPTURE_PHASE_MESSAGE = 'CLOCKIFY_CAPTURE_PHASE'/);
   assert.match(source, /Saving parsed Clockify report/);
-  assert.match(source, /Checking available task projects/);
-  assert.match(source, /Preparing task suggestions for preview/);
   assert.match(source, /Saving the migration preview/);
   assert.match(source, /Opening the migration preview/);
   assert.match(source, /captureParsingProgress = null;/);
   assert.doesNotMatch(source, /entry\.description|entry\.task|entry\.project/);
+  assert.doesNotMatch(source, /task suggestions|available task projects/i);
 });
 
 test('Clockify adapter only considers a validated captured page as the initial report response', () => {

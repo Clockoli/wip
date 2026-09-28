@@ -18,11 +18,7 @@ function dependencies({ history = { complete: true, data, history: completeHisto
       disarmCapture: async tabId => { calls.push(['disarmCapture', tabId]); },
       measure: async (name, value, count) => { calls.push(['measure', name, value, count]); },
       configuredSnapshot: async () => ({ config: { owner: 'clockoli', repo: 'time' }, auth: { githubLogin: 'ada' } }),
-      resolveUrls: async (entries, _config, { onCatalogReady }) => {
-        calls.push(['resolveUrls', entries]);
-        onCatalogReady();
-        return entries.map(entry => ({ ...entry, resolvedIssue: { url: 'https://github.com/clockoli/time/issues/1', title: 'Issue' } }));
-      },
+
       createPreview: async received => { calls.push(['createPreview', received]); },
       peekPreview: async () => { calls.push(['peekPreview']); return preview; },
       openPreview: async () => { calls.push(['openPreview']); return { id: 99 }; },
@@ -39,14 +35,14 @@ test('completes a normalized annual capture through the shared history-to-previe
 
   assert.deepEqual(result, { captured: true, history: completeHistory });
   assert.deepEqual(calls.map(([name]) => name), [
-    'emitPhase', 'appendHistory', 'measure', 'emitPhase', 'resolveUrls', 'emitPhase', 'measure',
-    'emitPhase', 'createPreview', 'peekPreview', 'measure', 'emitPhase', 'openPreview',
+    'emitPhase', 'appendHistory', 'measure', 'emitPhase', 'createPreview', 'peekPreview', 'measure', 'emitPhase', 'openPreview',
     'measure', 'disarmCapture',
   ]);
   assert.deepEqual(calls.find(([name]) => name === 'appendHistory'), ['appendHistory', 2026, data]);
   assert.deepEqual(calls.filter(([name]) => name === 'emitPhase').map(([, phase]) => phase.phase), [
-    'saving_current_report', 'checking_task_projects', 'preparing_task_suggestions', 'saving_preview', 'opening_preview',
+    'saving_current_report', 'saving_preview', 'opening_preview',
   ]);
+  assert.deepEqual(calls.find(([name]) => name === 'createPreview'), ['createPreview', data]);
 });
 
 test('returns the next annual unit before resolution and preview work when history capture continues', async () => {

@@ -27,7 +27,7 @@ import { clockifyDetailedReportYear } from '../services/clockify-report-route.js
 import { assertClockifyAnnualDataYear } from '../services/clockify-annual-data.js';
 import { importClockifyOrganization } from '../services/clockify-organization-import.js';
 import { removeAllClockoliRecords, removeClockifyImportedTestRecords } from '../services/clockify-import-cleanup.js';
-import { resolveClockifyUrlSuggestions } from '../services/clockify-url-classifier.js';
+
 import { IndexedDbBackend } from '../storage/chrome-store.js';
 import { assertMessageAllowed, taskUrlForStart } from './message-policy.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -55,7 +55,7 @@ const CLOCKIFY_MIGRATION_PROGRESS_PORT = 'CLOCKIFY_MIGRATION_PROGRESS_V1';
 const CLOCKIFY_CAPTURE_PARSE_PROGRESS = 'CLOCKIFY_CAPTURE_PARSE_PROGRESS';
 const CLOCKIFY_CAPTURE_PHASE = 'CLOCKIFY_CAPTURE_PHASE';
 const CLOCKIFY_CAPTURE_PHASES = new Set([
-  'saving_current_report', 'checking_task_projects', 'preparing_task_suggestions', 'saving_preview', 'opening_preview',
+  'saving_current_report', 'saving_preview', 'opening_preview',
 ]);
 const clockifyMigrationProgressPorts = new Map();
 const clockifyMigrationBackend = new IndexedDbBackend();
@@ -80,19 +80,6 @@ function githubForConfig(config) {
   });
 }
 
-async function clockifyUrlClassifierArtifact() {
-  const response = await fetch(chrome.runtime.getURL('src/assets/clockify-url-classifier-model-v1.json'));
-  if (!response.ok) throw new Error('Clockify URL classifier artifact is unavailable.');
-  return response.json();
-}
-
-async function resolveClockifyCapturedUrls(entries, config, { onCatalogReady = null } = {}) {
-  if (onCatalogReady !== null && typeof onCatalogReady !== 'function') throw new TypeError('Clockify URL-resolution phase callback is invalid.');
-  const catalog = await new InstallationDiscoveryService({ github: githubForConfig(config) }).discover();
-  onCatalogReady?.();
-  const modelArtifact = await clockifyUrlClassifierArtifact();
-  return resolveClockifyUrlSuggestions({ entries, repositories: catalog.repositories, modelArtifact });
-}
 
 async function remoteActiveProbe({ config, auth, state }) {
   const user = config.storageLogin || state.user || auth.githubLogin;
@@ -282,7 +269,7 @@ function completeClockifyCapture({ tabId, year, data }) {
     disarmCapture: capturedTabId => clockifyCaptureArm.disarm(capturedTabId),
     measure: (name, elapsedMs, count) => clockifyCaptureProfile.measure(name, elapsedMs, count),
     configuredSnapshot,
-    resolveUrls: resolveClockifyCapturedUrls,
+
     createPreview: preview => clockifyMigrationSession.create(preview),
     peekPreview: () => clockifyMigrationSession.peek(),
     openPreview: () => chrome.tabs.create({ url: chrome.runtime.getURL('src/clockify-migration/preview.html') }),
