@@ -27,7 +27,9 @@ function handlerContext(overrides = {}) {
     Map, Number, Object, Array, JSON, Promise, Error, console,
     assertMessageAllowed,
     isClockifyProgressRequestId,
+    CLOCKIFY_MIGRATION_OUTCOME_KEY: 'clockify-migration-import-outcome-v1',
     chrome: { runtime: { getURL: path => `${origin}${path || ''}` }, tabs: { get: async () => ({ url: 'https://app.clockify.me/reports/detailed?year=2024' }) }, action: { setIcon: async () => {} } },
+    clockifyMigrationStorage: { get: async () => null, set: async () => {} },
     ...overrides,
   });
   vm.runInContext(between('async function handle(', 'chrome.runtime.onMessage.addListener'), context);
@@ -55,7 +57,7 @@ test('Clockify migration confirmation consumes once, imports the exact session d
   const entries = [{ entryId: 'entry-1' }];
   const mappings = [{ sourceUserId: 'clockify-klim', githubLogin: 'KlimTodrik' }];
   const github = { destination: 'configured repository' };
-  let consumed = 0, importRequest;
+  let consumed = 0, importRequest, persistedOutcome;
   const context = handlerContext({
     clockifyMigrationProgressPorts: new Map([[requestId, { postMessage: message => portMessages.push(message) }]]),
     clockifyMigrationSession: { consume: async id => { consumed += 1; assert.equal(id, requestId); return { users: sourceUsers, entries }; } },
@@ -66,6 +68,7 @@ test('Clockify migration confirmation consumes once, imports the exact session d
       request.onProgress({ stage: 'writing_records', completed: 1, total: 1, elapsedMs: 42 });
       return [{ sourceUserId: 'clockify-klim', status: 'imported' }];
     },
+    clockifyMigrationStorage: { get: async () => null, set: async (key, value) => { persistedOutcome = { key, value }; } },
     isClockifyProgressRequestId,
     emitClockifyMigrationProgress: (ports, id, progress) => {
       assert.equal(id, requestId);
@@ -83,6 +86,19 @@ test('Clockify migration confirmation consumes once, imports the exact session d
   assert.deepEqual(JSON.parse(JSON.stringify(importRequest.mappings)), mappings);
   assert.deepEqual(JSON.parse(JSON.stringify(importRequest.destinationUser)), { id: 'github-user', login: 'KlimTodrik' });
   assert.deepEqual(portMessages, [{ type: 'CLOCKIFY_MIGRATION_PROGRESS', phase: 'writing_records', completedUsers: 1, totalUsers: 1, elapsedMs: 42 }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(persistedOutcome)), {
+    key: 'clockify-migration-import-outcome-v1',
+    value: { id: requestId, users: sourceUsers, outcomes: [{ sourceUserId: 'clockify-klim', status: 'imported' }] },
+  });
+});
+
+test('Clockify migration preview returns a persisted import outcome after worker restart', async () => {
+  const outcome = { id: requestId, users: [{ userId: 'clockify-klim', displayName: 'KlimTodrik', entryCount: 1 }], outcomes: [{ sourceUserId: 'clockify-klim', status: 'already_present' }] };
+  const context = handlerContext({
+    clockifyMigrationSession: { peek: async () => null },
+    clockifyMigrationStorage: { get: async key => { assert.equal(key, 'clockify-migration-import-outcome-v1'); return outcome; }, set: async () => {} },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' }, previewSender))), { outcome });
 });
 
 test('Clockify migration progress ignores malformed updates and removes a failed Port subscription', () => {

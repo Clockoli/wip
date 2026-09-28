@@ -61,6 +61,8 @@ Clockoli permits one running timer across all configured time repositories. If a
 
 ## Features
 
+- **Clockify migration:** imports user-supplied annual Detailed Report exports through either the in-page report capture or native CSV export flow. Clockoli never reads Clockify credentials; both untrusted sources are normalized and previewed before an explicit mapped-user import.
+
 ### Tracking and correction
 
 - Track any canonical HTTP(S) URL; task titles are optional.

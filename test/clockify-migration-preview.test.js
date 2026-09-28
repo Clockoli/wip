@@ -109,6 +109,15 @@ test('completed migration state is presented as a finished success, not an activ
 
 });
 
+test('preview renders the safe incoming-versus-existing comparison for an import ID collision', () => {
+  assert.match(source, /const collision = diagnostic\?\.collision/);
+  assert.match(source, /collision\.incoming\.provenanceSha256/);
+  assert.match(source, /collision\.existing\.path/);
+  assert.match(source, /collision\.comparison\.sameTimeRange/);
+  assert.match(source, /collision\?\.recordId && collision\?\.path/);
+  assert.doesNotMatch(source, /entryId/);
+});
+
 test('preview does not tell users to manually resolve an automatic import overlap', () => {
   assert.match(source, /could not resolve the imported intervals safely/);
   assert.doesNotMatch(source, /resolve the overlap/);

@@ -453,3 +453,67 @@ test('returns an allowlisted structural reason when the pre-provisioned branch i
   });
   assert.equal(github.writes.length, 0);
 });
+
+test('fails closed rather than replacing an unrelated record with a colliding deterministic import ID', async () => {
+  const github = prepared();
+  const unrelated = entry('2026-08-18', 'unrelated');
+  await importClockifyCompletedRecords({ github, githubUser, entries: [unrelated], idFactory: () => '01K2ABCDEF0123456789ABCDEF' });
+  const path = 'times/2026-08/ada.jsonl';
+  const [stored] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
+  stored.metadata.clockoli_import.provenance_sha256 = 'a'.repeat(64);
+  stored.taskUrl = 'https://github.com/acme/other/issues/999';
+  github.seed(path, serializeMonthlyRecords([stored]), github.files.get(path).sha);
+  const before = github.files.get(path).text;
+  const writes = github.writes.length;
+
+  const result = await importClockifyCompletedRecords({
+    github, githubUser, entries: [entry('2026-08-18', 'different-source')], idFactory: () => '01K2ABCDEF0123456789ABCDEF',
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failureReason, 'invalid_imported_record');
+  assert.deepEqual(result.diagnostic, {
+    stage: 'preparing_destination_record', code: 'destination_duplicate_record_id', detail: 'Duplicate imported work record ID',
+    collision: {
+      incoming: {
+        recordId: '01K2ABCDEF0123456789ABCDEF', startedAt: '2026-08-18T09:00:00.000Z', endedAt: '2026-08-18T10:00:00.000Z', durationSeconds: 3600,
+        provenanceSha256: result.diagnostic.collision.incoming.provenanceSha256,
+        taskFingerprintSha256: result.diagnostic.collision.incoming.taskFingerprintSha256,
+      },
+      existing: {
+        recordId: '01K2ABCDEF0123456789ABCDEF', startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600,
+        provenanceSha256: 'a'.repeat(64), taskFingerprintSha256: result.diagnostic.collision.existing.taskFingerprintSha256, path, line: 1,
+      },
+      comparison: { sameProvenance: false, sameTimeRange: false, sameTaskFingerprint: false },
+    },
+  });
+  assert.match(result.diagnostic.collision.incoming.provenanceSha256, /^[a-f0-9]{64}$/);
+  assert.match(result.diagnostic.collision.incoming.taskFingerprintSha256, /^[a-f0-9]{64}$/);
+  assert.match(result.diagnostic.collision.existing.taskFingerprintSha256, /^[a-f0-9]{64}$/);
+  assert.equal(github.writes.length, writes);
+  assert.equal(github.files.get(path).text, before);
+});
+
+test('replays a legacy imported record by deterministic ID when its normalized time changed', async () => {
+  const github = prepared();
+  const source = entry('2026-08-18', 'legacy-id-replay');
+  const idFactory = () => '01K2ABCDEF0123456789ABCDEF';
+  await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory });
+  const path = 'times/2026-08/ada.jsonl';
+  const [stored] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
+  stored.startedAt = '2026-08-19T08:00:00.000Z';
+  stored.endedAt = '2026-08-19T09:00:00.000Z';
+  stored.metadata.clockoli_import.provenance_sha256 = 'b'.repeat(64);
+  const serialized = JSON.parse(serializeMonthlyRecords([stored]));
+  serialized.activity.local_date = '2026-08-19';
+  github.seed(path, `${JSON.stringify(serialized)}\n`, github.files.get(path).sha);
+
+  const result = await importClockifyCompletedRecords({ github, githubUser, entries: [source], idFactory });
+
+  assert.deepEqual(result, { status: 'imported', added: 0, alreadyPresent: 0 });
+  const [replayed] = parseMonthlyRecords(github.files.get(path).text, { user: 'ada', path });
+  assert.equal(replayed.id, stored.id);
+  assert.equal(replayed.startedAt, source.startedAt);
+  assert.equal(replayed.endedAt, source.endedAt);
+  assert.notEqual(replayed.metadata.clockoli_import.provenance_sha256, 'b'.repeat(64));
+});

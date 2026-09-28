@@ -65,7 +65,23 @@ function safeFailureDiagnostic(stage, error) {
     : /task URL|task title/i.test(message) ? 'destination_task'
     : 'destination_record_validation';
   const detail = /^[A-Za-z][A-Za-z0-9 _:-]{0,120}$/.test(message) ? message : null;
-  return { stage: 'preparing_destination_record', code, ...(detail ? { detail } : {}) };
+  const collision = error?.collision;
+  const validCollisionSide = value => value && typeof value === 'object'
+    && typeof value.recordId === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(value.recordId)
+    && typeof value.provenanceSha256 === 'string' && /^[a-f0-9]{64}$/.test(value.provenanceSha256)
+    && typeof value.startedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.startedAt)
+    && typeof value.endedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.endedAt)
+    && Number.isSafeInteger(value.durationSeconds) && value.durationSeconds >= 0
+    && typeof value.taskFingerprintSha256 === 'string' && /^[a-f0-9]{64}$/.test(value.taskFingerprintSha256);
+  const collisionLocation = code === 'destination_duplicate_record_id'
+    && validCollisionSide(collision?.incoming) && validCollisionSide(collision?.existing)
+    && typeof collision.existing.path === 'string' && /^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.jsonl$/.test(collision.existing.path)
+    && Number.isSafeInteger(collision.existing.line) && collision.existing.line >= 1
+    && collision.comparison && typeof collision.comparison === 'object'
+    && ['sameProvenance', 'sameTimeRange', 'sameTaskFingerprint'].every(key => typeof collision.comparison[key] === 'boolean')
+    ? collision
+    : null;
+  return { stage: 'preparing_destination_record', code, ...(detail ? { detail } : {}), ...(collisionLocation ? { collision: collisionLocation } : {}) };
 }
 function failureReason(stage, error) {
   if (stage === 'overlapping_intervals' || error?.code === 'overlapping_intervals') return 'overlapping_intervals';
@@ -97,6 +113,45 @@ async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function collisionTimeRange(value) {
+  return {
+    startedAt: value.startedAt,
+    endedAt: value.endedAt,
+    durationSeconds: value.duration ?? value.durationSeconds,
+  };
+}
+
+async function taskFingerprint(taskUrl, taskTitle) {
+  return sha256(`clockoli-import-task-v1|${taskUrl.length}:${taskUrl}|${taskTitle.length}:${taskTitle}`);
+}
+
+async function collisionDiagnostic(candidate, existing, path, line) {
+  const incomingTask = importedTaskIdentity(candidate);
+  const incoming = {
+    recordId: candidate.id,
+    provenanceSha256: candidate.provenance,
+    ...collisionTimeRange(candidate),
+    taskFingerprintSha256: await taskFingerprint(incomingTask.url, incomingTask.title),
+  };
+  const stored = {
+    recordId: existing.id,
+    provenanceSha256: provenanceOf(existing),
+    ...collisionTimeRange(existing),
+    taskFingerprintSha256: await taskFingerprint(existing.taskUrl, existing.taskTitle),
+    path,
+    line,
+  };
+  return {
+    incoming,
+    existing: stored,
+    comparison: {
+      sameProvenance: incoming.provenanceSha256 === stored.provenanceSha256,
+      sameTimeRange: incoming.startedAt === stored.startedAt && incoming.endedAt === stored.endedAt && incoming.durationSeconds === stored.durationSeconds,
+      sameTaskFingerprint: incoming.taskFingerprintSha256 === stored.taskFingerprintSha256,
+    },
+  };
 }
 
 function provenanceOf(entry) {
@@ -151,6 +206,22 @@ function recordReplayIdentityKey(record) {
   return replayIdentityKey(record.entryDate, record.durationSeconds, record.taskUrl, record.taskTitle);
 }
 
+function isImportedRecordForMappedUser(record, githubUser) {
+  return record?.producer?.kind === IMPORT_PRODUCER.kind
+    && record?.producer?.name === IMPORT_PRODUCER.name
+    && record?.user === githubUser.login
+    && record?.actor?.kind === 'human'
+    && record?.actor?.id === `github:${githubUser.id}`;
+}
+
+function isLegacyDeterministicIdTarget(candidate, item, githubUser) {
+  if (!isImportedRecordForMappedUser(item.record, githubUser) || item.record.id !== candidate.id) return false;
+  const task = importedTaskIdentity(candidate);
+  return item.record.durationSeconds === candidate.duration
+    && item.record.taskUrl === task.url
+    && item.record.taskTitle === task.title;
+}
+
 function addToIndex(index, key, value) {
   const values = index.get(key);
   if (values) values.push(value);
@@ -161,32 +232,36 @@ function replayTargets(candidates, files, githubUser) {
   const records = [...files.values()].flatMap(file => file.entries.map((record, index) => ({ file, index, record })));
   const recordsByProvenance = new Map();
   const recordsByIdentity = new Map();
+  const recordsById = new Map();
   for (const item of records) {
     const provenance = provenanceOf(item.record);
     if (typeof provenance === 'string') addToIndex(recordsByProvenance, provenance, item);
-    if (item.record?.producer?.kind === IMPORT_PRODUCER.kind
-      && item.record?.producer?.name === IMPORT_PRODUCER.name
-      && item.record?.user === githubUser.login
-      && item.record?.actor?.kind === 'human'
-      && item.record?.actor?.id === `github:${githubUser.id}`) {
+    addToIndex(recordsById, item.record.id, item);
+    if (isImportedRecordForMappedUser(item.record, githubUser)) {
       addToIndex(recordsByIdentity, recordReplayIdentityKey(item.record), item);
     }
   }
   const candidateIdentityKeys = new Map();
   const candidateCountsByIdentity = new Map();
+  const candidateCountsById = new Map();
   for (const candidate of candidates) {
     const keys = candidateReplayIdentityKeys(candidate);
     candidateIdentityKeys.set(candidate, keys);
     for (const key of keys) candidateCountsByIdentity.set(key, (candidateCountsByIdentity.get(key) ?? 0) + 1);
+    candidateCountsById.set(candidate.id, (candidateCountsById.get(candidate.id) ?? 0) + 1);
   }
   const targets = new Map();
   for (const candidate of candidates) {
     const provenanceMatches = recordsByProvenance.get(candidate.provenance) ?? [];
     const identityKeys = candidateIdentityKeys.get(candidate);
     const identityMatches = [...new Set(identityKeys.flatMap(key => recordsByIdentity.get(key) ?? []))];
-    const matches = provenanceMatches.length ? provenanceMatches : identityMatches;
+    const legacyIdMatches = candidateCountsById.get(candidate.id) === 1
+      ? (recordsById.get(candidate.id) ?? []).filter(item => isLegacyDeterministicIdTarget(candidate, item, githubUser))
+      : [];
+    const matches = provenanceMatches.length ? provenanceMatches : identityMatches.length ? identityMatches : legacyIdMatches;
     if (matches.length !== 1) continue;
-    if (!provenanceMatches.length && candidateCountsByIdentity.get(recordReplayIdentityKey(matches[0].record)) !== 1) continue;
+    const usedLegacyIdMatch = !provenanceMatches.length && !identityMatches.length && legacyIdMatches.length === 1;
+    if (!provenanceMatches.length && !usedLegacyIdMatch && candidateCountsByIdentity.get(recordReplayIdentityKey(matches[0].record)) !== 1) continue;
     targets.set(candidate.provenance, matches[0]);
   }
   return targets;
@@ -452,13 +527,9 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
       const record = completedRecord({ entry: candidate, githubUser, id: candidate.id, now });
       const idTarget = recordsById.get(record.id);
       if (idTarget) {
-        const replacementPath = monthlyRecordsPath(githubUser.login, record.entryDate);
-        idTarget.file.entries.splice(idTarget.index, 1);
-        const destination = files.get(replacementPath);
-        if (!destination) throw new Error('Generated replacement record has no monthly partition');
-        destination.entries.push(record);
-        replacements.push({ previous: idTarget.record, record });
-        updated += 1;
+        const error = new Error('Duplicate imported work record ID');
+        error.collision = await collisionDiagnostic(candidate, idTarget.record, idTarget.file.path, idTarget.index + 1);
+        throw error;
       } else {
         additions.push({ path, record });
       }

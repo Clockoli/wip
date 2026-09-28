@@ -80,3 +80,29 @@ test('keeps importer failures privacy-safe in the migration result', async () =>
   }]);
   assert.equal(JSON.stringify(result).includes('providerDetail'), false);
 });
+
+test('forwards only the allowlisted source-free destination collision comparison', async () => {
+  const incoming = {
+    recordId: '01K2ABCDEF0123456789ABCDEF', provenanceSha256: 'a'.repeat(64),
+    startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600, taskFingerprintSha256: 'b'.repeat(64),
+  };
+  const existing = {
+    recordId: '01K2ABCDEF0123456789ABCDEF', provenanceSha256: 'c'.repeat(64),
+    startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z', durationSeconds: 3600, taskFingerprintSha256: 'd'.repeat(64),
+    path: 'times/2026-08/ada.jsonl', line: 4,
+  };
+  const diagnostic = {
+    stage: 'preparing_destination_record', code: 'destination_duplicate_record_id', detail: 'Duplicate imported work record ID',
+    collision: { incoming, existing, comparison: { sameProvenance: false, sameTimeRange: true, sameTaskFingerprint: false }, providerDetail: 'must not escape' },
+  };
+  const deps = dependencies({ imported: { status: 'failed', failureReason: 'invalid_imported_record', diagnostic } });
+  const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github: {}, destinationUser, ...deps });
+  assert.deepEqual(result, [{
+    sourceUserId: 'clockify-ada', githubUser: destinationUser, status: 'failed', failureReason: 'invalid_imported_record',
+    diagnostic: {
+      stage: 'preparing_destination_record', code: 'destination_duplicate_record_id', detail: 'Duplicate imported work record ID',
+      collision: { incoming, existing, comparison: { sameProvenance: false, sameTimeRange: true, sameTaskFingerprint: false } },
+    },
+  }]);
+  assert.equal(JSON.stringify(result).includes('providerDetail'), false);
+});

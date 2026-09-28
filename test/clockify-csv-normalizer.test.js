@@ -10,7 +10,7 @@ test('normalizes the native Clockify Detailed Report CSV with deterministic expo
   const result = await normalizeClockifyDetailedCsv(csv);
   assert.deepEqual(result.users.map(({ displayName, entryCount }) => ({ displayName, entryCount })), [{ displayName: 'Ada', entryCount: 1 }]);
   assert.equal(result.entries.length, 1);
-  assert.match(result.entries[0].entryId, /^csv-v1:[a-f0-9]{64}:1$/);
+  assert.match(result.entries[0].entryId, /^csv-v2:[a-f0-9]{64}:1$/);
   assert.match(result.entries[0].userId, /^csv-user:[a-f0-9]{64}$/);
   assert.match(result.entries[0].projectId, /^csv-project:[a-f0-9]{64}$/);
   assert.equal(result.entries[0].duration, 5400);
@@ -74,4 +74,11 @@ test('rejects invalid 12-hour clock values and unknown billable markers', async 
     );
   }
   await assert.rejects(normalizeClockifyDetailedCsv(`${header}\n${row.replace(',Yes,', ',Maybe,')}\n`), /invalid billable/i);
+});
+
+test('uses row-order-independent provenance IDs for equivalent CSV exports', async () => {
+  const later = row.replace('9:00 AM,01/02/2026,10:30 AM,1:30', '11:00 AM,01/02/2026,12:30 PM,1:30');
+  const first = await normalizeClockifyDetailedCsv(`${header}\n${row}\n${later}\n`);
+  const reordered = await normalizeClockifyDetailedCsv(`${header}\n${later}\n${row}\n`);
+  assert.deepEqual(first.entries.map(entry => entry.entryId).sort(), reordered.entries.map(entry => entry.entryId).sort());
 });

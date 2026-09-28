@@ -69,6 +69,7 @@ export async function normalizeClockifyDetailedCsv(csvText, { profile = false, o
   if (typeof timezone !== 'string' || !timezone) fail('browser timezone is unavailable');
   const users = new Map();
   const entries = [];
+  const rowOccurrences = new Map();
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index];
     if (row.length !== HEADER.length) fail(`row ${index} has ${row.length} columns`);
@@ -94,8 +95,11 @@ export async function normalizeClockifyDetailedCsv(csvText, { profile = false, o
     const projectId = `csv-project:${await sha256(project.toLowerCase())}`;
     const tags = [...new Set(text(value.Tags, 'tags', 2_000).split(',').map(tag => tag.trim()).filter(Boolean))];
     if (!['Yes', 'No'].includes(value.Billable)) fail(`row ${index} has invalid billable marker`);
+    const rowDigest = await sha256(JSON.stringify(row));
+    const occurrence = (rowOccurrences.get(rowDigest) ?? 0) + 1;
+    rowOccurrences.set(rowDigest, occurrence);
     const entry = {
-      provider: 'clockify', entryId: `csv-v1:${sourceDigest}:${index}`, userId,
+      provider: 'clockify', entryId: `csv-v2:${rowDigest}:${occurrence}`, userId,
       startedAt: start.toISOString(), endedAt: end.toISOString(), timezone, duration,
       projectId, project, task: text(value.Task, 'task', 300), description: text(value.Description, 'description'), tags,
       billable: value.Billable === 'Yes',

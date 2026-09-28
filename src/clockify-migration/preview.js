@@ -156,8 +156,15 @@ function renderOutcomes(users, outcomes) {
     const name = names.get(String(outcome?.sourceUserId || outcome?.userId || ''));
     const repair = outcome?.repair;
     const diagnostic = outcome?.diagnostic;
+    const collision = diagnostic?.collision;
+    const hasCollisionComparison = collision?.incoming && collision?.existing && collision?.comparison;
+    const collisionDetail = hasCollisionComparison
+      ? ` Incoming: ${collision.incoming.recordId}; ${collision.incoming.startedAt} to ${collision.incoming.endedAt} (${collision.incoming.durationSeconds}s); provenance ${collision.incoming.provenanceSha256}; task fingerprint ${collision.incoming.taskFingerprintSha256}. Existing: ${collision.existing.recordId} in ${collision.existing.path}, line ${collision.existing.line}; ${collision.existing.startedAt} to ${collision.existing.endedAt} (${collision.existing.durationSeconds}s); provenance ${collision.existing.provenanceSha256}; task fingerprint ${collision.existing.taskFingerprintSha256}. Comparison: provenance ${collision.comparison.sameProvenance ? 'matches' : 'differs'}, time ${collision.comparison.sameTimeRange ? 'matches' : 'differs'}, task ${collision.comparison.sameTaskFingerprint ? 'matches' : 'differs'}.`
+      : collision?.recordId && collision?.path && Number.isSafeInteger(collision.line)
+        ? ` Existing record: ${collision.recordId} in ${collision.path}, line ${collision.line}.`
+      : '';
     const label = diagnostic?.stage === 'preparing_destination_record'
-      ? `Clockoli failed while preparing the destination record. Code: ${diagnostic.code}.${diagnostic.detail ? ` Detail: ${diagnostic.detail}.` : ''} Nothing was written.`
+      ? `Clockoli failed while preparing the destination record. Code: ${diagnostic.code}.${diagnostic.detail ? ` Detail: ${diagnostic.detail}.` : ''}${collisionDetail} Nothing was written.`
       : repair?.kind === 'monthly_partition_mismatch'
       ? `Clockoli found a misplaced record in ${repair.path}, line ${repair.line}: its local month is ${repair.actualMonth}, not ${repair.expectedMonth}. Move it to the ${repair.actualMonth} monthly file, then retry.`
       : outcome?.status === 'failed' && FAILURE_LABELS[outcome?.failureReason]
@@ -230,6 +237,17 @@ function initialize() {
   (async () => {
     try {
       const data = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+      if (data?.outcome) {
+        const users = safeUsers(data.outcome.users);
+        if (!users.length || !Array.isArray(data.outcome.outcomes)) throw new Error('The recovered migration outcome is incomplete. Return to the Clockify report and capture it again.');
+        preview = { id: String(data.outcome.id), users };
+        mappingView.hidden = true; migrationView.hidden = false; finished = true;
+        renderOutcomes(users, data.outcome.outcomes);
+        renderProgress({ phase: 'completed', completedUsers: data.outcome.outcomes.length, totalUsers: data.outcome.outcomes.length });
+        showMessage(outcomeMessage(data.outcome.outcomes), 'success');
+        $('loading').hidden = true; $('preview').hidden = false;
+        return;
+      }
       const users = safeUsers(data?.users);
       const entryCount = Array.isArray(data?.entries) ? data.entries.length : Number(data?.entries);
       if (!data?.id || !users.length || !Number.isSafeInteger(entryCount) || entryCount < 1) throw new Error('The migration preview is unavailable or incomplete. Return to the Clockify report and try again.');

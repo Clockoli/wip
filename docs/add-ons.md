@@ -10,9 +10,11 @@ The privileged core remains separate from each untrusted provider adapter. Add-o
 
 The planned version 1 permits only the `import_completed_records` capability. Remote code, arbitrary messages, and arbitrary GitHub calls are forbidden. Disabling an add-on stops integration but never deletes imported records.
 
-## Clockify migration add-on
+## Clockify migration
 
-The Clockify migration add-on reads only a completed Detailed Report result in a user-opened authenticated Clockify tab. Clockify tokens, cookies, request headers, request bodies, report-task markers, and raw provider responses are never collected or retained.
+Clockify supports two explicit user-initiated annual-report transports: page-to-page capture from the open Detailed Report and import of a native CSV export. Both transports produce the same normalized preview and require explicit user mapping/confirmation before writing. The final per-user import outcome is retained in extension storage so reopening the preview after a service-worker restart reports the completed result rather than guessing or rerunning the import.
+
+The Clockify migration add-on reads only a completed Detailed Report result in a user-opened authenticated Clockify tab or a user-selected native CSV export. Clockify tokens, cookies, request headers, request bodies, report-task markers, and raw provider responses are never collected or retained.
 
 Enable the add-on in Settings, open the Detailed Report page, and click **Migrate** in the Clockoli banner above Clockify’s Export control. This is the primary migration action: it opens Clockify’s native Export menu, selects **Save as CSV**, and captures the completed CSV in memory for the Clockoli preview. **Migrate page by page** is a secondary fallback that captures each completed Detailed Report page and advances Clockify’s pagination controls; it does not trigger a CSV export or download. Clockoli does not invoke Clockify APIs directly, collect provider credentials, or retain raw CSV or report payloads after normalization for the expiring preview. The preview shows the source roster and entry counts. It suggests GitHub logins for people with access to the configured Clockoli repository, but never assigns a mapping: the user must explicitly map each person to a unique GitHub login or explicitly skip that person before any GitHub operation begins.
 

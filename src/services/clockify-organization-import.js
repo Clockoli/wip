@@ -115,7 +115,40 @@ function safeDiagnostic(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const allowed = new Set(['destination_record_schema', 'destination_active_timer_schema', 'destination_duplicate_record_id', 'destination_source_identity', 'destination_record_identity', 'destination_time_context', 'destination_producer', 'destination_actor', 'destination_metadata', 'destination_description', 'destination_task', 'destination_record_validation']);
   const detail = typeof value.detail === 'string' && /^[A-Za-z][A-Za-z0-9 _:-]{0,120}$/.test(value.detail) ? value.detail : null;
-  return value.stage === 'preparing_destination_record' && allowed.has(value.code) ? { stage: value.stage, code: value.code, ...(detail ? { detail } : {}) } : null;
+  const collision = value.collision;
+  const validCollisionSide = side => side && typeof side === 'object' && !Array.isArray(side)
+    && typeof side.recordId === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(side.recordId)
+    && typeof side.provenanceSha256 === 'string' && /^[a-f0-9]{64}$/.test(side.provenanceSha256)
+    && typeof side.startedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(side.startedAt)
+    && typeof side.endedAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(side.endedAt)
+    && Number.isSafeInteger(side.durationSeconds) && side.durationSeconds >= 0
+    && typeof side.taskFingerprintSha256 === 'string' && /^[a-f0-9]{64}$/.test(side.taskFingerprintSha256);
+  const safeCollision = value.code === 'destination_duplicate_record_id'
+    && collision && typeof collision === 'object' && !Array.isArray(collision)
+    && validCollisionSide(collision.incoming) && validCollisionSide(collision.existing)
+    && typeof collision.existing.path === 'string' && /^times\/\d{4}-(?:0[1-9]|1[0-2])\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\.jsonl$/.test(collision.existing.path)
+    && Number.isSafeInteger(collision.existing.line) && collision.existing.line >= 1
+    && collision.comparison && typeof collision.comparison === 'object'
+    && ['sameProvenance', 'sameTimeRange', 'sameTaskFingerprint'].every(key => typeof collision.comparison[key] === 'boolean')
+    ? {
+      incoming: {
+        recordId: collision.incoming.recordId, provenanceSha256: collision.incoming.provenanceSha256,
+        startedAt: collision.incoming.startedAt, endedAt: collision.incoming.endedAt, durationSeconds: collision.incoming.durationSeconds,
+        taskFingerprintSha256: collision.incoming.taskFingerprintSha256,
+      },
+      existing: {
+        recordId: collision.existing.recordId, provenanceSha256: collision.existing.provenanceSha256,
+        startedAt: collision.existing.startedAt, endedAt: collision.existing.endedAt, durationSeconds: collision.existing.durationSeconds,
+        taskFingerprintSha256: collision.existing.taskFingerprintSha256, path: collision.existing.path, line: collision.existing.line,
+      },
+      comparison: {
+        sameProvenance: collision.comparison.sameProvenance, sameTimeRange: collision.comparison.sameTimeRange,
+        sameTaskFingerprint: collision.comparison.sameTaskFingerprint,
+      },
+    }
+    : null;
+  return value.stage === 'preparing_destination_record' && allowed.has(value.code)
+    ? { stage: value.stage, code: value.code, ...(detail ? { detail } : {}), ...(safeCollision ? { collision: safeCollision } : {}) } : null;
 }
 
 function safeOutcome(mapping, outcome) {

@@ -126,7 +126,7 @@ The GitHub control uses a closed Shadow DOM and rejects synthetic privileged act
 
 ### Clockify and add-on boundary
 
-The planned Clockify migration add-on will be a first-party packaged provider adapter, not a privileged integration. It will read detailed-report data only from a user-opened authenticated Clockify tab; its page data will be untrusted and validated by the core. Clockify tokens, cookies, and headers will never be collected or retained. The core retains all GitHub/storage privileges, credentials, and record-writing authority; provider adapters do not receive them.
+The Clockify migration add-on is a first-party packaged provider adapter, not a privileged integration. It accepts either page-to-page Detailed Report capture from a user-opened authenticated Clockify tab or a user-selected native CSV export; both sources are untrusted and validated by the core. Clockify tokens, cookies, and headers are never collected or retained. The core retains all GitHub/storage privileges, credentials, and record-writing authority; provider adapters do not receive them.
 
 ### Repository verification
 

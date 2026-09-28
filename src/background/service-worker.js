@@ -67,6 +67,7 @@ const clockifyMigrationStorage = Object.freeze({
   async set(key, value) { await clockifyMigrationBackend.setMany({ [key]: value }); },
   async remove(key) { await clockifyMigrationBackend.deleteMany([key]); },
 });
+const CLOCKIFY_MIGRATION_OUTCOME_KEY = 'clockify-migration-import-outcome-v1';
 const clockifyMigrationSession = createClockifyMigrationSessionService({ storageSession: clockifyMigrationStorage });
 const clockifyCaptureArm = createClockifyCaptureArmService({ storageSession: clockifyMigrationStorage });
 const clockifyHistoryScan = createClockifyHistoryScanService({ storageSession: clockifyMigrationStorage });
@@ -767,7 +768,11 @@ async function handle(message, sender) {
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_PREVIEW') {
     const preview = await clockifyMigrationSession.peek();
-    if (!preview) throw new Error('The Clockify migration preview is unavailable or expired. Return to the Clockify report and capture it again.');
+    if (!preview) {
+      const outcome = await clockifyMigrationStorage.get(CLOCKIFY_MIGRATION_OUTCOME_KEY);
+      if (outcome?.id && Array.isArray(outcome?.users) && Array.isArray(outcome?.outcomes)) return { outcome };
+      throw new Error('The Clockify migration preview is unavailable or expired. Return to the Clockify report and capture it again.');
+    }
     return { id: preview.id, users: preview.data.users, entries: preview.data.entries.length };
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS') {
@@ -783,7 +788,7 @@ async function handle(message, sender) {
     const payload = message.payload;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
         || Object.keys(payload).length !== 3 || typeof payload.id !== 'string' || !Array.isArray(payload.mappings)
-        || !isClockifyProgressRequestId(payload.requestId) || !clockifyMigrationProgressPorts.has(payload.requestId)) {
+        || !isClockifyProgressRequestId(payload.requestId)) {
       throw new Error('Invalid Clockify migration confirmation');
     }
     const { config, auth } = await configuredSnapshot();
@@ -798,6 +803,7 @@ async function handle(message, sender) {
       destinationUser: { id: auth.githubUserId, login: config.storageLogin || auth.githubLogin },
       onProgress: progress => emitClockifyMigrationProgress(clockifyMigrationProgressPorts, payload.requestId, progress),
     });
+    await clockifyMigrationStorage.set(CLOCKIFY_MIGRATION_OUTCOME_KEY, { id: payload.id, users: data.users, outcomes });
     return { outcomes };
   }
   if (message.type === 'CLOCKIFY_ARM_CAPTURE' || message.type === 'CLOCKIFY_ARM_CSV_CAPTURE') {
