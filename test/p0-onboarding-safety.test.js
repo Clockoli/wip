@@ -73,6 +73,7 @@ test('all setup gates and initial report loading use the shared product language
 });
 
 test('README directs installation to Settings and the full getting-started guide', () => {
+  assert.match(readme, /## Quick start[\s\S]*chrome:\/\/extensions/);
   assert.match(readme, /Open \*\*Settings\*\*/);
-  assert.match(readme, /Full setup instructions: \[Getting started\]\(docs\/getting-started\.md\)/);
+  assert.match(readme, /\[Getting started\]\(docs\/getting-started\.md\)/);
 });

@@ -72,15 +72,13 @@ A suitable repository must be:
 
 Clockoli asks for **Grant access** only when the checked target is missing from the accessible list or needs App Contents-write permission. If Clockoli knows the owner's existing App installation, the link opens that installation's settings rather than starting another installation. Use **Only select repositories** and grant access only to the intended time repository or repositories. If you cannot change access, ask the repository owner or organization administrator; approval may be required.
 
-An access dialog opens only after an explicit **Check repository** finds missing App access. **Grant access** closes the dialog and opens the existing installation settings when known, or the App install page otherwise. Return to Settings and press **Check repository** again; the accessible list refreshes silently every 3 seconds while setup is active. A repository you selected or explicitly checked is remembered for the signed-in account across the GitHub visit and Settings reload. Clockoli does not replace a missing target with another available repository. If a private repository is missing, that does not prove it does not exist: check the name, your GitHub access, the App grant, and any pending approval.
+The access dialog opens only after an explicit **Check repository** finds missing App access. **Grant access** closes the dialog and opens the known installation settings or the App install page. Return to Settings and select **Check repository** again; the list also refreshes silently while setup is active. Clockoli remembers the checked target across the GitHub visit and Settings reload; it does not replace a missing target with another available repository. A missing private repository does not prove it does not exist: check its name, your GitHub access, the App grant, and any pending approval.
 
 #### Review and confirm
 
-Ready repositories become available automatically after Clockoli verifies your membership, personal branch ownership, and task index. No Add button or remote write is needed. **Check repository** or a row’s action opens the appropriate access or setup dialog for that target; there is no separate **Review connection** or **Refresh repositories** button. After each confirmed connection, setup stays open. Your first repository becomes the default; later additions preserve it. Choose **Default time repository** separately, then select **Finish setup** when the default is usable and no authorization confirmation is pending. Finish stops discovery polling and clears the remembered target without remote writes. You can add more from Settings later.
+Ready repositories become available automatically after Clockoli verifies membership, personal branch ownership, and the task index; they need no Add action or remote write. **Check repository** or a row’s action opens the relevant access or setup dialog when needed. Choose **Default time repository**, then **Finish setup** once the default is usable and no authorization confirmation is pending. The first connection becomes the default; later additions preserve it. You can add more from Settings later.
 
-Discovery only reads GitHub, registers already-ready repositories locally, and runs silently every 3 seconds only while repository setup is active. The list rerenders only when its meaningful data changes; unchanged results preserve focus, scroll, drafts, messages, and open dialogs. Background errors keep the last good list without a spinner or notification; explicit checks report errors. Polling never opens a dialog or performs remote writes. It may automatically confirm a same-account candidate authorization only after read-validating every configured destination and passing atomic active/queued-work guards.
-
-New or replacement GitHub authorization is confirmed automatically when it belongs to the same GitHub identity, can read every configured time repository, and cannot strand active or queued work. If any check fails, the current credentials remain in use and Clockoli shows one account-level recovery message. There is no per-repository **Confirm authorization** button.
+Discovery is read-only on GitHub and never opens a dialog or writes repository data. Initialization and joining require your explicit confirmation. New or replacement GitHub authorization is accepted automatically only for the same identity after every configured destination can be read and active or queued work is safe; otherwise the current credentials remain in use and Settings shows recovery guidance. See [Time repository storage](time-data-repository.md) for discovery, authorization, and branch details.
 
 The access dialog’s **Create one on GitHub** link prefills the checked repository name and owner while retaining the private Clockoli template. GitHub may ignore the owner if you lack creation permission; verify the owner before creating. The top **Create a new time repository** link still suggests `clockoli-data`.
 
@@ -118,36 +116,38 @@ A task is a canonical HTTP(S) URL. The title is optional.
 
 1. Open the page you want to track.
 2. Select the Clockoli toolbar icon.
-3. Choose **Start tracking this task**.
+3. In the full-width panel, choose **Track this task**.
 4. Work normally.
-5. Open Clockoli again and choose **Stop and save**.
-6. Add an optional description before stopping if useful.
+5. Open Clockoli again and add an optional description if useful.
+6. Choose **Stop and save**.
 
-The popup reads the active tab's current URL and title when you start. Internal browser pages such as `chrome://extensions` cannot be tasks because they are not HTTP(S) pages.
+The panel uses the active tab's current URL and title when you start. Internal browser pages such as `chrome://extensions` cannot be tasks because they are not HTTP(S) pages; the toolbar opens **Activity** instead.
 
 ### From GitHub
 
 Clockoli adds a split stopwatch control before your GitHub avatar:
 
 - the stopwatch opens the tracking panel for the current GitHub URL;
-- the arrow opens navigation to **Tasks**, **Times**, and **Reports**.
+- the arrow opens navigation to **Top tasks**, **Activity**, and **Reports**.
 
 GitHub issue and pull-request titles can be used as optional metadata when GitHub makes them available. The URL remains the task identity.
 
 ### One timer at a time
 
-Clockoli permits one global active timer across every configured time repository. The panel says:
+Clockoli permits one global active timer across every configured time repository. The smaller GitHub stopwatch dialog says:
 
 - **Tracking this task** when the active timer matches the current page;
 - **Tracking another task** when a different URL is active.
 
-Choose **Switch to this task** to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
+Choose **Switch to this task** in the full-width panel (or **Save and switch to this task** in the smaller GitHub stopwatch dialog) to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
 
 ### Route new Starts
 
 Projects are ordered, case-insensitive URL-substring rules. The first matching project chooses the time repository for a new Start. An explicit default time repository receives unmatched URLs. A running timer and every accepted queued write remain pinned to their original destination if you later reorder rules or change the default.
 
 ## 4. Correct a record
+
+Open **Activity** for older entries and overlaps, or correct a recent entry in the tracking panel.
 
 Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
@@ -159,37 +159,43 @@ Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start 
 
 If moving a boundary crosses the adjacent record, Clockoli changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
 
-## 5. Open Tasks, Times, and Reports
+## 5. Open Top tasks, Activity, and Reports
 
-Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
+Use the panel navigation or the GitHub split-menu arrow:
 
-- **Tasks** groups the current user's sessions by canonical task URL across selected time repositories, retains time-repository provenance, and provides search, periods, and inline actions.
-- **Times** combines completed entries from selected time repositories for preset or custom periods, supports URL/title filtering and inline correction, and accepts all-or-nothing bulk manual entries.
+- **Top tasks** groups the current user's sessions by canonical task URL across selected time repositories. Search or choose a period, then start or stop a task from its row.
+- **Activity** combines completed entries from selected time repositories for preset or custom periods. Filter by URL or title, correct an entry, or add completed time with the all-or-nothing bulk importer.
 - **Reports** reads selected or all time repositories and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF. It labels the tracked URL's **Task source** separately from the **Time repository** that stores the record.
 
-Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and print/PDF exports while the selected data is partial.
+Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and report print/PDF exports while the selected data is partial. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
 
 ## 6. Optional settings
 
-**Save display settings** and **Save billable rates** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
+**Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
 
 ### Recent entries
 
-Choose from 1 to 31 days of recent entries in the main panel. This changes display only; it does not limit tracking, Tasks, or Reports.
+Choose from 1 to 31 days of recent entries in the main panel. This changes display only; it does not limit tracking, Top tasks, Activity, or Reports.
 
 ### Billable rates
 
 Add hourly rates by GitHub login and include the currency directly in each rate, for example `$15.50`, `20.15$`, `€55.50`, `750 RUB`, or `888 GEL`. Rates stay in this browser's extension-local storage. Other team members do not receive them, and the repository never stores rates or calculated money.
 
+### Invoicing
+
+In **Invoicing**, save seller and client details, invoice numbering, payment terms, and tax defaults for local invoice previews. These details stay in this browser and are not written to the time repository. See the [feature guide](features.md#invoicing) for invoice creation and limits.
+
 ### Local settings backup
 
-Export a readable JSON backup after changing display or billing settings. It contains:
+Export a readable JSON backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
 
-- recent-entry display setting;
+- recent-entry and reporting preferences;
+- project rules and client assignments;
 - hourly rates with their currency signs or descriptions;
-- version 6 destination references, the default destination, and project routing rules.
+- invoicing details such as seller, clients, and payment terms;
+- credential-free repository references and, for routed installations, the default destination.
 
-It does not contain credentials, device codes, active timers, pending writes, or tracked time. Import can restore project routes only when every referenced destination is already configured in the browser. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
+The routed export uses settings format version 6; the single-repository/PAT path can use version 7. Neither contains credentials, device codes, active timers, pending writes, or tracked time. Import restores routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
 
 ## Team setup
 
