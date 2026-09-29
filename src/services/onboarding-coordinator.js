@@ -33,9 +33,9 @@ export class OnboardingCoordinator {
     throw new OnboardingError('Authorize the Clockoli GitHub App before choosing a repository.', 'github_app_auth_required');
   }
 
-  async discover() {
+  async discover(options = {}) {
     try {
-      return await this.discoverWithAuthorization();
+      return await this.discoverWithAuthorization(options);
     } catch (error) {
       const pending = await this.store.getPendingAuthSnapshot();
       if (pending.auth?.mode !== 'github_app' || ![
@@ -49,17 +49,34 @@ export class OnboardingCoordinator {
     }
   }
 
-  async discoverWithAuthorization() {
+  async listRepositories() { return this.discover({ inspectIds: [] }); }
+
+  async checkRepository({ installationId, repoId } = {}) {
+    if (!Number.isSafeInteger(installationId) || installationId <= 0
+        || !Number.isSafeInteger(repoId) || repoId <= 0) {
+      throw new OnboardingError('Select a repository discovered through the Clockoli GitHub App.', 'repository_access_required');
+    }
+    const result = await this.discover({ inspectIds: [{ installationId, repoId }] });
+    if (result.blocked) throw new OnboardingError(result.blocked.message, result.blocked.code);
+    const repository = result.repositories.find(value => value.installationId === installationId && value.repoId === repoId);
+    if (!repository) throw new OnboardingError('Clockoli cannot access this repository through the GitHub App.', 'repository_access_required');
+    return { repository, onboardingStateChanged: result.promoted };
+  }
+
+  async discoverWithAuthorization({ inspectIds = null, connectIds = [] } = {}) {
     const auth = await this.authContext();
-    let configuration = null;
+    const configuration = await this.store.getConfigurationSnapshot();
     if (auth.source === 'pending') {
       await this.store.ensureDataVersion(5);
-      configuration = await this.store.getConfigurationSnapshot();
       await this.assertSafeTransition(configuration, await this.store.ensureDataVersion(5), true,
         { auth: auth.snapshot.auth, credentialProvider: auth.credentialProvider });
       await this.assertMatchingAuthorizationIdentity(auth);
     }
-    const discovery = await this.inspectDiscovery(auth);
+    const existing = Object.values(configuration?.registry?.destinations ?? {});
+    const required = inspectIds === null ? null : [
+      ...inspectIds, ...existing.map(config => ({ installationId: config.installationId, repoId: config.repoId })),
+    ];
+    const discovery = await this.inspectDiscovery(auth, required);
     const configs = [];
     for (const repository of discovery.repositories) {
       if (repository.state !== 'initialized_member' || !repository.eligible) continue;
@@ -89,14 +106,18 @@ export class OnboardingCoordinator {
         }
       }
     }
-    if (auth.source === 'current' && configs.length) {
+    if (connectIds.length && !connectIds.every(id => configs.some(config => config.installationId === id.installationId && config.repoId === id.repoId))) {
+      throw new OnboardingError('This repository is not ready to connect. Check its access and storage again.', 'repository_action_unavailable');
+    }
+    const configured = configs.filter(config => existing.some(value => value.repoId === config.repoId)
+      || connectIds.some(id => id.installationId === config.installationId && id.repoId === config.repoId));
+    if (auth.source === 'current' && configured.length) {
       await this.store.ensureDataVersion(5);
-      const saved = await this.store.registerReadyGitHubAppRepositories(configs, auth.snapshot.authGeneration);
+      const saved = await this.store.registerReadyGitHubAppRepositories(configured, auth.snapshot.authGeneration);
       if (!saved) throw new OnboardingError('Authentication changed during discovery. Check repositories again.', 'onboarding_superseded');
       return { ...discovery, candidates: discovery.repositories.filter(repository => repository.eligible), promoted: false };
     }
     if (auth.source === 'pending') {
-      const existing = Object.values(configuration?.registry?.destinations ?? {});
       const readyById = new Map(configs.map(config => [config.repoId, config]));
       const inaccessible = existing.find(config => !readyById.has(config.repoId));
       if (inaccessible) {
@@ -105,7 +126,7 @@ export class OnboardingCoordinator {
       const promotedConfigs = [
         ...existing.map(config => ({ ...config, ...readyById.get(config.repoId),
           recentDays: config.recentDays ?? readyById.get(config.repoId).recentDays, authMode: 'github_app' })),
-        ...configs.filter(config => !existing.some(current => current.repoId === config.repoId)),
+        ...configured.filter(config => !existing.some(current => current.repoId === config.repoId)),
       ];
       await this.assertSafeTransition(await this.store.getConfigurationSnapshot(), await this.store.ensureDataVersion(5), true,
         { auth: auth.snapshot.auth, credentialProvider: auth.credentialProvider });
@@ -134,9 +155,10 @@ export class OnboardingCoordinator {
     }
   }
 
-  async inspectDiscovery(auth) {
+  async inspectDiscovery(auth, inspectIds = null) {
     const discovery = await this.discoveryFactory({ credentialProvider: auth.credentialProvider }).discover();
-    const pending = discovery.repositories.filter(repository => !repository.state);
+    const selected = repository => inspectIds === null || inspectIds.some(id => id.installationId === repository.installationId && id.repoId === repository.repoId);
+    const pending = discovery.repositories.filter(repository => selected(repository) && !repository.state);
     if (!pending.length) return discovery;
     if (!Number.isSafeInteger(this.maxRepositoryInspections) || this.maxRepositoryInspections <= 0
         || pending.length > this.maxRepositoryInspections) {
@@ -145,7 +167,7 @@ export class OnboardingCoordinator {
     const user = { id: auth.snapshot.auth.githubUserId, login: auth.snapshot.auth.githubLogin };
     const inspected = [];
     for (const repository of discovery.repositories) {
-      if (repository.state) { inspected.push(repository); continue; }
+      if (repository.state || !selected(repository)) { inspected.push(repository); continue; }
       const github = this.githubFactory({
         credentialProvider: auth.credentialProvider,
         owner: repository.owner, repo: repository.repo, branch: repository.defaultBranch || 'main',
@@ -180,11 +202,15 @@ export class OnboardingCoordinator {
       throw new OnboardingError('Select a repository discovered through the Clockoli GitHub App.', 'repository_access_required');
     }
     const action = typeof payload.action === 'string' ? payload.action : '';
-    if (!['add', 'join', 'initialize'].includes(action)) {
-      throw new OnboardingError('Choose whether to add, join, or initialize the repository.', 'repository_action_required');
+    if (!['connect', 'add', 'join', 'initialize'].includes(action)) {
+      throw new OnboardingError('Choose whether to connect, add, join, or initialize the repository.', 'repository_action_required');
+    }
+    if (action === 'connect') {
+      const result = await this.discoverWithAuthorization({ inspectIds: [{ installationId, repoId }], connectIds: [{ installationId, repoId }] });
+      return { repository: result.repositories.find(repository => repository.installationId === installationId && repository.repoId === repoId), status: 'access_checked' };
     }
     const auth = await this.authContext();
-    const discovery = await this.inspectDiscovery(auth);
+    const discovery = await this.inspectDiscovery(auth, [{ installationId, repoId }]);
     let candidate = discovery.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
     if (!candidate) throw new OnboardingError('Clockoli no longer has access to the selected repository.', 'repository_access_required');
     const allowed = { add: candidate.canAdd, join: candidate.canJoin, initialize: candidate.canInitialize };
@@ -272,7 +298,7 @@ export class OnboardingCoordinator {
       initialization = await initialize();
     } catch (error) {
       if (error?.code !== 'repository_branch_changed' || branchMode !== 'default') throw error;
-      const refreshed = await this.inspectDiscovery(auth);
+      const refreshed = await this.inspectDiscovery(auth, [{ installationId, repoId }]);
       const refreshedCandidate = refreshed.candidates.find(value => value.installationId === installationId && value.repoId === repoId);
       if (!refreshedCandidate?.defaultBranch) {
         throw new OnboardingError('GitHub is still finishing repository setup. Wait a moment, then validate again.', 'onboarding_superseded');

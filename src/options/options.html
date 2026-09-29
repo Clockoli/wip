@@ -101,12 +101,16 @@
           <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
           <a id="new-time-repository" class="button-link secondary-link" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
           <p class="help">Skip this if you already have a time repository you want to connect to.</p>
-          <p id="repository-step-instruction">Ready repositories are available automatically. Choose a default below, or enter a GitHub URL or owner/name to check another repository. Initialization and joining require your confirmation.</p>
+          <p id="repository-step-instruction">Repositories granted to the GitHub App appear below as Not checked. Check verifies access and Clockoli storage without connecting or changing repository files. If ready, choose Connect repository separately; initialization and joining also require confirmation.</p>
           <form id="repository-target-form">
-            <label>Repository URL or owner/name<input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="acme/time-data" required></label>
-            <div class="actions"><button id="check-repository-target" type="submit" class="secondary">Check repository</button></div>
+            <label for="repository-target">Enter a repository URL or owner/name</label>
+            <div class="repository-target-control">
+              <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="acme/time-data" aria-describedby="repository-target-status">
+              <button id="refresh-repository-target" type="button" class="repository-target-refresh" aria-label="Recheck repository" title="Recheck repository" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6A5.5 5.5 0 0 0 3.5 4L2 5.5M2 2.5v3h3M3 10a5.5 5.5 0 0 0 9.5 2L14 10.5m0 3v-3h-3"/></svg></button>
+            </div>
           </form>
           <p id="repository-target-status" class="help" role="status" aria-live="polite"></p>
+          <button id="connect-checked-repository" type="button" class="secondary" hidden>Connect repository</button>
           <dialog id="repository-access-panel" class="repository-access-dialog" aria-labelledby="repository-access-title" aria-describedby="repository-access-instruction" hidden>
             <header class="repository-access-header"><h3 id="repository-access-title">Grant repository access</h3><button id="close-repository-access" type="button" class="secondary" aria-label="Close repository access dialog">×</button></header>
             <div class="repository-access-content">
@@ -119,7 +123,8 @@
             </div>
           </dialog>
           <fieldset id="repository-choice-fieldset" hidden>
-            <legend id="repository-choice-legend">Repositories Clockoli can use for data storage</legend>
+            <legend id="repository-choice-legend">Repositories granted to the GitHub App</legend>
+            <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Loading granted repositories…</div>
             <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
             <div id="repository-list" class="repository-list"></div>
           </fieldset>
@@ -152,7 +157,7 @@
 
   <section id="time-repositories" class="card" aria-labelledby="time-repositories-title" hidden>
     <div class="card-heading">
-      <div><h2 id="time-repositories-title" tabindex="-1">Time repositories</h2><p>Clockoli stores time in dedicated private GitHub repositories. Ready repositories are available automatically, regardless of who owns them.</p></div>
+      <div><h2 id="time-repositories-title" tabindex="-1">Time repositories</h2><p>Clockoli stores time in dedicated private GitHub repositories. Check access and storage first, then explicitly connect a ready repository, regardless of who owns it.</p></div>
     </div>
     <p id="pat-repository-limitation" class="notice" hidden>Personal access token compatibility mode supports one time repository only. Connect with the Clockoli GitHub App to use multiple repositories.</p>
     <p id="time-repositories-empty" class="help">No time repositories are connected. Use one that already contains Clockoli data, or set up a new private repository.</p>

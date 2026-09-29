@@ -18,7 +18,22 @@ export function normalizeTaskUrl(value) {
   return parsed.href;
 }
 
-export function taskUrlOf(value) { return normalizeTaskUrl(value); }
+// Stored Clockify work may have a deterministic identity without a navigable URL.
+// Browser-created tasks still go through normalizeTaskUrl before reaching storage.
+export function normalizeStoredTaskIdentity(value) {
+  const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
+  if (typeof candidate === 'string' && candidate.length <= TASK_URL_MAX) {
+    const parts = candidate.split('/');
+    if (parts.length === 3 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
+        && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2])) {
+      validateOwner(parts[0]);
+      return candidate;
+    }
+  }
+  return normalizeTaskUrl(candidate);
+}
+
+export function taskUrlOf(value) { return normalizeStoredTaskIdentity(value); }
 
 export function validateOwner(value) {
   if (typeof value !== 'string' || !OWNER_RE.test(value) || value.includes('--')) throw new Error('Invalid owner');

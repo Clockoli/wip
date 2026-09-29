@@ -94,6 +94,18 @@ test('task summaries merge by canonical URL and user instead of an absent work-r
   ]);
 });
 
+test('task summaries merge unresolved imported identities without guessing URLs', () => {
+  const taskUrl = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const merged = mergeDestinationTaskSummaries([
+    { destination: { id: 'first' }, records: [{ user: 'alice', taskUrl, durationSeconds: 90, recordIds: ['a'] }] },
+    { destination: { id: 'second' }, records: [{ user: 'alice', taskUrl, durationSeconds: 30, recordIds: ['b'] }] },
+  ]);
+  assert.equal(merged.records.length, 1);
+  assert.equal(merged.records[0].taskUrl, taskUrl);
+  assert.equal(merged.records[0].durationSeconds, 120);
+  assert.deepEqual(merged.records[0].destinationIds, ['first', 'second']);
+});
+
 test('destination loads isolate ordinary failures, reject all failures, and propagate abort', async () => {
   const destinations = [{ id: 'github:1', label: 'one' }, { id: 'github:2', label: 'two' }];
   const partial = await loadDestinationRecords(destinations, async destination => {

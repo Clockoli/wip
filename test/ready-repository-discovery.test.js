@@ -58,10 +58,17 @@ async function setup({ pending = false, branchError = null, onRead = () => {} } 
   return { backend, store, coordinator, reads };
 }
 
-test('discovery registers all ready repositories durably and runtime uses their verified branches without provisioning', async () => {
+async function connectBoth(coordinator) {
+  await coordinator.selectRepository({ installationId: 88, repoId: 77, action: 'connect' });
+  await coordinator.selectRepository({ installationId: 88, repoId: 78, action: 'connect' });
+}
+
+test('explicitly connected ready repositories persist and runtime uses their verified branches without provisioning', async () => {
   const { backend, store, coordinator, reads } = await setup();
   const result = await coordinator.discover();
   assert.equal(result.repositories.filter(repository => repository.ready).length, 2);
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), []);
+  await connectBoth(coordinator);
   const registry = await store.getDestinationRegistry();
   assert.deepEqual(Object.keys(registry.destinations), ['github:77', 'github:78']);
   assert.equal(registry.defaultDestinationId, 'github:77');
@@ -79,9 +86,41 @@ test('discovery registers all ready repositories durably and runtime uses their 
   assert.ok(reads.filter(read => read.path !== '.clockoli/config.json').every(read => read.branch === 'clockoli/users/123'));
 });
 
+test('listing does not inspect unrelated repositories; explicit check validates the selected repository', async () => {
+  const { store, coordinator, reads } = await setup();
+  const listed = await coordinator.listRepositories();
+  assert.equal(listed.repositories.length, 2);
+  assert.equal(reads.length, 0);
+  assert.equal(listed.repositories[1].state, undefined);
+  assert.deepEqual((await store.getDestinationRegistry()).destinations, {});
+  const checked = await coordinator.checkRepository({ installationId: 88, repoId: 78 });
+  assert.equal(checked.repository.ready, true);
+  assert.ok(reads.length > 0);
+  assert.ok(reads.every(read => read.expectedRepositoryId === 78));
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), [], 'checking cannot connect');
+});
+
+test('explicit connect revalidates and registers only the chosen ready repository', async () => {
+  const { store, coordinator, reads } = await setup();
+  await coordinator.checkRepository({ installationId: 88, repoId: 78 });
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), []);
+  reads.length = 0;
+  await coordinator.selectRepository({ installationId: 88, repoId: 78, action: 'connect' });
+  assert.ok(reads.length > 0, 'connect must validate again');
+  assert.ok(reads.every(read => read.expectedRepositoryId === 78));
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), ['github:78']);
+});
+
+test('explicit connect refuses a repository whose personal branch no longer validates', async () => {
+  const { store, coordinator } = await setup({ branchError: Object.assign(new Error('missing'), { status: 404 }) });
+  await assert.rejects(coordinator.selectRepository({ installationId: 88, repoId: 78, action: 'connect' }),
+    error => error.code === 'repository_action_unavailable');
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), []);
+});
+
 test('ready discovery verifies an identical existing non-default destination without rewriting pinned state', async () => {
   const { backend, store, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   const id = 'github:78';
   delete backend.data.repositoryVerification[id];
   backend.data.destinationRegistry.destinations[id].label = 'My team';
@@ -106,7 +145,7 @@ test('ready discovery verifies an identical existing non-default destination wit
 for (const [field, value] of Object.entries({ owner: 'elsewhere', repo: 'renamed', branch: 'main', storageLogin: 'bob', installationId: 999, branchMode: 'default', authMode: 'pat' })) {
   test(`ready discovery does not verify an existing destination with different ${field}`, async () => {
     const { backend, store, coordinator } = await setup();
-    await coordinator.discover();
+    await connectBoth(coordinator);
     delete backend.data.repositoryVerification['github:78'];
     backend.data.destinationRegistry.destinations['github:78'][field] = value;
     const before = structuredClone(backend.data);
@@ -118,7 +157,7 @@ for (const [field, value] of Object.entries({ owner: 'elsewhere', repo: 'renamed
 
 test('existing verification refresh rejects a branch belonging to another current identity', async () => {
   const { backend, store, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   delete backend.data.repositoryVerification['github:78'];
   const configs = Object.values(backend.data.destinationRegistry.destinations);
   backend.data.auth.githubUserId = 999;
@@ -129,7 +168,7 @@ test('existing verification refresh rejects a branch belonging to another curren
 
 test('existing verification refresh remains atomic under replaced or candidate authorization', async () => {
   const { backend, store, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   delete backend.data.repositoryVerification['github:78'];
   const configs = Object.values(backend.data.destinationRegistry.destinations);
   for (const patch of [{ authGeneration: 2 }, { authGeneration: 1, pendingAuth: { mode: 'github_app' } }]) {
@@ -142,7 +181,7 @@ test('existing verification refresh remains atomic under replaced or candidate a
 
 test('read recovery and refreshed state never provision old configured branches', async () => {
   const { backend, store, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   delete backend.data.destinationRegistry.destinations['github:77'].storageBranchVersion;
   backend.data.auth.accessToken = 'test-only';
   let provisions = 0;
@@ -173,6 +212,7 @@ test('read recovery and refreshed state never provision old configured branches'
 
 test('member with missing personal storage needs explicit setup, not automatic registration', async () => {
   const { store, coordinator } = await setup({ branchError: Object.assign(new Error('missing'), { status: 404 }) });
+  await coordinator.selectRepository({ installationId: 88, repoId: 77, action: 'connect' });
   const result = await coordinator.discover();
   assert.equal(result.repositories[1].ready, false);
   assert.equal(result.repositories[1].branchSetupRequired, true);
@@ -181,17 +221,18 @@ test('member with missing personal storage needs explicit setup, not automatic r
 
 test('invalid personal branch ownership fails closed while healthy repositories remain usable', async () => {
   const { store, coordinator } = await setup({ branchError: { version: 1, githubUserId: 999, storageLogin: 'alice' } });
+  await coordinator.selectRepository({ installationId: 88, repoId: 77, action: 'connect' });
   const result = await coordinator.discover();
   assert.equal(result.repositories[1].ready, false);
   assert.equal(result.repositories[1].eligible, false);
   assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), ['github:77']);
 });
 
-test('candidate discovery automatically promotes matching authorization and registers every ready repository', async () => {
+test('candidate discovery promotes matching authorization without silently connecting ready repositories', async () => {
   const { backend, store, coordinator } = await setup({ pending: true });
   const result = await coordinator.discover();
   assert.equal(result.repositories.filter(repository => repository.ready).length, 2);
-  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), ['github:77', 'github:78']);
+  assert.deepEqual(Object.keys((await store.getDestinationRegistry()).destinations), []);
   assert.equal(backend.data.auth.mode, 'github_app');
   assert.equal(backend.data.auth.githubUserId, 123);
   assert.equal(backend.data.pendingAuth, undefined);
@@ -200,7 +241,7 @@ test('candidate discovery automatically promotes matching authorization and regi
 
 test('candidate promotion preserves local destination preferences and stronger verification evidence', async () => {
   const { backend, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   backend.data.destinationRegistry.destinations['github:77'].recentDays = 13;
   backend.data.destinationRegistry.destinations['github:77'].futureSetting = { keep: true };
   backend.data.repositoryVerification['github:77'] = {
@@ -219,7 +260,7 @@ test('candidate promotion preserves local destination preferences and stronger v
 
 test('candidate promotion does not need a still-working previous access token', async () => {
   const { backend, coordinator } = await setup();
-  await coordinator.discover();
+  await connectBoth(coordinator);
   coordinator.currentCredentialProvider = { source: 'expired-current' };
   coordinator.pendingCredentialProvider = { source: 'candidate' };
   const githubFactory = coordinator.githubFactory;
@@ -239,7 +280,7 @@ test('candidate promotion does not need a still-working previous access token', 
 test('candidate promotion requires the same GitHub identity and access to every configured destination', async () => {
   for (const failure of ['identity', 'access']) {
     const { backend, store, coordinator } = await setup();
-    await coordinator.discover();
+    await connectBoth(coordinator);
     backend.data.pendingAuth = { mode: 'github_app', githubUserId: failure === 'identity' ? 999 : 123, githubLogin: failure === 'identity' ? 'mallory' : 'alice' };
     backend.data.pendingAuthGeneration = 2;
     const before = structuredClone(backend.data);
@@ -268,7 +309,7 @@ test('candidate promotion is blocked by accepted work before reads and by auth/c
       if (race === 'registry') values.data.destinationRegistry.destinations['github:77'].label = 'changed concurrently';
       if (race === 'work') values.data.activeTimer = { destinationId: 'github:77', record: { id: 'raced' } };
     } });
-    await coordinator.discover();
+    await connectBoth(coordinator);
     backend.data.pendingAuth = { mode: 'github_app', githubUserId: 123, githubLogin: 'alice' };
     backend.data.pendingAuthGeneration = 2;
     if (race === 'active') backend.data.activeTimer = { destinationId: 'github:77', record: { id: 'running' } };
@@ -298,14 +339,14 @@ test('authorization replaced during branch reads prevents local registration ato
   const { store, coordinator } = await setup({ onRead: async (path, backend) => {
     if (path === '.clockoli/tasks.json') await backend.setMany({ authGeneration: 2 });
   } });
-  await assert.rejects(coordinator.discover(), { code: 'onboarding_superseded' });
+  await assert.rejects(coordinator.selectRepository({ installationId: 88, repoId: 77, action: 'connect' }), { code: 'onboarding_superseded' });
   assert.deepEqual((await store.getDestinationRegistry()).destinations, {});
 });
 
 for (const scenario of ['renamed', 'custom-branch', 'missing', 'pending-auth', 'replaced-auth', 'changed-config', 'changed-default']) {
   test(`real 404 recovery is remote-read-only and preserves pinned state: ${scenario}`, async () => {
     const { backend, store, coordinator } = await setup();
-    await coordinator.discover();
+    await connectBoth(coordinator);
     const id = 'github:77';
     delete backend.data.destinationRegistry.destinations[id].storageBranchVersion;
     if (scenario === 'custom-branch') {

@@ -5,6 +5,7 @@ import {
   parseMonthlyRecordsPath, serializeActiveRecord, serializeMonthlyRecords, timestampWithTimezone,
 } from '../src/domain/work-records.js';
 import { applyEntryEdits, buildActiveTimer, buildEntry } from '../src/domain/records.js';
+import { aggregateTrackedTasks } from '../src/domain/tasks.js';
 
 const ID = '01K2ABCDEF0123456789ABCDEF';
 const actor = { kind: 'human', id: 'github:123', name: 'alice' };
@@ -75,6 +76,30 @@ test('monthly JSONL round-trips completed records and derives duration', () => {
   assert.equal(parsed[0]._sha, 'monthly-sha');
   assert.equal(parsed[0].durationSeconds, 4530);
   assert.equal(parsed[1].taskUrl, 'https://example.com/work?q=42');
+});
+
+test('unresolved imported identities round-trip as work records and appear in Top tasks', () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const stored = JSON.parse(serializeMonthlyRecords([entry]));
+  stored.work_item.url = identity;
+  stored.work_item.id = `url:${identity}`;
+  const [parsed] = parseMonthlyRecords(`${JSON.stringify(stored)}\n`, context());
+  assert.equal(parsed.taskUrl, identity);
+  assert.equal(JSON.parse(serializeMonthlyRecords([parsed])).work_item.url, identity);
+  const [task] = aggregateTrackedTasks([parsed], { user: 'alice' });
+  assert.equal(task.taskUrl, identity);
+  assert.equal(task.totalSeconds, entry.durationSeconds);
+  const edited = applyEntryEdits(parsed, { description: 'Updated' });
+  assert.equal(JSON.parse(serializeMonthlyRecords([edited])).work_item.url, identity);
+  const retitled = applyEntryEdits(parsed, { taskTitle: 'Fixed encoding' });
+  assert.equal(JSON.parse(serializeMonthlyRecords([retitled])).work_item.url, identity);
+  assert.throws(() => applyEntryEdits(parsed, { taskUrl: 'manticoresoftware/NexusRepo/other' }), /Invalid task URL/);
+  assert.throws(() => buildActiveTimer({
+    user: 'alice', actor, producer, taskUrl: identity, startedAt: '2026-08-18T15:00:00.000Z', timezone: 'UTC',
+  }), /Invalid task URL/);
+  for (const invalid of ['manticoresoftware/NexusRepo/../secret', 'manticoresoftware/NexusRepo/task?token=x', 'ftp://example.com/task']) {
+    assert.throws(() => parseMonthlyRecords(`${JSON.stringify({ ...stored, work_item: { ...stored.work_item, url: invalid } })}\n`, context()), /Invalid task URL/);
+  }
 });
 
 test('v1 parser rejects old text blocks, malformed JSONL, duplicates, and wrong state or partition', () => {
