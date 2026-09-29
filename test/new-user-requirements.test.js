@@ -106,8 +106,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.doesNotMatch(content, /time-step|time-unit|WHEEL_THRESHOLD|wheelRemainder|addEventListener\('wheel'/);
   assert.match(content, /\.task-result-untitled \.task-url \{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
     'untitled URLs stay clamped even at the 2,048-character identity limit');
-  assert.match(content, /url\.title = taskUrl/,
-    'the full clamped URL remains exposed as native accessible text');
+  assert.match(content, /url\.title = identity/,
+    'the full clamped URL or imported identity remains exposed as native accessible text');
   assert.match(content, /\.task-title \{[^}]*-webkit-line-clamp:2/,
     'maximum-length optional titles are limited to two result lines');
   assert.match(content, /title\.title = taskTitle/,

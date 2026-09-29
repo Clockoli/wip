@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
 import { taskPeriodRange } from '../src/domain/tasks.js';
+import { normalizeTaskUrl } from '../src/domain/values.js';
 
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
@@ -50,7 +51,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
-    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange,
+    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeTaskUrl,
     ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
 
     ClockoliRecovery: { actionFor: () => null },
@@ -118,6 +119,81 @@ test('ready discovery populates both default options without selection writes an
   await page.context.discoverRepositories({ silent: true });
   assert.equal(page.nodes.get('setup-default-destination').children[0], option);
   assert.equal(page.nodes.get('repository-list').children[0], row);
+});
+
+test('silent discovery revokes inspected Ready on semantic changes without re-inspecting rows', async () => {
+  const base = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data',
+    private: true, visibility: 'private', archived: false, disabled: false, defaultBranch: 'main',
+    appPermissions: { contents: 'write' }, userPermissions: { push: true }, eligible: true, reasons: [] };
+  const inspected = { ...base, state: 'initialized_member', canAdd: true, ready: true };
+  let discovered = base;
+  const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY' ? { repository: inspected }
+    : { repositories: [discovered], installations: [] } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.discoverRepositories();
+  page.nodes.get('repository-target').value = base.fullName;
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Ready — not connected');
+  const unchangedRow = page.nodes.get('repository-list').children[0];
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.nodes.get('repository-list').children[0], unchangedRow);
+  for (const changed of [{ archived: true, eligible: false, reasons: ['archived'] },
+    { private: false, visibility: 'public', eligible: false, reasons: ['private_required'] }]) {
+    discovered = { ...base, ...changed };
+    await page.context.discoverRepositories({ silent: true });
+    assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Not checked');
+    assert.equal(page.nodes.get('repository-list').children[0].children[2].textContent, 'Check repository');
+    assert.equal(page.context.reviewSelectedRepository(), false);
+    assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+    discovered = base;
+    await page.context.discoverRepositories({ silent: true });
+    assert.notEqual(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Ready — not connected');
+  }
+});
+
+test('blurred B is checked after an in-flight A inspection without applying stale A', async () => {
+  const first = { installationId: 10, repoId: 20, fullName: 'acme/first', owner: 'acme', repo: 'first', eligible: true };
+  const second = { installationId: 10, repoId: 21, fullName: 'acme/second', owner: 'acme', repo: 'second', eligible: true };
+  let releaseFirst, firstStarted;
+  const started = new Promise(resolve => { firstStarted = resolve; });
+  const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
+    ? request.payload.repoId === first.repoId
+      ? new Promise(resolve => { releaseFirst = () => resolve({ repository: { ...first, state: 'initialized_member', canAdd: true, ready: true } }); firstStarted(); })
+      : { repository: { ...second, state: 'initialized_member', canAdd: true, ready: true } }
+    : { repositories: [first, second], installations: [] } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  input.value = first.fullName;
+  const checkingFirst = page.submit('repository-target-form');
+  await started;
+  input.value = second.fullName;
+  input.listeners.input();
+  await input.listeners.blur({ relatedTarget: null });
+  releaseFirst();
+  await checkingFirst;
+  assert.deepEqual(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').map(request => request.payload.repoId), [20, 21]);
+  assert.equal(page.nodes.get('repository-list').children[1].children[1].children[1].textContent, 'Ready — not connected');
+  assert.equal(page.context.reviewSelectedRepository(), true);
+  assert.equal(page.nodes.get('repository-confirmation-title').textContent, 'Connect acme/second?');
+});
+
+test('Merge tasks omits unresolved identities from both pickers and explains the URL-only limitation', async () => {
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS' ? { tasks: [
+    { taskUrl: 'acme/project/unresolved-task', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/task', destinationIds: ['github:1'] },
+  ], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time-data' },
+  } } });
+  page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-task-period').value = 'one-month';
+  assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
+  await page.context.refreshMergeTasks();
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').length, 1);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /unresolved.*(URL|merge)/i);
+  for (const side of ['source', 'target']) {
+    assert.deepEqual(page.nodes.get(`merge-${side}-list`).children.map(row => row.children[1]?.textContent), ['https://example.test/task']);
+  }
 });
 
 test('Merge tasks queues selected left-to-right pairs and sends them together', async () => {

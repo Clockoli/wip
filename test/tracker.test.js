@@ -1441,6 +1441,32 @@ test('linked time edits save a crossed adjacent boundary in one monthly-file wri
   ]);
 });
 
+test('linked edits preserve a persisted imported identity but reject newly entered non-URL identities', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', {
+    taskUrl: identity, taskTitle: 'Imported task', issueTitle: 'Imported task', description: 'Old',
+  });
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  const request = { path, originalSha: 'original-sha', index: 0, original: {
+    id: original.id, taskUrl: identity, issueUrl: identity, taskTitle: original.taskTitle,
+    issueTitle: original.issueTitle, startedAt: original.startedAt, endedAt: original.endedAt, description: 'Old',
+  } };
+  const tracker = service({ github });
+  await assert.rejects(() => tracker.editEntries({ entries: [{ ...request,
+    edits: { taskUrl: 'other/project/new-task' },
+  }] }), /Invalid task URL/);
+  assert.equal(github.atomicWrites.length, 0);
+  const [saved] = await tracker.editEntries({ entries: [{ ...request,
+    edits: { endedAt: '2026-08-18T09:30:00.000Z', taskTitle: 'Reviewed', description: 'Updated' },
+  }] });
+  assert.equal(saved.taskUrl, identity);
+  assert.equal(saved.endedAt, '2026-08-18T09:30:00.000Z');
+  assert.equal(saved.taskTitle, 'Reviewed');
+  assert.equal(saved.description, 'Updated');
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('linked time edits remain atomic when an adjusted Start moves across monthly files', async () => {
   const github = new FakeGitHub(), august = 'times/2026-08/alice.jsonl', september = 'times/2026-09/alice.jsonl';
   const previous = entry('2026-08-31T22:00:00.000Z', '2026-08-31T23:30:00.000Z');

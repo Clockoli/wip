@@ -2,6 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 import { taskPeriodRange } from '../domain/tasks.js';
+import { normalizeTaskUrl } from '../domain/values.js';
 
 
 const $ = id => document.getElementById(id);
@@ -17,6 +18,7 @@ const choiceStore = new ChromeStore();
 let repositoryTarget = '';
 let repositoryInputDirty = false;
 let checkingRepositoryTarget = '';
+let queuedRepositoryCheck = null;
 let repositoryCheckFeedback = '';
 let repositoryCheckFeedbackError = false;
 let repositoryCheckError = '';
@@ -872,10 +874,19 @@ async function discoverRepositories({ silent = false } = {}) {
       repositories = result.repositories.map(repository => {
         const prior = repositories.find(value => value.installationId === repository.installationId && value.repoId === repository.repoId);
         return prior?.state && prior.defaultBranch === repository.defaultBranch
+          && prior.private === repository.private && prior.visibility === repository.visibility
+          && prior.archived === repository.archived && prior.disabled === repository.disabled
+          && prior.eligible === repository.eligible
+          && JSON.stringify(prior.reasons) === JSON.stringify(repository.reasons)
           && JSON.stringify(prior.appPermissions) === JSON.stringify(repository.appPermissions)
           && JSON.stringify(prior.userPermissions) === JSON.stringify(repository.userPermissions)
           ? prior : repository;
       });
+      if (selectedRepository && !repositories.includes(selectedRepository)) {
+        selectedRepository = null;
+        updateRepositoryConfirmation();
+        renderRepositoryAccess();
+      }
       installations = result.installations || [];
       repositoryDiscoveryKnown = true;
       renderRepositoryList();
@@ -1231,12 +1242,18 @@ function renderMergeQueue() {
 }
 function renderMergeTasks(tasks) {
   const destinationId = $('merge-task-destination').value;
-  mergeTasks = tasks.filter(task => task.taskUrl && destinationId && task.destinationIds?.includes(destinationId)).sort((left, right) => Number(right.totalSeconds || 0) - Number(left.totalSeconds || 0) || left.taskUrl.localeCompare(right.taskUrl));
+  const destinationTasks = tasks.filter(task => task.taskUrl && destinationId && task.destinationIds?.includes(destinationId));
+  mergeTasks = destinationTasks.filter(task => {
+    try { return Boolean(normalizeTaskUrl(task.taskUrl)); }
+    catch { return false; }
+  }).sort((left, right) => Number(right.totalSeconds || 0) - Number(left.totalSeconds || 0) || left.taskUrl.localeCompare(right.taskUrl));
+  const unavailable = destinationTasks.length - mergeTasks.length;
   for (const side of ['source', 'target']) {
     if (!mergeTasks.some(task => task.taskUrl === mergeSelection[side])) mergeSelection[side] = '';
     renderMergeTaskList(side);
   }
   renderMergeQueue();
+  return unavailable;
 }
 function selectMergeTask(side, taskUrl) {
   mergeSelection[side] = taskUrl; renderMergeTaskList(side);
@@ -1266,8 +1283,10 @@ async function refreshMergeTasks() {
     if (result.partial || result.conflicts?.length) {
       renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
     }
-    renderMergeTasks(result.tasks || []);
-    $('merge-tasks-feedback').textContent = mergeTasks.length ? '' : 'No tasks match the selected people and period.';
+    const unavailable = renderMergeTasks(result.tasks || []);
+    $('merge-tasks-feedback').textContent = unavailable
+      ? `${unavailable} unresolved ${unavailable === 1 ? 'identity is' : 'identities are'} not available for URL-only task merge.`
+      : mergeTasks.length ? '' : 'No tasks match the selected people and period.';
   } catch (error) { renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message; }
 }
 
@@ -1465,7 +1484,7 @@ for (const id of ['open-device-page']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
 async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = false) {
-  if (checkingRepositoryTarget) return;
+  if (checkingRepositoryTarget) { queuedRepositoryCheck = { rawTarget, fromList, keepInput }; return; }
   const revision = repositoryLifecycle;
   const account = repositoryChoiceAccount();
   let completed = false;
@@ -1503,7 +1522,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
       if (repositoryActionKey(selectedRepository) !== 'connect' && !reviewSelectedRepository()) $('repository-target-status').focus();
     }
   } catch (error) {
-    if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled) {
+    if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled && !repositoryInputDirty) {
       repositoryCheckError = checkingRepositoryTarget;
       if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`; repositoryCheckFeedbackError = true; }
       message(error.message, 'error');
@@ -1519,6 +1538,12 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
       }
       renderRepositoryAccess();
     } else if (keepInput) repositoryCheckFeedback = '';
+    const queued = queuedRepositoryCheck;
+    queuedRepositoryCheck = null;
+    if (queued && revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled
+        && (queued.fromList || queued.rawTarget.trim() === $('repository-target').value.trim())) {
+      await checkRepositoryTarget(queued.rawTarget, queued.fromList, queued.keepInput);
+    }
   }
 }
 $('repository-target-form').addEventListener('submit', event => {
@@ -1528,7 +1553,7 @@ $('repository-target-form').addEventListener('submit', event => {
 $('repository-target').addEventListener('blur', event => {
   const input = $('repository-target');
   if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id) || event?.relatedTarget?.dataset?.repositoryAction
-      || !input.value.trim() || !repositoryInputDirty || checkingRepositoryTarget) return;
+      || !input.value.trim() || !repositoryInputDirty) return;
   try { parseRepositoryTarget(input.value); }
   catch {
     input.setAttribute('aria-invalid', 'true');

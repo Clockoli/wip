@@ -113,8 +113,8 @@ export class OnboardingCoordinator {
       || connectIds.some(id => id.installationId === config.installationId && id.repoId === config.repoId));
     if (auth.source === 'current' && configured.length) {
       await this.store.ensureDataVersion(5);
-      const saved = await this.store.registerReadyGitHubAppRepositories(configured, auth.snapshot.authGeneration);
-      if (!saved) throw new OnboardingError('Authentication changed during discovery. Check repositories again.', 'onboarding_superseded');
+      const saved = await this.store.registerReadyGitHubAppRepositories(configured, auth.snapshot.authGeneration, configuration.generation);
+      if (!saved) throw new OnboardingError('Authentication or repository configuration changed during discovery. Check repositories again.', 'onboarding_superseded');
       return { ...discovery, candidates: discovery.repositories.filter(repository => repository.eligible), promoted: false };
     }
     if (auth.source === 'pending') {

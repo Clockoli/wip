@@ -97,7 +97,7 @@ test('timeline task switching is optimistic and keeps the queued completion visi
   assert.match(content, /function mergeTimelineCompletedEntries\(completed, optimisticCompletions\)/);
   assert.match(content, /mergeTimelineCompletedEntries\(completed, timelineOptimisticCompletions\.values\(\)\)/);
   assert.match(content, /timelineStartInFlight/);
-  assert.match(content, /isStartDisabled: timelineStartInFlight \|\|/);
+  assert.match(content, /isStartDisabled: !taskUrlOf\(entry\) \|\| timelineStartInFlight \|\|/);
   assert.match(content, /timelineStartInFlight = true;\s*refreshMountedTimeline\(\);/);
   assert.match(content, /timelineStartInFlight = false;\s*refreshMountedTimeline\(\);/);
   assert.match(content, /timelineInstance\.scrollToEnd\(\)/);
@@ -228,9 +228,9 @@ test('accepted start invalidates older recent loads before rendering and can mou
 
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
-  assert.match(content, /isStartDisabled: timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
+  assert.match(content, /isStartDisabled: !taskUrlOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
   assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
-  assert.match(content, /if \(!entry \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
+  assert.match(content, /if \(!entry \|\| !taskUrlOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
   const panelStopEnd = content.indexOf('\n        stop.disabled', panelStopStart);
@@ -366,7 +366,7 @@ test('timeline block identity stays stable when edits change chronological order
 test('tracking timeline renders named rows and the configurable main project for unmatched tasks', () => {
   const content = read('src/content/github.js');
   assert.match(content, /function popupTimelineRows\(entries\)/);
-  assert.match(content, /projectNameForUrl\(taskUrlOf\(entry\), pageState\.projects, pageState\.otherProjectName\)/);
+  assert.match(content, /projectNameForUrl\(storedTaskIdentityOf\(entry\), pageState\.projects, pageState\.otherProjectName\)/);
   assert.match(content, /rowId: projectRowId\(projectName\)/);
   assert.match(content, /const otherProjectName = String\(pageState\.otherProjectName \|\| 'Other'\)/);
   assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now \}\)/);

@@ -953,21 +953,17 @@ test('the Timeline details pointer connects the hovered block to the details pan
   await mount(page);
   const task = page.locator('#timeline .task[data-task-key="entry:a"]');
   await task.hover();
-  const geometry = await expect.poll(() => page.evaluate(() => {
+  await expect.poll(() => page.evaluate(() => {
     const root = document.querySelector('#timeline').shadowRoot;
     const task = root.querySelector('.task[data-task-key="entry:a"]').getBoundingClientRect();
     const pointer = root.querySelector('.details-pointer');
     const details = root.querySelector('.details').getBoundingClientRect();
     const rect = pointer.getBoundingClientRect();
-    return { hidden: pointer.hidden, task, rect, details, aligned: Math.abs(rect.left - (task.left + task.width / 2)) < 1 };
-  })).toMatchObject({ hidden: false, aligned: true });
-  const settled = await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    return { task: root.querySelector('.task[data-task-key="entry:a"]').getBoundingClientRect(), rect: root.querySelector('.details-pointer').getBoundingClientRect(), details: root.querySelector('.details').getBoundingClientRect() };
-  });
-  expect(settled.rect.left + settled.rect.width / 2).toBeCloseTo(settled.task.left + settled.task.width / 2, 0);
-  expect(settled.rect.top).toBeCloseTo(settled.task.bottom, 0);
-  expect(settled.rect.bottom).toBeCloseTo(settled.details.top, 0);
+    return { hidden: pointer.hidden, task, rect, details,
+      aligned: rect.width === 1 && Math.abs((rect.left + rect.width / 2) - (task.left + task.width / 2)) < 1,
+      startsAtTask: Math.abs(rect.top - task.bottom) < 1,
+      reachesDetails: Math.abs(rect.bottom - details.top) < 1 };
+  })).toMatchObject({ hidden: false, aligned: true, startsAtTask: true, reachesDetails: true });
 });
 
 test('Calendar hover stays below day and project labels', async ({ page }) => {

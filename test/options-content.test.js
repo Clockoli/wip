@@ -193,7 +193,8 @@ test('repository polling is silent, read-only, bounded by lifecycle, and has no 
   assert.match(script, /if \(!silent && revision === repositoryLifecycle\)/);
   const silent = script.slice(script.indexOf('    if (silent) {'), script.indexOf('    } else {', script.indexOf('    if (silent) {')));
   assert.match(silent, /renderRepositoryList\(\)/);
-  assert.doesNotMatch(silent, /selectedRepository\s*=|rememberRepositoryTarget|message\(|showModal|reviewSelectedRepository|SELECT_REPOSITORY/);
+  assert.match(silent, /if \(selectedRepository && !repositories\.includes\(selectedRepository\)\) \{\s*selectedRepository = null/);
+  assert.doesNotMatch(silent.replace('selectedRepository = null', ''), /selectedRepository\s*=|rememberRepositoryTarget|message\(|showModal|reviewSelectedRepository|SELECT_REPOSITORY/);
   assert.match(script, /pendingConfirmation \|\| repositoryActionApplying/);
   assert.match(script, /addEventListener\('pagehide'/);
   const grant = script.slice(script.indexOf("$('install-app').addEventListener"), script.indexOf("for (const id of ['new-time-repository', 'modal-new-time-repository'])"));

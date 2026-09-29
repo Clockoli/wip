@@ -179,6 +179,30 @@ test('existing verification refresh remains atomic under replaced or candidate a
   }
 });
 
+for (const action of ['discover', 'checkRepository']) {
+  test(`in-flight ${action} cannot restore a removed non-default destination`, async () => {
+    let removeDuringRead = false, removed = false;
+    let store;
+    const setupResult = await setup({ onRead: async (path, backend) => {
+      if (removeDuringRead && !removed && path === '.clockoli/tasks.json') {
+        removed = true;
+        await store.removeDestination('github:78');
+      }
+    } });
+    ({ store } = setupResult);
+    const { backend, coordinator } = setupResult;
+    await connectBoth(coordinator);
+    removeDuringRead = true;
+    await assert.rejects(action === 'discover' ? coordinator.discover()
+      : coordinator.checkRepository({ installationId: 88, repoId: 78 }), { code: 'onboarding_superseded' });
+    assert.equal(removed, true, 'removal happened while repository reads were in flight');
+    const registry = await new ChromeStore(backend).getDestinationRegistry();
+    assert.deepEqual(Object.keys(registry.destinations), ['github:77']);
+    assert.equal(registry.defaultDestinationId, 'github:77');
+    assert.equal((await store.getOnboardingVerification('github:78')).status, null);
+  });
+}
+
 test('read recovery and refreshed state never provision old configured branches', async () => {
   const { backend, store, coordinator } = await setup();
   await connectBoth(coordinator);

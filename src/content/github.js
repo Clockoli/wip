@@ -121,15 +121,28 @@
   }
 
   function taskUrlOf(value) { return normalizeTaskUrl(typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url); }
+  function storedTaskIdentityOf(value) {
+    const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
+    const url = normalizeTaskUrl(candidate);
+    if (url) return url;
+    if (typeof candidate !== 'string' || candidate.length > 2048) return null;
+    const parts = candidate.split('/');
+    return parts.length === 3 && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(parts[0])
+      && !parts[0].includes('--') && parts[1].length <= 100 && parts[1] !== '.' && parts[1] !== '..'
+      && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
+      && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
+  }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
   function taskResult(value, className = '') {
-    const taskUrl = taskUrlOf(value), taskTitle = taskTitleOf(value);
+    const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
     const result = el('div', undefined, `task-result${taskTitle ? '' : ' task-result-untitled'}${className ? ` ${className}` : ''}`);
-    const url = el(taskTitle ? 'div' : 'a', taskUrl, 'task-url'); url.title = taskUrl;
-    if (!taskTitle) { url.href = taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
+    const url = el(taskTitle || !taskUrl ? 'div' : 'a', identity, 'task-url'); url.title = identity;
+    if (!taskTitle && taskUrl) { url.href = taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
     result.append(url);
     if (taskTitle) {
-      const title = el('a', taskTitle, 'task-title'); title.href = taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.title = taskTitle; result.append(title);
+      const title = el(taskUrl ? 'a' : 'span', taskTitle, 'task-title');
+      if (taskUrl) { title.href = taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; }
+      title.title = taskTitle; result.append(title);
     }
     return result;
   }
@@ -142,7 +155,9 @@
     image.height = 20;
     image.referrerPolicy = 'no-referrer';
     try {
-      image.src = siteFaviconUrl(value);
+      const faviconUrl = siteFaviconUrl(value);
+      if (faviconUrl) image.src = faviconUrl;
+      else image.hidden = true;
     }
     catch { image.hidden = true; }
     image.addEventListener('error', () => { image.hidden = true; }, { once: true });
@@ -1042,7 +1057,7 @@
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
-  function originalRecord(entry) { return { id: entry.id, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
+  function originalRecord(entry) { return { id: entry.id, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), issueUrl: storedTaskIdentityOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
   function sameRecord(left, right) {
     const a = originalRecord(left), b = originalRecord(right);
@@ -1098,7 +1113,7 @@
         || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
         || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
         || !identity(item.actor) || !producer(item.producer) || !object(item.metadata) || !object(item.metrics) || !timezoneOk
-        || !taskUrlOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
+        || !storedTaskIdentityOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
         || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
         || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) || new Date(item.updatedAt) < new Date(item.createdAt)
         || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
@@ -1418,11 +1433,15 @@
         const entries = [...submittedDrafts.entries()].map(([draftKey, value]) => {
           const editor = inlineEditors.get(draftKey), target = editor?.entry;
           if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
-          const task = value.metadataActive ? taskFromUrl(value.taskUrl, value.taskTitle) : taskFromUrl(taskUrlOf(target), taskTitleOf(target));
-          if (!task) throw new Error('Enter a valid HTTP(S) task URL.');
+          const originalIdentity = storedTaskIdentityOf(target);
+          const task = value.metadataActive && value.taskUrl !== originalIdentity
+            ? taskFromUrl(value.taskUrl, value.taskTitle)
+            : { taskUrl: originalIdentity, taskTitle: value.metadataActive ? value.taskTitle : taskTitleOf(target) };
+          if (!task?.taskUrl) throw new Error('Enter a valid HTTP(S) task URL.');
           const description = String(value.metadataActive ? value.description : target.description || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
-          const edits = { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
-          const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
+          const edits = { ...(task.taskUrl === originalIdentity && !taskUrlOf(target) ? {} : { taskUrl: task.taskUrl }),
+            taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
+          const changed = task.taskUrl !== originalIdentity || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
           return changed ? { destinationId: target.destinationId, path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
         const savedKeys = new Set(submittedDrafts.keys());
@@ -1485,7 +1504,7 @@
         stop: { ...timestampParts(entry.endedAt, entry.timezone), timestamp: entry.endedAt },
         group: key,
       }),
-      metadataActive: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
+      metadataActive: true, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
     });
     renderUi(); globalThis.requestAnimationFrame?.(() => {
       const editor = inlineEditors.get(key);
@@ -1535,7 +1554,7 @@
       timeRow.append(inline.unsaved);
       if (draft?.metadataActive) {
         const metadata = el('div', undefined, 'inline-metadata-editor');
-        const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = 'url'; urlField.required = true; urlField.value = draft.taskUrl;
+        const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = taskUrlOf(entry) ? 'url' : 'text'; urlField.required = true; urlField.value = draft.taskUrl;
         const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
         const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
         const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
@@ -1546,7 +1565,7 @@
           control.append(input, save); label.append(control); return label;
         };
         metadata.append(
-          field('Task URL', urlField, 'Save task URL'),
+          field(taskUrlOf(entry) ? 'Task URL' : 'Imported task identity (replace with an HTTP(S) URL)', urlField, 'Save task URL'),
           field('Task title (optional)', titleField, 'Save task title'),
           field('Description', descriptionField, 'Save description'),
         );
@@ -1693,7 +1712,7 @@
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
       const entries = recordsWithDrafts();
-      const matches = query ? entries.filter(entry => taskUrlOf(entry).toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
+      const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
       let empty = null;
       if (!matches.length) {
         empty = el('div', undefined, 'activity-empty');
@@ -1772,13 +1791,13 @@
     const items = entries.map((entry) => {
       const stableId = entry.id || `${entry._path}:${entry._index}`;
       const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
-      const projectName = projectNameForUrl(taskUrlOf(entry), pageState.projects, pageState.otherProjectName);
+      const projectName = projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, pageState.otherProjectName);
       byId.set(id, entry);
       return {
         id,
         rowId: projectRowId(projectName),
         url: taskUrlOf(entry),
-        title: taskTitleOf(entry) || taskUrlOf(entry) || 'Untitled task',
+        title: taskTitleOf(entry) || storedTaskIdentityOf(entry) || 'Untitled task',
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
         savedDescription: entry.description || '',
@@ -1787,7 +1806,7 @@
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
         isPending: Boolean(entry._pending),
-        isStartDisabled: timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
+        isStartDisabled: !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
         isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
@@ -1811,7 +1830,7 @@
   function popupTimelineRows(entries) {
     const rows = (pageState.projects || []).map(project => ({ id: projectRowId(project.name), title: project.name }));
     const otherProjectName = String(pageState.otherProjectName || 'Other');
-    if (entries.some(entry => projectNameForUrl(taskUrlOf(entry), pageState.projects, otherProjectName) === otherProjectName)) {
+    if (entries.some(entry => projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, otherProjectName) === otherProjectName)) {
       rows.push({ id: projectRowId(otherProjectName), title: otherProjectName });
     }
     return rows.length ? rows : [{ id: projectRowId(otherProjectName), title: otherProjectName }];
@@ -2144,7 +2163,7 @@
   }
 
   async function restartTimelineEntry(entry) {
-    if (!entry || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!entry || !taskUrlOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
     if (!confirmLongEntry()) return false;
     timelineStartInFlight = true;
     refreshMountedTimeline();
@@ -2516,7 +2535,7 @@
       const duration = el('span', formatDuration(Math.max(0, new Date(entry.endedAt) - new Date(entry.startedAt)) / 1000), 'inline-duration');
       const resume = button('▶ Continue', 'secondary', async () => { try { await restartTimelineEntry(entry); } catch {} });
       resume.setAttribute('data-panel-action', `continue:${entry.id}`);
-      resume.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      resume.disabled = !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
       row.append(identity, range, duration);
       if (entry._pending || timelineOptimisticEdits.has(entry.id)) {
         const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; row.append(pending);
@@ -2544,7 +2563,7 @@
     overlaps.replaceChildren();
     if (!entries.length) return;
     const warning = el('div', undefined, 'overlap-warning');
-    warning.append(el('span', `Overlapping entries: ${entries.map(entry => `${taskTitleOf(entry) || taskUrlOf(entry)} (${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${entry._active ? 'now' : wallTime(timestampParts(entry.endedAt, entry.timezone))})`).join('; ')}. `));
+    warning.append(el('span', `Overlapping entries: ${entries.map(entry => `${taskTitleOf(entry) || storedTaskIdentityOf(entry)} (${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${entry._active ? 'now' : wallTime(timestampParts(entry.endedAt, entry.timezone))})`).join('; ')}. `));
     const link = el('a', 'Fix in Activity'); link.href = extensionResourceUrl('src/times/times.html');
     link.addEventListener('click', event => { if (!event.isTrusted) return; event.preventDefault(); void send({ type: 'OPEN_TIMES' }).catch(setError); });
     warning.append(link); overlaps.append(warning);

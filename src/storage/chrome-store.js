@@ -1182,13 +1182,15 @@ export class ChromeStore {
 
   // Discovery may add already-provisioned destinations locally, but must never
   // replace coordinates, accepted work, defaults, or promote candidate credentials.
-  async registerReadyGitHubAppRepositories(configs, expectedAuthGeneration) {
+  async registerReadyGitHubAppRepositories(configs, expectedAuthGeneration, expectedConfigurationGeneration) {
     return this.backend.mutateMany([
       AUTH, AUTH_GENERATION, PENDING_AUTH, CONFIGURATION_GENERATION, 'dataVersion',
       DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
     ], values => {
       if (values[AUTH]?.mode !== 'github_app' || values[PENDING_AUTH]
-          || generationValue(values[AUTH_GENERATION]) !== expectedAuthGeneration) return { result: false };
+          || generationValue(values[AUTH_GENERATION]) !== expectedAuthGeneration
+          || (expectedConfigurationGeneration !== undefined
+            && generationValue(values[CONFIGURATION_GENERATION]) !== expectedConfigurationGeneration)) return { result: false };
       let next = { ...values }, changed = false, verificationChanged = false;
       for (const config of configs) {
         const id = destinationIdForConfiguration(config);
