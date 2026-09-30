@@ -173,6 +173,108 @@ test('active start resize edits without dispatching Stop and stays running', asy
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getRunningTask()?.instanceId)).toBe('active:c');
 });
 
+test('Timeline resize bars appear on hover and remain visible after selecting an entry', async ({ page }) => {
+  await mount(page);
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  const bars = () => block.evaluate(element => [...element.querySelectorAll('.resize-handle')].map(handle => ({
+    opacity: Number(getComputedStyle(handle, '::after').opacity),
+    cursor: getComputedStyle(handle).cursor,
+  })));
+  await page.mouse.move(0, 0);
+  expect(await block.evaluate(element => ({
+    shadow: getComputedStyle(element).boxShadow,
+    padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
+  }))).toEqual({ shadow: 'none', padding: '9px' });
+  expect((await bars()).map(bar => bar.opacity)).toEqual([0, 0]);
+  await block.hover();
+  await expect.poll(async () => (await bars()).map(bar => bar.opacity)).toEqual([1, 1]);
+  await block.click();
+  await page.mouse.move(0, 0);
+  await expect.poll(async () => (await bars()).map(bar => bar.opacity)).toEqual([1, 1]);
+  expect((await bars()).map(bar => bar.cursor)).toEqual(['ew-resize', 'ew-resize']);
+});
+
+test('Calendar resize bars stay visible on selection after the pointer leaves', async ({ page }) => {
+  await mount(page);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const block = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  const opacities = () => block.evaluate(element => [...element.querySelectorAll('.calendar-resize-handle')]
+    .map(handle => Number(getComputedStyle(handle, '::after').opacity)));
+  await page.mouse.move(0, 0);
+  expect(await opacities()).toEqual([0, 0]);
+  expect(await block.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none');
+  await block.hover();
+  await expect.poll(opacities).toEqual([1, 1]);
+  await block.click();
+  await expect(block).toHaveClass(/selected/);
+  await page.mouse.move(0, 0);
+  await expect(block).toHaveClass(/selected/);
+  await expect.poll(opacities).toEqual([1, 1]);
+});
+
+test('Timeline edges show full-height colored grips without changing the default entry frame', async ({ page }) => {
+  await mount(page);
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.hover();
+  await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
+    .map(handle => handle.getBoundingClientRect().width))).toEqual([14, 14]);
+  const grips = await block.evaluate(element => [...element.querySelectorAll('.resize-handle')].map(handle => {
+    const grip = getComputedStyle(handle, '::after');
+    const entry = element.getBoundingClientRect();
+    const expected = document.createElement('span');
+    expected.style.backgroundColor = 'color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel))';
+    element.append(expected);
+    const color = getComputedStyle(expected).backgroundColor;
+    expected.remove();
+    return { targetWidth: handle.getBoundingClientRect().width, width: parseFloat(grip.width), height: parseFloat(grip.height), top: grip.top, bottom: grip.bottom, radius: grip.borderRadius, background: grip.backgroundColor, color, marks: grip.backgroundImage, markSize: grip.backgroundSize, frame: getComputedStyle(element).boxShadow, entryHeight: entry.height, opacity: grip.opacity };
+  }));
+  expect(grips).toHaveLength(2);
+  for (const grip of grips) {
+    expect(grip.targetWidth).toBeGreaterThanOrEqual(12);
+    expect(grip.width).toBeGreaterThanOrEqual(9);
+    expect(grip.height).toBeGreaterThanOrEqual(grip.entryHeight - 2);
+    expect(grip.top).toBe('0px');
+    expect(grip.bottom).toBe('0px');
+    expect(grip.background).toBe(grip.color);
+    expect(grip.marks).toContain('linear-gradient');
+    expect(grip.markSize).toBe('1px 16px, 1px 16px');
+    expect(grip.frame).not.toContain('inset');
+    expect(grip.opacity).toBe('1');
+  }
+  expect(grips.map(grip => grip.radius)).toEqual(['6px 0px 0px 6px', '0px 6px 6px 0px']);
+});
+
+test('Calendar edges show full-width colored grips with paired grip marks', async ({ page }) => {
+  await mount(page);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const block = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await block.hover();
+  await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.calendar-resize-handle')]
+    .map(handle => getComputedStyle(handle, '::after').opacity))).toEqual(['1', '1']);
+  const grips = await block.evaluate(element => [...element.querySelectorAll('.calendar-resize-handle')].map(handle => {
+    const target = getComputedStyle(handle);
+    const grip = getComputedStyle(handle, '::after');
+    const expected = document.createElement('span');
+    expected.style.backgroundColor = 'color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel))';
+    element.append(expected);
+    const color = getComputedStyle(expected).backgroundColor;
+    expected.remove();
+    return { targetHeight: parseFloat(target.height), entryWidth: element.clientWidth, width: parseFloat(grip.width), height: parseFloat(grip.height), radius: grip.borderRadius, background: grip.backgroundColor, color, marks: grip.backgroundImage, markSize: grip.backgroundSize, transform: grip.transform, opacity: grip.opacity };
+  }));
+  expect(grips).toHaveLength(2);
+  for (const grip of grips) {
+    expect(grip.targetHeight).toBeGreaterThanOrEqual(2);
+    expect(grip.width).toBeGreaterThanOrEqual(grip.entryWidth - 2);
+    expect(grip.height).toBeGreaterThanOrEqual(6);
+    expect(grip.background).toBe(grip.color);
+    expect(grip.marks).toContain('linear-gradient');
+    expect(grip.markSize).toBe('16px 1px, 16px 1px');
+    expect(grip.transform).toBe('none');
+    expect(grip.opacity).toBe('1');
+  }
+  expect(grips.map(grip => grip.radius)).toEqual(['6px 6px 0px 0px', '0px 0px 6px 6px']);
+});
+
 test('externally pending edit remains editable while its GitHub write is queued', async ({ page }) => {
   await mount(page, { persistPending: true });
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());

@@ -3989,6 +3989,7 @@
     _beginCalendarTaskEdit(e, task, mode, segmentEl = null) {
       e.preventDefault();
       e.stopPropagation();
+      this._selectTask(task, true);
       this._cancelZoomAnimation();
       this._pauseRunningTimerForInteraction();
       const verticalMapSnapshot = this._calendarMetrics?.verticalMap || this._buildCalendarVerticalMap(this.options.calendarHourHeight);

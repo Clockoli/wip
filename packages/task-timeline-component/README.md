@@ -4,7 +4,7 @@ This workspace vendors the dependency-free `TaskTimeline` component and adds the
 
 ## Layout
 
-- `vendor/timeline-component.js` — reviewed upstream component with the local-midnight day-band fix required by Clockoli.
+- `vendor/timeline-component.js` — reviewed upstream component with the local-midnight day-band fix and physical Calendar click selection required by Clockoli.
 - `src/clockoli-adapter.js` — Clockoli data/callback/state/theme adapter.
 - `scripts/build.mjs` — deterministically creates `src/content/task-timeline-component.js`.
 - `tests/` — source/API contract tests.

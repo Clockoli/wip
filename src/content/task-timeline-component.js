@@ -3990,6 +3990,7 @@
     _beginCalendarTaskEdit(e, task, mode, segmentEl = null) {
       e.preventDefault();
       e.stopPropagation();
+      this._selectTask(task, true);
       this._cancelZoomAnimation();
       this._pauseRunningTimerForInteraction();
       const verticalMapSnapshot = this._calendarMetrics?.verticalMap || this._buildCalendarVerticalMap(this.options.calendarHourHeight);
@@ -4409,9 +4410,47 @@
     .task.clockoli-minimum-width.clockoli-end-edge .edit-clock.end { left:auto; right:0; top:-20px; bottom:auto; transform:translateX(calc(-1 * var(--clockoli-end-edge-shift, 0px))); }
     .task-main { padding-inline: 9px; }
     .task-name { overflow: hidden; text-overflow: ellipsis; }
-    .resize-handle::after { opacity: 0; }
+    .resize-handle { width: min(14px, 40%); }
+    .resize-handle::after {
+      top: 0; bottom: 0; width: 11px;
+      background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
+      background-image: linear-gradient(var(--tt-text), var(--tt-text)),
+                        linear-gradient(var(--tt-text), var(--tt-text));
+      background-size: 1px 16px, 1px 16px;
+      background-position: calc(50% - 2px) center, calc(50% + 2px) center;
+      background-repeat: no-repeat;
+    }
+    .resize-handle.left::after { left: 0; border-radius: 6px 0 0 6px; }
+    .resize-handle.right::after { right: 0; border-radius: 0 6px 6px 0; }
+    .calendar-task .calendar-resize-handle { left: 0; right: 0; }
+    .calendar-task .calendar-resize-handle::after {
+      left: 0; width: 100%; height: 6px;
+      transform: none;
+      background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
+      background-image: linear-gradient(var(--tt-text), var(--tt-text)),
+                        linear-gradient(var(--tt-text), var(--tt-text));
+      background-size: 16px 1px, 16px 1px;
+      background-position: center 2px, center 4px;
+      background-repeat: no-repeat;
+    }
+    .calendar-task .calendar-resize-handle.start::after { top: 0; border-radius: 6px 6px 0 0; }
+    .calendar-task .calendar-resize-handle.end::after { bottom: 0; border-radius: 0 0 6px 6px; }
+    .task.editing.resize-left .resize-handle.left::after,
+    .task.editing.resize-right .resize-handle.right::after,
+    .calendar-task.editing.resize-left .calendar-resize-handle.start::after,
+    .calendar-task.editing.resize-right .calendar-resize-handle.end::after {
+      background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
+      box-shadow: none;
+    }
+    .calendar-task.editing.resize-left .calendar-resize-handle.start::after,
+    .calendar-task.editing.resize-right .calendar-resize-handle.end::after { height: 6px; }
     .task:hover .resize-handle::after, .task.hovered .resize-handle::after,
-    .task.editing .resize-handle::after { opacity: 0; }
+    .task.selected .resize-handle::after, .task.focused .resize-handle::after,
+    .task.editing .resize-handle::after { opacity: 1; transform: none; }
+    .calendar-task:hover .calendar-resize-handle::after,
+    .calendar-task.editing .calendar-resize-handle::after,
+    .calendar-task.selected .calendar-resize-handle::after,
+    .calendar-task.focused .calendar-resize-handle::after { opacity: 1; transform: none; }
     .connector-dot { background: var(--tt-text); box-shadow: 0 0 0 1px var(--tt-panel); }
     .row-label { color: var(--tt-muted); background: color-mix(in srgb, var(--tt-panel) 88%, transparent); }
     .calendar-task {
