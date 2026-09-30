@@ -28,6 +28,7 @@ async function mount(page, overrides = {}) {
     ];
     window.__calls = [];
     window.__descriptionResolves = [];
+    window.__editSettlers = [];
     window.__items = items;
     window.__timeline = ClockoliTaskTimeline.createTimeline(document.querySelector('#timeline'), {
       items,
@@ -47,6 +48,7 @@ async function mount(page, overrides = {}) {
       },
       onEditCommit(edit) {
         window.__calls.push(['edit', edit.id, edit.kind]);
+        if (overrides.deferEdit) return new Promise((resolve, reject) => window.__editSettlers.push({ resolve, reject }));
         if (overrides.persistPending) {
           window.__items = window.__items.map(item => item.id === edit.id ? { ...item, isPending: true } : item);
           queueMicrotask(() => window.__timeline.update({ items: window.__items, now: Date.now() }));
@@ -171,21 +173,93 @@ test('active start resize edits without dispatching Stop and stays running', asy
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getRunningTask()?.instanceId)).toBe('active:c');
 });
 
-test('externally pending edit stays pending after its async callback resolves', async ({ page }) => {
+test('externally pending edit remains editable while its GitHub write is queued', async ({ page }) => {
   await mount(page, { persistPending: true });
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
   await page.keyboard.press('ArrowLeft');
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getInteractionState().pendingInstanceIds)).toContain('entry:a');
   expect(await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').classList.contains('pending'))).toBeTruthy();
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
+  await expect(block).toHaveAttribute('aria-busy', 'true');
+  await block.click();
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
+  await page.evaluate(() => {
+    window.__items = window.__items.map(item => item.id === 'entry:a' ? { ...item, isPending: false } : item);
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+  });
+  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
 });
 
-test('pending entries remain movable while delete stays blocked', async ({ page }) => {
+test('edited block shows left-aligned saving feedback and queues successive edits in order', async ({ page }) => {
+  await mount(page, { deferEdit: true });
+  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
+  await page.keyboard.press('ArrowLeft');
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await expect(block.locator('.clockoli-entry-saving')).toContainText('Saving…');
+  await expect(block).toHaveAttribute('aria-busy', 'true');
+  await expect(block).toHaveAttribute('aria-label', /Saving…/);
+  await expect.poll(() => block.evaluate(element => {
+    const entry = element.getBoundingClientRect();
+    const indicator = element.querySelector('.clockoli-entry-saving').getBoundingClientRect();
+    return entry.width > 0 && indicator.left >= entry.left && indicator.right < entry.right;
+  })).toBe(true);
+  await block.click();
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
+  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getInteractionState().pendingInstanceIds.includes('entry:a'))).toBe(false);
+  await expect(block).not.toHaveAttribute('aria-busy', 'true');
+});
+
+test('a late failed edit does not undo a newer edit or clear its preloader', async ({ page }) => {
+  await mount(page, { deferEdit: true });
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.click();
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
+  const newestStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.evaluate(() => window.__editSettlers[0].reject(new Error('older save failed')));
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'error'))).toBeTruthy();
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(newestStart);
+  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
+  await page.evaluate(() => window.__editSettlers[1].resolve(true));
+  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+});
+
+test('saving feedback clears on rejection and follows the entry into Calendar', async ({ page }) => {
+  await mount(page, { deferEdit: true });
+  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('#timeline .task[data-task-key="entry:a"] .clockoli-entry-saving')).toBeVisible();
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const calendarBlock = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await expect(calendarBlock.locator('.clockoli-entry-saving')).toBeVisible();
+  await page.evaluate(() => window.__editSettlers.shift().reject(new Error('save failed')));
+  await expect(calendarBlock.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'error'))).toBeTruthy();
+});
+
+test('pending entries show saving feedback, permit edits and still block deletion', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:b"]').click());
+  const block = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
   await page.keyboard.press('ArrowRight');
-  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
   await page.keyboard.press('Delete');
-  expect(await page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
+  await page.evaluate(() => {
+    window.__items = window.__items.map(item => item.id === 'entry:b' ? { ...item, isPending: false } : item);
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+  });
+  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
 });
 
 test('details descriptions expose a green check and save when it is clicked', async ({ page }) => {

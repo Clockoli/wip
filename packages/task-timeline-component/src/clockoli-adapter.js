@@ -65,6 +65,11 @@
     .task.focused:not(.selected) { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
     .task.pending { opacity: .72; }
     .task.pending::after { display: none; }
+    .clockoli-entry-saving { position: absolute; left: 6px; top: 50%; z-index: 2; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 12px); overflow: hidden; transform: translateY(-50%); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; pointer-events: none; }
+    .task.clockoli-saving .task-main, .calendar-task.clockoli-saving .calendar-task-name { padding-left: 80px; }
+    .clockoli-entry-saving-spinner { width: 12px; height: 12px; flex: none; border: 2px solid var(--tt-border); border-top-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); border-radius: 50%; animation: clockoli-entry-spin .8s linear infinite; }
+    @keyframes clockoli-entry-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .clockoli-entry-saving-spinner { animation: none; } }
     .task.running { border-style: dashed; }
     .task.clockoli-minimum-width .edit-clock.start { left:auto; right:calc(100% + 4px); top:50%; bottom:auto; transform:translateY(-50%); }
     .task.clockoli-minimum-width .edit-clock.end { left:calc(100% + 4px); right:auto; top:50%; bottom:auto; transform:translateY(-50%); }
@@ -141,6 +146,8 @@
     let props = { ...initialProps };
     let destroyed = false;
     const expectedRejections = new Map();
+    const savingKeys = new Set();
+    const pendingEdits = new Map();
 
     let originalItems = new Map();
     let styleObserver = null;
@@ -301,13 +308,26 @@
         const item = callbackItem(task);
         if (!item || typeof props.onEditCommit !== 'function') return false;
         const kind = event.action === 'resize-start' ? 'resize-left' : event.action === 'resize-end' ? 'resize-right' : 'move';
-        const result = props.onEditCommit({
+        const edit = {
           id: String(event.instanceId),
           startedAt: event.after?.start,
           endedAt: event.after?.end,
           kind,
-        });
-        return retainExternalState(result);
+        };
+        savingKeys.add(edit.id);
+        pendingEdits.set(edit.id, (pendingEdits.get(edit.id) || 0) + 1);
+        styleTasks();
+        void Promise.resolve().then(() => props.onEditCommit(edit))
+          .catch(error => props.onError?.(error, { action: 'edit', source: 'clockoli-adapter' }))
+          .finally(() => {
+            const remaining = (pendingEdits.get(edit.id) || 1) - 1;
+            if (!remaining) {
+              pendingEdits.delete(edit.id);
+              savingKeys.delete(edit.id);
+            } else pendingEdits.set(edit.id, remaining);
+            if (!destroyed) styleTasks();
+          });
+        return true;
       },
       onSelect() { queueMicrotask(renderActions); },
       onError(error, info) {
@@ -351,6 +371,25 @@
     function styleTasks() {
       if (destroyed) return;
       for (const element of timeline.shadow.querySelectorAll('.task[data-task-key], .calendar-task[data-task-key]')) {
+        const saving = savingKeys.has(element.dataset.taskKey) || Boolean(sourceItem(element.dataset.taskKey)?.isPending);
+        element.classList.toggle('clockoli-saving', saving);
+        if (saving) element.setAttribute('aria-busy', 'true');
+        else element.removeAttribute('aria-busy');
+        const indicator = element.querySelector('.clockoli-entry-saving');
+        if (saving && !indicator) {
+          const overlay = document.createElement('span');
+          overlay.className = 'clockoli-entry-saving';
+          const spinner = document.createElement('span');
+          spinner.className = 'clockoli-entry-saving-spinner';
+          spinner.setAttribute('aria-hidden', 'true');
+          const label = document.createElement('span');
+          label.textContent = 'Saving…';
+          overlay.append(spinner, label);
+          element.append(overlay);
+        } else if (!saving) indicator?.remove();
+        const label = element.getAttribute('aria-label') || '';
+        if (saving && !label.endsWith(' · Saving…')) element.setAttribute('aria-label', `${label} · Saving…`);
+        else if (!saving && label.endsWith(' · Saving…')) element.setAttribute('aria-label', label.slice(0, -' · Saving…'.length));
         const item = sourceItem(element.dataset.taskKey);
         element.style.setProperty('--clockoli-task-color', resolveColor(item || { id: element.dataset.taskKey }));
         if (element.classList.contains('task')) {

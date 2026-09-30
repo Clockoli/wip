@@ -1811,7 +1811,7 @@
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
-        isPending: Boolean(entry._pending),
+        isPending: Boolean(entry.isPending),
         isStartDisabled: !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
         isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
@@ -2201,11 +2201,6 @@
 
   function renderPopupTimeline() {
     const section = el('section', undefined, 'popup-timeline-section');
-    const spinner = el('div', undefined, 'timeline-queue-spinner');
-    spinner.setAttribute('role', 'status');
-    timelineQueueIndicator = spinner;
-    section.append(spinner);
-    refreshTimelineQueueIndicator();
     const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
     if (!createTimeline) {
       section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
@@ -2744,7 +2739,7 @@
     (document.body || document.documentElement).append(fullWidthPopupRoot);
   }
 
-  function closeFullWidthPopup() {
+  function closeFullWidthPopup({ restoreFocus = true } = {}) {
     fullWidthPopupOpen = false;
     compactSurface = null; popupFocusPending = false;
     clearInterval(tick); tick = null;
@@ -2754,7 +2749,8 @@
     fullWidthPopupRoot?.remove(); fullWidthPopupRoot = null; fullWidthPopupShadow = null;
     renderUi();
     const target = popupReturnFocus?.isConnected ? popupReturnFocus : shadow?.querySelector?.('.trigger-main');
-    target?.focus?.({ preventScroll: true }); popupReturnFocus = null;
+    if (restoreFocus) target?.focus?.({ preventScroll: true });
+    popupReturnFocus = null;
   }
 
   function renderFullWidthPopup(style) {
@@ -3074,8 +3070,6 @@
       :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
-      .timeline-queue-spinner { min-height:25px; padding:0 0 10px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
-      .timeline-queue-spinner.empty { visibility:hidden }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
       .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
@@ -3156,6 +3150,14 @@
     return true;
   }
 
+  function handleDocumentClick(event) {
+    const path = event.composedPath();
+    if (fullWidthPopupOpen && !path.includes(fullWidthPopupRoot) && !path.includes(root)) {
+      closeFullWidthPopup({ restoreFocus: false });
+    }
+    if (menuOpen && !path.includes(root)) closeMenu();
+  }
+
   if (timesMode) {
     mountInHeader(); renderUi();
     void loadSelectedTimes();
@@ -3181,6 +3183,7 @@
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     });
+    document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', event => {
       if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) closeFullWidthPopup();
     });
@@ -3192,9 +3195,7 @@
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     });
-    document.addEventListener('click', event => {
-      if (menuOpen && !event.composedPath().includes(root)) closeMenu();
-    });
+    document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', event => {
       if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) { closeFullWidthPopup(); return; }
       if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
