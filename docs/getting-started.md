@@ -45,7 +45,7 @@ An unpacked extension does not update automatically:
 
 Clockoli Settings opens after the first installation. You can reopen it from the gear button in the Clockoli panel or from the extension details page.
 
-Normal setup has two guided steps: sign in with GitHub, then discover ready time repositories, choose a default, and finish setup. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
+Normal setup has two guided steps: sign in with GitHub, then check a time repository, confirm **Connect repository** if ready (or the offered setup action), choose a default, and finish setup. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
 
 ### Step 1: activate the device
 
@@ -119,36 +119,38 @@ A task is a canonical HTTP(S) URL. The title is optional.
 
 1. Open the page you want to track.
 2. Select the Clockoli toolbar icon.
-3. Choose **Start tracking this task**.
+3. In the full-width panel, choose **Track this task**.
 4. Work normally.
-5. Open Clockoli again and choose **Stop and save**.
-6. Add an optional description before stopping if useful.
+5. Open Clockoli again and add an optional description if useful.
+6. Choose **Stop and save**.
 
-The popup reads the active tab's current URL and title when you start. Internal browser pages such as `chrome://extensions` cannot be tasks because they are not HTTP(S) pages.
+The panel uses the active tab's current URL and title when you start. Internal browser pages such as `chrome://extensions` cannot be tasks because they are not HTTP(S) pages; the toolbar opens **Activity** instead.
 
 ### From GitHub
 
 Clockoli adds a split stopwatch control before your GitHub avatar:
 
 - the stopwatch opens the tracking panel for the current GitHub URL;
-- the arrow opens navigation to **Tasks**, **Times**, and **Reports**.
+- the arrow opens navigation to **Top tasks**, **Activity**, and **Reports**.
 
 GitHub issue and pull-request titles can be used as optional metadata when GitHub makes them available. The URL remains the task identity.
 
 ### One timer at a time
 
-Clockoli permits one global active timer across every configured time repository. The panel says:
+Clockoli permits one global active timer across every configured time repository. The smaller GitHub stopwatch dialog says:
 
 - **Tracking this task** when the active timer matches the current page;
 - **Tracking another task** when a different URL is active.
 
-Choose **Switch to this task** to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
+Choose **Switch to this task** in the full-width panel (or **Save and switch to this task** in the smaller GitHub stopwatch dialog) to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
 
 ### Route new Starts
 
 Projects are ordered, case-insensitive URL-substring rules. The first matching project chooses the time repository for a new Start. An explicit default time repository receives unmatched URLs. A running timer and every accepted queued write remain pinned to their original destination if you later reorder rules or change the default.
 
 ## 4. Correct a record
+
+Open **Activity** for older entries and overlaps, or correct a recent entry in the tracking panel.
 
 Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
@@ -160,37 +162,43 @@ Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start 
 
 If moving a boundary crosses the adjacent record, Clockoli changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
 
-## 5. Open Tasks, Times, and Reports
+## 5. Open Top tasks, Activity, and Reports
 
-Use the buttons in the panel header, the GitHub split-menu arrow, or the popup:
+Use the panel navigation or the GitHub split-menu arrow:
 
-- **Tasks** groups the current user's sessions by canonical task URL across selected time repositories, retains time-repository provenance, and provides search, periods, and inline actions.
-- **Times** combines completed entries from selected time repositories for preset or custom periods, supports URL/title filtering and inline correction, and accepts all-or-nothing bulk manual entries.
+- **Top tasks** groups the current user's sessions by canonical task URL across selected time repositories. Search or choose a period, then start or stop a task from its row.
+- **Activity** combines completed entries from selected time repositories for preset or custom periods. Filter by URL or title, correct an entry, or add completed time with the all-or-nothing bulk importer.
 - **Reports** reads selected or all time repositories and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF. It labels the tracked URL's **Task source** separately from the **Time repository** that stores the record.
 
-Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and print/PDF exports while the selected data is partial.
+Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and report print/PDF exports while the selected data is partial. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
 
 ## 6. Optional settings
 
-**Save display settings** and **Save billable rates** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
+**Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
 
 ### Recent entries
 
-Choose from 1 to 31 days of recent entries in the main panel. This changes display only; it does not limit tracking, Tasks, or Reports.
+Choose from 1 to 31 days of recent entries in the main panel. This changes display only; it does not limit tracking, Top tasks, Activity, or Reports.
 
 ### Billable rates
 
 Add hourly rates by GitHub login and include the currency directly in each rate, for example `$15.50`, `20.15$`, `€55.50`, `750 RUB`, or `888 GEL`. Rates stay in this browser's extension-local storage. Other team members do not receive them, and the repository never stores rates or calculated money.
 
+### Invoicing
+
+In **Invoicing**, save seller and client details, invoice numbering, payment terms, and tax defaults for local invoice previews. These details stay in this browser and are not written to the time repository. See the [feature guide](features.md#invoicing) for invoice creation and limits.
+
 ### Local settings backup
 
-Export a readable JSON backup after changing display or billing settings. It contains:
+Export a readable JSON backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
 
-- recent-entry display setting;
+- recent-entry and reporting preferences;
+- project rules and client assignments;
 - hourly rates with their currency signs or descriptions;
-- version 6 destination references, the default destination, and project routing rules.
+- invoicing details such as seller, clients, and payment terms;
+- credential-free repository references and, for routed installations, the default destination.
 
-It does not contain credentials, device codes, active timers, pending writes, or tracked time. Import can restore project routes only when every referenced destination is already configured in the browser. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
+The routed export uses settings format version 6; the single-repository/PAT path can use version 7. Neither contains credentials, device codes, active timers, pending writes, or tracked time. Import restores routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
 
 ## Team setup
 

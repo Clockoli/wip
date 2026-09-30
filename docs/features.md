@@ -30,15 +30,21 @@ Stopping an entry longer than 12 hours asks for confirmation. The warning does n
 
 ## Main tracking panel and popup
 
+### Daily panel
+
 The browser toolbar opens a full-width daily panel on HTTP(S) pages. Above the timeline, the active-task strip shows **Not tracking** and **Track this task**, or the running task link, a ticking elapsed clock, and **Stop and save**. When another task is open, **Switch to this task** saves the active timer and starts the current page. The timeline's block Start and Stop actions remain available. Every Stop or switch asks for confirmation when the active entry exceeds 12 hours.
 
 Below the timeline, **Today** lists completed entries by their stored local date, with task colors matching the timeline, start–stop times, durations, pending status, and **Continue**. Continue saves any running task before restarting the selected task. Stationary **Today** and **This week** totals include applicable running time; unavailable totals display **…**, including when GitHub summary reads fail. Older entries remain available in **Activity**.
 
 The panel first reads local state and shows **Loading…** until configuration is known. On other websites, an idle panel explains that the page can be tracked and that time is saved to the private GitHub repository. State refreshes update controls, totals, save status, errors, and the timeline clock while preserving the mounted editor, its viewport, focused block, and panel scroll position. Opening focuses the strip's main action; closing restores the previous focus. Escape first cancels a timeline edit or selection, then closes the panel when the editor leaves it unhandled.
 
-Overlapping visible timeline blocks produce one warning naming the entries and intervals, with **Fix in Activity**. Save status distinguishes local acceptance, work waiting for GitHub, confirmed GitHub saves, and conflicts. Queue diagnostics stay collapsed until opened, while actionable conflicts remain visible. Connection errors show a headline, detail, and recovery action; Retry refreshes reads without repeating a tracking mutation. Reduced-motion users see static stopwatch and toolbar icons.
+Overlapping visible timeline blocks produce one warning naming the entries and intervals, with **Fix in Activity**. Save status distinguishes local acceptance, work waiting for GitHub, confirmed GitHub saves, and conflicts. Queue diagnostics are hidden unless enabled in Advanced settings; when shown, they start collapsed. Actionable conflicts remain visible. Connection errors show a headline, detail, and recovery action; Retry refreshes reads without repeating a tracking mutation. Reduced-motion users see static stopwatch and toolbar icons.
+
+### GitHub stopwatch dialog
 
 The smaller GitHub stopwatch dialog includes an optional Stop description, separate **Stop and save** and **Save and switch to this task** actions when viewing another task, stationary Today and This week totals, and recent entries with inline correction and Delete. When complete route-matched participant totals are available, it also shows **Tracked on this issue/PR**, noting included running time. Beautified tracking commit events retain their original commit links on the timestamps.
+
+### Navigation
 
 Both surfaces provide Top tasks, Activity, Reports, and Settings navigation.
 
@@ -47,6 +53,8 @@ The GitHub split control survives GitHub's client-side navigation and mounts nex
 ## Recent entries
 
 The main panel shows cached entries immediately when available and refreshes them automatically. It loads up to 50 recent entries from the configured display window. The display window defaults to seven local calendar days and can be set from 1 to 31 days.
+
+In the compact GitHub stopwatch dialog, recent entries label their dates **Today**, **Yesterday**, or with a short weekday name.
 
 Changing this setting does not alter stored data or limit reports. Recent data is read by monthly file rather than one API request per record.
 
@@ -73,7 +81,7 @@ Selecting the displayed URL, title, or description expands those fields in the s
 - Start and Stop date/time;
 - description, up to 2,000 characters.
 
-Only one draft is active at a time. Starting another edit cancels the previous unsaved draft. A linked adjacent-boundary group remains available while the Times URL/title filter changes.
+Only one draft is active at a time. Starting another edit cancels the previous unsaved draft. A linked adjacent-boundary group remains available while the Activity URL/title filter changes.
 
 Changing the URL clears an unchanged old title so metadata from one task is not silently carried to another.
 
@@ -87,14 +95,14 @@ Changing the URL clears an unchanged old title so metadata from one task is not 
 - Periods: last 2 weeks, month, 3 months, 6 months, or year.
 - Completed and running time participate in ordering.
 - The task URL appears as a compact source line, with the optional title as the prominent link below it. Untitled tasks show the URL as the primary link without duplication.
-- Inline direct-input time-range controls use the same serialized timer state as the popup.
+- Each task shows accumulated time and a Start/Stop control. Starting another task stops the running timer first.
 - Each aggregate retains sorted time-repository provenance so identical URLs from different destinations are not misattributed.
 
 The page reads the current user's monthly paths from the selected destinations before hydrating optional GitHub issue/PR titles. Destinations load independently, so available tasks may remain visible with partial-read status. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 
 ## Activity page
 
-Times loads the current user's completed entries from selected time repositories for Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range. Each edit or delete is sent back to the record's original time repository.
+Activity loads the current user's completed entries from selected time repositories for Last 3 days (the default), Today, Yesterday, this or last week, this or last month, or an inclusive custom range. URL/title filtering and the shared inline editor operate locally on the loaded range. Each edit or delete is sent back to the record's original time repository.
 
 The bulk importer accepts one dated URL task per line with an optional description and a duration. It validates the complete request and existing history before one atomic Git commit, including intervals that cross in from older monthly files and a concurrently started active timer. A failed request writes nothing and keeps the draft available for correction.
 
@@ -104,7 +112,7 @@ Reports includes records whose Start date falls in the selected inclusive range.
 
 ### Periods
 
-Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the chosen preset name or the formatted date range.
+Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the selected date range, including when a preset is selected.
 
 - Today and Yesterday
 - Last 7 days and Last 30 days
@@ -116,7 +124,7 @@ Open the date-range button beneath Reporting period to choose a preset or custom
 
 Presets apply immediately. In the calendar, select a Start day and then an End day; choosing an earlier second day starts a new range. You can also edit the native Start and End date fields. Month navigation leaves the selection unchanged. Arrow keys move between days, Enter or Space selects, and Escape closes the picker and returns focus to the button. Clicking outside also closes it.
 
-The footer names the local time zone. Turn on UTC to include and group entries by their UTC Start date, using that same date for effective rates, exchange rates, exports, and invoices. With UTC off, reporting uses each entry's recorded local date. UTC reporting also reads the adjacent monthly files so records near a month boundary are included correctly. The switch is saved locally across reloads and is included in v7 settings exports; settings files without it use the local basis. Reporting preferences and invoices are never written to the time-data repository.
+The footer names the local time zone. Turn on UTC to include and group entries by their UTC Start date, using that same date for effective rates, exchange rates, exports, and invoices. With UTC off, reporting uses each entry's recorded local date. UTC reporting also reads the adjacent monthly files so records near a month boundary are included correctly. The switch is saved locally across reloads and is included in settings exports; settings files without it use the local basis. Reporting preferences and invoices are never written to the time-data repository.
 
 ### Summary and facets
 
@@ -149,7 +157,7 @@ Choose independent horizontal and stack dimensions:
 - Time repository
 - Task
 
-The data table under the chart is loaded only when expanded, which keeps large reports responsive.
+The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
 
 ### Export
 
@@ -157,36 +165,44 @@ The data table under the chart is loaded only when expanded, which keeps large r
 - JSON timesheet
 - Native browser print or save-to-PDF
 
-CSV and JSON include URL, Start, End, duration, person, description, provenance, and available GitHub task fields. When local rates are configured, each exported row also includes its effective hourly rate, billable amount, and that rate's currency. If any selected time repository fails to load or conflicting copies of a record are omitted, Clockoli shows the partial report but disables CSV, JSON, and print/PDF exports.
+CSV and JSON include task URL and title, Start, End, duration, person, and description. They do not include the time repository or additional GitHub issue/PR metadata. When local rates are configured, each exported row also includes its effective hourly rate, per-entry billable amount, and that rate's currency. If any selected time repository fails to load or conflicting copies of a record are omitted, Clockoli shows the partial report but disables CSV, JSON, and print/PDF timesheet exports.
 
 ## Local billable rates
 
 Settings accepts non-negative hourly rates keyed by GitHub login, with a currency sign or 2–12 letter description included in every rate value.
 
+- Rates can be effective-dated so reports use the applicable rate for each entry's date.
 - Rates are stored as integer minor units.
-- Billable totals are calculated from each person's tracked seconds and rounded after aggregation rather than rounding every record early. Different currencies remain separate; Reports exposes a currency selector for billable charts when needed.
+- Displayed billable totals aggregate tracked seconds before rounding; exported per-entry billable amounts are rounded individually, and invoice amounts are rounded per completed invoice line. Different currencies remain separate; Reports exposes a currency selector for billable charts when needed and converts mixed-currency amounts by day using locally cached [Frankfurter](https://frankfurter.dev/) rates. Conversion requires a three-letter currency code or one of `$`, `€`, `£`, or `¥`; unsupported currency descriptions cannot be converted.
 - Rates and calculated amounts stay in extension-local storage.
 - A teammate's browser can use different rates for the same shared repository.
 - Missing rates contribute zero and are identified in the report summary.
 
 ## Invoicing
 
+### Create and preview
+
 Create an invoice from the current filtered report, so the selected period, people, projects, and sources define what is billed. Each invoice uses one target currency. When effective-dated rates change within the period, Clockoli keeps the corresponding invoice lines separate; when the covered records use multiple currencies, it converts each entry using the exchange rate for that entry's date.
+
+A partial report can still produce an invoice preview when rated entries are available, even though timesheet exports are disabled. Check that all intended time repositories loaded before printing or saving an invoice.
 
 Clients can own projects, and picking a client narrows the invoice to that client's work without changing the report filters. Clockoli warns when an invoice also includes projects owned by another client.
 
+The invoice dialog names the billing period from the Reports From/To range. Presets select This month, Last month, Last 7 days, or Last 30 days using the selected reporting date basis (local or UTC). The invoice is generated locally as a preview and can be printed or saved as PDF; CSV and JSON timesheets remain available on Reports when the report is complete. Unrated time remains visible as not billed. Invoice numbers are reserved only on the first Print / Save as PDF action for a preview and are never committed to the time-data repository. The counter only ever moves forward: neither a settings save nor restoring an older settings backup can lower it below a number that has already been issued.
+
+### Invoice settings and payment terms
+
 Saving rates or invoicing keeps stored clients even when their metadata is empty. New client cards are omitted only while empty and untouched, and only if neither a named project nor the main project selects them.
 
-The invoice dialog names the billing period from the Reports From/To range. Presets select This month, Last month, Last 7 days, or Last 30 days using local calendar dates. The invoice is generated locally as a preview and can be printed or saved as PDF; CSV and JSON timesheets remain available on Reports. Unrated time remains visible as not billed. Invoice numbers are reserved only on the first Print / Save as PDF action for a preview and are never committed to the time-data repository. The counter only ever moves forward: neither a settings save nor restoring an older settings backup can lower it below a number that has already been issued.
+Add up to 20 additional lines for charges or discounts in the invoice currency. These amounts are included in the subtotal and taxed, without exchange-rate conversion. Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt.
 
-Add up to 20 additional lines for charges or discounts in the invoice currency. These amounts are included in the subtotal and taxed, without exchange-rate conversion. Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt. Older text terms recognize “due on receipt” and “on receipt” without regard to case as zero days, then prefer the number following “net” (so “2% 10, Net 30” means 30 days). Otherwise they use a sole number or default to 30, clamped to 0–365. Unless the original text is exactly “Net {N}” for the resulting days or a due-on-receipt phrase, it is preserved as a separate “Payment terms: ” line in Notes without duplicating an existing exact line. If adding it would exceed the 1,000-character notes limit, existing notes remain unchanged. Notes supports line breaks. These settings and invoice details stay in the browser.
+Older text terms recognize “due on receipt” and “on receipt” without regard to case as zero days, then prefer the number following “net” (so “2% 10, Net 30” means 30 days). Otherwise they use a sole number or default to 30, clamped to 0–365. Unless the original text is exactly “Net {N}” for the resulting days or a due-on-receipt phrase, it is preserved as a separate “Payment terms: ” line in Notes without duplicating an existing exact line. If adding it would exceed the 1,000-character notes limit, existing notes remain unchanged. Notes supports line breaks. These settings and invoice details stay in the browser.
 
 Version 1 does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.
 
 ## Time repositories, projects, and personal branches
 
-
-Clockoli can validate and add several dedicated private personal or organization repositories. Each user writes routine timer data in each destination to a marked branch named:
+Clockoli can validate and add several dedicated private personal or organization repositories. For newly configured destinations, each user writes routine timer data to a marked branch named:
 
 ```text
 clockoli/users/{stable-github-user-id}
@@ -194,13 +210,15 @@ clockoli/users/{stable-github-user-id}
 
 This keeps users' normal timer commits off each repository's default branch and reduces write conflicts between team members. Reports discovers work records only from marked `clockoli/users/` personal branches; each default branch stores shared repository metadata.
 
+An existing configuration can temporarily retain its prior storage branch while active or pending work prevents a safe transition to the personal branch.
+
 Projects are ordered case-insensitive URL-substring rules. The first match routes a new Start to that project's chosen destination; an explicit default destination handles unmatched URLs. PAT compatibility mode supports exactly one destination.
 
-See [Data, privacy, and security](data-and-privacy.md) for file formats and permissions.
+See [Data, privacy, and security](data-and-privacy.md#data-format-v1) for file formats and the per-task index used for shared task totals, and [GitHub permissions](data-and-privacy.md#github-permissions) for access details.
 
 ## Synchronization and offline mutations
 
-Start, Stop, and task switches are accepted durably in the extension-local queue, then synchronized with GitHub asynchronously:
+Start, Stop, and task switches are accepted durably in extension-local state, then synchronized with GitHub asynchronously. For a Stop or switch, completion reconciliation proceeds in this order:
 
 1. Clockoli records a stable pending completion in extension-local IndexedDB.
 2. It appends or verifies the intended monthly record with SHA protection.
@@ -227,7 +245,7 @@ Clockoli checks repository identity, branch routing, file SHA, and original reco
 
 ### Backup
 
-Version 6 exported settings contain display preferences, local billing, credential-free destination references, the exported default destination, and project routing. They exclude all secrets and time data. Import restores project routes only when all referenced destinations are already configured; references remain unverified, and import does not replace this browser's current default, add destinations, or reconnect repositories.
+For configured multi-repository routing, the version 6 settings export contains display preferences, local billing, credential-free destination references, the exported default destination, and project routing. The non-routing export path uses version 7. Settings exports exclude secrets and time data, including active timers and pending writes; see [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions). Import restores routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. References remain unverified, and import does not replace this browser's current default, add destinations, or reconnect repositories.
 
 ### Connection actions
 
@@ -239,4 +257,4 @@ Version 6 exported settings contain display preferences, local billing, credenti
 
 ## Deliberate limits
 
-The current beta includes manual completed-entry creation through the Times bulk importer. It does not include reminders, mobile applications, Firefox packaging, or a side-by-side conflict diff editor. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.
+The current beta includes manual completed-entry creation through the Activity bulk importer. It does not include reminders, mobile applications, Firefox packaging, or a side-by-side conflict diff editor. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.

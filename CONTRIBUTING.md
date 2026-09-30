@@ -46,6 +46,7 @@ Use a private test repository and test credentials. Never commit tokens, reposit
 | `src/background/service-worker.js` | Credentials, GitHub API calls, durable state, synchronization, mutations, and toolbar state |
 | `src/background/message-policy.js` | Trust boundary for runtime messages and sender validation |
 | `src/api/github-client.js` | GitHub reads and SHA-guarded writes, deletes, and atomic commits |
+| `src/auth/` | GitHub App Device Flow and credential rotation |
 | `src/domain/` | Canonical values, work records, paths, validation, and projections |
 | `src/services/` | Tracking, onboarding, reports, metadata, recovery, and exchange-rate workflows |
 | `src/storage/chrome-store.js` | Extension-origin IndexedDB state and migrations |

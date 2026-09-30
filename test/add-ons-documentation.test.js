@@ -41,7 +41,9 @@ test('first-party packaged add-ons have a constrained, user-disclosed contract',
   assert.match(addOns, /temporary, privileged extension IndexedDB storage/i);
   assert.match(addOns, /not constrained by `chrome\.storage\.session`’s quota/i);
   assert.match(addOns, /content scripts do not access extension storage/i);
-  assert.match(addOns, /explicitly map each person.*explicitly skip/i);
+  assert.match(addOns, /Manually map the Clockify person.*explicitly \*\*Skip this person\*\* for everyone else/i);
+  assert.match(addOns, /\*\*CSV migration\*\*.*\*\*Page to page migration\*\*/i);
+  assert.match(addOns, /non-navigable `owner\/project\/task-slug` identity/i);
 
   assert.match(addOns, /branch already configured for the signed-in Clockoli user/i);
   assert.match(addOns, /never creates or switches to an additional branch/i);

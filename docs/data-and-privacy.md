@@ -201,7 +201,7 @@ A version 6 settings export includes local display and billing preferences plus 
 - tracked records;
 - report and metadata caches.
 
-Import validates the entire file and applies supported local preferences atomically. It can restore project routing only when every referenced destination is already configured. Destination references remain unverified, and the imported default does not replace this browser's current default. Import does not inspect repositories, verify access, add destinations, or reconnect GitHub.
+Import validates the entire file and applies supported local preferences atomically. It restores project routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. Destination references remain unverified, and the imported default does not replace this browser's current default. Import does not inspect repositories, verify access, add destinations, or reconnect GitHub.
 
 ## Access and privacy consequences
 

@@ -1,14 +1,8 @@
 # Clockoli
 
-Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Packaged add-ons and their permission boundary are documented in [docs/add-ons.md](docs/add-ons.md).
-
-Clockoli is a Chrome/Chromium time tracker that stores your records in private GitHub time repositories you control. It has no Clockoli application server and no separate time-tracking database.
+**Own your time data without handing it to another SaaS.** Clockoli is a Chrome/Chromium time tracker that writes readable records directly to private GitHub time repositories you control, with no application server or separate time-tracking database.
 
 Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
-
-Clockoli keeps three concepts separate: your **GitHub account** authenticates you, a **source repository** may own a tracked GitHub issue or pull request, and a **time repository** is the private destination where Clockoli stores records.
 
 ## Why Clockoli
 
@@ -17,111 +11,42 @@ Most time trackers put your records in a vendor database. Clockoli writes readab
 - **You own the data.** Access, retention, backup, and deletion follow the rules of your GitHub repository.
 - **The history is inspectable.** Time files are readable without Clockoli, and edits remain visible in Git history.
 - **There is no Clockoli backend.** The extension talks directly to GitHub.
-- **It works beyond one issue tracker.** Any valid HTTP(S) URL can be a task.
-- **It still feels native on GitHub.** A stopwatch appears in the GitHub header, while the browser toolbar popup works on other sites.
-- **Team reporting does not require a second data silo.** Team members write to isolated personal branches, and Reports can combine selected personal and organization time repositories.
 
 Clockoli is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why Clockoli](docs/why-clockoli.md) for a detailed comparison and the tradeoffs.
 
-## Current beta installation
+## Quick start
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.30`; the published `v0.1.11` GitHub release predates the features documented here.
+Clockoli currently runs as a trusted unpacked extension. Use the current checkout or a trusted current package; see [Getting started](docs/getting-started.md) for version guidance, package installation, and update instructions.
 
-1. Clone or update this repository:
+1. Clone this repository:
 
    ```bash
    git clone git@github.com:clockoli/clockoli.git
    cd clockoli
-   git switch main
-   git pull --ff-only
    ```
 
-2. Open `chrome://extensions` in Chrome or another Chromium browser.
-3. Enable **Developer mode**.
-4. Select **Load unpacked** and choose the repository root, the directory that contains `manifest.json`.
-5. Pin Clockoli to the browser toolbar.
-6. Open **Settings**, sign in with GitHub, then use **Check repository** or a repository row’s action to review and explicitly confirm a connection. Choose **Default time repository** separately and select **Finish setup**.
+2. In Chrome or another Chromium browser, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**. Choose the repository root containing `manifest.json`, then pin Clockoli to the toolbar.
+3. Open **Settings** and sign in with GitHub. Check a listed repository with **Check repository**, or enter a URL or `owner/name` and leave the field or press Enter to check it. Then explicitly confirm **Connect repository** if ready, or the offered setup action if not. Choose **Default time repository**, then select **Finish setup**.
+4. Open a page, select the Clockoli toolbar icon, and choose **Track this task** in the full-width panel. When finished, choose **Stop and save**.
 
-During setup, the compact repository list updates silently every 3 seconds without making writes or opening dialogs. Unchanged results leave the list and your input untouched.
+Your **GitHub account** authenticates you; a **source repository** may own a tracked issue or pull request; a **time repository** stores your records. These can be different repositories. The [setup guide](docs/getting-started.md) explains repository access and confirmation.
 
-If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
+On GitHub, you can also open the tracker from the stopwatch beside your avatar. Its smaller dialog says **Start tracking this task**; the arrow next to it opens **Top tasks**, **Activity**, and **Reports**.
 
-Full setup instructions: [Getting started](docs/getting-started.md).
+## What you can do
 
-## Start tracking
-
-1. Open the page you want to track.
-2. Select the Clockoli toolbar icon.
-3. Choose **Start tracking this task**.
-4. When you finish, open Clockoli and choose **Stop and save**. Add a description if it will help later.
-
-On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
-
-Clockoli permits one running timer across all configured time repositories. If another task is running, choose **Switch to this task**: Clockoli durably queues completion in the source time repository before starting the new timer in its routed destination.
-
-## Features
-
-- **Clockify migration:** imports user-supplied annual Detailed Report exports through either the in-page report capture or native CSV export flow. Clockoli never reads Clockify credentials; both untrusted sources are normalized and previewed before an explicit mapped-user import.
-
-### Tracking and correction
-
-- Track any canonical HTTP(S) URL; task titles are optional.
-- GitHub-header integration plus a toolbar popup for other sites.
-- One GitHub-backed active timer per user, visible across connected browsers.
-- Optional descriptions, up to 2,000 characters.
-- Live elapsed time and rotating totals for Today, This week, Last week, and This month.
-- Recent entries labeled Today, Yesterday, or by weekday.
-- Direct one-line `HH : MM - HH : MM` time correction in the main panel.
-- Start and Stop remain directly editable inline; wheel/trackpad gestures scroll normally and never change a time value.
-- Automatic adjacent-boundary repair: moving Start into the previous interval moves the previous Stop; moving Stop into the next interval moves the next Start. The linked records are saved atomically.
-- One unified inline draft for URL, optional title, Start, Stop, and description; Enter or **Save time** saves the complete draft.
-- Conflict-safe **Delete**, with the prior version retained in Git history.
-- Overlap warnings and a confirmation before saving entries longer than 12 hours.
-
-### Tasks
-
-- A **Recently tracked work** page for the current user.
-- Deduplication by canonical task URL.
-- Search by URL or optional title.
-- Period filters from two weeks to one year.
-- Totals include completed sessions and the currently running session.
-- Aggregated completed and running time per task.
-- Aggregation by canonical URL across selected time repositories, with time-repository provenance.
-
-### Times
-
-- A dedicated history page with day, week, month, and custom inclusive periods.
-- Filter tracked entries by URL or optional title while preserving active linked drafts.
-- Add multiple dated URL tasks in one all-or-nothing bulk import.
-- Edit and delete historical rows with the same inline controls as the main tracker.
-
-### Reports and billing
-
-- Reporting across selected or all configured time repositories and their marker-backed `clockoli/users/` personal branches.
-- Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
-- People, Project, Task source, and Time repository facets. A Task source is a GitHub owner/repository for GitHub tasks or a hostname for another URL; a Time repository is where Clockoli stored the record.
-- Total time, average time per distinct task, distinct task count, and billable amount.
-- Independent Day, Week, Month, Person, Task source, Time repository, and Task chart dimensions.
-- CSV and JSON timesheet downloads.
-- Native print/save-to-PDF.
-- Partial results remain visible when one selected time repository cannot be read or conflicting copies of a record are omitted; exports are disabled until the selected report is complete and conflict-free.
-- Mixed-currency billable charts converted by day with locally cached rates from [Frankfurter](https://github.com/lineofflight/frankfurter).
-- Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to time repositories.
-
-### Storage, sync, and privacy
-
-- Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
-- Multiple dedicated private personal or organization time repositories, each with one marked personal branch per user.
-- Human-readable monthly JSONL files with UTC timestamps plus explicit local dates and IANA timezones.
-- Exact per-task indexes for fast all-time participant totals without scanning monthly history.
-- SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
-- Destination-pinned queued writes with automatic retry when GitHub is temporarily unavailable; routing changes never redirect accepted work.
-- Version 6 settings backup in readable JSON with destination references, the exported default, and project routing, but without credentials, active timers, pending writes, or tracked time. Import can restore project routes only for destinations already configured in the browser; references remain unverified, and import does not change the browser's current default, add destinations, or reconnect repositories.
-- Credentials and local settings remain in extension-origin IndexedDB and are not exposed to GitHub pages.
+- Track any HTTP(S) task URL from the toolbar, or use the stopwatch built into GitHub.
+- Keep one active timer across connected browsers and configured time repositories; switch tasks without running two timers at once.
+- Correct or delete time entries, with previous versions retained in Git history; add completed entries in bulk on the Activity page.
+- Find recently tracked work by task URL or title and see completed and running totals.
+- Report across selected personal and organization time repositories, filter by person or task source, and export CSV or JSON timesheets.
+- Apply browser-local hourly rates for billable reporting without writing rates to time repositories.
+- Keep readable time records in private GitHub repositories you control; accepted timer actions are queued locally and synchronized when GitHub is available.
+- Migrate user-supplied Clockify annual Detailed Reports via in-page capture or CSV export, with a preview and explicit mapped-user import. See [Add-ons](docs/add-ons.md).
 
 See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
 
-## Documentation
+## More documentation
 
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md)
@@ -135,15 +60,14 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 ## Current limitations
 
 - Chrome/Chromium 102 or newer; no Firefox package.
-- Current beta installation is unpacked and has no automatic updates.
+- Unpacked installations have no automatic updates.
 - Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
-- One global active timer across all configured time repositories.
-- Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
-- The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.
-- Billable rates are local to each browser and are not shared with teammates.
+- Manual time entry is available through the Activity bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
 - Anyone who can read a time repository can read the URLs, titles, timestamps, and descriptions stored in that repository.
 
 ## Development
+
+Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Requires Node.js 20.19+ (CI uses Node.js 22). The extension has no runtime package dependencies. Its timeline source and test tooling are included in the repository as an npm workspace.
 
@@ -151,26 +75,4 @@ Requires Node.js 20.19+ (CI uses Node.js 22). The extension has no runtime packa
 npm ci
 npm test
 npm run check
-```
-
-Timeline changes belong in `packages/task-timeline-component/`. Run `npm run build:timeline` to regenerate the checked-in TaskTimeline + Clockoli adapter artifact under `src/content/`.
-
-`npm run check` validates the Manifest V3 package inventory, referenced files, security invariants, and JavaScript syntax.
-
-### Repository map
-
-```text
-src/api/          GitHub API client
-src/auth/         GitHub App Device Flow and credential rotation
-src/background/   Manifest V3 service worker and message boundary
-src/content/      GitHub header control and shared tracking panel
-src/domain/       records, task URLs, reports, settings, and text format
-src/options/      onboarding and settings
-src/popup/        browser toolbar popup
-src/reports/      analytics and export page
-src/services/     tracking, sync, repository, and reporting services
-src/storage/      extension-origin IndexedDB adapter
-src/tasks/        recently tracked work page
-packages/task-timeline-component/ vendored TaskTimeline, Clockoli adapter, build, unit, E2E, and package tests
-test/             Clockoli Node tests
 ```
