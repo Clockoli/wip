@@ -45,7 +45,7 @@ An unpacked extension does not update automatically:
 
 Clockoli Settings opens after the first installation. You can reopen it from the gear button in the Clockoli panel or from the extension details page.
 
-Normal setup has two guided steps: sign in with GitHub, then discover ready time repositories, choose a default, and finish setup. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
+Normal setup has two guided steps: sign in with GitHub, then check a time repository, confirm **Connect repository** if ready (or the offered setup action), choose a default, and finish setup. Before connecting, Settings focuses on the connection card. Open **More settings** for Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
 
 ### Step 1: activate the device
 

@@ -31,12 +31,12 @@ GitHub user authorization and GitHub App installation are separate.
 
 1. Return to Clockoli Settings.
 2. Use **Done on GitHub—check now** if automatic checking has not completed.
-3. After sign-in, Clockoli automatically checks accessible repositories in **Connect time repositories**. Use a repository row’s action, or enter its GitHub URL or `owner/name` and select **Check repository**.
+3. After sign-in, Clockoli lists accessible repositories in **Connect time repositories**. Select a row’s **Check repository** action, or enter a GitHub URL or `owner/name` and leave the field or press Enter to check the manual target.
 4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 
 ### My repository is not listed
 
-Enter its GitHub URL or `owner/name` in **Repository URL or owner/name**, then select **Check repository**. A missing private repository is not necessarily nonexistent: GitHub may hide it when your account or the App lacks access. Check the spelling and your GitHub access before creating a replacement.
+Enter its GitHub URL or `owner/name` in **Repository URL or owner/name**, then leave the field or press Enter to check it. Use the refresh icon beside the field to retry. A missing private repository is not necessarily nonexistent: GitHub may hide it when your account or the App lacks access. Check the spelling and your GitHub access before creating a replacement.
 
 Check that:
 
@@ -49,7 +49,7 @@ Check that:
 
 When the checked target is missing or needs App Contents-write permission, use **Grant access**. If Clockoli knows the owner's existing App installation, this opens its settings. Choose **Only select repositories** and add the intended repository; ask its owner or organization administrator if you cannot change the grant. There is no need to repeat installation when the repository is already accessible.
 
-The access dialog appears only after an explicit **Check repository**. **Grant access** closes it and opens GitHub. Return to Settings and press **Check repository** again; the list refreshes silently every 3 seconds while setup is active. Clockoli remembers the repository you selected or explicitly checked across the GitHub visit and Settings reload. It does not silently substitute another repository if your target remains unavailable. Use **Check repository** to recheck the target. Network errors are reported separately from missing App access.
+The access dialog appears only after checking a manual target or selecting a row’s **Check repository** action. **Grant access** closes it and opens GitHub. Return to Settings and recheck the row or manual target; the list refreshes silently every 3 seconds while setup is active. Clockoli remembers the repository you selected or explicitly checked across the GitHub visit and Settings reload. It does not silently substitute another repository if your target remains unavailable. Network errors are reported separately from missing App access.
 
 If you really need a repository, use **Create a new time repository** at the beginning of the repository section, then return and enter its URL. Creating it does not grant App access.
 
@@ -57,7 +57,7 @@ Discovery and inspection never write to GitHub or connect new repositories local
 
 ### Check an edited repository target before connecting
 
-Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check repository** to inspect the edited target, resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
+Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Leave the field or press Enter to inspect the edited target, resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
 
 ### The list does not visibly refresh, or Finish setup is unavailable
 
@@ -85,7 +85,7 @@ An organization owner may need to approve the GitHub App installation or reposit
 
 ### I cannot initialize an organization repository
 
-Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then select that repository from the accessible list or enter its URL or `owner/name` and select **Check repository**. Select the repository row’s action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
+Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then use the listed repository's **Check repository** action or enter its URL or `owner/name` and leave the field or press Enter to check it. Review the offered action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
 
 ### Fine-grained PAT setup fails
 
@@ -242,6 +242,20 @@ Rates are local to the current browser. They are not read from the shared reposi
 ### CSV/JSON and the screen differ
 
 Downloads use the currently loaded report, date range, facets, and local rates. Reload after changing settings or repository data, then download again.
+
+## Clockify migration
+
+### Migration controls are missing from the Detailed Report
+
+Enable the Clockify add-on in Clockoli Settings and grant its optional `https://app.clockify.me/*` permission. Open Clockify's Detailed Report page in an authenticated tab and reload it after changing add-on permissions or reloading the extension. The banner should offer **CSV migration** and **Page to page migration**. See [Clockify migration](add-ons.md#clockify-migration) for the capture and mapping steps.
+
+### The CSV capture cannot finish
+
+Clockoli uses Clockify's native **Save as CSV** export after scanning report years. If Clockify offers email delivery instead of a CSV download, the banner reports `CSV_EMAIL_EXPORT_UNAVAILABLE`; no CSV was captured. Return to the report and try **Page to page migration**, which captures the displayed pages without requesting a CSV download. If the banner cannot find Export or its CSV option, check that the Detailed Report finished loading and retry from that tab. No separate file upload is available.
+
+### The preview is missing or an import was not completed
+
+Wait for the year capture to finish, then review each person and entry count. Map only the Clockify person whose time belongs to the currently signed-in Clockoli GitHub user; explicitly **Skip this person** for all others. Confirm the mapping and select **Import completed time**. A preview expires after one hour, so recapture from Clockify if it is unavailable. Review the per-person outcome: **Already present** means no new write was needed; a failure or conflict is not an import. Follow the displayed recovery message and retry only after resolving it. Reopening a completed preview can show its retained outcome without rerunning the import.
 
 ## Configuration and data safety
 

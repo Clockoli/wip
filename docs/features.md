@@ -245,7 +245,7 @@ Clockoli checks repository identity, branch routing, file SHA, and original reco
 
 ### Backup
 
-For configured multi-repository routing, the version 6 settings export contains display preferences, local billing, credential-free destination references, the exported default destination, and project routing. The non-routing export path uses version 7. Settings exports exclude secrets and time data, including active timers and pending writes; see [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions). Import restores project routes only when all referenced destinations are already configured; references remain unverified, and import does not replace this browser's current default, add destinations, or reconnect repositories.
+For configured multi-repository routing, the version 6 settings export contains display preferences, local billing, credential-free destination references, the exported default destination, and project routing. The non-routing export path uses version 7. Settings exports exclude secrets and time data, including active timers and pending writes; see [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions). Import restores routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. References remain unverified, and import does not replace this browser's current default, add destinations, or reconnect repositories.
 
 ### Connection actions
 

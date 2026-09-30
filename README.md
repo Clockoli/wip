@@ -26,18 +26,18 @@ Clockoli currently runs as a trusted unpacked extension. Use the current checkou
    ```
 
 2. In Chrome or another Chromium browser, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**. Choose the repository root containing `manifest.json`, then pin Clockoli to the toolbar.
-3. Open **Settings** and sign in with GitHub. Use **Check repository** to inspect a time repository, then explicitly confirm **Connect repository** if ready, or the offered setup action if not. Choose **Default time repository**, then select **Finish setup**.
-4. Open a page, select the Clockoli toolbar icon, and choose **Start tracking this task**. When finished, choose **Stop and save**.
+3. Open **Settings** and sign in with GitHub. Check a listed repository with **Check repository**, or enter a URL or `owner/name` and leave the field or press Enter to check it. Then explicitly confirm **Connect repository** if ready, or the offered setup action if not. Choose **Default time repository**, then select **Finish setup**.
+4. Open a page, select the Clockoli toolbar icon, and choose **Track this task** in the full-width panel. When finished, choose **Stop and save**.
 
 Your **GitHub account** authenticates you; a **source repository** may own a tracked issue or pull request; a **time repository** stores your records. These can be different repositories. The [setup guide](docs/getting-started.md) explains repository access and confirmation.
 
-On GitHub, you can also open the tracker from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
+On GitHub, you can also open the tracker from the stopwatch beside your avatar. Its smaller dialog says **Start tracking this task**; the arrow next to it opens **Top tasks**, **Activity**, and **Reports**.
 
 ## What you can do
 
 - Track any HTTP(S) task URL from the toolbar, or use the stopwatch built into GitHub.
 - Keep one active timer across connected browsers and configured time repositories; switch tasks without running two timers at once.
-- Correct or delete time entries, with previous versions retained in Git history; add completed entries in bulk on the Times page.
+- Correct or delete time entries, with previous versions retained in Git history; add completed entries in bulk on the Activity page.
 - Find recently tracked work by task URL or title and see completed and running totals.
 - Report across selected personal and organization time repositories, filter by person or task source, and export CSV or JSON timesheets.
 - Apply browser-local hourly rates for billable reporting without writing rates to time repositories.
@@ -62,7 +62,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - Chrome/Chromium 102 or newer; no Firefox package.
 - Unpacked installations have no automatic updates.
 - Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
-- Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
+- Manual time entry is available through the Activity bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
 - Anyone who can read a time repository can read the URLs, titles, timestamps, and descriptions stored in that repository.
 
 ## Development
