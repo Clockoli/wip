@@ -176,9 +176,15 @@ test('active start resize edits without dispatching Stop and stays running', asy
 test('Timeline resize bars appear on hover and remain visible after selecting an entry', async ({ page }) => {
   await mount(page);
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  const borders = () => block.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { leftWidth: style.borderLeftWidth, leftColor: style.borderLeftColor };
+  });
   const bars = () => block.evaluate(element => [...element.querySelectorAll('.resize-handle')].map(handle => ({
     opacity: Number(getComputedStyle(handle, '::after').opacity),
     cursor: getComputedStyle(handle).cursor,
+    fill: getComputedStyle(handle, '::after').backgroundColor,
+    marks: getComputedStyle(handle, '::after').backgroundImage,
   })));
   await page.mouse.move(0, 0);
   expect(await block.evaluate(element => ({
@@ -186,12 +192,60 @@ test('Timeline resize bars appear on hover and remain visible after selecting an
     padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
   }))).toEqual({ shadow: 'none', padding: '9px' });
   expect((await bars()).map(bar => bar.opacity)).toEqual([0, 0]);
+  let idleBorders;
+  await expect.poll(async () => {
+    const current = await borders();
+    if (current.leftWidth === '3px' && current.leftColor) idleBorders = current;
+    return Boolean(idleBorders);
+  }).toBe(true);
   await block.hover();
   await expect.poll(async () => (await bars()).map(bar => bar.opacity)).toEqual([1, 1]);
+  const accent = await block.evaluate(element => {
+    const sample = document.createElement('span');
+    sample.style.backgroundColor = 'color-mix(in srgb, var(--clockoli-task-background) 78%, black)';
+    element.append(sample);
+    const color = getComputedStyle(sample).backgroundColor;
+    sample.remove();
+    return color;
+  });
+  expect((await bars()).map(bar => bar.fill)).toEqual([accent, accent]);
+  expect((await bars())[0].fill).toBe((await bars())[1].fill);
+  expect((await bars()).every(bar => bar.marks.includes('linear-gradient'))).toBe(true);
+  expect((await bars())[0].marks).toBe((await bars())[1].marks);
+  expect(await borders()).toEqual(idleBorders);
   await block.click();
   await page.mouse.move(0, 0);
   await expect.poll(async () => (await bars()).map(bar => bar.opacity)).toEqual([1, 1]);
+  expect((await bars()).map(bar => bar.fill)).toEqual([accent, accent]);
+  expect((await bars())[0].fill).toBe((await bars())[1].fill);
+  expect(await borders()).toEqual(idleBorders);
   expect((await bars()).map(bar => bar.cursor)).toEqual(['ew-resize', 'ew-resize']);
+});
+
+test('Timeline hover and selection reveal controls without moving or restyling the entry', async ({ page }) => {
+  await mount(page);
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await page.mouse.move(0, 0);
+  const appearance = () => block.evaluate(element => {
+    const style = getComputedStyle(element);
+    const label = element.querySelector('.task-name').getBoundingClientRect();
+    return {
+      labelX: label.x - element.getBoundingClientRect().x,
+      labelWidth: label.width,
+      padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
+      shadow: style.boxShadow,
+      background: style.backgroundColor,
+      borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+    };
+  });
+  const idle = await appearance();
+  await block.hover();
+  await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
+    .map(handle => getComputedStyle(handle, '::after').opacity))).toEqual(['1', '1']);
+  expect(await appearance()).toEqual(idle);
+  await block.click();
+  await page.mouse.move(0, 0);
+  expect(await appearance()).toEqual(idle);
 });
 
 test('Calendar resize bars stay visible on selection after the pointer leaves', async ({ page }) => {
@@ -212,22 +266,33 @@ test('Calendar resize bars stay visible on selection after the pointer leaves', 
   await expect.poll(opacities).toEqual([1, 1]);
 });
 
-test('Timeline edges show full-height colored grips without changing the default entry frame', async ({ page }) => {
+test('Timeline shows darker end grips without top or bottom bands', async ({ page }) => {
   await mount(page);
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await page.mouse.move(0, 0);
+  const idleBorders = await block.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
+  });
   await block.hover();
   await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
     .map(handle => handle.getBoundingClientRect().width))).toEqual([14, 14]);
+  await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
+    .map(handle => getComputedStyle(handle, '::after').opacity))).toEqual(['1', '1']);
   const grips = await block.evaluate(element => [...element.querySelectorAll('.resize-handle')].map(handle => {
     const grip = getComputedStyle(handle, '::after');
     const entry = element.getBoundingClientRect();
-    const expected = document.createElement('span');
-    expected.style.backgroundColor = 'color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel))';
-    element.append(expected);
-    const color = getComputedStyle(expected).backgroundColor;
-    expected.remove();
-    return { targetWidth: handle.getBoundingClientRect().width, width: parseFloat(grip.width), height: parseFloat(grip.height), top: grip.top, bottom: grip.bottom, radius: grip.borderRadius, background: grip.backgroundColor, color, marks: grip.backgroundImage, markSize: grip.backgroundSize, frame: getComputedStyle(element).boxShadow, entryHeight: entry.height, opacity: grip.opacity };
+    const taskStyle = getComputedStyle(element);
+    return { targetWidth: handle.getBoundingClientRect().width, width: parseFloat(grip.width), height: parseFloat(grip.height), top: grip.top, bottom: grip.bottom, radius: grip.borderRadius, background: grip.backgroundColor, marks: grip.backgroundImage, markSize: grip.backgroundSize, frame: taskStyle.boxShadow, topBorder: taskStyle.borderTopColor, bottomBorder: taskStyle.borderBottomColor, leftBorder: taskStyle.borderLeftColor, rightBorder: taskStyle.borderRightColor, padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft, entryHeight: entry.height, opacity: grip.opacity };
   }));
+  const expected = await block.evaluate(element => {
+    const sample = document.createElement('span');
+    sample.style.backgroundColor = 'color-mix(in srgb, var(--clockoli-task-background) 78%, black)';
+    element.append(sample);
+    const color = getComputedStyle(sample).backgroundColor;
+    sample.remove();
+    return color;
+  });
   expect(grips).toHaveLength(2);
   for (const grip of grips) {
     expect(grip.targetWidth).toBeGreaterThanOrEqual(12);
@@ -235,13 +300,52 @@ test('Timeline edges show full-height colored grips without changing the default
     expect(grip.height).toBeGreaterThanOrEqual(grip.entryHeight - 2);
     expect(grip.top).toBe('0px');
     expect(grip.bottom).toBe('0px');
-    expect(grip.background).toBe(grip.color);
+    expect(grip.background).toBe(expected);
     expect(grip.marks).toContain('linear-gradient');
-    expect(grip.markSize).toBe('1px 16px, 1px 16px');
+    expect(grip.marks).toContain('rgb(0, 0, 0)');
+    expect(grip.markSize).toBe('2px 16px, 2px 16px');
     expect(grip.frame).not.toContain('inset');
+    expect([grip.topBorder, grip.rightBorder, grip.bottomBorder, grip.leftBorder]).toEqual(idleBorders);
+    expect(grip.padding).toBe('9px');
     expect(grip.opacity).toBe('1');
   }
-  expect(grips.map(grip => grip.radius)).toEqual(['6px 0px 0px 6px', '0px 6px 6px 0px']);
+  expect(grips[0].marks).toBe(grips[1].marks);
+  expect(grips[0].background).toBe(grips[1].background);
+  expect(grips.map(grip => grip.radius)).toEqual(['4px 0px 0px 4px', '0px 4px 4px 0px']);
+  await block.click();
+  await page.mouse.move(0, 0);
+  const selectedStyle = await block.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { shadow: style.boxShadow, top: style.borderTopColor, bottom: style.borderBottomColor };
+  });
+  expect(selectedStyle).toEqual({ shadow: 'none', top: idleBorders[0], bottom: idleBorders[2] });
+  const other = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await other.hover();
+  const colors = await Promise.all([block, other].map(item => item.evaluate(element => ({
+    background: getComputedStyle(element).backgroundColor,
+    accent: getComputedStyle(element.querySelector('.resize-handle'), '::after').backgroundColor,
+  }))));
+  expect(colors[0].background).not.toBe(colors[1].background);
+  expect(colors[0].accent).not.toBe(colors[1].accent);
+  for (const { background, accent } of colors) {
+    const rgb = color => color.match(/[\d.]+/g).slice(0, 3).map(Number);
+    expect(rgb(accent).every((channel, index) => channel < rgb(background)[index])).toBe(true);
+  }
+  await block.hover();
+  for (const edge of ['left', 'right']) {
+    await block.evaluate((element, side) => {
+      element.classList.add('editing', `resize-${side}`);
+    }, edge);
+    const active = await block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
+      .map(handle => {
+        const style = getComputedStyle(handle, '::after');
+        return { fill: style.backgroundColor, marks: style.backgroundImage, height: style.height };
+      }));
+    expect(active.map(handle => handle.fill)).toEqual([grips[0].background, grips[1].background]);
+    expect(active.map(handle => handle.marks)).toEqual([grips[0].marks, grips[1].marks]);
+    expect(active.map(handle => handle.height)).toEqual([`${grips[0].height}px`, `${grips[1].height}px`]);
+    await block.evaluate((element, side) => element.classList.remove('editing', `resize-${side}`), edge);
+  }
 });
 
 test('Calendar edges show full-width colored grips with paired grip marks', async ({ page }) => {
@@ -307,6 +411,19 @@ test('edited block shows left-aligned saving feedback and queues successive edit
     const indicator = element.querySelector('.clockoli-entry-saving').getBoundingClientRect();
     return entry.width > 0 && indicator.left >= entry.left && indicator.right < entry.right;
   })).toBe(true);
+  const spacing = await block.evaluate(element => {
+    const entry = element.getBoundingClientRect();
+    const spinner = element.querySelector('.clockoli-entry-saving-spinner').getBoundingClientRect();
+    const title = element.querySelector('.task-name').getBoundingClientRect();
+    const grip = getComputedStyle(element.querySelector('.resize-handle.left'), '::after');
+    return {
+      spinnerInset: spinner.left - entry.left,
+      gripEnd: parseFloat(grip.width),
+      titleGap: title.left - element.querySelector('.clockoli-entry-saving').getBoundingClientRect().right,
+    };
+  });
+  expect(spacing.spinnerInset).toBeGreaterThanOrEqual(spacing.gripEnd + 2);
+  expect(spacing.titleGap).toBeGreaterThanOrEqual(4);
   await block.click();
   await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
   await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
@@ -334,6 +451,163 @@ test('a late failed edit does not undo a newer edit or clear its preloader', asy
   await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
   await page.evaluate(() => window.__editSettlers[1].resolve(true));
   await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+});
+
+test('rejected edits restore the prior interval without leaving a false undo entry', async ({ page }) => {
+  await mount(page, { deferEdit: true });
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.click();
+  const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(false));
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
+  expect(await page.evaluate(() => window.__timeline.__timeline.canUndo())).toBe(false);
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().reject(new Error('save failed')));
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
+  expect(await page.evaluate(() => window.__timeline.__timeline.canUndo())).toBe(false);
+});
+
+test('consecutive rejected edits restore the last accepted interval', async ({ page }) => {
+  await mount(page, { deferEdit: true });
+  await page.locator('#timeline .task[data-task-key="entry:a"]').click();
+  const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
+  await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
+  await page.evaluate(() => window.__editSettlers[1].resolve(false));
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
+  expect(await page.evaluate(() => window.__timeline.__timeline.canUndo())).toBe(false);
+});
+
+test('undo after a late rejected edit does not resurrect the failed interval', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { deferEdit: true, items: [
+    { id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+  ] });
+  await page.locator('#timeline .task[data-task-key="entry:a"]').click();
+  const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
+  await page.evaluate(() => window.__editSettlers[1].resolve(true));
+  await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getInteractionState().pendingInstanceIds.includes('entry:a'))).toBe(false);
+  await page.evaluate(() => window.__timeline.__timeline.undo());
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
+});
+
+test('rejected undo restores the accepted interval and preserves undo history', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { deferEdit: true, items: [
+    { id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+  ] });
+  const timeline = () => page.evaluate(() => {
+    const instance = window.__timeline.__timeline;
+    return { start: instance._findTask('entry:a').start, undo: instance.canUndo(), redo: instance.canRedo() };
+  });
+  const original = (await timeline()).start;
+  await page.locator('#timeline .task[data-task-key="entry:a"]').click();
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect.poll(() => timeline()).toMatchObject({ undo: true, redo: false });
+  const accepted = (await timeline()).start;
+  expect(accepted).not.toBe(original);
+  await page.evaluate(() => window.__timeline.__timeline.undo());
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().reject(new Error('undo save failed')));
+  await expect.poll(() => timeline()).toEqual({ start: accepted, undo: true, redo: false });
+  await page.evaluate(() => window.__timeline.__timeline.undo());
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect.poll(() => timeline()).toEqual({ start: original, undo: false, redo: true });
+});
+
+test('rejected redo restores the undone interval and preserves redo history', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { deferEdit: true, items: [
+    { id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+  ] });
+  const timeline = () => page.evaluate(() => {
+    const instance = window.__timeline.__timeline;
+    return { start: instance._findTask('entry:a').start, undo: instance.canUndo(), redo: instance.canRedo() };
+  });
+  const original = (await timeline()).start;
+  await page.locator('#timeline .task[data-task-key="entry:a"]').click();
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect.poll(() => timeline()).toMatchObject({ undo: true });
+  await page.evaluate(() => window.__timeline.__timeline.undo());
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect.poll(() => timeline()).toEqual({ start: original, undo: false, redo: true });
+  await page.evaluate(() => window.__timeline.__timeline.redo());
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().reject(new Error('redo save failed')));
+  await expect.poll(() => timeline()).toEqual({ start: original, undo: false, redo: true });
+  await page.evaluate(() => window.__timeline.__timeline.redo());
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
+  await expect.poll(() => timeline()).toMatchObject({ undo: true, redo: false });
+  expect((await timeline()).start).not.toBe(original);
+});
+
+test('minimum-width pending entries show the whole spinner inside the block', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { items: [
+    { id: 'entry:short', url: 'https://example.com/short', title: 'Short', startedAt: now - HOUR, endedAt: now - HOUR + 5_000, rowId: 'one', isEditable: true, isPending: true },
+  ] });
+  const block = page.locator('#timeline .task[data-task-key="entry:short"]');
+  await expect(block.locator('.clockoli-entry-saving-spinner')).toBeVisible();
+  const geometry = await block.evaluate(element => {
+    const task = element.getBoundingClientRect();
+    const spinner = element.querySelector('.clockoli-entry-saving-spinner').getBoundingClientRect();
+    const overlay = element.querySelector('.clockoli-entry-saving').getBoundingClientRect();
+    return { taskWidth: task.width, spinnerWidth: spinner.width, overlayWidth: overlay.width,
+      inside: spinner.left >= task.left && spinner.right <= task.right,
+      compact: getComputedStyle(element.querySelector('.clockoli-entry-saving-label')).display === 'none' };
+  });
+  expect(geometry.taskWidth).toBeLessThan(46);
+  expect(geometry.spinnerWidth).toBeGreaterThanOrEqual(12);
+  expect(geometry.overlayWidth).toBeGreaterThanOrEqual(geometry.spinnerWidth);
+  expect(geometry.inside).toBe(true);
+  expect(geometry.compact).toBe(true);
+  await expect(block).toHaveAttribute('aria-label', /Saving…/);
+});
+
+test('intermediate pending entry widths keep spinner and label inside the block', async ({ page }) => {
+  const now = Date.now();
+  const item = { id: 'entry:medium', url: 'https://example.com/medium', title: 'Medium', startedAt: now - HOUR, endedAt: now - HOUR + 12 * 60_000, rowId: 'one', isEditable: true, isPending: true };
+  await mount(page, { items: [item] });
+  const block = page.locator('#timeline .task[data-task-key="entry:medium"]');
+  const widths = [];
+  for (const duration of [5, 12, 20, 30]) {
+    await page.evaluate(({ item, duration }) => {
+      window.__timeline.update({ items: [{ ...item, endedAt: item.startedAt + duration * 60_000 }], now: Date.now() });
+    }, { item, duration });
+    const bounds = await block.evaluate(element => {
+      const saving = element.querySelector('.clockoli-entry-saving');
+      const spinner = saving.querySelector('.clockoli-entry-saving-spinner');
+      const label = saving.querySelector('.clockoli-entry-saving-label');
+      const task = element.getBoundingClientRect();
+      const icon = spinner.getBoundingClientRect();
+      const text = label.getBoundingClientRect();
+      return { width: task.width, iconInside: icon.left >= task.left && icon.right <= task.right,
+        textInside: getComputedStyle(label).display === 'none' || text.right <= task.right,
+        labelVisible: getComputedStyle(label).display !== 'none' };
+    });
+    widths.push(bounds.width);
+    expect(bounds.iconInside, `spinner at ${bounds.width}px`).toBe(true);
+    expect(bounds.textInside, `label at ${bounds.width}px`).toBe(true);
+    expect(bounds.labelVisible, `label at ${bounds.width}px`).toBe(bounds.width >= 110);
+  }
+  expect(widths.some(width => width >= 46 && width < 110)).toBe(true);
+  expect(widths.some(width => width >= 110)).toBe(true);
 });
 
 test('saving feedback clears on rejection and follows the entry into Calendar', async ({ page }) => {
@@ -951,7 +1225,7 @@ test('Timeline hover and drag show only Start, End, and Duration badges in the r
   expect(hover.byClass.duration.left).toBeCloseTo(hover.task.left, 0);
   expect(hover.byClass.duration.top).toBeGreaterThanOrEqual(hover.task.bottom - 1);
 
-  const box = await task.boundingBox();
+  const box = hover.task;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 20, box.y + box.height / 2);
