@@ -2,6 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 import { taskPeriodRange } from '../domain/tasks.js';
+import { getAddon } from '../addons/registry.js';
 
 
 const $ = id => document.getElementById(id);
@@ -45,6 +46,28 @@ let projectSequence = 0;
 function message(text, kind = '') {
   $('message').textContent = text;
   $('message').className = kind;
+}
+
+function renderAddonSettings(settings, hasClockifyAccess = false) {
+  const descriptor = getAddon('clockify-migration');
+  $('clockify-addon-title').textContent = descriptor.title;
+  $('clockify-addon-description').textContent = descriptor.description;
+  $('clockify-addon-origin').textContent = descriptor.requestedOrigins.join(', ');
+  $('clockify-addon-capability').textContent = descriptor.capabilities.includes('import_completed_records') ? 'Capability: import completed records only.' : '';
+  const enabled = settings[descriptor.id] === true;
+  $('clockify-detailed-report-link').hidden = !(enabled && hasClockifyAccess);
+  $('clockify-addon-enabled').dataset.enabled = String(enabled);
+  $('clockify-addon-status').textContent = enabled ? 'Enabled' : 'Disabled';
+  $('clockify-addon-status').className = `badge${enabled ? ' ready' : ''}`;
+  $('clockify-addon-enabled').textContent = enabled ? 'Disable Clockify migration' : 'Enable Clockify migration';
+}
+
+async function refreshAddonSettings() {
+  const [settings, hasClockifyAccess] = await Promise.all([
+    send({ type: 'GET_ADDON_SETTINGS' }),
+    chrome.permissions.contains({ origins: ['https://app.clockify.me/*'] }),
+  ]);
+  renderAddonSettings(settings, hasClockifyAccess);
 }
 
 function formFeedback(id, text, kind = '') {
@@ -846,6 +869,20 @@ function scheduleRepositoryPolling() {
   }, 3000);
 }
 window.addEventListener('pagehide', () => { repositoryPollingStopped = true; stopRepositoryMonitoring(); });
+
+$('clockify-addon-enabled').addEventListener('click', async () => {
+  $('clockify-addon-enabled').disabled = true;
+  try {
+    const enabled = $('clockify-addon-enabled').dataset.enabled !== 'true';
+    if (enabled && !await chrome.permissions.request({ origins: ['https://app.clockify.me/*'] })) {
+      throw new Error('Clockify access was not granted.');
+    }
+    await send({ type: 'SET_ADDON_ENABLED', payload: { id: 'clockify-migration', enabled } });
+    await refreshAddonSettings();
+    message(`Clockify migration ${enabled ? 'enabled' : 'disabled'}.`, 'success');
+  } catch (error) { message(error.message || 'Could not update Clockify migration.', 'error'); }
+  finally { $('clockify-addon-enabled').disabled = false; }
+});
 
 function addRateRow(login = '', period = null) {
   const rate = period || { amountMinorPerHour: 0, currency: '$', currencyPosition: 'prefix', startDate: '', endDate: '' };
@@ -1701,6 +1738,6 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
 
 mountRunningStatus($('running-status'), { send });

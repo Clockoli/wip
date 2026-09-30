@@ -2,6 +2,8 @@
 
 Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+Packaged add-ons and their permission boundary are documented in [docs/add-ons.md](docs/add-ons.md).
+
 Clockoli is a Chrome/Chromium time tracker that stores your records in private GitHub time repositories you control. It has no Clockoli application server and no separate time-tracking database.
 
 Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
@@ -58,6 +60,8 @@ On GitHub, the same controls are available from the stopwatch beside your avatar
 Clockoli permits one running timer across all configured time repositories. If another task is running, choose **Switch to this task**: Clockoli durably queues completion in the source time repository before starting the new timer in its routed destination.
 
 ## Features
+
+- **Clockify migration:** imports user-supplied annual Detailed Report exports through either the in-page report capture or native CSV export flow. Clockoli never reads Clockify credentials; both untrusted sources are normalized and previewed before an explicit mapped-user import.
 
 ### Tracking and correction
 
@@ -124,6 +128,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 - [Feature guide](docs/features.md)
 - [Why Clockoli](docs/why-clockoli.md)
 - [Data, privacy, and security](docs/data-and-privacy.md)
+- [Add-ons](docs/add-ons.md): first-party packaged add-on architecture and provider boundaries.
 - [Time-data repository setup](docs/time-data-repository.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

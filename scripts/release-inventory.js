@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const MANIFEST = 'manifest.json';
 const VIRTUAL_RESOURCES = new Set(['_favicon/*']);
-const RUNTIME_PAGE_ENTRIES = ['src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
+const RUNTIME_PAGE_ENTRIES = ['src/clockify-migration/preview.html', 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
 const SECRET_PATTERNS = [
   { label: 'GitHub token', pattern: /\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b/ },
@@ -21,7 +21,7 @@ function localReferences(file, text) {
   const references = [];
   const extension = path.extname(file);
   if (extension === '.js') {
-    for (const match of text.matchAll(/(?<![\w$.])(?:from\s+|import\s*)["']([^"']+)["']/g)) references.push(match[1]);
+    for (const match of text.matchAll(/(?<![\w$.])(?:from\s+|import\s+)["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.html') {
     for (const match of text.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) references.push(match[1]);
   } else if (extension === '.css') {

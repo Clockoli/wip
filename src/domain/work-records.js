@@ -257,7 +257,11 @@ export function parseMonthlyRecords(text, context = {}) {
     try { stored = JSON.parse(line); }
     catch { throw new Error(`Monthly record line ${index + 1} is not valid JSON`); }
     validateStoredRecord(stored, 'completed');
-    if (stored.activity.local_date.slice(0, 7) !== month) throw new Error(`Record line ${index + 1} does not match monthly partition ${month}`);
+    if (stored.activity.local_date.slice(0, 7) !== month) {
+      const error = new Error(`Record line ${index + 1} does not match monthly partition ${month}`);
+      error.repair = { kind: 'monthly_partition_mismatch', line: index + 1, actualMonth: stored.activity.local_date.slice(0, 7), expectedMonth: month };
+      throw error;
+    }
     if (ids.has(stored.id)) throw new Error(`Duplicate work record ID: ${stored.id}`);
     ids.add(stored.id);
     return fromStoredRecord(stored, { ...context, user, index });

@@ -66,7 +66,7 @@ export function mergeDestinationRecords(destinationResults, destinationOrder = [
 }
 
 export function mergeDestinationTaskSummaries(destinationResults, destinationOrder = []) {
-  const order = new Map(destinationOrder.map((id, index) => [id, index])), summaries = new Map();
+  const order = new Map(destinationOrder.map((id, index) => [id, index])), summaries = new Map(), ownersByRecordId = new Map();
   for (const result of destinationResults ?? []) {
     const destinationId = result.destination?.id, timeRepository = destinationLabel(result.destination);
     for (const record of result.records ?? []) {
@@ -75,8 +75,14 @@ export function mergeDestinationTaskSummaries(destinationResults, destinationOrd
       if (!taskUrl || !user || !Number.isFinite(durationSeconds) || durationSeconds < 0 || !Array.isArray(record.recordIds)) throw new Error('Invalid task summary');
       const key = `${taskUrl}\n${user.toLowerCase()}`;
       const summary = summaries.get(key) ?? {
-        user, taskUrl, durationSeconds: 0, recordIds: new Set(), destinationIds: new Set(), timeRepositories: new Set(),
+        user, taskUrl, durationSeconds: 0, recordIds: new Set(), destinationIds: new Set(), timeRepositories: new Set(), conflicted: false,
       };
+      for (const id of record.recordIds) {
+        if (typeof id !== 'string' || !id) throw new Error('Invalid task summary record ID');
+        const owner = ownersByRecordId.get(id);
+        if (owner && owner.destinationId !== destinationId) { owner.summary.conflicted = true; summary.conflicted = true; }
+        else ownersByRecordId.set(id, { destinationId, summary });
+      }
       summary.durationSeconds += durationSeconds;
       for (const id of record.recordIds) summary.recordIds.add(id);
       if (destinationId) summary.destinationIds.add(destinationId);
@@ -85,13 +91,18 @@ export function mergeDestinationTaskSummaries(destinationResults, destinationOrd
     }
   }
   const sortDestinations = values => [...values].sort((left, right) => (order.get(left) ?? Infinity) - (order.get(right) ?? Infinity) || left.localeCompare(right));
+  const conflicts = [...summaries.values()].filter(summary => summary.conflicted).map(summary => ({
+    code: 'task_summary_record_id_conflict', taskUrl: summary.taskUrl, user: summary.user,
+    recordIds: [...summary.recordIds].sort(), destinationIds: sortDestinations(summary.destinationIds),
+    timeRepositories: [...summary.timeRepositories],
+  }));
   return {
-    records: [...summaries.values()].map(summary => ({
+    records: [...summaries.values()].filter(summary => !summary.conflicted).map(summary => ({
       user: summary.user, taskUrl: summary.taskUrl, durationSeconds: summary.durationSeconds,
       recordIds: [...summary.recordIds].sort(), destinationIds: sortDestinations(summary.destinationIds),
       timeRepositories: [...summary.timeRepositories],
     })),
-    conflicts: [],
+    conflicts,
   };
 }
 
@@ -290,6 +301,23 @@ export class ReportService {
     }
     return mergeReportRecords(personalRecords, [])
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
+  }
+
+  async loadRepositoryUserRange(range, { defaultBranch = null, githubUserId = null, user, signal, includeStorageMetadata = false, budgets = {} } = {}) {
+    const validatedUser = validatePathSegment(user, 'user');
+    if (!defaultBranch || !Number.isSafeInteger(githubUserId) || githubUserId <= 0
+        || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+      return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    }
+    const defaultGithub = this.github.forBranch(defaultBranch, 'default');
+    const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
+    const mappedUser = users.find(candidate => candidate.id === githubUserId
+      && candidate.login.toLowerCase() === validatedUser.toLowerCase());
+    if (!mappedUser) return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    return new ReportService({
+      github: mappedUser.github, cache: this.cache, concurrency: this.concurrency,
+      onProgress: this.onProgress, requestLimiter: this.requestLimiter,
+    }).loadUserRange(range, mappedUser.login, { signal, includeStorageMetadata }, budgets);
   }
 
   async loadRepositoryTask(taskUrl, { defaultBranch = null, signal, budgets = {} } = {}) {

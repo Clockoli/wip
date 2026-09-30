@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Clockify migration · Clockoli</title>
+  <link rel="stylesheet" href="../styles/github-primer.css">
+  <link rel="stylesheet" href="../styles/page-tabs.css">
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+<div class="page-tabs-shell">
+  <nav class="page-tabs" aria-label="Clockoli pages">
+    <a class="page-brand" href="../times/times.html" aria-label="Clockoli Activity"><img src="../assets/clockoli-with-text.svg" alt=""></a>
+    <div class="page-tab-list">
+      <a class="page-tab" href="../times/times.html">Activity</a>
+      <a class="page-tab" href="../tasks/tasks.html">Top tasks</a>
+      <a class="page-tab" href="../reports/reports.html">Reports</a>
+      <a class="page-tab" href="../options/options.html">Settings</a>
+      <a class="page-tab" href="preview.html" aria-current="page">Migration</a>
+    </div>
+  </nav>
+</div>
+<main>
+  <section class="card" aria-labelledby="preview-title">
+    <div class="card-heading">
+      <div>
+        <h1 id="preview-title">Review Clockify migration</h1>
+        <p>Review the people in the currently open Clockify report, then manually assign every person to a GitHub login.</p>
+      </div>
+    </div>
+    <div id="message" class="card-header-message" role="alert" aria-live="assertive" hidden></div>
+
+    <div id="loading" class="loading" aria-live="polite">Loading migration preview…</div>
+    <div id="preview" hidden>
+      <section id="mapping-view" aria-labelledby="mapping-title">
+        <h2 id="mapping-title">Map Clockify people</h2>
+        <p class="summary"><strong id="entry-count">0</strong> completed time entries are ready to review.</p>
+        <p class="privacy-note">This preview comes from the open Clockify tab. Clockoli does not store Clockify credentials.</p>
+
+        <form id="mapping-form" novalidate>
+          <fieldset>
+            <legend>Manual GitHub account mapping</legend>
+            <p class="help">GitHub logins for people with access to this Clockoli repository are suggested as you type. Choose and confirm each mapping manually, or explicitly skip a person who should not be imported. Each GitHub login can be used only once.</p>
+            <datalist id="github-login-suggestions"></datalist>
+            <div id="source-users"></div>
+          </fieldset>
+          <label class="confirmation"><input id="confirmation" type="checkbox" required> I confirm that every GitHub login is correct and authorize this migration.</label>
+          <div class="actions">
+            <button id="import" type="submit" disabled>Import completed time</button>
+            <a href="../options/options.html">Back to Settings</a>
+          </div>
+        </form>
+      </section>
+
+      <section id="migration-view" aria-labelledby="migration-title" hidden>
+        <h2 id="migration-title">Migration</h2>
+        <p class="privacy-note">Clockoli is saving the confirmed mapping. Progress and the final result appear here.</p>
+        <section id="import-status" class="migration-progress" aria-labelledby="import-status-title" role="status" aria-live="polite" hidden>
+          <h3 id="import-status-title">Saving migration</h3>
+          <p id="progress-current-step"></p>
+          <progress id="import-progress" max="11" value="0">0%</progress>
+          <p id="progress-summary"></p>
+        </section>
+        <ul id="outcomes" class="outcomes" aria-live="polite" hidden></ul>
+      </section>
+    </div>
+  </section>
+</main>
+<script type="module" src="preview.js"></script>
+</body>
+</html>

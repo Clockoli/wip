@@ -79,16 +79,21 @@ export function applyTaskIndexChanges(index, { remove = [], add = [] } = {}) {
     else next.tasks[taskUrl] = { totalSeconds, sessionCount, recordIds: current.recordIds.filter(recordId => recordId !== id) };
   }
   const knownRecordIds = new Set(Object.values(next.tasks).flatMap(summary => summary.recordIds));
+  const additionsByTask = new Map();
   for (const entry of add) {
     const { id, taskUrl, durationSeconds } = normalizedEntry(entry);
-    const current = next.tasks[taskUrl] ?? { totalSeconds: 0, sessionCount: 0, recordIds: [] };
     if (knownRecordIds.has(id)) throw new Error('Clockoli task index does not match completed records');
-    next.tasks[taskUrl] = {
-      totalSeconds: current.totalSeconds + durationSeconds,
-      sessionCount: current.sessionCount + 1,
-      recordIds: [...current.recordIds, id].sort((left, right) => left.localeCompare(right)),
-    };
     knownRecordIds.add(id);
+    if (!additionsByTask.has(taskUrl)) additionsByTask.set(taskUrl, []);
+    additionsByTask.get(taskUrl).push({ id, durationSeconds });
+  }
+  for (const [taskUrl, additions] of additionsByTask) {
+    const current = next.tasks[taskUrl] ?? { totalSeconds: 0, sessionCount: 0, recordIds: [] };
+    next.tasks[taskUrl] = {
+      totalSeconds: current.totalSeconds + additions.reduce((total, entry) => total + entry.durationSeconds, 0),
+      sessionCount: current.sessionCount + additions.length,
+      recordIds: [...current.recordIds, ...additions.map(entry => entry.id)].sort((left, right) => left.localeCompare(right)),
+    };
   }
   next.tasks = Object.fromEntries(Object.entries(next.tasks).sort(([left], [right]) => left.localeCompare(right)));
   return next;
