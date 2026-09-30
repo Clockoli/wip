@@ -857,7 +857,7 @@ test('minimum-width boundary badges stay visible at both Timeline viewport edges
     { id: 'entry:last-edge', url: 'https://example.com/last', title: 'Last', startedAt: now - 24 * HOUR, endedAt: now - 24 * HOUR + 5_000, rowId: 'one', isEditable: true },
   ] });
   const check = async (key, edge) => {
-    await page.evaluate(({ key, edge }) => {
+    const hoverPoint = await page.evaluate(({ key, edge }) => {
       const timeline = window.__timeline.__timeline;
       const element = timeline._taskElementByKey(key);
       const viewport = timeline.viewport.getBoundingClientRect();
@@ -867,17 +867,28 @@ test('minimum-width boundary badges stay visible at both Timeline viewport edges
       const taskRight = scroll + task.right - viewport.left;
       timeline._setScrollLeft(edge === 'start' ? taskLeft + 15 : taskRight - timeline.viewport.clientWidth - 15);
       timeline.viewport.dispatchEvent(new Event('scroll'));
-      timeline._taskElementByKey(key).classList.add('editing');
+      const visibleTask = timeline._taskElementByKey(key).getBoundingClientRect();
+      const visibleViewport = timeline.viewport.getBoundingClientRect();
+      return {
+        x: Math.max(visibleViewport.left + 1, Math.min(visibleViewport.right - 1, visibleTask.left + visibleTask.width / 2)),
+        y: visibleTask.top + visibleTask.height / 2,
+      };
     }, { key, edge });
-    const task = page.locator(`#timeline .task[data-task-key="${key}"]`);
-    return task.evaluate((element, edge) => {
-      const viewportElement = element.closest('.viewport');
+    // Hover at the exposed part of the clipped task: locator.hover() would
+    // auto-scroll it and invalidate the edge geometry under test.
+    await page.mouse.move(hoverPoint.x, hoverPoint.y);
+    return page.evaluate(({ key, edge }) => {
+      const timeline = window.__timeline.__timeline;
+      const element = timeline._taskElementByKey(key);
+      element.classList.add('editing');
+      // Task blocks and the scroll viewport are siblings in the component shadow root.
+      const viewportElement = element.getRootNode().querySelector('.viewport');
       const viewportRect = viewportElement.getBoundingClientRect();
       const viewport = { left: viewportRect.left, right: viewportRect.left + viewportElement.clientWidth };
       const badge = element.querySelector(`.edit-clock.${edge}`).getBoundingClientRect();
       const task = element.getBoundingClientRect();
       return { viewport: { left: viewport.left, right: viewport.right }, badge: { left: badge.left, right: badge.right, bottom: badge.bottom }, task: { left: task.left, right: task.right, top: task.top } };
-    }, edge);
+    }, { key, edge });
   };
   const first = await check('entry:first-edge', 'start');
   expect(first.task.left).toBeLessThan(first.viewport.left);

@@ -530,6 +530,12 @@
   }
 
   function send(message) {
+    const runtime = globalThis.chrome?.runtime;
+    if (typeof runtime?.sendMessage !== 'function') {
+      const error = new Error('Extension context interrupted');
+      error.code = 'extension_context_interrupted';
+      return Promise.reject(error);
+    }
     return new Promise((resolve, reject) => {
       if (!extensionContextActive) {
         const error = new Error('Extension context invalidated.'); error.code = 'extension_context_interrupted'; reject(error); return;

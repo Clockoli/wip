@@ -2,7 +2,7 @@ import { recordDate } from '../domain/reporting.js';
 import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
-import { entryDateParts, normalizeTaskUrl, taskUrlOf, validatePathSegment } from '../domain/values.js';
+import { entryDateParts, normalizeStoredTaskIdentity, taskUrlOf, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
@@ -66,7 +66,7 @@ export function mergeDestinationRecords(destinationResults, destinationOrder = [
 }
 
 export function mergeDestinationTaskSummaries(destinationResults, destinationOrder = []) {
-  const order = new Map(destinationOrder.map((id, index) => [id, index])), summaries = new Map();
+  const order = new Map(destinationOrder.map((id, index) => [id, index])), summaries = new Map(), ownersByRecordId = new Map();
   for (const result of destinationResults ?? []) {
     const destinationId = result.destination?.id, timeRepository = destinationLabel(result.destination);
     for (const record of result.records ?? []) {
@@ -75,8 +75,14 @@ export function mergeDestinationTaskSummaries(destinationResults, destinationOrd
       if (!taskUrl || !user || !Number.isFinite(durationSeconds) || durationSeconds < 0 || !Array.isArray(record.recordIds)) throw new Error('Invalid task summary');
       const key = `${taskUrl}\n${user.toLowerCase()}`;
       const summary = summaries.get(key) ?? {
-        user, taskUrl, durationSeconds: 0, recordIds: new Set(), destinationIds: new Set(), timeRepositories: new Set(),
+        user, taskUrl, durationSeconds: 0, recordIds: new Set(), destinationIds: new Set(), timeRepositories: new Set(), conflicted: false,
       };
+      for (const id of record.recordIds) {
+        if (typeof id !== 'string' || !id) throw new Error('Invalid task summary record ID');
+        const owner = ownersByRecordId.get(id);
+        if (owner && owner.destinationId !== destinationId) { owner.summary.conflicted = true; summary.conflicted = true; }
+        else ownersByRecordId.set(id, { destinationId, summary });
+      }
       summary.durationSeconds += durationSeconds;
       for (const id of record.recordIds) summary.recordIds.add(id);
       if (destinationId) summary.destinationIds.add(destinationId);
@@ -85,13 +91,18 @@ export function mergeDestinationTaskSummaries(destinationResults, destinationOrd
     }
   }
   const sortDestinations = values => [...values].sort((left, right) => (order.get(left) ?? Infinity) - (order.get(right) ?? Infinity) || left.localeCompare(right));
+  const conflicts = [...summaries.values()].filter(summary => summary.conflicted).map(summary => ({
+    code: 'task_summary_record_id_conflict', taskUrl: summary.taskUrl, user: summary.user,
+    recordIds: [...summary.recordIds].sort(), destinationIds: sortDestinations(summary.destinationIds),
+    timeRepositories: [...summary.timeRepositories],
+  }));
   return {
-    records: [...summaries.values()].map(summary => ({
+    records: [...summaries.values()].filter(summary => !summary.conflicted).map(summary => ({
       user: summary.user, taskUrl: summary.taskUrl, durationSeconds: summary.durationSeconds,
       recordIds: [...summary.recordIds].sort(), destinationIds: sortDestinations(summary.destinationIds),
       timeRepositories: [...summary.timeRepositories],
     })),
-    conflicts: [],
+    conflicts,
   };
 }
 
@@ -292,8 +303,25 @@ export class ReportService {
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.user.localeCompare(b.user));
   }
 
+  async loadRepositoryUserRange(range, { defaultBranch = null, githubUserId = null, user, signal, includeStorageMetadata = false, budgets = {} } = {}) {
+    const validatedUser = validatePathSegment(user, 'user');
+    if (!defaultBranch || !Number.isSafeInteger(githubUserId) || githubUserId <= 0
+        || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+      return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    }
+    const defaultGithub = this.github.forBranch(defaultBranch, 'default');
+    const users = await discoverUserStorageBranches(defaultGithub, { signal, concurrency: this.concurrency });
+    const mappedUser = users.find(candidate => candidate.id === githubUserId
+      && candidate.login.toLowerCase() === validatedUser.toLowerCase());
+    if (!mappedUser) return this.loadUserRange(range, validatedUser, { signal, includeStorageMetadata }, budgets);
+    return new ReportService({
+      github: mappedUser.github, cache: this.cache, concurrency: this.concurrency,
+      onProgress: this.onProgress, requestLimiter: this.requestLimiter,
+    }).loadUserRange(range, mappedUser.login, { signal, includeStorageMetadata }, budgets);
+  }
+
   async loadRepositoryTask(taskUrl, { defaultBranch = null, signal, budgets = {} } = {}) {
-    const canonicalTaskUrl = normalizeTaskUrl(taskUrl);
+    const canonicalTaskUrl = normalizeStoredTaskIdentity(taskUrl);
     const maxUsers = budgetValue(budgets.maxUsers, DEFAULT_TASK_USER_BUDGET, 'user');
     this.onProgress({ label: 'Discovering people and task indexes…', value: 20 });
     if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
@@ -346,7 +374,7 @@ export class ReportService {
     normalizeReportingUtc(reportingUtc);
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
-    const canonicalTaskUrl = taskUrl === null ? null : normalizeTaskUrl(taskUrl);
+    const canonicalTaskUrl = taskUrl === null ? null : normalizeStoredTaskIdentity(taskUrl);
     signal?.throwIfAborted();
 
     const repositoryKey = this.github.repositoryKey || 'repository';

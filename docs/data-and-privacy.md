@@ -124,6 +124,10 @@ GitHub pages are untrusted input. Clockoli's privileged GitHub credentials remai
 
 The GitHub control uses a closed Shadow DOM and rejects synthetic privileged activation. This reduces the page's ability to inspect or programmatically trigger extension controls.
 
+### Clockify and add-on boundary
+
+The Clockify migration add-on is a first-party packaged provider adapter, not a privileged integration. It accepts either page-to-page Detailed Report capture from a user-opened authenticated Clockify tab or a user-selected native CSV export; both sources are untrusted and validated by the core. Clockify tokens, cookies, and headers are never collected or retained. The core retains all GitHub/storage privileges, credentials, and record-writing authority; provider adapters do not receive them.
+
 ### Repository verification
 
 Before writing, Clockoli verifies the destination's stable GitHub ID, canonical owner/name, private visibility, branch route, and accessibility. Repository rename/transfer recovery is bounded and identity-based; Clockoli does not silently write to a different repository that happens to occupy old coordinates.

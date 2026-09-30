@@ -24,6 +24,12 @@ test('extension-context interruption stops stale content timers without renderin
   assert.match(source, /const markUrl = extensionResourceUrl\('src\/assets\/clockoli-32\.png'\)/);
 });
 
+test('GitHub content-script messaging fails closed after an extension-context reload', () => {
+  assert.match(source, /const runtime = globalThis\.chrome\?\.runtime;/);
+  assert.match(source, /if \(typeof runtime\?\.sendMessage !== 'function'\)/);
+  assert.match(source, /error\.code = 'extension_context_interrupted'/);
+});
+
 const createdNodes = [];
 
 class FakeNode {

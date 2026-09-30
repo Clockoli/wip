@@ -1,4 +1,4 @@
-import { normalizeIssue, validateBranch, validateOwner, validateRepo } from '../domain/values.js';
+import { normalizeIssue, validateBranch, validateOwner, validatePathSegment, validateRepo } from '../domain/values.js';
 
 export class GitHubApiError extends Error {
   constructor(message, status, code = 'github_api_error') { super(message); this.name = this.constructor.name; this.status = status; this.code = code; }
@@ -80,6 +80,29 @@ function decodeBase64Utf8(value) {
 function encodePath(path) {
   if (typeof path !== 'string' || path.startsWith('/') || path.includes('..') || path.includes('\\')) throw new Error('Invalid GitHub content path');
   return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function validGitHubLogin(login) {
+  try { validatePathSegment(login, 'user'); return true; } catch { return false; }
+}
+
+async function mapBounded(items, limit, operation) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+function normalizedIssueTitle(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 }
 
 
@@ -261,7 +284,46 @@ export class GitHubClient {
     return { id: user.id, login: user.login };
   }
 
+  async getUserIdentity(login) {
+    const requestedLogin = validatePathSegment(login, 'user');
+    const user = await this.request(`/users/${encodeURIComponent(requestedLogin)}`);
+    if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user?.login)
+        || user.login.toLowerCase() !== requestedLogin.toLowerCase()) {
+      throw new GitHubApiError('GitHub returned an invalid user identity.', 502, 'invalid_github_response');
+    }
+    return { id: user.id, login: user.login };
+  }
+
+  async listRepositoryCollaboratorLogins() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborator suggestions');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    if (!Array.isArray(collaborators) || collaborators.length > 100) throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+    const logins = collaborators.map(user => user?.login);
+    if (logins.some(login => !validGitHubLogin(login)) || new Set(logins.map(login => login.toLowerCase())).size !== logins.length) {
+      throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+    }
+    return logins.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'accent' }));
+  }
+
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
+
+  async resolveRepositoryIssue({ repository, number, title } = {}) {
+    if (!this.owner) throw new Error('A GitHub repository owner is required for issue resolution');
+    const repo = validateRepo(repository);
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid GitHub issue number');
+    const expectedTitle = normalizedIssueTitle(title);
+    if (!expectedTitle) return null;
+    try {
+      const issue = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(repo)}/issues/${number}`);
+      if (issue?.pull_request || issue?.number !== number || typeof issue?.html_url !== 'string'
+          || normalizedIssueTitle(issue.title) !== expectedTitle) return null;
+      const canonical = normalizeIssue(issue.html_url);
+      return { url: canonical, title: normalizedIssueTitle(issue.title) };
+    } catch (error) {
+      if (error?.status === 404) return null;
+      throw error;
+    }
+  }
 
   async validateRepository() {
     const repo = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`);
@@ -585,13 +647,17 @@ export class GitHubClient {
       if ((current.get(item.path) ?? null) !== (item.sha ?? null)) throw new GitHubConflictError();
     }
     const blobShas = {}, tree = [];
-    for (const change of changes) {
+    const blobs = await mapBounded(changes, 6, async change => {
       let sha = null;
       if (change.text !== null) {
         const blob = await this.request(`${base}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: change.text, encoding: 'utf-8' }) });
-        sha = blob.sha; blobShas[change.path] = sha;
+        sha = blob.sha;
       }
-      tree.push({ path: change.path, mode: '100644', type: 'blob', sha });
+      return { path: change.path, sha };
+    });
+    for (const blob of blobs) {
+      if (blob.sha !== null) blobShas[blob.path] = blob.sha;
+      tree.push({ path: blob.path, mode: '100644', type: 'blob', sha: blob.sha });
     }
     const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
     const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });

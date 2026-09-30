@@ -20,6 +20,10 @@ npm test
 npm run check
 ```
 
+To measure coverage for the extension source, run `npm run test:coverage`. The
+generated timeline bundle is excluded because it is built and verified by the
+timeline workspace checks.
+
 Chrome loads checked-in extension files directly. When changing the timeline source or adapter under `packages/task-timeline-component/`, regenerate `src/content/task-timeline-component.js` with `npm run build:timeline` before testing or loading the extension.
 
 To load the extension:
@@ -108,7 +112,7 @@ npm run check
 git diff --check
 ```
 
-`npm test` runs both Clockoli's Node suite and the complete internal timeline suite, including Chromium E2E and package-consumer smoke coverage. `npm run check` runs extension validation and release-inventory validation. Do not replace either command with a narrower check.
+`npm test` runs both Clockoli's Node suite and the complete internal timeline suite, including Chromium E2E and package-consumer smoke coverage. `npm run check` runs extension validation and release-inventory validation. Do not replace either command with a narrower check. When a coverage report is required, run `npm run test:coverage`; it reports the extension source under `src/` and excludes the generated timeline bundle.
 
 ## Browser verification
 

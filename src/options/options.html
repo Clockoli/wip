@@ -22,9 +22,8 @@
 </div>
 <div id="running-status"></div>
 <main>
-  <div id="message" role="status" aria-live="polite"></div>
-
   <section class="card connection-card" aria-labelledby="connection-title">
+    <div id="message" role="status" aria-live="polite"></div>
     <div class="card-heading">
       <div><h2 id="connection-title" tabindex="-1">Set up Clockoli</h2><p id="connection-description">Connect your GitHub account so Clockoli can find private time repositories that you can use.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
@@ -204,6 +203,17 @@
     </div>
     <section class="merge-queue" aria-labelledby="merge-queue-title"><div class="section-heading"><h3 id="merge-queue-title">Merge list</h3><span id="merge-queue-count" class="badge">0 pairs</span></div><div id="merge-queue-list"></div><p id="merge-queue-empty" class="help">Select one task in each list to add a merge pair.</p></section>
     <div class="actions merge-task-actions"><button id="merge-tasks-submit" type="button" disabled>Merge</button><p id="merge-tasks-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
+  </section>
+
+  <section id="addons-settings" class="card" aria-labelledby="addons-title">
+    <div class="card-heading"><div><h2 id="addons-title">Add-ons</h2><p>Enable packaged integrations only after reviewing their requested access.</p></div></div>
+    <article id="clockify-migration" class="addon-card" aria-labelledby="clockify-addon-title">
+      <div class="addon-heading"><div><h3 id="clockify-addon-title">Clockify migration</h3><p id="clockify-addon-description"></p></div><span id="clockify-addon-status" class="badge">Disabled</span></div>
+      <p class="help">Requested host: <code id="clockify-addon-origin"></code></p>
+      <p id="clockify-addon-capability" class="help"></p>
+      <p id="clockify-detailed-report-link" class="help" hidden><a href="https://app.clockify.me/reports/detailed" target="_blank" rel="noreferrer">Open Clockify Detailed report</a></p>
+      <button id="clockify-addon-enabled" type="button" class="secondary">Enable Clockify migration</button>
+    </article>
   </section>
 
   <details id="more-settings" class="more-settings">
