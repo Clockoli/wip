@@ -90,7 +90,7 @@ An active file is one JSON object. A monthly file is JSON Lines with one compact
 
 The same ID is retained when a running record becomes completed. Rewriters preserve unknown root and nested fields, allowing additive evolution without erasing data from other producers. See [Data Format v1](data-format-v1.md) for the normative contract.
 
-`.clockoli/tasks.json` maps each canonical task URL to exact `totalSeconds`, `sessionCount`, and sorted `recordIds` values for that personal branch. The IDs let a queued completion be deduplicated exactly across an atomic-commit retry. GitHub sidebar totals read this small index from every user branch instead of scanning all monthly files. Missing, malformed, or inconsistent indexes fail closed; Clockoli does not report them as zero.
+`.clockoli/tasks.json` maps each canonical task identity to exact `totalSeconds`, `sessionCount`, and sorted `recordIds` values for that personal branch. Index keys are canonical HTTP(S) task URLs or bare unresolved Clockify identities in the form `owner/project/task-slug` (for example, `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). The bare identity is not a guessed URL; ordinary browser tracking still requires HTTP(S). The IDs let a queued completion be deduplicated exactly across an atomic-commit retry. GitHub sidebar totals read this small index from every user branch instead of scanning all monthly files. Missing, malformed, or inconsistent indexes fail closed; Clockoli does not report them as zero.
 
 ### URL normalization
 
@@ -110,7 +110,7 @@ Normal Device Flow setup has two separate grants:
 
 Each time repository must grant **Contents: Read and write** to the Clockoli App. The signed-in user also needs appropriate repository and branch rights. Initializing a personal repository is an individual action. Initializing an organization repository requires GitHub repository-admin permission; teammates with ordinary write access join only after an administrator has created the valid marker. Clockoli has no separate permanent administrator role.
 
-Discovery, inspection, classification, and preselection never write to GitHub. Already-ready repositories are registered locally after membership, branch ownership, and task-index validation, without changing an existing default or accepted work. Clockoli writes a marker or personal branch only after an explicit **Initialize repository**, **Join repository**, or **Set up storage branch** confirmation.
+Discovery, inspection, classification, and preselection never write to GitHub or connect new destinations locally. An explicit confirmed **Connect repository** revalidates a ready repository and registers it locally without changing repository files, an existing default, or accepted work. Clockoli writes a marker or personal branch only after an explicit **Initialize repository**, **Join repository**, or **Set up storage branch** confirmation.
 
 Tracking a URL does not post time data back to that page or source system. A GitHub issue/PR can be tracked without giving Clockoli write access to its source repository. Metadata enrichment is available only when the authenticated user can read the relevant GitHub task.
 
@@ -123,6 +123,10 @@ The advanced PAT path should use a fine-grained token restricted to one private 
 GitHub pages are untrusted input. Clockoli's privileged GitHub credentials remain in extension-controlled contexts. Content-script requests are allowlisted and bound to a validated canonical sender URL; extension-only pages have their own message policy.
 
 The GitHub control uses a closed Shadow DOM and rejects synthetic privileged activation. This reduces the page's ability to inspect or programmatically trigger extension controls.
+
+### Clockify and add-on boundary
+
+The Clockify migration add-on is a first-party packaged provider adapter, not a privileged integration. It accepts either page-to-page Detailed Report capture from a user-opened authenticated Clockify tab or a user-selected native CSV export; both sources are untrusted and validated by the core. Clockify tokens, cookies, and headers are never collected or retained. The core retains all GitHub/storage privileges, credentials, and record-writing authority; provider adapters do not receive them.
 
 ### Repository verification
 

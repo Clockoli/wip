@@ -86,7 +86,8 @@ export function todayTrackedSeconds(records, active, now = new Date(), today = n
 
 export function taskSource(record) {
   const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
-  return issue ? `${issue.owner}/${issue.repo}` : new URL(taskUrl).hostname;
+  return issue ? `${issue.owner}/${issue.repo}` : /^https?:\/\//.test(taskUrl)
+    ? new URL(taskUrl).hostname : taskUrl.split('/').slice(0, 2).join('/');
 }
 export function timeRepository(record) {
   if (typeof record?.timeRepository !== 'string' || !record.timeRepository.trim()) throw new Error('Time repository annotation is required');

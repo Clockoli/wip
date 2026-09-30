@@ -5,14 +5,20 @@ const CONTENT_MESSAGES = new Set([
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS',
   'SET_ACTION_ICON_FRAME',
 ]);
+const CLOCKIFY_MESSAGES = new Set([
+  'CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE',
+  'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_YEAR_OBSERVED',
+]);
 const EXTENSION_MESSAGES = new Set([
   'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'GET_LOCAL_PREFERENCES',
   'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
   'LOAD_TASKS', 'LOAD_TIMES', 'BULK_ADD_TIMES', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
-  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP',
-  'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS',
+  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP',
+  'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS', 'GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED',
+  'GET_CLOCKIFY_MIGRATION_PREVIEW', 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS', 'CONFIRM_CLOCKIFY_MIGRATION',
+  'CLEANUP_CLOCKIFY_TEST_IMPORTS', 'DELETE_ALL_CLOCKOLI_RECORDS',
 ]);
 const COMPLETED_MUTATION_MESSAGES = new Set([
   'EDIT_ENTRIES', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY',
@@ -24,6 +30,10 @@ function senderContext(sender, extensionOrigin) {
   if (value.startsWith(extensionOrigin)) return { kind: 'extension', taskUrl: null };
   try {
     const parsed = new URL(value);
+    if (sender?.tab && parsed.protocol === 'https:' && parsed.hostname === 'app.clockify.me'
+        && parsed.pathname.replace(/\/+$/, '') === '/reports/detailed') {
+      return { kind: 'clockify', taskUrl: null };
+    }
     if (sender?.tab && ['http:', 'https:'].includes(parsed.protocol)) {
       return { kind: 'content', taskUrl: normalizeTaskUrl(value) };
     }
@@ -33,7 +43,9 @@ function senderContext(sender, extensionOrigin) {
 
 export function assertMessageAllowed(type, sender, extensionOrigin) {
   const context = senderContext(sender, extensionOrigin);
-  const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES : context.kind === 'content' ? CONTENT_MESSAGES : new Set();
+  const allowed = context.kind === 'extension' ? EXTENSION_MESSAGES
+    : context.kind === 'content' ? CONTENT_MESSAGES
+      : context.kind === 'clockify' ? CLOCKIFY_MESSAGES : new Set();
   if (!allowed.has(type)) throw new Error(`Message ${type} is not allowed from this sender`);
   return context.kind;
 }

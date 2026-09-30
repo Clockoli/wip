@@ -13,10 +13,10 @@ test('first run presents sign-in then an owner-neutral repository list and manua
   assert.match(optionsHtml, /id="connection-title"[^>]*>Set up Clockoli</);
   assert.match(optionsHtml, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
   assert.match(optionsHtml, /Step <span id="current-step">1<\/span> of 2/);
-  assert.match(optionsHtml, /enter a GitHub URL or owner\/name/);
+  assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(optionsHtml, /id="repository-target-form"[\s\S]*id="repository-target"/);
   assert.match(optionsHtml, /id="repository-list"/);
-  assert.match(optionsHtml, /Ready repositories are available automatically, regardless of who owns them/);
+  assert.match(optionsHtml, /explicitly connect a ready repository, regardless of who owns it/);
   assert.doesNotMatch(optionsHtml, /Use an existing Clockoli repository|Set up a new time repository|data-repository-choice/);
 });
 

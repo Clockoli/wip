@@ -1,4 +1,4 @@
-import { normalizeTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from './values.js';
+import { normalizeStoredTaskIdentity, validateEntryId, validatePathSegment } from './values.js';
 
 export const TASK_INDEX_PATH = '.clockoli/tasks.json';
 
@@ -12,7 +12,7 @@ function cloneIndex(index) {
 }
 
 function normalizedEntry(entry) {
-  const taskUrl = taskUrlOf(entry);
+  const taskUrl = normalizeStoredTaskIdentity(entry?.taskUrl ?? entry?.issue?.url ?? entry?.url);
   const id = validateEntryId(entry?.id);
   const durationSeconds = Number(entry?.durationSeconds);
   if (!taskUrl || !Number.isSafeInteger(durationSeconds) || durationSeconds < 0) {
@@ -40,8 +40,8 @@ export function parseTaskIndex(text, { user } = {}) {
   const tasks = {};
   const knownRecordIds = new Set();
   for (const taskUrl of Object.keys(value.tasks).sort()) {
-    const canonical = normalizeTaskUrl(taskUrl), summary = value.tasks[taskUrl];
-    if (canonical !== taskUrl) throw new Error('Clockoli task index URL is not canonical');
+    const canonical = normalizeStoredTaskIdentity(taskUrl), summary = value.tasks[taskUrl];
+    if (canonical !== taskUrl) throw new Error('Clockoli task index identity is not canonical');
     if (!exactKeys(summary, ['totalSeconds', 'sessionCount', 'recordIds'])
         || !Number.isSafeInteger(summary.totalSeconds) || summary.totalSeconds < 0
         || !Number.isSafeInteger(summary.sessionCount) || summary.sessionCount < 1
@@ -79,23 +79,28 @@ export function applyTaskIndexChanges(index, { remove = [], add = [] } = {}) {
     else next.tasks[taskUrl] = { totalSeconds, sessionCount, recordIds: current.recordIds.filter(recordId => recordId !== id) };
   }
   const knownRecordIds = new Set(Object.values(next.tasks).flatMap(summary => summary.recordIds));
+  const additionsByTask = new Map();
   for (const entry of add) {
     const { id, taskUrl, durationSeconds } = normalizedEntry(entry);
-    const current = next.tasks[taskUrl] ?? { totalSeconds: 0, sessionCount: 0, recordIds: [] };
     if (knownRecordIds.has(id)) throw new Error('Clockoli task index does not match completed records');
-    next.tasks[taskUrl] = {
-      totalSeconds: current.totalSeconds + durationSeconds,
-      sessionCount: current.sessionCount + 1,
-      recordIds: [...current.recordIds, id].sort((left, right) => left.localeCompare(right)),
-    };
     knownRecordIds.add(id);
+    if (!additionsByTask.has(taskUrl)) additionsByTask.set(taskUrl, []);
+    additionsByTask.get(taskUrl).push({ id, durationSeconds });
+  }
+  for (const [taskUrl, additions] of additionsByTask) {
+    const current = next.tasks[taskUrl] ?? { totalSeconds: 0, sessionCount: 0, recordIds: [] };
+    next.tasks[taskUrl] = {
+      totalSeconds: current.totalSeconds + additions.reduce((total, entry) => total + entry.durationSeconds, 0),
+      sessionCount: current.sessionCount + additions.length,
+      recordIds: [...current.recordIds, ...additions.map(entry => entry.id)].sort((left, right) => left.localeCompare(right)),
+    };
   }
   next.tasks = Object.fromEntries(Object.entries(next.tasks).sort(([left], [right]) => left.localeCompare(right)));
   return next;
 }
 
 export function taskIndexRecord(index, taskUrl) {
-  const canonical = normalizeTaskUrl(taskUrl), summary = index.tasks[canonical];
+  const canonical = normalizeStoredTaskIdentity(taskUrl), summary = index.tasks[canonical];
   return summary ? {
     user: index.storageLogin, taskUrl: canonical, durationSeconds: summary.totalSeconds, recordIds: [...summary.recordIds],
   } : null;

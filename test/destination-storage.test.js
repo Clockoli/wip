@@ -439,6 +439,41 @@ test('PAT persistence remains v5 and enforces one destination without losing its
   assert.equal(backend.values.has('token'), false);
 });
 
+test('PAT configuration rejects a destructive replacement while another destination has accepted work', async () => {
+  for (const accepted of [
+    { activeTimer: { destinationId: 'github:2', record: { id: 'running-other' } } },
+    { pendingWrites: [{ id: 'queued-other' }] },
+  ]) {
+    const initial = v5State({
+      auth: { mode: 'github_app', githubUserId: 7, githubLogin: 'alice', generation: 3 },
+      authGeneration: 3,
+      ...(accepted.activeTimer ? { activeTimer: accepted.activeTimer } : {}),
+    });
+    if (accepted.pendingWrites) initial.destinationStates.entries['github:2'].pendingWrites = accepted.pendingWrites;
+    const backend = new MemoryBackend(initial), store = new ChromeStore(backend), before = backend.snapshot();
+    await assert.rejects(() => store.savePatConfiguration(
+      { repoId: 1, owner: 'one', repo: 'time', branch: 'users/a', recentDays: 7 },
+      'new-secret', { user: 'alice', activeCache: null, recentCache: [], pendingWrites: [], dataVersion: 5 },
+      { id: 7, login: 'alice' },
+    ), /PAT.*accepted work/i);
+    assert.deepEqual(backend.snapshot(), before);
+  }
+});
+
+test('destination re-registration rejects a branch replacement while it has accepted work', async () => {
+  const initial = v5State({
+    auth: { mode: 'github_app', githubUserId: 7, generation: 3 }, authGeneration: 3,
+    activeTimer: { destinationId: 'github:1', record: { id: 'running' } },
+  });
+  initial.destinationRegistry.destinations['github:1'] = { id: 'github:1', repoId: 1, owner: 'one', repo: 'time', branch: 'users/alice', storageLogin: 'alice' };
+  const backend = new MemoryBackend(initial), store = new ChromeStore(backend), before = backend.snapshot();
+  await assert.rejects(() => store.saveGitHubAppConfiguration(
+    { repoId: 1, owner: 'one', repo: 'time', branch: 'users/other', storageLogin: 'alice', authMode: 'github_app' },
+    { user: 'alice', dataVersion: 5 }, 3,
+  ), /accepted work/i);
+  assert.deepEqual(backend.snapshot(), before);
+});
+
 test('v5 display settings preserve routed project identities and explicitly change the default destination', async () => {
   const initial = v5State();
   initial.destinationRegistry.destinations = {

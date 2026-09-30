@@ -65,6 +65,7 @@ function taskIcon(task) {
   if (!task.issue) {
     const image = document.createElement('img');
     image.className = 'task-icon task-favicon'; image.alt = ''; image.width = 16; image.height = 16; image.referrerPolicy = 'no-referrer';
+    if (!/^https?:\/\//.test(taskUrlOf(task))) { image.hidden = true; return image; }
     try {
       const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
       favicon.searchParams.set('pageUrl', taskUrlOf(task)); favicon.searchParams.set('size', '32'); image.setAttribute('src', favicon.href);
@@ -98,7 +99,8 @@ function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-  button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
+  button.disabled = Boolean(!/^https?:\/\//.test(task.taskUrl) || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
+  if (!/^https?:\/\//.test(task.taskUrl)) button.title = 'Imported task has no URL to track.';
   button.addEventListener('click', async () => {
     if (button.disabled) return;
     task = state.tasks.find(item => item.taskUrl === task.taskUrl);
@@ -176,7 +178,7 @@ function updateRows() {
     row.classList.toggle('running', active);
     button.classList.toggle('stop', active);
     button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-    button.disabled = Boolean(!task || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
+    button.disabled = Boolean(!task || !/^https?:\/\//.test(task.taskUrl) || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
     if (task) row.querySelector('.tracked-time').textContent = formatClockDuration(taskTotalSeconds(task));
   }
 }
@@ -225,10 +227,13 @@ function rebuildList(tasks) {
     const main = document.createElement('div'); main.className = 'task-main';
     const taskIdentityIcon = taskIcon(task); taskIdentityIcon.setAttribute('style', `color:${taskColor(task)}`); main.append(taskIdentityIcon);
     const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
-    const url = document.createElement(task.title ? 'div' : 'a'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
-    if (!task.title) { url.href = task.taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
+    const navigable = /^https?:\/\//.test(task.taskUrl);
+    const url = document.createElement(!task.title && navigable ? 'a' : 'div'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
+    if (!task.title && navigable) { url.href = task.taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
     if (task.title) {
-      const title = document.createElement('a'); title.className = 'task-title'; title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
+      const title = document.createElement(navigable ? 'a' : 'span'); title.className = 'task-title';
+      if (navigable) { title.href = task.taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; }
+      title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
     }
     copy.append(url);
     main.append(copy);

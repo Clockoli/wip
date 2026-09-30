@@ -2,6 +2,7 @@ import {
   invoicingSettings, normalizeBillingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
   normalizeProjectDefinitions, normalizeProjects, normalizeReportingUtc, parseSettingsImport, projectClientPreferences, settingsExportText,
 } from '../domain/local-settings.js';
+import { listAddons } from '../addons/registry.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [] });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
@@ -22,6 +23,8 @@ const REPORTING_UTC = 'reportingUtc';
 const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
+const ADDON_ENABLED = 'addonEnabled';
+const KNOWN_ADDON_IDS = new Set(listAddons().map(addon => addon.id));
 const SETTINGS_KEYS = [BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION, SETTINGS_EXPORTED_REVISION];
 const DESTINATION_REGISTRY = 'destinationRegistry';
 const DESTINATION_STATES = 'destinationStates';
@@ -33,7 +36,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -251,6 +254,23 @@ export class ChromeStore {
     await this.backend.setMany(patch);
   }
 
+  async getAddonSettings() {
+    const values = await this.backend.getMany([ADDON_ENABLED]);
+    const saved = values[ADDON_ENABLED];
+    return Object.fromEntries([...KNOWN_ADDON_IDS].map(id => [id, saved?.[id] === true]));
+  }
+
+  async setAddonEnabled(id, enabled) {
+    if (!KNOWN_ADDON_IDS.has(id)) throw new Error('Unknown known add-on');
+    if (typeof enabled !== 'boolean') throw new Error('Add-on enabled state must be Boolean');
+    return this.backend.mutateMany([ADDON_ENABLED], values => {
+      const current = values[ADDON_ENABLED] && typeof values[ADDON_ENABLED] === 'object' ? values[ADDON_ENABLED] : {};
+      const settings = Object.fromEntries([...KNOWN_ADDON_IDS].map(knownId => [knownId, current[knownId] === true]));
+      settings[id] = enabled;
+      return { set: { [ADDON_ENABLED]: settings }, result: enabled };
+    });
+  }
+
   async mutateState(mutate) {
     return this.backend.mutateMany([...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER], values => {
       if (values.dataVersion === 5 && values[DESTINATION_REGISTRY]?.defaultDestinationId) {
@@ -368,6 +388,16 @@ export class ChromeStore {
     const registry = structuredClone(values[DESTINATION_REGISTRY]);
     const entries = structuredClone(values[DESTINATION_STATES].entries);
     const existing = Object.hasOwn(registry.destinations, destinationId);
+    const existingConfig = registry.destinations[destinationId];
+    const acceptedWork = values[ACTIVE_TIMER]?.destinationId === destinationId
+      || (values[DESTINATION_STATES].entries[destinationId]?.pendingWrites ?? []).length > 0;
+    // Repository renames retain their stable repo ID and are safe; branch or
+    // storage-login changes would redirect already accepted work.
+    const coordinatesChanged = existing && ['branch', 'branchMode', 'storageLogin']
+      .some(key => Object.hasOwn(existingConfig, key) && (existingConfig[key] ?? null) !== (config[key] ?? null));
+    if (acceptedWork && coordinatesChanged) {
+      throw new Error('Cannot replace destination coordinates while it has accepted work. Finish or resolve that work first.');
+    }
     registry.destinations[destinationId] = {
       ...structuredClone(config), id: destinationId,
       label: config.label || `${config.owner}/${config.repo}`,
@@ -1136,7 +1166,16 @@ export class ChromeStore {
         generation: authGeneration,
       };
       if (values.dataVersion === 5) {
-        const patConfig = { ...config, authMode: 'pat' };
+        const patConfig = { ...config, authMode: 'pat',
+          ...(!config.storageLogin && typeof statePatch.user === 'string' && statePatch.user ? { storageLogin: statePatch.user } : {}) };
+        const patDestinationId = destinationIdForConfiguration(patConfig);
+        const hasOtherAcceptedWork = (values[ACTIVE_TIMER]?.destinationId !== undefined
+          && values[ACTIVE_TIMER].destinationId !== patDestinationId)
+          || Object.entries(values[DESTINATION_STATES]?.entries ?? {}).some(([destinationId, state]) => destinationId !== patDestinationId
+            && Array.isArray(state?.pendingWrites) && state.pendingWrites.length > 0);
+        if (hasOtherAcceptedWork) {
+          throw new Error('Cannot save PAT configuration while another destination has accepted work. Finish or resolve that work first.');
+        }
         const registration = this.destinationRegistration(values, patConfig, statePatch);
         const destinationId = registration.destinationId;
         const state = destinationState(registration.set[DESTINATION_STATES].entries[destinationId]);
@@ -1182,13 +1221,15 @@ export class ChromeStore {
 
   // Discovery may add already-provisioned destinations locally, but must never
   // replace coordinates, accepted work, defaults, or promote candidate credentials.
-  async registerReadyGitHubAppRepositories(configs, expectedAuthGeneration) {
+  async registerReadyGitHubAppRepositories(configs, expectedAuthGeneration, expectedConfigurationGeneration) {
     return this.backend.mutateMany([
       AUTH, AUTH_GENERATION, PENDING_AUTH, CONFIGURATION_GENERATION, 'dataVersion',
       DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
     ], values => {
       if (values[AUTH]?.mode !== 'github_app' || values[PENDING_AUTH]
-          || generationValue(values[AUTH_GENERATION]) !== expectedAuthGeneration) return { result: false };
+          || generationValue(values[AUTH_GENERATION]) !== expectedAuthGeneration
+          || (expectedConfigurationGeneration !== undefined
+            && generationValue(values[CONFIGURATION_GENERATION]) !== expectedConfigurationGeneration)) return { result: false };
       let next = { ...values }, changed = false, verificationChanged = false;
       for (const config of configs) {
         const id = destinationIdForConfiguration(config);

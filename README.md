@@ -26,7 +26,7 @@ Clockoli currently runs as a trusted unpacked extension. Use the current checkou
    ```
 
 2. In Chrome or another Chromium browser, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**. Choose the repository root containing `manifest.json`, then pin Clockoli to the toolbar.
-3. Open **Settings** and sign in with GitHub. Ready time repositories appear automatically; if yours needs setup, use **Check repository** (or its row action), then review and explicitly confirm the offered action. Choose **Default time repository**, then select **Finish setup**.
+3. Open **Settings** and sign in with GitHub. Use **Check repository** to inspect a time repository, then explicitly confirm **Connect repository** if ready, or the offered setup action if not. Choose **Default time repository**, then select **Finish setup**.
 4. Open a page, select the Clockoli toolbar icon, and choose **Start tracking this task**. When finished, choose **Stop and save**.
 
 Your **GitHub account** authenticates you; a **source repository** may own a tracked issue or pull request; a **time repository** stores your records. These can be different repositories. The [setup guide](docs/getting-started.md) explains repository access and confirmation.
@@ -42,12 +42,18 @@ On GitHub, you can also open the tracker from the stopwatch beside your avatar. 
 - Report across selected personal and organization time repositories, filter by person or task source, and export CSV or JSON timesheets.
 - Apply browser-local hourly rates for billable reporting without writing rates to time repositories.
 - Keep readable time records in private GitHub repositories you control; accepted timer actions are queued locally and synchronized when GitHub is available.
+- Migrate user-supplied Clockify annual Detailed Reports via in-page capture or CSV export, with a preview and explicit mapped-user import. See [Add-ons](docs/add-ons.md).
 
 See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
 
 ## More documentation
 
 - [Documentation index](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Feature guide](docs/features.md)
+- [Why Clockoli](docs/why-clockoli.md)
+- [Data, privacy, and security](docs/data-and-privacy.md)
+- [Add-ons](docs/add-ons.md): first-party packaged add-on architecture and provider boundaries.
 - [Time-data repository setup](docs/time-data-repository.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

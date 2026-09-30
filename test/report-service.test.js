@@ -94,6 +94,31 @@ test('task summaries merge by canonical URL and user instead of an absent work-r
   ]);
 });
 
+test('task summaries merge unresolved imported identities without guessing URLs', () => {
+  const taskUrl = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const merged = mergeDestinationTaskSummaries([
+    { destination: { id: 'first' }, records: [{ user: 'alice', taskUrl, durationSeconds: 90, recordIds: ['a'] }] },
+    { destination: { id: 'second' }, records: [{ user: 'alice', taskUrl, durationSeconds: 30, recordIds: ['b'] }] },
+  ]);
+  assert.equal(merged.records.length, 1);
+  assert.equal(merged.records[0].taskUrl, taskUrl);
+  assert.equal(merged.records[0].durationSeconds, 120);
+  assert.deepEqual(merged.records[0].destinationIds, ['first', 'second']);
+});
+
+test('task summaries omit duplicated record IDs across destinations instead of double-counting them', () => {
+  const taskUrl = 'https://github.com/acme/app/issues/1';
+  const merged = mergeDestinationTaskSummaries([
+    { destination: { id: 'github:1', label: 'one' }, records: [{ user: 'alice', taskUrl, durationSeconds: 60, recordIds: ['same-id'] }] },
+    { destination: { id: 'github:2', label: 'two' }, records: [{ user: 'alice', taskUrl, durationSeconds: 60, recordIds: ['same-id'] }] },
+  ], ['github:1', 'github:2']);
+  assert.deepEqual(merged.records, []);
+  assert.deepEqual(merged.conflicts, [{
+    code: 'task_summary_record_id_conflict', taskUrl, user: 'alice', recordIds: ['same-id'],
+    destinationIds: ['github:1', 'github:2'], timeRepositories: ['one', 'two'],
+  }]);
+});
+
 test('destination loads isolate ordinary failures, reject all failures, and propagate abort', async () => {
   const destinations = [{ id: 'github:1', label: 'one' }, { id: 'github:2', label: 'two' }];
   const partial = await loadDestinationRecords(destinations, async destination => {

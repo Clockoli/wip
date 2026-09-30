@@ -91,6 +91,11 @@ test('content task switches remain bound to the current page URL', () => {
   assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
 });
 
+test('an imported identity cannot be started or switched from an extension page', () => {
+  assert.throws(() => taskUrlForStart('acme/project/imported-task', extension, origin), /task URL/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), /task URL/i);
+});
+
 test('timeline task switching may select a previously tracked task from another GitHub page', () => {
   assert.equal(
     taskUrlForTimelineSwitch('https://github.com/manticoresoftware/site/issues/231', content, origin),

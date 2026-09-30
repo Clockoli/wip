@@ -64,7 +64,7 @@ test('repository-first choice has no scenario or owner preselection', () => {
 
 test('repository list has independent actions and local icons, not radio selection', () => {
   assert.match(styles, /\.repository-icon/);
-  assert.match(script, /action.textContent = selectable/);
+  assert.match(script, /selectable \? repositoryAction\(repository\)/);
   assert.doesNotMatch(script, /radio.type = 'radio'/);
   assert.match(source, /id="setup-default-destination"/);
 });
@@ -193,7 +193,8 @@ test('repository polling is silent, read-only, bounded by lifecycle, and has no 
   assert.match(script, /if \(!silent && revision === repositoryLifecycle\)/);
   const silent = script.slice(script.indexOf('    if (silent) {'), script.indexOf('    } else {', script.indexOf('    if (silent) {')));
   assert.match(silent, /renderRepositoryList\(\)/);
-  assert.doesNotMatch(silent, /selectedRepository\s*=|rememberRepositoryTarget|message\(|showModal|reviewSelectedRepository|SELECT_REPOSITORY/);
+  assert.match(silent, /if \(selectedRepository && !repositories\.includes\(selectedRepository\)\) \{\s*selectedRepository = null/);
+  assert.doesNotMatch(silent.replace('selectedRepository = null', ''), /selectedRepository\s*=|rememberRepositoryTarget|message\(|showModal|reviewSelectedRepository|SELECT_REPOSITORY/);
   assert.match(script, /pendingConfirmation \|\| repositoryActionApplying/);
   assert.match(script, /addEventListener\('pagehide'/);
   const grant = script.slice(script.indexOf("$('install-app').addEventListener"), script.indexOf("for (const id of ['new-time-repository', 'modal-new-time-repository'])"));
@@ -245,14 +246,14 @@ test('public Device Flow resume uses validated service state rather than raw sto
 test('compliance documentation matches any-owner tracking and durable v1 work-item titles', async () => {
   const compliance = await readFile(new URL('../docs/spec-compliance.md', import.meta.url), 'utf8');
   assert.doesNotMatch(compliance, /configurable allowlist/i);
-  assert.match(compliance, /work-item URL, title/i);
+  assert.match(compliance, /Work-item identity .* title/i);
   assert.match(compliance, /schema_version` is exactly `1`/i);
 });
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Repositories Clockoli can use for data storage/i);
-  assert.match(source, /Ready repositories are available automatically, regardless of who owns them/i);
+  assert.match(source, /Repositories granted to the GitHub App/i);
+  assert.match(source, /explicitly connect a ready repository, regardless of who owns it/i);
   assert.match(source, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
   assert.match(styles, /#message\.error\{[^}]*z-index:/);
@@ -325,9 +326,10 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   }
   assert.match(gettingStarted, /two guided steps/i);
   assert.doesNotMatch(gettingStarted, /three guided steps|### Step 3:/i);
-  for (const label of ['Repository URL or owner/name', 'Check repository']) {
+  for (const label of ['Check repository']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
+  assert.match(gettingStarted, /manual target.*leave the field or press Enter/);
   assert.match(gettingStarted, /Discovery and inspection never write to GitHub/i);
   assert.match(gettingStarted, /then explicitly confirm the offered action/i);
   assert.match(gettingStarted, /requires fresh GitHub repository-admin permission/i);

@@ -109,7 +109,7 @@ function formatInvoiceDate(value) {
 function invoiceTaskCell(line) {
   const cell = invoiceNode('td', 'invoice-task-cell');
   const label = String(line.taskTitle || line.taskUrl || '').trim();
-  if (line.taskUrl) {
+  if (/^https?:\/\//.test(line.taskUrl || '')) {
     const link = invoiceNode('a', '', label || line.taskUrl); link.href = line.taskUrl; link.target = '_blank'; link.rel = 'noreferrer'; cell.append(link);
   } else cell.textContent = label;
   return cell;

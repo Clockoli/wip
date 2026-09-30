@@ -109,6 +109,36 @@ test('GitHub client atomically updates multiple text files from one verified tre
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
 });
 
+test('GitHub client creates atomic-update blobs with bounded concurrency', async () => {
+  let inFlightBlobs = 0;
+  let maximumInFlightBlobs = 0;
+  let blobNumber = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } });
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [] });
+    if (url.endsWith('/git/blobs')) {
+      inFlightBlobs += 1;
+      maximumInFlightBlobs = Math.max(maximumInFlightBlobs, inFlightBlobs);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      inFlightBlobs -= 1;
+      blobNumber += 1;
+      return response(201, { sha: `blob-${blobNumber}` });
+    }
+    if (url.endsWith('/git/trees')) return response(201, { sha: 'tree-new' });
+    if (url.endsWith('/git/commits')) return response(201, { sha: 'commit-new' });
+    if (url.endsWith('/git/refs/heads/main') && options.method === 'PATCH') return response(200, { object: { sha: 'commit-new' } });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', branch: 'main', fetchImpl });
+  const changes = Array.from({ length: 12 }, (_, index) => ({ path: `times/2025-${String(index + 1).padStart(2, '0')}/ada.jsonl`, sha: null, text: `entry-${index}\n` }));
+
+  await client.updateTextsAtomic(changes, 'bulk import');
+
+  assert.ok(maximumInFlightBlobs > 1, 'blob creation should not serialize every destination month');
+  assert.ok(maximumInFlightBlobs <= 6, 'blob creation must remain bounded to avoid GitHub throttling');
+});
+
 test('atomic text update rejects a branch head changed after partition discovery', async () => {
   let writes = 0;
   const fetchImpl = async (url, options = {}) => {
@@ -281,6 +311,48 @@ test('task metadata rejects a GraphQL node whose URL or type does not match the 
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
   const issue = { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' };
   assert.deepEqual(await client.getTaskMetadata([issue]), new Map());
+});
+
+test('GitHub client resolves an explicitly supplied GitHub login to its immutable numeric identity', async () => {
+  const calls = [];
+  const client = new GitHubClient({
+    token: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { id: 123, login: 'octo-cat' });
+    },
+  });
+
+  assert.deepEqual(await client.getUserIdentity('octo-cat'), { id: 123, login: 'octo-cat' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.github.com/users/octo-cat');
+  assert.equal(calls[0].options.method, undefined);
+});
+
+test('GitHub identity lookup validates the requested login before fetching', async () => {
+  let calls = 0;
+  const client = new GitHubClient({ token: 'secret', fetchImpl: async () => { calls += 1; return response(200); } });
+
+  await assert.rejects(() => client.getUserIdentity('invalid/login'), /Invalid user/i);
+  assert.equal(calls, 0);
+});
+
+test('GitHub identity lookup preserves not-found errors and fails closed on malformed or mismatched responses', async () => {
+  const missing = new GitHubClient({ token: 'secret', fetchImpl: async () => response(404, { message: 'Not Found' }) });
+  await assert.rejects(() => missing.getUserIdentity('missing-user'), GitHubNotFoundError);
+
+  const rawPayload = { id: '123', login: 'not/a-login', privateData: 'do-not-expose' };
+  const malformed = new GitHubClient({ token: 'secret', fetchImpl: async () => response(200, rawPayload) });
+  await assert.rejects(() => malformed.getUserIdentity('octocat'), error => (
+    error.code === 'invalid_github_response'
+      && error.status === 502
+      && !error.message.includes(rawPayload.privateData)
+  ));
+
+  const mismatched = new GitHubClient({ token: 'secret', fetchImpl: async () => response(200, { id: 456, login: 'different-user' }) });
+  await assert.rejects(() => mismatched.getUserIdentity('octocat'), error => (
+    error.code === 'invalid_github_response' && error.status === 502
+  ));
 });
 
 test('GitHub client invokes a WorkerGlobalScope-branded fetch with the global receiver', async () => {

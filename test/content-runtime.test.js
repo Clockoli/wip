@@ -24,6 +24,12 @@ test('extension-context interruption stops stale content timers without renderin
   assert.match(source, /const markUrl = extensionResourceUrl\('src\/assets\/clockoli-32\.png'\)/);
 });
 
+test('GitHub content-script messaging fails closed after an extension-context reload', () => {
+  assert.match(source, /const runtime = globalThis\.chrome\?\.runtime;/);
+  assert.match(source, /if \(typeof runtime\?\.sendMessage !== 'function'\)/);
+  assert.match(source, /error\.code = 'extension_context_interrupted'/);
+});
+
 const createdNodes = [];
 
 class FakeNode {
@@ -3046,6 +3052,72 @@ test('Activity groups nonconsecutive tasks by local record date with day totals 
     assert.equal(record.querySelector('.task-url').textContent, record.querySelector('.task-title').href);
     assert.equal(record.querySelectorAll('.inline-time-value').length, 4);
   }
+});
+
+test('Activity displays and searches imported identities without creating a task link', () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08', identity)]);
+  const root = h.renderActivity();
+  const row = root.querySelector('.entry-record');
+  assert.equal(row.querySelector('.task-url').textContent, identity);
+  assert.equal(row.querySelector('.task-title').tag, 'span');
+  assert.equal(row.querySelectorAll('a').some(link => link.href === identity), false);
+  const filter = root.querySelector('.times-filter').querySelector('input');
+  filter.value = 'fixed-last-block'; filter.oninput({});
+  assert.equal(root.querySelectorAll('.entry-record').length, 1);
+  filter.value = 'absent'; filter.oninput({});
+  assert.equal(root.querySelectorAll('.entry-record').length, 0);
+});
+
+test('Activity edits imported time and metadata without submitting a non-URL as a new task', async () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  for (const edit of ['description', 'title', 'time']) {
+    const h = activityHarness([activityEntry('1', '2026-09-05', '08', identity)]);
+    let root = h.renderActivity();
+    await root.querySelector('.entry-edit').onclick({ isTrusted: true });
+    root = h.renderActivity();
+    if (edit === 'description') {
+      const description = root.querySelector('.inline-description');
+      description.value = 'Reviewed import'; description.oninput({});
+    } else if (edit === 'title') {
+      const title = root.querySelector('.inline-task-title');
+      title.value = 'New title'; title.oninput({});
+    } else {
+      const minute = root.querySelectorAll('.inline-time-value')[3];
+      minute.value = '45'; minute.oninput({});
+    }
+    await root.querySelector('.inline-save').onclick({ isTrusted: true });
+    const request = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT');
+    assert.equal(request.payload.entries[0].original.taskUrl, identity);
+    assert.equal(request.payload.entries[0].edits[edit === 'description' ? 'description' : edit === 'title' ? 'taskTitle' : 'endedAt'],
+      edit === 'description' ? 'Reviewed import' : edit === 'title' ? 'New title' : '2026-09-05T08:45:00.000Z');
+    assert.equal('taskUrl' in request.payload.entries[0].edits, false);
+  }
+});
+
+test('Imported identities cannot be restarted from the timeline', async () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const entry = activityEntry('1', '2026-09-05', '08', identity);
+  const h = dailyPanelHarness({ records: [entry], now: new Date('2026-09-05T12:00:00').getTime(),
+    state: { configured: true, active: null, pendingWrites: [] } });
+  assert.equal(h.timelineItems(0, new Date('2026-09-05T12:00:00').getTime())[0].isStartDisabled, true);
+  assert.equal(await h.restartTimelineEntry(entry), false);
+  assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
+});
+
+test('Activity only permits replacing an imported identity with a valid task URL', async () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08', identity)]);
+  let root = h.renderActivity();
+  await root.querySelector('.entry-edit').onclick({ isTrusted: true });
+  root = h.renderActivity();
+  const url = root.querySelector('.inline-task-url');
+  url.value = 'other/project/another-task'; url.oninput({});
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  assert.equal(h.messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false);
+  url.value = 'https://example.com/task'; url.oninput({});
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  assert.equal(h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits.taskUrl, 'https://example.com/task');
 });
 
 test('Activity loads the existing colour resolver before the renderer and preserves one running strip', async () => {
