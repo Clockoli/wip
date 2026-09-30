@@ -34,7 +34,7 @@ test('first run has two steps: GitHub sign-in then repository selection regardle
 test('step two offers repositories and a manual target with conditional App access, not scenario choices', () => {
   const connect = section('repository-step');
   assert.match(connect, /Connect time repositories/i);
-  assert.match(connect, /id="repository-target-form"[\s\S]*Repository URL or owner\/name[\s\S]*id="repository-target"/);
+  assert.match(connect, /id="repository-target-form"[\s\S]*Enter a repository URL or owner\/name[\s\S]*id="repository-target"/);
   assert.match(connect, /id="repository-list"/);
   assert.match(connect, /<a id="new-time-repository"[^>]*>Create a new time repository<\/a>/);
   assert.match(connect, /id="repository-access-panel"[^>]*hidden/);
@@ -220,21 +220,21 @@ test('storage recovery returns to selection under the universal explicit-confirm
 });
 
 test('direct repository selection is accessible and exposes check progress and focused review', () => {
-  assert.match(html, /<label>Repository URL or owner\/name<input id="repository-target"[^>]*required/);
+  assert.match(html, /<label for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(html, /id="check-repository-target"[^>]*type="submit"/);
+  assert.match(html, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
   assert.match(html, /id="confirm-repository-action"[^>]*type="button"/);
   assert.doesNotMatch(html, /Unavailable repositories include the reason/);
   assert.match(styles, /\.repository-option/);
   assert.match(styles, /\.repository-icon/);
   assert.doesNotMatch(script, /radio\.type = 'radio'/);
-  assert.match(script, /status\.textContent = repositoryInspectionStatus\(repository\)/);
-  assert.match(script, /button\.disabled = true; button\.textContent = 'Checking repository'/);
-  const check = script.slice(script.indexOf("$('repository-target-form').addEventListener"), script.indexOf("$('close-repository-access').addEventListener"));
+  assert.match(script, /status\.textContent = statusLabel/);
+  assert.match(script, /action\.textContent = checkingRepositoryTarget === repository.fullName \? 'Checking…'/);
+  const check = script.slice(script.indexOf('async function checkRepositoryTarget'), script.indexOf("$('close-repository-access').addEventListener"));
   assert.match(check, /!repositoryInputDirty && repositoryTarget === target/);
-  assert.match(check, /if \(!reviewSelectedRepository\(\)\) \$\('repository-target-status'\)\.focus\(\)/);
-  assert.match(check, /repositoryInputDirty = true;\s*selectedRepository = null;\s*updateRepositoryConfirmation\(\)/);
+  assert.match(check, /repositoryActionKey\(selectedRepository\) !== 'connect' && !reviewSelectedRepository\(\)/);
+  assert.match(check, /repositoryInputDirty = true;\s*repositoryCheckError = '';\s*selectedRepository = null;\s*updateRepositoryConfirmation\(\)/);
   assert.doesNotMatch(check, /SELECT_REPOSITORY/);
   assert.match(script, /\$\('repository-confirmation'\)\.showModal\(\)/);
   assert.match(styles, /@media\(max-width:400px\)/);

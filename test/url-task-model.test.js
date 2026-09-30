@@ -16,9 +16,11 @@ test('task identity is an arbitrary canonical HTTP(S) URL with optional GitHub m
     type: 'pull_request', owner: 'acme', repo: 'app', number: 9, url: 'https://github.com/acme/app/pull/9',
   });
   assert.equal(parseGitHubTaskUrl(arbitraryUrl), null);
-  for (const invalid of ['javascript:alert(1)', 'file:///tmp/task', 'https://user:secret@example.com/', 'not a URL']) {
+  for (const invalid of ['javascript:alert(1)', 'file:///tmp/task', 'https://user:secret@example.com/', 'not a URL', 'acme/project/imported-task']) {
     assert.throws(() => normalizeTaskUrl(invalid), /task URL/i);
   }
+  assert.equal(taskUrlOf({ taskUrl: 'acme/project/imported-task' }), 'acme/project/imported-task');
+  assert.throws(() => buildActiveTimer({ user: 'alice', id: ID, taskUrl: 'acme/project/imported-task', startedAt: '2026-08-22T08:00:00Z', timezone: 'UTC' }), /task URL/i);
 });
 
 test('new timers and monthly records persist canonical work-item identity and title', () => {

@@ -7,6 +7,7 @@ import {
 
 const issue = 'https://github.com/acme/app/issues/42';
 const pull = 'https://github.com/acme/app/pull/7';
+const unresolved = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
 const entry = (id, taskUrl, durationSeconds) => ({ id, taskUrl, durationSeconds });
 const [p1, i1, i2, i3, e1] = [
   '01K2ABCDEF0123456789ABCDEF',
@@ -49,6 +50,32 @@ test('task index applies exact edit, move, and delete deltas', () => {
     user: 'alice', taskUrl: issue, durationSeconds: 210, recordIds: [i3, i2],
   });
   assert.equal(taskIndexRecord(changed, pull), null);
+});
+
+test('task index accepts and updates an unresolved Clockify identity without inventing a URL', () => {
+  const index = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [entry(i1, unresolved, 120)] });
+  assert.deepEqual(parseTaskIndex(serializeTaskIndex(index), { user: 'alice' }).tasks[unresolved], {
+    totalSeconds: 120, sessionCount: 1, recordIds: [i1],
+  });
+  assert.deepEqual(taskIndexRecord(index, unresolved), {
+    user: 'alice', taskUrl: unresolved, durationSeconds: 120, recordIds: [i1],
+  });
+  assert.deepEqual(applyTaskIndexChanges(index, { remove: [entry(i1, unresolved, 120)] }).tasks, {});
+});
+
+test('task index rejects malformed unresolved identities and still requires canonical URLs', () => {
+  for (const key of [
+    'manticoresoftware/NexusRepo', 'manticoresoftware/NexusRepo/',
+    'manticoresoftware/NexusRepo/Fixed last block',
+    'manticoresoftware/NexusRepo/../secret',
+    'manticoresoftware/NexusRepo/Fixed?query=1',
+    'https://github.com/acme/app/issues/42?utm_source=test',
+  ]) {
+    const index = { version: 1, storageLogin: 'alice', tasks: {
+      [key]: { totalSeconds: 120, sessionCount: 1, recordIds: [i1] },
+    } };
+    assert.throws(() => parseTaskIndex(JSON.stringify(index), { user: 'alice' }), undefined, key);
+  }
 });
 
 test('task index rejects missing, malformed, noncanonical, foreign, and inconsistent data', () => {

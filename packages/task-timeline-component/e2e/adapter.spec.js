@@ -970,12 +970,11 @@ test('the Timeline details pointer connects the hovered block to the details pan
     const pointer = root.querySelector('.details-pointer');
     const details = root.querySelector('.details').getBoundingClientRect();
     const rect = pointer.getBoundingClientRect();
-    return {
-      hidden: pointer.hidden,
-      aligned: Math.abs(rect.left - (task.left + task.width / 2)) < 1,
-      connected: Math.abs(rect.top - task.bottom) < 1 && Math.abs(rect.bottom - details.top) < 1,
-    };
-  })).toEqual({ hidden: false, aligned: true, connected: true });
+    return { hidden: pointer.hidden, task, rect, details,
+      aligned: rect.width === 1 && Math.abs((rect.left + rect.width / 2) - (task.left + task.width / 2)) < 1,
+      startsAtTask: Math.abs(rect.top - task.bottom) < 1,
+      reachesDetails: Math.abs(rect.bottom - details.top) < 1 };
+  })).toMatchObject({ hidden: false, aligned: true, startsAtTask: true, reachesDetails: true });
 });
 
 test('Calendar hover stays below day and project labels', async ({ page }) => {

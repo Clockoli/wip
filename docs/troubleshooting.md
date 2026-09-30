@@ -32,7 +32,7 @@ GitHub user authorization and GitHub App installation are separate.
 1. Return to Clockoli Settings.
 2. Use **Done on GitHub—check now** if automatic checking has not completed.
 3. After sign-in, Clockoli automatically checks accessible repositories in **Connect time repositories**. Use a repository row’s action, or enter its GitHub URL or `owner/name` and select **Check repository**.
-4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Already-ready repositories become available automatically. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
+4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 
 ### My repository is not listed
 
@@ -53,7 +53,7 @@ The access dialog appears only after an explicit **Check repository**. **Grant a
 
 If you really need a repository, use **Create a new time repository** at the beginning of the repository section, then return and enter its URL. Creating it does not grant App access.
 
-Discovery and inspection never write to GitHub. Ready repositories are added locally automatically after membership, personal branch ownership, and task-index validation. A missing branch needs explicit setup; invalid ownership or index data must be repaired before use. Select the repository row’s action, read the privacy disclosure and **Repository writes**, then explicitly confirm **Set up storage branch**, **Join repository**, or **Initialize repository**, as offered. Even **Set up storage branch** may create or verify your personal storage branch. Anyone with repository read access can see stored task URLs, titles, timestamps, and descriptions.
+Discovery and inspection never write to GitHub or connect new repositories locally. After a ready check, choose **Connect repository** and confirm; Clockoli revalidates and registers it locally without changing repository files. A missing branch needs explicit setup; invalid ownership or index data must be repaired before use. Select the repository row’s action, read the privacy disclosure and **Repository writes** when present, then explicitly confirm **Set up storage branch**, **Join repository**, or **Initialize repository**, as offered. Even **Set up storage branch** may create or verify your personal storage branch. Anyone with repository read access can see stored task URLs, titles, timestamps, and descriptions.
 
 ### Check an edited repository target before connecting
 

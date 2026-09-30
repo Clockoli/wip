@@ -27,7 +27,8 @@ test('repository-first setup requests App access only for the concrete target', 
 
 test('repository discovery honors an explicit dirty target and never confirms writes automatically', () => {
   assert.match(optionsHtml, /id="repository-step-instruction"/);
-  assert.match(optionsHtml, /Ready repositories are available automatically, regardless of who owns them/i);
+  assert.match(optionsHtml, /If ready, choose Connect repository separately/i);
+  assert.match(optionsHtml, /Repositories granted to the GitHub App appear below as Not checked/i);
   assert.match(optionsHtml, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/);
   const render = optionsJs.slice(optionsJs.indexOf('function renderRepositories(result)'), optionsJs.indexOf('function reviewSelectedRepository()'));
   assert.match(render, /selectedRepository = repositoryInputDirty \? null : repositoryTarget/);
@@ -41,15 +42,16 @@ test('repository discovery honors an explicit dirty target and never confirms wr
   assert.match(close, /pendingConfirmation = null/);
 });
 
-test('repository controls offer explicit checking, informational links, default and Finish', () => {
+test('repository controls offer row checks and manual recheck, informational links, default and Finish', () => {
   assert.match(optionsHtml, /id="repository-target-form"/);
-  assert.match(optionsHtml, /Repository URL or owner\/name<input id="repository-target"/);
-  assert.match(optionsHtml, /id="check-repository-target"[^>]*type="submit"[^>]*>Check repository<\/button>/);
+  assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>/);
+  assert.match(optionsHtml, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
+  assert.doesNotMatch(optionsHtml, /id="check-repository-target"/);
   assert.doesNotMatch(optionsHtml, /id="refresh-repositories"|id="connect-repository"/);
   assert.doesNotMatch(optionsJs, /radio\.type = 'radio'/);
   assert.match(optionsCss, /\.repository-icon/);
   assert.match(optionsJs, /name\.href = `https:\/\/github\.com\/\$\{repository.fullName\}`/);
-  assert.match(optionsJs, /status\.textContent = repositoryInspectionStatus\(repository\)/);
+  assert.match(optionsJs, /const statusLabel = repositoryInspectionStatus\(repository\)/);
   assert.match(optionsHtml, /Default time repository<select id="setup-default-destination"/);
   assert.match(optionsHtml, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
 });
@@ -104,8 +106,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.doesNotMatch(content, /time-step|time-unit|WHEEL_THRESHOLD|wheelRemainder|addEventListener\('wheel'/);
   assert.match(content, /\.task-result-untitled \.task-url \{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
     'untitled URLs stay clamped even at the 2,048-character identity limit');
-  assert.match(content, /url\.title = taskUrl/,
-    'the full clamped URL remains exposed as native accessible text');
+  assert.match(content, /url\.title = identity/,
+    'the full clamped URL or imported identity remains exposed as native accessible text');
   assert.match(content, /\.task-title \{[^}]*-webkit-line-clamp:2/,
     'maximum-length optional titles are limited to two result lines');
   assert.match(content, /title\.title = taskTitle/,

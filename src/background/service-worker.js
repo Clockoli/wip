@@ -723,8 +723,12 @@ async function handle(message, sender) {
     return { cancelled: true };
   }
   if (message.type === 'DISCOVER_REPOSITORIES') {
-    const discovery = await onboarding.discover();
+    const discovery = await onboarding.listRepositories();
     return { ...discovery, onboardingState: await onboardingState() };
+  }
+  if (message.type === 'INSPECT_REPOSITORY') {
+    const result = await onboarding.checkRepository(message.payload);
+    return { ...result, onboardingState: await onboardingState() };
   }
   if (message.type === 'CHECK_REPOSITORY_ACCESS') return checkCurrentRepositoryAccess(message.destinationId || message.payload?.destinationId || null);
   if (message.type === 'SELECT_REPOSITORY') return onboarding.selectRepository(message.payload);

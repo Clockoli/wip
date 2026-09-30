@@ -218,7 +218,7 @@ Rules:
 - `url` is optional in the general schema, but required for work created by the current browser extension;
 - `title` is a bounded display snapshot and may be empty;
 - when a provider supplies an immutable object ID, writers should use a provider-qualified ID;
-- otherwise the current browser writer uses `url:{canonical-url}`;
+- otherwise the current browser writer uses `url:{canonical-url}`; imported unresolved records may use `url:{owner/project/task-slug}`;
 - URL-derived identity follows Clockoli URL canonicalization;
 - identity and display URL remain separate fields so a future writer can preserve identity across URL changes;
 - the set of `kind` values is extensible.
@@ -229,6 +229,8 @@ Clockoli URL canonicalization:
 - rejects embedded username/password credentials;
 - removes query strings and fragments from canonical GitHub issue/PR URLs;
 - preserves query strings and fragments for other URLs because they may identify different work.
+
+Imported unresolved Clockify work records and the personal-branch `.clockoli/tasks.json` projection recognize bare identities of the form `owner/project/task-slug` (for example `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). These are task identities, not navigable URLs: they have exactly three slash-separated segments, a valid owner, an alphanumeric-starting project containing only letters, digits, dots, underscores or hyphens, and a non-empty alphanumeric/hyphen task slug. Store that identity unchanged in `work_item.url` and in the task index. Browser-created work still requires a canonical HTTP(S) URL; imports do not guess a GitHub URL from an unresolved identity.
 
 ---
 

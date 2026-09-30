@@ -2,6 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 import { taskPeriodRange } from '../domain/tasks.js';
+import { normalizeTaskUrl } from '../domain/values.js';
 import { getAddon } from '../addons/registry.js';
 
 
@@ -17,6 +18,11 @@ import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
 let repositoryTarget = '';
 let repositoryInputDirty = false;
+let checkingRepositoryTarget = '';
+let queuedRepositoryCheck = null;
+let repositoryCheckFeedback = '';
+let repositoryCheckFeedbackError = false;
+let repositoryCheckError = '';
 let choiceAccount = '';
 let installations = [];
 let choiceWrite = Promise.resolve();
@@ -394,7 +400,7 @@ function renderDestinationCards() {
     ? authorizationBlock.message
     : destinations.length
       ? `Connected repositories are listed above with their status. Default: ${destinationLabel(destinations.find(destination => destination.id === fallback))}. Choose a ready default, or check another repository.`
-      : 'Ready repositories appear here automatically. If none are ready, check a repository to initialize or join it.';
+      : 'Check a repository first, then choose Connect repository when it is ready. Setup actions require confirmation.';
   for (const destination of [...destinations].sort((a, b) => destinationLabel(a).localeCompare(destinationLabel(b)))) {
     root.append(renderDestinationCard(destination, destination.id === fallback));
   }
@@ -534,10 +540,10 @@ function repositoryChoiceAccount() {
   return auth?.mode === 'github_app' ? String(auth.githubUserId || auth.githubLogin || '') : '';
 }
 
-function rememberRepositoryTarget(fullName) {
+function rememberRepositoryTarget(fullName, reflectInput = true) {
   repositoryTarget = fullName;
   repositoryInputDirty = false;
-  $('repository-target').value = fullName;
+  if (reflectInput) $('repository-target').value = fullName;
   const account = repositoryChoiceAccount();
   // Serialize writes so a slower previous click cannot overwrite the latest choice.
   choiceWrite = choiceWrite.catch(() => {}).then(() => account ? choiceStore.saveOnboardingRepositoryChoice(account, fullName) : undefined);
@@ -570,16 +576,31 @@ function renderRepositoryAccess() {
   $('repository-access-instruction').textContent = missing
     ? 'Clockoli cannot access this repository. Check its name and your GitHub access; its existence is not confirmed.'
     : 'Clockoli needs Contents: Read and write permission for this repository.';
-  $('repository-target-status').textContent = repositoryInputDirty ? 'Select Check repository to inspect the edited target.' : !repositoryTarget ? '' : missing
-    ? `Clockoli cannot access ${repositoryTarget}. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.`
-    : selectedRepository ? `${selectedRepository.fullName}: ${repositoryInspectionStatus(selectedRepository)}`
-      : `Checking ${repositoryTarget}…`;
+  const targetStatus = $('repository-target-status');
+  const input = $('repository-target');
+  $('refresh-repository-target').disabled = !input.value.trim() || Boolean(checkingRepositoryTarget);
+  $('connect-checked-repository').hidden = !input.value.trim() || repositoryInputDirty || Boolean(checkingRepositoryTarget)
+    || selectedRepository?.fullName.toLowerCase() !== repositoryTarget.toLowerCase()
+    || repositoryActionKey(selectedRepository) !== 'connect' || !repositoryCanBeSelected(selectedRepository);
+  const listed = repositories.some(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase());
+  const manual = Boolean(input.value.trim()) && !listed;
+  const failed = manual && repositoryCheckError === repositoryTarget && !repositoryInputDirty;
+  const unavailable = manual && missing && !checkingRepositoryTarget;
+  targetStatus.className = `help${repositoryCheckFeedbackError || failed || unavailable ? ' repository-target-error' : ''}`;
+  targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? 'Checking when you leave this field.'
+    : checkingRepositoryTarget === repositoryTarget ? 'Checking access and storage… No changes will be made.'
+    : failed ? 'Check failed. Edit the name or press Enter to retry.' : unavailable
+    ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
+    : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
+  if (repositoryCheckFeedbackError || failed || unavailable) input.setAttribute('aria-invalid', 'true');
+  else input.removeAttribute('aria-invalid');
 }
 
 function repositoryActionKey(repository = selectedRepository) {
   if (!repository) return '';
   const storageState = repository.storageState || repository.state;
   const organization = repository.ownerType === 'Organization' || repository.ownership === 'organization';
+  if (storageState === 'initialized_member' && repository.ready === true && repository.eligible && repository.canAdd === true) return 'connect';
   if (storageState === 'initialized_member' && repository.canAdd === true && !repository.ready) return 'add';
   if (storageState === 'initialized_joinable' && repository.canJoin === true) return 'join';
   if (['empty', 'uninitialized'].includes(storageState) && repository.canInitialize === true) {
@@ -590,7 +611,7 @@ function repositoryActionKey(repository = selectedRepository) {
 
 function repositoryAction(repository = selectedRepository) {
   return {
-    add: 'Set up storage branch', join: 'Join repository', initialize_personal: 'Initialize repository',
+    connect: 'Connect repository', add: 'Set up storage branch', join: 'Join repository', initialize_personal: 'Initialize repository',
     initialize_organization: 'Initialize repository',
   }[repositoryActionKey(repository)] || 'Choose repository';
 }
@@ -602,7 +623,7 @@ function repositoryIsConnected(repository) {
 }
 
 function repositoryCanBeSelected(repository) {
-  return (repository?.branchSetupRequired || !repositoryIsConnected(repository))
+  return !state?.candidateAuth && (repository?.branchSetupRequired || !repositoryIsConnected(repository))
     && repository?.eligible === true && Boolean(repositoryActionKey(repository));
 }
 
@@ -611,9 +632,11 @@ function updateRepositoryConfirmation() {
 }
 
 function repositoryInspectionStatus(repository) {
+  if (checkingRepositoryTarget === repository.fullName && !repositoryInputDirty) return 'Checking access and storage…';
+  if (!repository.state) return 'Not checked';
   if (repositoryIsConnected(repository) && repository.ready !== false && !state?.candidateAuth && repository.eligible && (repository.storageState || repository.state) === 'initialized_member' && repository.canAdd) return 'Ready — connected';
   const storageState = repository.storageState || repository.state;
-  if (storageState === 'initialized_member' && repository.ready) return 'Ready';
+  if (storageState === 'initialized_member' && repository.ready) return 'Ready — not connected';
   if (storageState === 'initialized_member' && repository.branchSetupRequired) return 'Needs setup — personal storage branch';
   if (storageState === 'initialized_member' && repository.canAdd && repository.eligible) return 'Ready';
   if (storageState === 'initialized_joinable' && repository.canJoin) return 'Ready to join';
@@ -631,12 +654,21 @@ function repositoryInspectionStatus(repository) {
   return repositoryReason(repository) ? `Unavailable — ${repositoryReason(repository)}` : 'Unavailable';
 }
 
+function repositoryStatusKind(label) {
+  if (label.startsWith('Checking')) return 'checking';
+  if (label === 'Ready to join') return 'setup';
+  if (label.startsWith('Ready')) return 'ready';
+  if (label.startsWith('Needs setup') || label.startsWith('Administrator') || label.startsWith('Empty')) return 'setup';
+  if (label.startsWith('Unavailable')) return 'unavailable';
+  return 'unchecked';
+}
+
 function renderRepositoryList() {
   const query = $('repository-search').value.trim().toLowerCase();
   const visible = repositories.filter(repository => !query || repository.fullName.toLowerCase().includes(query))
     .sort((a, b) => a.fullName.localeCompare(b.fullName));
-  const signature = JSON.stringify(visible.map(repository => [repository.fullName, repository.installationId, repository.repoId,
-    repositoryInspectionStatus(repository), repositoryCanBeSelected(repository), repositoryActionKey(repository)]));
+  const signature = JSON.stringify([Boolean(checkingRepositoryTarget), visible.map(repository => [repository.fullName, repository.installationId, repository.repoId,
+    repositoryInspectionStatus(repository), repositoryCanBeSelected(repository), repositoryActionKey(repository)])]);
   if (repositoryListSignature === signature) return;
   repositoryListSignature = signature;
   const root = $('repository-list');
@@ -653,25 +685,39 @@ function renderRepositoryList() {
     const copy = document.createElement('span');
     const name = document.createElement('a'); name.textContent = repository.fullName;
     name.href = `https://github.com/${repository.fullName}`; name.target = '_blank'; name.rel = 'noreferrer';
-    const status = document.createElement('small'); status.textContent = repositoryInspectionStatus(repository);
+    const status = document.createElement('small');
+    const statusLabel = repositoryInspectionStatus(repository);
+    status.className = `repository-status repository-status-${repositoryStatusKind(statusLabel)}`;
+    status.textContent = statusLabel;
     copy.append(name, status);
     const action = document.createElement('button'); action.type = 'button'; action.className = 'secondary';
     action.dataset.repositoryAction = repository.fullName;
     const selectable = repositoryCanBeSelected(repository);
-    action.textContent = selectable ? repositoryAction(repository) : repositoryIsConnected(repository) ? 'Connected' : 'Check repository';
-    action.disabled = repositoryActionApplying || (repositoryIsConnected(repository) && !repository.branchSetupRequired);
+    action.textContent = checkingRepositoryTarget === repository.fullName ? 'Checking…'
+      : selectable ? repositoryAction(repository) : repositoryIsConnected(repository) ? 'Connected' : 'Check repository';
+    action.disabled = repositoryActionApplying || Boolean(checkingRepositoryTarget)
+      || (repositoryIsConnected(repository) && !repository.branchSetupRequired);
     action.addEventListener('click', async () => {
-      selectedRepository = repository;
-      await rememberRepositoryTarget(repository.fullName);
-      updateRepositoryConfirmation(); renderRepositoryAccess();
-      if (selectable) reviewSelectedRepository();
-      else $('check-repository-target').click();
+      if (checkingRepositoryTarget || repositoryActionApplying) return;
+      if (selectable) {
+        selectedRepository = repository;
+        await rememberRepositoryTarget(repository.fullName, false);
+        $('repository-target').value = '';
+        updateRepositoryConfirmation(); renderRepositoryAccess();
+        reviewSelectedRepository();
+      } else await checkRepositoryTarget(repository.fullName, true);
     });
     row.append(icon, copy);
-    if (!repository.ready) row.append(action);
+    if (!repository.ready || selectable) row.append(action);
     root.append(row);
-    if (!repository.ready && focused === repository.fullName) action.focus();
+    if ((!repository.ready || selectable) && focused === repository.fullName) action.focus();
   }
+}
+
+function renderRepositoryLoading() {
+  const loading = discoveryStatus === 'loading';
+  $('repository-list-loading').hidden = !loading;
+  $('repository-choice-fieldset').hidden = !loading && repositories.length === 0;
 }
 
 function renderRepositories(result) {
@@ -681,7 +727,7 @@ function renderRepositories(result) {
   selectedRepository = repositoryInputDirty ? null : repositoryTarget
     ? repositories.find(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase()) || null
     : selectOnlyEligibleRepository(repositories.filter(repositoryCanBeSelected));
-  $('repository-choice-fieldset').hidden = repositories.length === 0;
+  renderRepositoryLoading();
   const searchHidden = repositories.length < 5;
   $('repository-search-label').hidden = searchHidden;
   if (searchHidden && $('repository-search').value) {
@@ -708,11 +754,12 @@ function reviewSelectedRepository() {
     storageState: repository.storageState || repository.state,
   };
   const titles = {
-    add: `Add ${fullName}?`, join: `Join ${fullName}?`,
+    connect: `Connect ${fullName}?`, add: `Add ${fullName}?`, join: `Join ${fullName}?`,
     initialize_personal: `Initialize ${fullName}?`,
     initialize_organization: `Initialize ${fullName}?`,
   };
   const bodies = {
+    connect: 'Clockoli will recheck access and storage, then add this ready repository to this browser. Checking alone does not connect it. This action does not change repository files. Once connected, it can be used for future time records.',
     add: 'Clockoli will add this repository to this browser, create or verify your personal storage branch, and make it available for project routing. Existing Clockoli records and other users’ branches will not be changed.',
     join: 'Clockoli will add your GitHub identity to this repository’s Clockoli user list and create your personal storage branch if it does not exist. Other users’ branches and time records will not be changed.',
     initialize_personal: 'Clockoli will initialize this repository for time tracking.',
@@ -746,7 +793,7 @@ async function confirmRepositoryAction() {
   $('confirm-repository-action').disabled = true;
   $('close-repository-confirmation').disabled = true;
   $('back-to-repository-selection').disabled = true;
-  const actionProgress = confirmation.intent === 'add' ? 'Adding repository…'
+  const actionProgress = confirmation.intent === 'connect' ? 'Connecting repository…' : confirmation.intent === 'add' ? 'Adding repository…'
     : confirmation.intent === 'join' ? 'Joining repository…' : 'Initializing repository…';
   $('confirm-repository-action').textContent = actionProgress;
   message(`${actionProgress.slice(0, -1)} ${confirmation.fullName}…`);
@@ -768,7 +815,9 @@ async function confirmRepositoryAction() {
     await refreshLocalPreferences();
     message(confirmation.intent.startsWith('initialize_')
       ? 'Repository initialized. Clockoli verified the setup write.'
-      : confirmation.intent === 'join'
+      : confirmation.intent === 'connect'
+        ? 'Repository connected locally. No repository files were changed.'
+        : confirmation.intent === 'join'
         ? 'Repository joined. Clockoli registered your storage branch.'
         : 'Repository added. Existing Clockoli membership was validated.', 'success');
     return true;
@@ -793,6 +842,22 @@ function closeRepositoryConfirmation() {
   dialog.hidden = true;
 }
 
+async function inspectSelectedRepository(target, revision, account) {
+  const candidate = repositories.find(repository => repository.fullName.toLowerCase() === target.toLowerCase());
+  if (!candidate) return;
+  const result = await send({ type: 'INSPECT_REPOSITORY', payload: {
+    installationId: candidate.installationId, repoId: candidate.repoId,
+  } });
+  if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount() || setupCancelled
+      || repositoryInputDirty || repositoryTarget !== target) return;
+  if (result.onboardingState) state = { ...state, ...result.onboardingState };
+  const index = repositories.findIndex(repository => repository.installationId === candidate.installationId && repository.repoId === candidate.repoId);
+  if (index < 0) return;
+  repositories[index] = result.repository;
+  selectedRepository = result.repository;
+  renderRepositoryList(); renderRepositoryAccess(); renderDestinationCards();
+}
+
 async function discoverRepositories({ silent = false } = {}) {
   // Keep the actual request in flight until it settles, even after lifecycle invalidation.
   if (discoveryPromise) {
@@ -805,6 +870,7 @@ async function discoverRepositories({ silent = false } = {}) {
   const account = repositoryChoiceAccount();
   if (!silent) {
     discoveryStatus = 'loading'; selectedRepository = null;
+    renderRepositoryLoading();
     updateRepositoryConfirmation(); closeRepositoryAccess();
     message('Checking accessible repositories…'); showRecovery();
   }
@@ -821,13 +887,29 @@ async function discoverRepositories({ silent = false } = {}) {
     }
     authorizationBlock = result.blocked || null;
     if (result.blocked) {
+      if (!silent) { discoveryStatus = 'error'; renderRepositoryLoading(); }
       renderDestinationCards();
       if (!silent) message(result.blocked.message, 'error');
       return result;
     }
     if (silent) {
       if (pendingConfirmation || repositoryActionApplying || !repositoryPollingActive()) return;
-      repositories = result.repositories;
+      repositories = result.repositories.map(repository => {
+        const prior = repositories.find(value => value.installationId === repository.installationId && value.repoId === repository.repoId);
+        return prior?.state && prior.defaultBranch === repository.defaultBranch
+          && prior.private === repository.private && prior.visibility === repository.visibility
+          && prior.archived === repository.archived && prior.disabled === repository.disabled
+          && prior.eligible === repository.eligible
+          && JSON.stringify(prior.reasons) === JSON.stringify(repository.reasons)
+          && JSON.stringify(prior.appPermissions) === JSON.stringify(repository.appPermissions)
+          && JSON.stringify(prior.userPermissions) === JSON.stringify(repository.userPermissions)
+          ? prior : repository;
+      });
+      if (selectedRepository && !repositories.includes(selectedRepository)) {
+        selectedRepository = null;
+        updateRepositoryConfirmation();
+        renderRepositoryAccess();
+      }
       installations = result.installations || [];
       repositoryDiscoveryKnown = true;
       renderRepositoryList();
@@ -841,6 +923,7 @@ async function discoverRepositories({ silent = false } = {}) {
   } catch (error) {
     if (!silent && revision === repositoryLifecycle) {
       discoveryStatus = 'error'; selectedRepository = null; updateRepositoryConfirmation();
+      renderRepositoryLoading();
       $('repository-target-status').textContent = 'Repository check failed. Retry when GitHub is available.';
       message(error.message, 'error'); throw error;
     }
@@ -855,6 +938,7 @@ function repositoryPollingActive() {
 }
 function stopRepositoryMonitoring() {
   repositoryLifecycle++;
+  if (discoveryStatus === 'loading') { discoveryStatus = 'idle'; renderRepositoryLoading(); }
   clearTimeout(repositoryMonitorTimer); repositoryMonitorTimer = null;
 }
 function scheduleRepositoryPolling() {
@@ -1195,12 +1279,18 @@ function renderMergeQueue() {
 }
 function renderMergeTasks(tasks) {
   const destinationId = $('merge-task-destination').value;
-  mergeTasks = tasks.filter(task => task.taskUrl && destinationId && task.destinationIds?.includes(destinationId)).sort((left, right) => Number(right.totalSeconds || 0) - Number(left.totalSeconds || 0) || left.taskUrl.localeCompare(right.taskUrl));
+  const destinationTasks = tasks.filter(task => task.taskUrl && destinationId && task.destinationIds?.includes(destinationId));
+  mergeTasks = destinationTasks.filter(task => {
+    try { return Boolean(normalizeTaskUrl(task.taskUrl)); }
+    catch { return false; }
+  }).sort((left, right) => Number(right.totalSeconds || 0) - Number(left.totalSeconds || 0) || left.taskUrl.localeCompare(right.taskUrl));
+  const unavailable = destinationTasks.length - mergeTasks.length;
   for (const side of ['source', 'target']) {
     if (!mergeTasks.some(task => task.taskUrl === mergeSelection[side])) mergeSelection[side] = '';
     renderMergeTaskList(side);
   }
   renderMergeQueue();
+  return unavailable;
 }
 function selectMergeTask(side, taskUrl) {
   mergeSelection[side] = taskUrl; renderMergeTaskList(side);
@@ -1230,8 +1320,10 @@ async function refreshMergeTasks() {
     if (result.partial || result.conflicts?.length) {
       renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
     }
-    renderMergeTasks(result.tasks || []);
-    $('merge-tasks-feedback').textContent = mergeTasks.length ? '' : 'No tasks match the selected people and period.';
+    const unavailable = renderMergeTasks(result.tasks || []);
+    $('merge-tasks-feedback').textContent = unavailable
+      ? `${unavailable} unresolved ${unavailable === 1 ? 'identity is' : 'identities are'} not available for URL-only task merge.`
+      : mergeTasks.length ? '' : 'No tasks match the selected people and period.';
   } catch (error) { renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message; }
 }
 
@@ -1377,7 +1469,7 @@ $('confirm-repository-action').addEventListener('click', () => void confirmRepos
 for (const id of ['back-to-repository-selection', 'close-repository-confirmation']) $(id).addEventListener('click', () => {
   if (repositoryActionApplying) return;
   closeRepositoryConfirmation();
-  $('check-repository-target').focus();
+  ($('connect-checked-repository').hidden ? $('repository-target') : $('connect-checked-repository')).focus();
 });
 
 $('repository-confirmation').addEventListener('cancel', event => { event.preventDefault(); if (!repositoryActionApplying) closeRepositoryConfirmation(); });
@@ -1428,44 +1520,105 @@ $('clear-local').addEventListener('click', async () => {
 for (const id of ['open-device-page']) {
   $(id).addEventListener('click', () => { githubHandoff = true; });
 }
-$('repository-target-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = $('check-repository-target');
+async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = false) {
+  if (checkingRepositoryTarget) { queuedRepositoryCheck = { rawTarget, fromList, keepInput }; return; }
   const revision = repositoryLifecycle;
   const account = repositoryChoiceAccount();
-  button.disabled = true; button.textContent = 'Checking repository';
+  let completed = false;
   try {
-    const target = parseRepositoryTarget($('repository-target').value);
+    const target = parseRepositoryTarget(rawTarget);
+    checkingRepositoryTarget = target;
+    repositoryCheckError = '';
+    repositoryCheckFeedback = keepInput ? `Checking ${target}… Repository files will not be changed.` : '';
+    repositoryCheckFeedbackError = false;
     selectedRepository = null;
     updateRepositoryConfirmation();
     $('repository-access-panel').hidden = true;
-    await rememberRepositoryTarget(target);
+    const savedChoice = rememberRepositoryTarget(target, !fromList);
+    if (fromList) $('repository-target').value = '';
+    renderRepositoryList(); renderRepositoryAccess();
+    await savedChoice;
     if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount() || setupCancelled) return;
     const result = await discoverRepositories();
     if (!result || revision !== repositoryLifecycle || account !== repositoryChoiceAccount() || setupCancelled) return;
+    if (result.blocked) {
+      if (keepInput) { repositoryCheckFeedback = `Check blocked: ${result.blocked.message}`; repositoryCheckFeedbackError = true; }
+      return;
+    }
+    await inspectSelectedRepository(target, revision, account);
+    if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount() || setupCancelled) return;
+    completed = true;
+    if (selectedRepository && repositoryActionKey(selectedRepository) !== 'connect' && !keepInput
+        && !repositoryInputDirty && repositoryTarget === target) $('repository-target').value = '';
     if (!repositoryInputDirty && repositoryTarget === target && discoveryStatus === 'ready'
         && (!selectedRepository || selectedRepository.reasons?.includes('app_contents_write_required'))) {
       const dialog = $('repository-access-panel');
       dialog.hidden = false;
       dialog.showModal();
     } else if (!repositoryInputDirty && repositoryTarget === target) {
-      if (!reviewSelectedRepository()) $('repository-target-status').focus();
+      if (repositoryActionKey(selectedRepository) !== 'connect' && !reviewSelectedRepository()) $('repository-target-status').focus();
     }
-  } catch (error) { message(error.message, 'error'); }
-  finally { button.disabled = false; button.textContent = 'Check repository'; }
+  } catch (error) {
+    if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled && !repositoryInputDirty) {
+      repositoryCheckError = checkingRepositoryTarget;
+      if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`; repositoryCheckFeedbackError = true; }
+      message(error.message, 'error');
+    }
+  } finally {
+    checkingRepositoryTarget = '';
+    renderRepositoryList();
+    if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled) {
+      if (completed && keepInput && !repositoryInputDirty) {
+        const status = selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Unavailable — Clockoli cannot access this repository; check its name and App grant';
+        repositoryCheckFeedback = `Checked ${repositoryTarget}: ${status}.${status === 'Ready — not connected' ? ' Select Connect repository below to add it to this browser.' : ''} Repository files were not changed.`;
+        repositoryCheckFeedbackError = status.startsWith('Unavailable');
+      }
+      renderRepositoryAccess();
+    } else if (keepInput) repositoryCheckFeedback = '';
+    const queued = queuedRepositoryCheck;
+    queuedRepositoryCheck = null;
+    if (queued && revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled
+        && (queued.fromList || queued.rawTarget.trim() === $('repository-target').value.trim())) {
+      await checkRepositoryTarget(queued.rawTarget, queued.fromList, queued.keepInput);
+    }
+  }
+}
+$('repository-target-form').addEventListener('submit', event => {
+  event.preventDefault();
+  return checkRepositoryTarget($('repository-target').value);
 });
+$('repository-target').addEventListener('blur', event => {
+  const input = $('repository-target');
+  if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id) || event?.relatedTarget?.dataset?.repositoryAction
+      || !input.value.trim() || !repositoryInputDirty) return;
+  try { parseRepositoryTarget(input.value); }
+  catch {
+    input.setAttribute('aria-invalid', 'true');
+    $('repository-target-status').className = 'help repository-target-error';
+    $('repository-target-status').textContent = 'Enter a valid GitHub repository URL or owner/name.';
+    return;
+  }
+  return checkRepositoryTarget(input.value);
+});
+$('refresh-repository-target').addEventListener('click', () => checkRepositoryTarget($('repository-target').value, false, true));
+$('connect-checked-repository').addEventListener('click', () => reviewSelectedRepository());
 $('repository-target').addEventListener('input', () => {
   // Editing is not permission to apply an earlier inspection/confirmation.
   repositoryInputDirty = true;
+  repositoryCheckError = '';
   selectedRepository = null;
   updateRepositoryConfirmation();
+  repositoryCheckFeedback = '';
+  repositoryCheckFeedbackError = false;
   $('repository-access-panel').hidden = true;
+  $('repository-target').removeAttribute('aria-invalid');
+  renderRepositoryAccess();
 });
 $('close-repository-access').addEventListener('click', closeRepositoryAccess);
 $('repository-access-panel').addEventListener('cancel', event => { event.preventDefault(); closeRepositoryAccess(); });
 $('repository-access-panel').addEventListener('close', () => {
   $('repository-access-panel').hidden = true;
-  $('check-repository-target').focus();
+  $('repository-target').focus();
 });
 $('install-app').addEventListener('click', event => {
   event.preventDefault();
@@ -1477,7 +1630,7 @@ $('install-app').addEventListener('click', event => {
   githubHandoff = false;
   try {
     if (!openGitHubHandoff(url)) throw new Error('Browser blocked the GitHub access tab. Allow popups and try again.');
-    message('The repository list updates automatically. Return to set up the repository, or use Check repository for its URL.');
+    message('The repository list updates automatically. Return and check its row, or re-enter its URL.');
   } catch (error) { message(error.message, 'error'); }
 });
 for (const id of ['new-time-repository', 'modal-new-time-repository']) $(id).addEventListener('click', () => {

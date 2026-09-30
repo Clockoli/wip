@@ -1,5 +1,5 @@
 import {
-  entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl,
+  entryDateParts, entryDateValue, localDateParts, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubTaskUrl,
   taskUrlOf, validateEntryId, validatePathSegment,
 } from './values.js';
 import { createUlid } from './ulid.js';
@@ -95,13 +95,14 @@ function producerValue(producer) { return structuredClone(producer ?? DEFAULT_PR
 
 export function buildActiveTimer({
   user, id, entryId, actor, producer, taskUrl, taskTitle = '', issue, issueTitle = '', startedAt,
-  entryDate, timezone, description = '', metadata = {}, metrics = {}, execution,
+  entryDate, timezone, description = '', metadata = {}, metrics = {}, execution, importedStoredIdentity = false,
 }) {
   const validUser = validatePathSegment(user, 'user'), started = toIso(startedAt);
   const zone = normalizeTimezone(timezone), date = entryDate ?? localDateInTimezone(started, zone);
   entryDateParts(date);
   const recordId = validateEntryId(id ?? entryId ?? createUlid(new Date(started).getTime()));
-  const url = normalizeTaskUrl(taskUrl ?? issue), title = normalizeTaskTitle(taskTitle || issueTitle);
+  const url = importedStoredIdentity ? normalizeStoredTaskIdentity(taskUrl ?? issue) : normalizeTaskUrl(taskUrl ?? issue);
+  const title = normalizeTaskTitle(taskTitle || issueTitle);
   return {
     schemaVersion: 1,
     id: recordId,
@@ -197,7 +198,8 @@ export function applyActiveEdits(active, edits = {}, now = new Date()) {
   validateActiveTimer(active);
   const nextStart = toIso(edits.startedAt ?? active.startedAt), updatedAt = toIso(now);
   if (new Date(nextStart).getTime() > new Date(updatedAt).getTime()) throw new Error('Active timer start must not be in the future');
-  const currentUrl = taskUrlOf(active), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);
+  const currentUrl = taskUrlOf(active), taskUrl = edits.taskUrl !== undefined || edits.issue !== undefined
+    ? normalizeTaskUrl(edits.taskUrl ?? edits.issue) : currentUrl;
   const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = active;
   const metadata = structuredClone(active.metadata);
   if (taskUrl !== currentUrl) delete metadata.github;
@@ -219,7 +221,8 @@ export function applyActiveEdits(active, edits = {}, now = new Date()) {
 
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
-  const currentUrl = taskUrlOf(entry), taskUrl = normalizeTaskUrl(edits.taskUrl ?? edits.issue ?? currentUrl);
+  const currentUrl = taskUrlOf(entry), taskUrl = edits.taskUrl !== undefined || edits.issue !== undefined
+    ? normalizeTaskUrl(edits.taskUrl ?? edits.issue) : currentUrl;
   const startedAt = toIso(edits.startedAt ?? entry.startedAt), timezone = normalizeTimezone(edits.timezone ?? entry.timezone);
   const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = entry;
   const metadata = structuredClone(entry.metadata);

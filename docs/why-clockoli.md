@@ -84,7 +84,7 @@ One GitHub account can use several personal and organization time repositories. 
 
 Clockoli validates repository identity, privacy, branch routing, storage ownership, record shape, and file versions before writing. It uses Git SHAs and atomic commits for linked or cross-month corrections.
 
-Discovery and inspection never write to GitHub; already-ready time repositories become available locally automatically. Joining or initializing requires explicit confirmation, and an ordinary employee cannot initialize an unmarked organization repository. Incompatible files and unknown ownership fail closed instead of being guessed around.
+Discovery and inspection never write to GitHub or connect repositories locally; checked ready time repositories become available only after you confirm Connect repository. Joining or initializing also requires explicit confirmation, and an ordinary employee cannot initialize an unmarked organization repository. Incompatible files and unknown ownership fail closed instead of being guessed around.
 
 ## Compared with an issue-tracker timer
 

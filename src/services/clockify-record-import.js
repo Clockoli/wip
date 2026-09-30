@@ -377,6 +377,7 @@ function completedRecord({ entry, githubUser, id, now }) {
     actor: { kind: 'human', id: `github:${githubUser.id}`, name: githubUser.login },
     producer: IMPORT_PRODUCER,
     taskUrl: taskIdentity.url,
+    importedStoredIdentity: true,
     taskTitle: taskIdentity.title,
     startedAt,
     entryDate,

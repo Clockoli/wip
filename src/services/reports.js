@@ -2,7 +2,7 @@ import { recordDate } from '../domain/reporting.js';
 import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
-import { entryDateParts, normalizeTaskUrl, validatePathSegment } from '../domain/values.js';
+import { entryDateParts, normalizeStoredTaskIdentity, taskUrlOf, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
 const CACHE_VERSION = 1;
@@ -70,7 +70,7 @@ export function mergeDestinationTaskSummaries(destinationResults, destinationOrd
   for (const result of destinationResults ?? []) {
     const destinationId = result.destination?.id, timeRepository = destinationLabel(result.destination);
     for (const record of result.records ?? []) {
-      const taskUrl = normalizeTaskUrl(record.taskUrl), user = String(record.user || '').trim();
+      const taskUrl = taskUrlOf(record), user = String(record.user || '').trim();
       const durationSeconds = Number(record.durationSeconds);
       if (!taskUrl || !user || !Number.isFinite(durationSeconds) || durationSeconds < 0 || !Array.isArray(record.recordIds)) throw new Error('Invalid task summary');
       const key = `${taskUrl}\n${user.toLowerCase()}`;
@@ -321,7 +321,7 @@ export class ReportService {
   }
 
   async loadRepositoryTask(taskUrl, { defaultBranch = null, signal, budgets = {} } = {}) {
-    const canonicalTaskUrl = normalizeTaskUrl(taskUrl);
+    const canonicalTaskUrl = normalizeStoredTaskIdentity(taskUrl);
     const maxUsers = budgetValue(budgets.maxUsers, DEFAULT_TASK_USER_BUDGET, 'user');
     this.onProgress({ label: 'Discovering people and task indexes…', value: 20 });
     if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
@@ -374,7 +374,7 @@ export class ReportService {
     normalizeReportingUtc(reportingUtc);
     entryDateParts(startDate); entryDateParts(endDate);
     if (startDate > endDate) throw new Error('Report end date must not precede start date');
-    const canonicalTaskUrl = taskUrl === null ? null : normalizeTaskUrl(taskUrl);
+    const canonicalTaskUrl = taskUrl === null ? null : normalizeStoredTaskIdentity(taskUrl);
     signal?.throwIfAborted();
 
     const repositoryKey = this.github.repositoryKey || 'repository';

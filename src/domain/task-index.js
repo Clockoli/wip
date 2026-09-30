@@ -1,4 +1,4 @@
-import { normalizeTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from './values.js';
+import { normalizeStoredTaskIdentity, validateEntryId, validatePathSegment } from './values.js';
 
 export const TASK_INDEX_PATH = '.clockoli/tasks.json';
 
@@ -12,7 +12,7 @@ function cloneIndex(index) {
 }
 
 function normalizedEntry(entry) {
-  const taskUrl = taskUrlOf(entry);
+  const taskUrl = normalizeStoredTaskIdentity(entry?.taskUrl ?? entry?.issue?.url ?? entry?.url);
   const id = validateEntryId(entry?.id);
   const durationSeconds = Number(entry?.durationSeconds);
   if (!taskUrl || !Number.isSafeInteger(durationSeconds) || durationSeconds < 0) {
@@ -40,8 +40,8 @@ export function parseTaskIndex(text, { user } = {}) {
   const tasks = {};
   const knownRecordIds = new Set();
   for (const taskUrl of Object.keys(value.tasks).sort()) {
-    const canonical = normalizeTaskUrl(taskUrl), summary = value.tasks[taskUrl];
-    if (canonical !== taskUrl) throw new Error('Clockoli task index URL is not canonical');
+    const canonical = normalizeStoredTaskIdentity(taskUrl), summary = value.tasks[taskUrl];
+    if (canonical !== taskUrl) throw new Error('Clockoli task index identity is not canonical');
     if (!exactKeys(summary, ['totalSeconds', 'sessionCount', 'recordIds'])
         || !Number.isSafeInteger(summary.totalSeconds) || summary.totalSeconds < 0
         || !Number.isSafeInteger(summary.sessionCount) || summary.sessionCount < 1
@@ -100,7 +100,7 @@ export function applyTaskIndexChanges(index, { remove = [], add = [] } = {}) {
 }
 
 export function taskIndexRecord(index, taskUrl) {
-  const canonical = normalizeTaskUrl(taskUrl), summary = index.tasks[canonical];
+  const canonical = normalizeStoredTaskIdentity(taskUrl), summary = index.tasks[canonical];
   return summary ? {
     user: index.storageLogin, taskUrl: canonical, durationSeconds: summary.totalSeconds, recordIds: [...summary.recordIds],
   } : null;
