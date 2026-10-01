@@ -93,6 +93,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/github-app-onboarding.js',
   'src/services/onboarding-coordinator.js',
   'src/services/reports.js',
+  'src/services/repository-invitations.js',
   'src/services/repository-operation-recovery.js',
   'src/services/task-metadata.js',
   'src/services/tracker.js',

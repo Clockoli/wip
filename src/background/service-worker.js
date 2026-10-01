@@ -33,6 +33,7 @@ import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
+import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
 import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
@@ -236,6 +237,15 @@ async function checkCurrentRepositoryAccess(destinationId = null) {
     repository: { id: repository.id, fullName: repository.full_name },
     lastVerifiedAt, verificationStatus: 'access_checked',
   };
+}
+
+async function repositoryInvitationService(destinationId) {
+  const id = await requireConfiguredDestinationId(store, destinationId);
+  const { config, auth } = await configuredSnapshot({ destinationId: id });
+  if (!config || auth?.mode !== 'github_app' || !Number.isSafeInteger(config.repoId)) {
+    throw new Error('Invite teammates only from a connected GitHub App time repository.');
+  }
+  return new RepositoryInvitationService({ github: githubForConfig(config), installationId: config.installationId });
 }
 
 async function contextForDestination(destinationId, { localOnly = false } = {}) {
@@ -731,6 +741,35 @@ async function handle(message, sender) {
     return { ...result, onboardingState: await onboardingState() };
   }
   if (message.type === 'CHECK_REPOSITORY_ACCESS') return checkCurrentRepositoryAccess(message.destinationId || message.payload?.destinationId || null);
+  if (message.type === 'LOAD_REPOSITORY_COLLABORATORS') {
+    if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid collaborator request');
+    const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
+    const { config, auth } = await configuredSnapshot({ destinationId });
+    if (!config || !auth) throw new Error('Connect a time repository before viewing collaborators.');
+    const github = githubForConfig(config);
+    await github.assertDestinationReachable();
+    const collaborators = await github.listRepositoryCollaborators();
+    try {
+      const pending = await github.listRepositoryPendingInvitations();
+      return { ...collaborators, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+        ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
+    } catch {
+      return { ...collaborators, pendingUnavailable: true };
+    }
+  }
+  if (message.type === 'SEARCH_INVITEE_USERS' || message.type === 'INVITE_REPOSITORY_USER') {
+    const payload = message.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== (message.type === 'SEARCH_INVITEE_USERS' ? 2 : 3)
+        || typeof payload.destinationId !== 'string'
+        || typeof payload[message.type === 'SEARCH_INVITEE_USERS' ? 'query' : 'login'] !== 'string'
+        || (message.type === 'INVITE_REPOSITORY_USER' && (!Number.isSafeInteger(payload.userId) || payload.userId <= 0))) {
+      throw new Error('Invalid teammate request');
+    }
+    const invitation = await repositoryInvitationService(payload.destinationId);
+    return message.type === 'SEARCH_INVITEE_USERS'
+      ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
+  }
   if (message.type === 'SELECT_REPOSITORY') return onboarding.selectRepository(message.payload);
   if (message.type === 'SET_DEFAULT_DESTINATION') {
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId || message.payload?.destinationId);
@@ -1089,8 +1128,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {

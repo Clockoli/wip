@@ -143,7 +143,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
     'MERGE_TASKS',
   ];
   for (const type of privileged) {
@@ -152,6 +152,47 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   }
 });
 
+
+test('repository collaborator read checks sender and configured destination before GitHub access', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  let pendingFails = false, pendingIncomplete = false;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    store: {}, requireConfiguredDestinationId: async (_store, id) => {
+      calls.push(['destination', id]);
+      if (id !== 'github:20') throw new Error('The requested destination is not configured.');
+      return id;
+    }, configuredSnapshot: async ({ destinationId }) => {
+      calls.push(['snapshot', destinationId]); return { config: { repoId: 20 }, auth: { mode: 'github_app' } };
+    }, githubForConfig: () => ({
+      assertDestinationReachable: async () => { calls.push(['verified']); },
+      listRepositoryCollaborators: async () => { calls.push(['listed']); return { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false }; },
+      listRepositoryPendingInvitations: async () => {
+        calls.push(['pending']);
+        if (pendingFails) throw new Error('No permission');
+        return { users: [{ id: 43, login: 'alice', avatarUrl: null }], hasMore: false,
+          ...(pendingIncomplete ? { incomplete: true } : {}) };
+      },
+    }),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'LOAD_REPOSITORY_COLLABORATORS', destinationId: 'github:20' };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  await assert.rejects(context.handle({ ...request, destinationId: 'github:21' }, extension), /not configured/i);
+  await assert.rejects(context.handle({ ...request, extra: 'ignored' }, extension), /invalid collaborator request/i);
+  assert.deepEqual(calls, [['destination', 'github:21']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
+  assert.deepEqual(calls.slice(1), [['destination', 'github:20'], ['snapshot', 'github:20'], ['verified'], ['listed'], ['pending']]);
+  pendingIncomplete = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
+  pendingFails = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, pendingUnavailable: true });
+});
 
 test('any GitHub page can start a URL task only for its exact sender URL', () => {
   const sender = { url: 'https://github.com/acme/app/actions/runs/123?check_suite_focus=true', tab: { id: 9 } };

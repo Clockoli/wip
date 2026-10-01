@@ -31,11 +31,12 @@ function element(tagName = 'div') {
     hidden: false, open: false, disabled: false, value: '', textContent: '', className: '',
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
-    replaceChildren(...children) { this.children = []; this.append(...children); },
+    replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
     setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
     querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className && child.className.split(' ').includes(className); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+    contains(child) { return this === child || this.children.some(node => node.contains(child)); },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
 
     addEventListener(type, handler) { this.listeners[type] = handler; },
@@ -43,12 +44,12 @@ function element(tagName = 'div') {
   return node;
 }
 
-function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map() } = {}) {
+function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map(), collaboratorReplies = false } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [];
   const context = vm.createContext({
-    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
+    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeTaskUrl,
@@ -56,6 +57,10 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
     ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { sendMessage(request, callback) {
+      if (request.type === 'LOAD_REPOSITORY_COLLABORATORS' && !collaboratorReplies) {
+        callback({ ok: true, data: { users: [], hasMore: false } });
+        return;
+      }
       requests.push(request);
       const result = reply(request);
       const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message } } : { ok: true, data: value });
@@ -1449,11 +1454,57 @@ test('connected sharing instructions use the owner-neutral path for user and org
   ]) {
     page.context.testDestination = destination;
     const text = vm.runInContext('teammateInstructions(testDestination)', page.context);
-    assert.match(text, /2\. Install Clockoli and select Sign in with GitHub\./);
-    assert.match(text, /3\. Select .* or enter its GitHub URL in Connect time repositories\./);
+    assert.match(text, /Install Clockoli and sign in with GitHub\./);
+    assert.match(text, /Connect .* in Time repositories/);
     assert.match(text, new RegExp(`grant the Clockoli GitHub App access to ${destination.owner}\/${destination.repo}`));
     assert.doesNotMatch(text, /Connect GitHub|Join an organization repository/);
   }
+});
+
+test('teammate picker selects a searched GitHub user and requires confirmation before inviting', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  let invited = false;
+  const page = harness({ confirm: () => true, collaboratorReplies: true, reply: request => {
+    if (request.type === 'SEARCH_INVITEE_USERS') return { users: [{ id: 42, login: 'Bob', name: 'Bob Example', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] };
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return { users: [], hasMore: false,
+      pendingUsers: invited ? [{ id: 42, login: 'Bob', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] : [], pendingHasMore: false };
+    invited = true; return { status: 'invited', login: 'Bob' };
+  } });
+  page.render({ ...connectedState, destinations: [destination] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  assert.ok(picker);
+  const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  assert.equal(invite.disabled, true);
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.find(timer => timer.delay === 250).callback();
+  const choice = picker.querySelector('.teammate-choice');
+  assert.equal(choice.querySelector('.teammate-login').textContent, '@Bob');
+  assert.equal(choice.querySelector('.teammate-name').textContent, 'Bob Example');
+  assert.equal(choice.querySelector('.teammate-avatar').src, 'https://avatars.githubusercontent.com/u/42?v=4');
+  await choice.listeners.click();
+  assert.equal(invite.disabled, false);
+  assert.equal(picker.querySelector('.teammate-selected').querySelector('.teammate-name').textContent, 'Bob Example');
+  assert.equal(picker.querySelector('.teammate-selected').querySelector('.teammate-avatar').src, 'https://avatars.githubusercontent.com/u/42?v=4');
+  await invite.listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'INVITE_REPOSITORY_USER').payload)),
+    { destinationId: 'github:20', login: 'Bob', userId: 42 });
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /invitation sent/i);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-invitation').dataset.login, '@Bob · pending invitation');
+  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-collaborators').textContent, '');
+});
+
+test('teammate picker does not invite when confirmation is cancelled', async () => {
+  const page = harness({ confirm: () => false, reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? { users: [{ id: 42, login: 'Bob' }] } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.find(timer => timer.delay === 250).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  await picker.querySelector('.invite-teammate').listeners.click();
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
 });
 
 test('repository confirmation sends the one action allowed by the inspected repository state', async () => {
@@ -1524,4 +1575,202 @@ test('payment terms days load and save one numeric setting with explanatory help
   await page.submit('invoicing-form');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(save.payload.invoicing.paymentTermsDays, 45); assert.equal(Object.hasOwn(save.payload.invoicing, 'paymentTerms'), false);
+});
+
+test('connected repository rows show collaborators by destination and ignore stale responses', async () => {
+  let resolveFirst;
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const second = { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 };
+  const page = harness({ collaboratorReplies: true, reply: request => {
+    if (request.type !== 'LOAD_REPOSITORY_COLLABORATORS') return {};
+    if (request.destinationId === destination.id) return new Promise(resolve => { resolveFirst = resolve; });
+    return { users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: false };
+  } });
+  page.render({ ...connectedState, destinations: [destination] });
+  assert.deepEqual(page.requests.filter(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS').map(request => request.destinationId), ['github:20']);
+  page.render({ ...connectedState, destinations: [second] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  assert.equal(row.querySelector('.repository-collaborators').children[0].textContent, 'N');
+  resolveFirst({ users: [{ id: 8, login: 'Stale', avatarUrl: null }], hasMore: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(row.querySelector('.repository-collaborators').children.length, 1);
+  assert.equal(row.querySelector('.repository-collaborators').children[0].dataset.login, '@New');
+});
+
+test('reloading repository access indicators replaces old avatars and pending status on the same card', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const replies = [
+    { users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 8, login: 'Invitee', avatarUrl: null }], pendingHasMore: false },
+    { users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false, pendingUnavailable: true },
+  ];
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS' ? replies.shift() : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = page.nodes.get('time-repository-list'), row = root.children[0];
+  assert.equal(row.querySelectorAll('.repository-invitation').length, 1);
+  await page.context.loadRepositoryCollaborators(row, destination, root);
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.querySelectorAll('.repository-collaborator').length, 1);
+  assert.equal(display.querySelectorAll('.repository-invitation').length, 0);
+  assert.equal(display.attributes['aria-label'], 'Repository collaborators: @Member');
+});
+
+test('repository avatar refresh removes an old empty state and ignores a late older response', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  let resolveOld;
+  const replies = [
+    { users: [], hasMore: false, pendingUsers: [], pendingHasMore: false },
+    new Promise(resolve => { resolveOld = resolve; }),
+    { users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: false },
+  ];
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS' ? replies.shift() : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = page.nodes.get('time-repository-list'), row = root.children[0];
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.textContent, 'No collaborators or pending invitations');
+  const oldLoad = page.context.loadRepositoryCollaborators(row, destination, root);
+  await page.context.loadRepositoryCollaborators(row, destination, root);
+  assert.equal(display.textContent, '');
+  assert.equal(display.querySelectorAll('.repository-collaborator').length, 1);
+  resolveOld({ users: [{ id: 8, login: 'Old', avatarUrl: null }], hasMore: false });
+  await oldLoad;
+  assert.equal(display.querySelector('.repository-collaborator').dataset.login, '@New');
+});
+
+test('repository add circle opens only its own teammate form and focuses GitHub search', () => {
+  const destinations = [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ];
+  const page = harness(); page.render({ ...connectedState, destinations });
+  const rows = page.nodes.get('time-repository-list').children;
+  const first = rows.find(row => row.dataset.destinationId === 'github:20');
+  const second = rows.find(row => row.dataset.destinationId === 'github:21');
+  const add = second.querySelector('.repository-add-teammate');
+  assert.equal(add.tagName, 'button');
+  assert.match(add.attributes['aria-label'], /add.*acme\/other/i);
+  let prevented = false, stopped = false;
+  add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+  assert.equal(prevented, true); assert.equal(stopped, true);
+  assert.equal(first.open, false);
+  assert.equal(second.open, true);
+  assert.equal(second.querySelector('.teammate-instructions').open, true);
+  assert.equal(second.querySelector('.teammate-search').focused, true);
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+  const pat = harness(); pat.render({ ...connectedState, auth: { mode: 'pat' }, destinations });
+  assert.equal(pat.nodes.get('time-repository-list').querySelector('.repository-add-teammate'), null);
+});
+
+test('repository avatar hover uses the GitHub login and overflow does not impersonate add', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const avatar = row.querySelector('.repository-collaborator');
+  assert.equal(avatar.dataset.login, '@New');
+  assert.equal(row.querySelector('.repository-collaborator-more').textContent, '…');
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-collaborator\[data-login\]:hover::after\{[^}]*content:attr\(data-login\)/);
+});
+
+test('pending GitHub invitations show distinct noninteractive avatars and accessible status', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false,
+    pendingUsers: [{ id: 8, login: 'Invitee', avatarUrl: 'https://avatars.githubusercontent.com/u/8?v=4' }], pendingHasMore: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const pending = row.querySelector('.repository-invitation');
+  assert.equal(pending.dataset.login, '@Invitee · pending invitation');
+  assert.match(pending.attributes['aria-label'], /@Invitee.*pending invitation/i);
+  assert.equal(pending.children.find(child => child.tagName === 'img').src, 'https://avatars.githubusercontent.com/u/8?v=4');
+  assert.match(row.querySelector('.repository-collaborators').attributes['aria-label'], /pending invitation/i);
+  assert.match(row.querySelector('.repository-invitation-more').title, /pending invitation/i);
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-invitation\{[^}]*border-style:dashed/);
+});
+
+test('unavailable pending invitations stay silent without erasing verified collaborators', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false, pendingUnavailable: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  assert.equal(row.querySelector('.repository-collaborator').dataset.login, '@Member');
+  assert.equal(row.querySelector('.repository-collaborators').attributes['aria-label'], 'Repository collaborators: @Member');
+  assert.equal(row.querySelector('.repository-invitations-unavailable'), null);
+  assert.equal(row.querySelector('.repository-collaborators').textContent.includes('Pending unavailable'), false);
+});
+
+test('failed pending lookup with no collaborators does not claim there are no invitations', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [], hasMore: false, pendingUnavailable: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.textContent, 'No collaborators');
+  assert.doesNotMatch(display.attributes['aria-label'], /pending|unavailable/i);
+  assert.equal(row.querySelector('.repository-invitation'), null);
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+});
+
+test('invite section leads with search and keeps teammate setup steps behind a disclosure', () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  const invite = row.querySelector('.teammate-instructions');
+  assert.equal(invite.children[0].textContent, 'Invite teammates');
+  assert.match(invite.querySelector('.teammate-intro').textContent, /acme\/time-data/);
+  const picker = invite.querySelector('.teammate-picker');
+  const setup = invite.querySelector('.teammate-setup');
+  assert.ok(invite.children.indexOf(picker) < invite.children.indexOf(setup));
+  assert.equal(setup.open, false);
+  assert.equal(setup.querySelector('.teammate-steps').tagName, 'ol');
+  assert.equal(invite.children.some(child => child.tagName === 'pre'), false);
+  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search by GitHub username');
+  assert.match(picker.querySelector('.help').textContent, /repository admin/i);
+});
+
+test('add teammate control has a hover title and a compact icon next to avatars', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [{ id: 7, login: 'New' }], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const people = page.nodes.get('time-repository-list').querySelector('.repository-people');
+  const add = people.querySelector('.repository-add-teammate');
+  assert.equal(add.title, 'Add teammate');
+  assert.equal(add.children[0].tagName, 'svg');
+  assert.equal(people.children[0].className, 'repository-collaborators');
+  assert.equal(people.children[1], add);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-people\{[^}]*gap:3px/);
+  assert.match(css, /\.repository-add-teammate\{[^}]*width:24px;height:24px/);
+});
+
+test('shareable teammate steps copy the rewritten guide and expose a readable fallback', async () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const setup = page.nodes.get('time-repository-list').querySelector('.teammate-setup');
+  const copy = setup.children.find(child => child.textContent === 'Copy instructions');
+  const feedback = setup.querySelector('.form-feedback');
+  let copied = '';
+  page.context.navigator = { clipboard: { async writeText(text) { copied = text; } } };
+  await copy.listeners.click();
+  assert.match(copied, /Join acme\/time-data in Clockoli/);
+  assert.match(copied, /Do not create clockoli\/users/);
+  assert.match(feedback.textContent, /copied/);
+  page.context.navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); };
+  await copy.listeners.click();
+  assert.equal(setup.open, true);
+  assert.match(feedback.textContent, /Select the steps above/);
 });

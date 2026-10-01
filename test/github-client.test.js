@@ -15,6 +15,56 @@ function response(status, body = null, headers = {}) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body };
 }
 
+test('repository collaborator previews use verified identities and safe avatar URLs', async () => {
+  const requests = [];
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url => {
+    requests.push(url);
+    return response(200, [
+      { id: 11, login: 'Alice', avatar_url: 'https://avatars.githubusercontent.com/u/11?v=4' },
+      { id: 12, login: 'bob', avatar_url: 'https://evil.example/u/12' },
+      { id: 13, login: 'carol', avatar_url: 'http://avatars.githubusercontent.com/u/13' },
+      { id: 14, login: 'dan', avatar_url: 'https://avatars.githubusercontent.com/u/14?v=4' },
+      { id: 15, login: 'eve', avatar_url: 'https://avatars.githubusercontent.com/u/15?v=4' },
+    ]);
+  } });
+  assert.deepEqual(await client.listRepositoryCollaborators(), { users: [
+    { id: 11, login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/11?v=4' },
+    { id: 12, login: 'bob', avatarUrl: null }, { id: 13, login: 'carol', avatarUrl: null },
+    { id: 14, login: 'dan', avatarUrl: 'https://avatars.githubusercontent.com/u/14?v=4' },
+  ], hasMore: true });
+  assert.ok(requests[0].endsWith('/repos/acme/time-data/collaborators?per_page=100'));
+  assert.equal(requests.length, 1);
+  for (const malformed of [[{ login: 'bob' }], [{ id: 1, login: 'bob' }, { id: 2, login: 'BOB' }], {}]) {
+    const invalid = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async () => response(200, malformed) });
+    await assert.rejects(invalid.listRepositoryCollaborators(), /invalid collaborator/i);
+  }
+});
+
+test('repository pending invitations expose only bounded verified account avatars', async () => {
+  const requests = [];
+  const client = new GitHubClient({ token: 'synthetic', owner: 'acme', repo: 'time-data', fetchImpl: async url => {
+    requests.push(url);
+    return response(200, [
+      { id: 901, invitee: { id: 21, login: 'Alice', avatar_url: 'https://avatars.githubusercontent.com/u/21?size=99' } },
+      { id: 902, invitee: null },
+      { id: 903, invitee: { id: 22, login: 'bob', avatar_url: 'https://evil.example/u/22' } },
+      ...[23, 24, 25].map(id => ({ id: id + 900, invitee: { id, login: `user${id}`, avatar_url: null } })),
+    ]);
+  } });
+  assert.deepEqual(await client.listRepositoryPendingInvitations(), { users: [
+    { id: 21, login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/21?v=4' },
+    { id: 22, login: 'bob', avatarUrl: null },
+    { id: 23, login: 'user23', avatarUrl: null },
+    { id: 24, login: 'user24', avatarUrl: null },
+  ], hasMore: true });
+  assert.deepEqual(requests.map(url => new URL(url).pathname + new URL(url).search), ['/repos/acme/time-data/invitations?per_page=100']);
+  for (const malformed of [{}, [{ invitee: { id: 1, login: 'bad name' } }],
+    [{ invitee: { id: 1, login: 'alice' } }, { invitee: { id: 1, login: 'alice' } }]]) {
+    const invalid = new GitHubClient({ token: 'synthetic', owner: 'acme', repo: 'time-data', fetchImpl: async () => response(200, malformed) });
+    await assert.rejects(invalid.listRepositoryPendingInvitations(), /invalid invitation/i);
+  }
+});
+
 test('GitHub client emits safe per-request timing diagnostics without authorization data', async () => {
   const diagnostics = [];
   const client = new GitHubClient({

@@ -86,6 +86,15 @@ function validGitHubLogin(login) {
   try { validatePathSegment(login, 'user'); return true; } catch { return false; }
 }
 
+export function githubAvatarUrl(value, id) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'avatars.githubusercontent.com'
+      && !url.username && !url.password && url.pathname === `/u/${id}`
+      ? `https://avatars.githubusercontent.com/u/${id}?v=4` : null;
+  } catch { return null; }
+}
+
 async function mapBounded(items, limit, operation) {
   const results = new Array(items.length);
   let next = 0;
@@ -303,6 +312,44 @@ export class GitHubClient {
       throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
     }
     return logins.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'accent' }));
+  }
+
+  async listRepositoryCollaborators() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborators');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    if (!Array.isArray(collaborators) || collaborators.length > 100) throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    return { users: collaborators.slice(0, 4).map(user => ({
+      id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
+    })), hasMore: collaborators.length > 4 };
+  }
+
+  async listRepositoryPendingInvitations() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for invitations');
+    const users = [], ids = new Set(), logins = new Set();
+    for (let page = 1; page <= 5; page += 1) {
+      const invitations = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/invitations?per_page=100${page > 1 ? `&page=${page}` : ''}`);
+      if (!Array.isArray(invitations) || invitations.length > 100) throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+      for (const invitation of invitations) {
+        const user = invitation?.invitee;
+        if (user === null) continue; // Email invitations have no GitHub account avatar.
+        if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+            || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+          throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+        }
+        ids.add(user.id); logins.add(user.login.toLowerCase());
+        users.push({ id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) });
+      }
+      if (users.length > 4 || invitations.length < 100) return { users: users.slice(0, 4), hasMore: users.length > 4 };
+    }
+    return { users: users.slice(0, 4), hasMore: false, incomplete: true };
   }
 
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
