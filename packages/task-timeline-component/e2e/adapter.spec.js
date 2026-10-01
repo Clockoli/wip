@@ -187,10 +187,13 @@ test('Timeline resize bars appear on hover and remain visible after selecting an
     marks: getComputedStyle(handle, '::after').backgroundImage,
   })));
   await page.mouse.move(0, 0);
-  expect(await block.evaluate(element => ({
-    shadow: getComputedStyle(element).boxShadow,
-    padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
-  }))).toEqual({ shadow: 'none', padding: '9px' });
+  expect(await page.evaluate(() => {
+    const element = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]');
+    return {
+      shadow: getComputedStyle(element).boxShadow,
+      padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
+    };
+  })).toEqual({ shadow: 'none', padding: '9px' });
   expect((await bars()).map(bar => bar.opacity)).toEqual([0, 0]);
   let idleBorders;
   await expect.poll(async () => {
@@ -584,13 +587,11 @@ test('intermediate pending entry widths keep spinner and label inside the block'
   const now = Date.now();
   const item = { id: 'entry:medium', url: 'https://example.com/medium', title: 'Medium', startedAt: now - HOUR, endedAt: now - HOUR + 12 * 60_000, rowId: 'one', isEditable: true, isPending: true };
   await mount(page, { items: [item] });
-  const block = page.locator('#timeline .task[data-task-key="entry:medium"]');
   const widths = [];
   for (const duration of [5, 12, 20, 30]) {
-    await page.evaluate(({ item, duration }) => {
+    const bounds = await page.evaluate(({ item, duration }) => {
       window.__timeline.update({ items: [{ ...item, endedAt: item.startedAt + duration * 60_000 }], now: Date.now() });
-    }, { item, duration });
-    const bounds = await block.evaluate(element => {
+      const element = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:medium"]');
       const saving = element.querySelector('.clockoli-entry-saving');
       const spinner = saving.querySelector('.clockoli-entry-saving-spinner');
       const label = saving.querySelector('.clockoli-entry-saving-label');
@@ -600,7 +601,7 @@ test('intermediate pending entry widths keep spinner and label inside the block'
       return { width: task.width, iconInside: icon.left >= task.left && icon.right <= task.right,
         textInside: getComputedStyle(label).display === 'none' || text.right <= task.right,
         labelVisible: getComputedStyle(label).display !== 'none' };
-    });
+    }, { item, duration });
     widths.push(bounds.width);
     expect(bounds.iconInside, `spinner at ${bounds.width}px`).toBe(true);
     expect(bounds.textInside, `label at ${bounds.width}px`).toBe(true);
