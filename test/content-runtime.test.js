@@ -2034,8 +2034,9 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });
 
-function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
-  const messages = [], frames = [], intervals = [], confirmations = [];
+function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
+  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [];
+  const documentListeners = new Map();
   const timeouts = new Map();
   let timeoutId = 0;
   class PanelNode extends FakeNode {
@@ -2060,14 +2061,17 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     document.documentElement = document.body;
     document.querySelector = selector => selector === '.AppHeader-actions' ? actions : null;
     document.getElementById = id => document.body.walk().find(node => node.id === id) || null;
-    document.addEventListener = () => {};
+    document.addEventListener = (type, listener) => documentListeners.set(type, listener);
   }
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl),
     requestAnimationFrame: callback => frames.push(callback), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
     setTimeout: (callback, delay) => { const id = ++timeoutId; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
     confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
-    ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321' },
+    ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
+      timelineMounts.push(options);
+      return { update() {}, destroy() {} };
+    } : undefined },
   });
   vm.runInContext(recoverySource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
@@ -2091,7 +2095,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     };
   })();`, context);
   if (state && !header) context.panel.set(state, records, participants);
-  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, messages, frames, intervals, confirmations, timeouts, advance(ms) { now += ms; } };
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, messages, frames, intervals, confirmations, timelineMounts, timeouts, advance(ms) { now += ms; } };
 }
 
 test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
@@ -2485,6 +2489,27 @@ test('rejected completed and active edits restore the exact pre-enqueue optimist
   assert.equal(harness.optimisticEdit('active'), undefined);
 });
 
+test('timeline items keep saving state through optimistic edits and pending GitHub writes', async () => {
+  const now = Date.parse('2026-09-05T14:00:00Z');
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  let state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, records: [entry], now, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_EDIT') {
+      state = { ...state, pendingCount: 1, pendingWrites: [{ id: 'edit-op', status: 'pending', operation: 'editEntry' }] };
+      callback({ ok: true, data: { operationId: 'edit-op' } });
+    }
+    else callback({ ok: true, data: state });
+  } });
+  const item = () => harness.timelineItems(0, now).find(value => value.id === 'entry:entry');
+  assert.equal(item().isPending, false);
+  await harness.queueCalendarEntry(entry, { startedAt: '2026-09-05T12:05:00Z' });
+  assert.equal(item().isPending, true, 'accepted edit remains marked while its GitHub operation is outstanding');
+  harness.set({ ...state, pendingCount: 1, pendingWrites: [{ id: 'edit-op', status: 'pending', operation: 'editEntry' }] }, [{ ...entry, _pending: true }]);
+  assert.equal(item().isPending, true, 'server-projected pending state remains visible');
+  harness.applyPageState({ ...state, pendingCount: 0, pendingWrites: [], recent: [entry] });
+  assert.equal(item().isPending, false, 'confirmed save removes entry-level feedback');
+});
+
 test('a rejected replacement edit preserves an earlier accepted optimistic edit', async () => {
   const now = Date.parse('2026-09-05T14:00:00Z');
   const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
@@ -2835,29 +2860,88 @@ test('opening focuses the primary strip action after local state and closing res
   assert.equal(harness.document.activeElement, previous);
 });
 
-test('daily save status uses words, keeps diagnostics closed and conflicts visible, and retries only reads', async () => {
+test('clicking the GitHub page closes the full-width panel but clicking inside it does not', async () => {
+  const h = dailyPanelHarness({ header: true, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = h.document.panelShadow.querySelector('.trigger-main');
+  await trigger.onclick({ isTrusted: true });
+  const popup = h.document.getElementById('clockoli-full-width-popup-root');
+  assert.ok(popup);
+  h.documentListeners.get('click')({ composedPath: () => [popup, h.document.body] });
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), popup);
+  h.documentListeners.get('click')({ composedPath: () => [trigger, h.document.getElementById('clockoli-root'), h.document.body] });
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), popup, 'the launcher click must not immediately dismiss the panel');
+  const pageInput = h.document.createElement('input'); h.document.body.append(pageInput); pageInput.focus();
+  h.documentListeners.get('click')({ composedPath: () => [h.document.body] });
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+  assert.equal(h.document.activeElement, pageInput, 'clicking elsewhere must not return focus to the launcher');
+});
+
+test('daily panel shows pending operations without a visible entry but avoids duplicate entry status', async () => {
   const harness = dailyPanelHarness({ state: { configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 } });
   let menu = harness.renderMenu({ compact: true });
-  let saveStatus = menu.querySelector('.timeline-queue-spinner');
-  assert.equal(saveStatus.textContent, 'Saving…');
-  assert.equal(saveStatus.classList.contains('empty'), false);
-  assert.match(source, /\.timeline-queue-spinner \{[^}]*min-height:25px/);
-  assert.match(source, /\.timeline-queue-spinner\.empty \{ visibility:hidden \}/);
+  assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…');
   assert.equal(menu.querySelector('.queue-diagnostics').open, false);
+  harness.set({ configured: true, active: null, pendingWrites: [{ id: 'deleted', status: 'pending', operation: 'deleteEntry' }], pendingCount: 1 }, []);
+  menu = harness.renderMenu({ compact: true });
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…', 'a deleted block cannot show an entry badge');
   harness.set({ configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'conflict', conflictReason: 'completion_saved_newer_timer', stage: 'clearActive', operation: 'completeTimer' }], pendingCount: 1 }, []);
   menu = harness.renderMenu({ compact: true });
-  assert.equal(menu.querySelector('.timeline-queue-spinner').textContent, 'Your changes need review before saving');
+  assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
   assert.equal(menu.querySelector('.queue-diagnostics').open, false);
   assert.ok(menu.walk().some(node => node.textContent === 'Keep newer timer'));
   harness.set({ configured: true, active: null, pendingWrites: [], remoteWriteConfirmed: true, summaryError: { code: 'error', message: 'Read failed', recovery: 'read-retry' } }, []);
   menu = harness.renderMenu({ compact: true });
-  saveStatus = menu.querySelector('.timeline-queue-spinner');
-  assert.equal(saveStatus.textContent, 'Saved to GitHub');
-  assert.equal(saveStatus.hidden, false);
-  assert.equal(saveStatus.classList.contains('empty'), true);
-  assert.equal(saveStatus.getAttribute('aria-hidden'), 'true');
+  assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).hidden, true, 'an idle panel has no reserved status row');
   await menu.walk().find(node => node.textContent === 'Retry').onclick({ isTrusted: true });
   assert.deepEqual(harness.messages.filter(message => message.type !== 'LOAD_TASK_PARTICIPANTS').map(message => message.type), ['GET_PAGE_STATE', 'LOAD_RECENT']);
+});
+
+test('a pending entry suppresses duplicate status, but a simultaneous queued deletion keeps it visible', () => {
+  const now = Date.now();
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, _pending: true };
+  const pending = { configured: true, active: null, pendingCount: 1, pendingWrites: [{ id: 'edit', operation: 'editEntry', status: 'pending' }] };
+  const harness = dailyPanelHarness({ state: pending, records: [entry], now, timelineEnabled: true });
+  const status = () => harness.renderMenu({ compact: true }).walk().find(node => node.classList.contains('timeline-queue-status'));
+  assert.equal(status().hidden, true);
+  harness.set({ ...pending, pendingCount: 2, pendingWrites: [...pending.pendingWrites, { id: 'delete', operation: 'deleteEntry', status: 'pending' }] }, [entry]);
+  assert.equal(status().hidden, false);
+  assert.equal(status().textContent, 'Saving…');
+});
+
+test('deleting a Timeline block keeps saving feedback visible through local queue acceptance', async () => {
+  const now = Date.now();
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
+  const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
+  const pending = { ...initial, pendingCount: 1, pendingWrites: [{ id: 'queued-delete', operation: 'deleteEntry', status: 'pending' }] };
+  let current = initial;
+  let acceptDelete;
+  const harness = dailyPanelHarness({ state: initial, records: [entry], now, timelineEnabled: true, respond(message, callback) {
+    if (message.type === 'QUEUE_ENTRY_DELETE') { acceptDelete = callback; return; }
+    callback({ ok: true, data: current });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  harness.attach(menu);
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.equal(harness.timelineMounts.length, 1);
+  const status = menu.querySelector('.timeline-queue-status');
+  assert.equal(status.hidden, true);
+  const deleting = harness.timelineMounts[0].onDelete({ id: 'entry:entry' });
+  assert.equal(harness.confirmations.length, 1);
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
+  assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:entry'), false);
+  assert.equal(status.hidden, false);
+  assert.equal(status.textContent, 'Saving…');
+  current = pending;
+  acceptDelete({ ok: true, data: { operationId: 'queued-delete' } });
+  assert.equal(await deleting, true);
+  assert.equal(status.hidden, false, 'accepted deletion stays visible until the queue drains');
+  harness.applyPageState(pending);
+  assert.equal(status.hidden, false);
+  harness.applyPageState(initial);
+  assert.equal(status.hidden, true);
 });
 
 test('queue diagnostics show request timing and final end-to-end sync time', () => {

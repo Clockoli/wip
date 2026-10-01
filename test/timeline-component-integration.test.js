@@ -50,7 +50,7 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
   assert.doesNotMatch(content, /type: 'EDIT_ACTIVE_START'/);
   assert.match(content, /type: 'QUEUE_ENTRY_EDIT'/);
   assert.match(content, /type: 'QUEUE_ACTIVE_START_EDIT'/);
-  assert.match(content, /timeline-queue-spinner/);
+  assert.doesNotMatch(content, /timeline-queue-spinner/);
   assert.match(content, /describeSaveStatus/);
   assert.match(content, /edit\.kind !== 'resize-left'/);
   assert.match(content, /type: 'QUEUE_ACTIVE_START_EDIT'/);
@@ -64,7 +64,6 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.match(content, /timelineOptimisticEdits\.set\(entry\.id, edits\);\s*applyTimelineOptimisticEntry\(entry, edits\);\s*refreshMountedTimeline\(\);\s*const acceptanceId = beginTimelineQueueAcceptance\(\);/);
   assert.match(content, /isPending: Boolean\(entry\._pending \|\| optimistic\)/);
   assert.match(content, /isEditable: !entry\._active/);
-  assert.match(content, /timelineQueueIndicator\.textContent = status.label/);
   assert.doesNotMatch(content, /timeline-queue-count/);
   assert.match(content, /recordTimelineQueueDiagnostic\('Edit time entry: accepted locally and queued for GitHub\.'/);
   assert.match(content, /recent\.filter\(entry => entry\._path && \(entry\._sha \|\| entry\._pending\)/);
@@ -75,7 +74,7 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
   assert.match(content, /finishTimelineQueueAcceptance\(acceptanceId\);\s*refreshTimelineQueueIndicator\(\);\s*if \(!refreshMountedTimeline\(\)\) renderUi\(\);/);
   assert.match(content, /type: 'QUEUE_ENTRY_EDIT'/);
   assert.match(content, /timelineQueuedOperationIds\.set/);
-  assert.match(content, /timeline-queue-spinner/);
+  assert.doesNotMatch(content, /timeline-queue-spinner/);
   assert.match(content, /describeSaveStatus/);
   assert.doesNotMatch(content, /async function saveCalendarEntry/);
   assert.doesNotMatch(content, /timelineSaving = true; suppressRecentRender = true/);
@@ -85,7 +84,8 @@ test('timeline applies edits immediately and shows a non-blocking durable queue 
 test('timeline task switching is optimistic and keeps the queued completion visible', () => {
   const content = read('src/content/github.js');
 
-  assert.match(content, /isPending: Boolean\(entry\._pending\)/);
+  assert.match(content, /isPending: Boolean\(entry\._pending \|\| optimistic\)/);
+  assert.match(content, /isPending: Boolean\(entry\.isPending\)/);
   assert.match(content, /const acceptedActive = \{[\s\S]*?_pending: true/);
   assert.match(content, /function refreshMountedTimelineAtRightEdge\(startedAt\)/);
   assert.match(content, /function acceptTimelineStartImmediately[\s\S]*?pageState = \{ \.\.\.pageState, active: acceptedActive \};[\s\S]*?if \(!refreshMountedTimelineAtRightEdge\(startedAt\)\) renderUi\(\);/);
@@ -427,8 +427,6 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /timelineInstance\?\.setViewMode\(mode\)/);
   assert.match(content, /compactSurface\.today\.hidden = !list/);
   assert.doesNotMatch(content, /'Not tracking', 'strip-idle'/);
-  assert.match(content, /timelineQueueIndicator\.hidden = false/);
-  assert.match(content, /timelineQueueIndicator\.classList\.toggle\('empty', empty\)/);
   assert.match(content, /popup-timeline-track/);
   assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
   assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
@@ -442,10 +440,8 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.doesNotMatch(timeline, /STOP /);
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);
-  assert.match(content, /timeline-queue-spinner[\s\S]*?section\.append\(spinner\)/);
+  assert.doesNotMatch(content, /timeline-queue-spinner/);
   assert.match(content, /timelineInstance = createTimeline[\s\S]*?timelineInstance\.scrollToEnd\(\)/);
-  assert.match(content, /\.timeline-queue-spinner \{ min-height:25px; padding:0 0 10px/);
-  assert.match(content, /\.timeline-queue-spinner\.empty \{ visibility:hidden \}/);
   assert.doesNotMatch(content, /trailingActionGutterPx/);
   assert.doesNotMatch(content, /renderItemTrailingAction/);
 });

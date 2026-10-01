@@ -328,6 +328,29 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.description, 'Final edit');
 });
 
+test('successive accepted timeline edits survive a worker restart with the latest interval', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original };
+  const first = await tracker.queueEntryEdit({ ...request, edits: { startedAt: '2026-08-18T08:05:00.000Z', endedAt: '2026-08-18T09:05:00.000Z' } });
+  const second = await tracker.queueEntryEdit({ ...request, edits: { startedAt: '2026-08-18T08:10:00.000Z', endedAt: '2026-08-18T09:10:00.000Z' } });
+  assert.equal(second.operationId, first.operationId);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.deepEqual(store.value.pendingWrites[0].request.edits, { startedAt: '2026-08-18T08:10:00.000Z', endedAt: '2026-08-18T09:10:00.000Z' });
+  assert.equal(store.value.recentCache[0]._pending, true);
+  assert.equal(store.value.recentCache[0].startedAt, '2026-08-18T08:10:00.000Z');
+  await service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.startedAt, '2026-08-18T08:10:00.000Z');
+  assert.equal(saved.endedAt, '2026-08-18T09:10:00.000Z');
+});
+
 test('queue compaction uses the latest accepted snapshot instead of combining incompatible timestamps', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');

@@ -49,22 +49,34 @@
     .day-row, .calendar-toolbar, .calendar-sticky-header, .calendar-corner,
     .calendar-day-header { background: var(--bgColor-muted, var(--ck-bg-muted, #f6f8fa)); color: var(--tt-text); }
     .task {
+      --clockoli-task-background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel));
+      --clockoli-task-accent: color-mix(in srgb, var(--clockoli-task-background) 78%, black);
       height: 40px !important;
       border: 1px solid color-mix(in srgb, var(--clockoli-task-color, #64748b) 44%, transparent);
       border-left: 3px solid var(--clockoli-task-color, #64748b);
       border-radius: 7px !important;
-      background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel)) !important;
+      background: var(--clockoli-task-background) !important;
       color: var(--tt-text) !important;
       box-shadow: none;
     }
-    .task:hover:not(.editing), .task.hovered:not(.editing) {
-      box-shadow: 0 2px 6px color-mix(in srgb, var(--clockoli-task-color, #64748b) 25%, transparent);
-    }
+    .task:hover:not(.editing), .task.hovered:not(.editing), .task.editing { box-shadow: none; }
     .task:hover, .task.hovered:not(.selected), .task.editing { z-index: 10; }
     .task.selected { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
     .task.focused:not(.selected) { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
     .task.pending { opacity: .72; }
     .task.pending::after { display: none; }
+    .clockoli-entry-saving { position: absolute; left: 6px; top: 50%; z-index: 2; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 12px); overflow: hidden; transform: translateY(-50%); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; pointer-events: none; }
+    .task .clockoli-entry-saving { left: 14px; max-width: calc(100% - 20px); }
+    .task.clockoli-saving .task-main { padding-left: 88px; }
+    .task.clockoli-saving.clockoli-compact-saving .task-main { padding-left: 32px; }
+    .task.clockoli-compact-saving .clockoli-entry-saving { max-width: none; overflow: visible; }
+    .task.clockoli-compact-saving .clockoli-entry-saving-label { display: none; }
+    .task.clockoli-minimum-width.clockoli-compact-saving .clockoli-entry-saving { left: 50%; width: 18px; justify-content: center; transform: translate(-50%, -50%); }
+    .task.clockoli-minimum-width.clockoli-compact-saving .task-main { padding-left: 0; }
+    .calendar-task.clockoli-saving .calendar-task-name { padding-left: 80px; }
+    .clockoli-entry-saving-spinner { width: 12px; height: 12px; flex: none; border: 2px solid var(--tt-border); border-top-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); border-radius: 50%; animation: clockoli-entry-spin .8s linear infinite; }
+    @keyframes clockoli-entry-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .clockoli-entry-saving-spinner { animation: none; } }
     .task.running { border-style: dashed; }
     .task.clockoli-minimum-width .edit-clock.start { left:auto; right:calc(100% + 4px); top:50%; bottom:auto; transform:translateY(-50%); }
     .task.clockoli-minimum-width .edit-clock.end { left:calc(100% + 4px); right:auto; top:50%; bottom:auto; transform:translateY(-50%); }
@@ -72,9 +84,51 @@
     .task.clockoli-minimum-width.clockoli-end-edge .edit-clock.end { left:auto; right:0; top:-20px; bottom:auto; transform:translateX(calc(-1 * var(--clockoli-end-edge-shift, 0px))); }
     .task-main { padding-inline: 9px; }
     .task-name { overflow: hidden; text-overflow: ellipsis; }
-    .resize-handle::after { opacity: 0; }
+    .resize-handle { width: min(14px, 40%); }
+    .resize-handle::after {
+      top: 0; bottom: 0; width: 11px;
+      background-color: var(--clockoli-task-accent);
+      background-image: linear-gradient(#000, #000),
+                        linear-gradient(#000, #000);
+      background-size: 2px 16px, 2px 16px;
+      background-position: calc(50% - 2px) center, calc(50% + 2px) center;
+      background-repeat: no-repeat;
+    }
+    .resize-handle.left::after { left: 0; border-radius: 4px 0 0 4px; }
+    .resize-handle.right::after { right: 0; border-radius: 0 4px 4px 0; }
+    .calendar-task .calendar-resize-handle { left: 0; right: 0; }
+    .calendar-task .calendar-resize-handle::after {
+      left: 0; width: 100%; height: 6px;
+      transform: none;
+      background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
+      background-image: linear-gradient(var(--tt-text), var(--tt-text)),
+                        linear-gradient(var(--tt-text), var(--tt-text));
+      background-size: 16px 1px, 16px 1px;
+      background-position: center 2px, center 4px;
+      background-repeat: no-repeat;
+    }
+    .calendar-task .calendar-resize-handle.start::after { top: 0; border-radius: 6px 6px 0 0; }
+    .calendar-task .calendar-resize-handle.end::after { bottom: 0; border-radius: 0 0 6px 6px; }
+    .task.editing.resize-left .resize-handle.left::after,
+    .task.editing.resize-right .resize-handle.right::after {
+      background-color: var(--clockoli-task-accent);
+      background-image: linear-gradient(#000, #000), linear-gradient(#000, #000);
+      box-shadow: none;
+    }
+    .calendar-task.editing.resize-left .calendar-resize-handle.start::after,
+    .calendar-task.editing.resize-right .calendar-resize-handle.end::after {
+      background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
+      box-shadow: none;
+    }
+    .calendar-task.editing.resize-left .calendar-resize-handle.start::after,
+    .calendar-task.editing.resize-right .calendar-resize-handle.end::after { height: 6px; }
     .task:hover .resize-handle::after, .task.hovered .resize-handle::after,
-    .task.editing .resize-handle::after { opacity: 0; }
+    .task.selected .resize-handle::after, .task.focused .resize-handle::after,
+    .task.editing .resize-handle::after { opacity: 1; transform: none; }
+    .calendar-task:hover .calendar-resize-handle::after,
+    .calendar-task.editing .calendar-resize-handle::after,
+    .calendar-task.selected .calendar-resize-handle::after,
+    .calendar-task.focused .calendar-resize-handle::after { opacity: 1; transform: none; }
     .connector-dot { background: var(--tt-text); box-shadow: 0 0 0 1px var(--tt-panel); }
     .row-label { color: var(--tt-muted); background: color-mix(in srgb, var(--tt-panel) 88%, transparent); }
     .calendar-task {
@@ -141,6 +195,9 @@
     let props = { ...initialProps };
     let destroyed = false;
     const expectedRejections = new Map();
+    const savingKeys = new Set();
+    const pendingEdits = new Map();
+    const editStates = new Map();
 
     let originalItems = new Map();
     let styleObserver = null;
@@ -251,6 +308,52 @@
       return finish(result);
     }
 
+    function editHistoryIndex(event) {
+      return timeline.undoStack.findLastIndex(entry => entry.action === event.action
+        && entry.afterTask?.instanceId === event.instanceId
+        && entry.afterTask?.start === event.after.start && entry.afterTask?.end === event.after.end);
+    }
+
+    function rejectEdit(state) {
+      const { event } = state;
+      state.rejected = true;
+      const states = editStates.get(String(event.instanceId)) || [];
+      if (state.historyEntry) {
+        const destination = event.action === 'undo' ? timeline.redoStack : timeline.undoStack;
+        const source = event.action === 'undo' ? timeline.undoStack : timeline.redoStack;
+        if (destination.at(-1) === state.historyEntry) {
+          destination.pop();
+          source.push(state.historyEntry);
+          timeline._updateHistoryButtons();
+        }
+      } else {
+        const historyIndex = editHistoryIndex(event);
+        if (historyIndex !== -1) timeline.undoStack.splice(historyIndex, 1);
+        timeline._updateHistoryButtons();
+      }
+      // A later edit may already have been accepted or may still be saving.
+      // Bridge its undo/rollback baseline across this rejected interval.
+      const next = states[states.indexOf(state) + 1];
+      if (next && next.event.before.start === event.after.start && next.event.before.end === event.after.end) {
+        next.rollbackBefore = state.rollbackBefore;
+        const nextHistoryIndex = editHistoryIndex(next.event);
+        const history = timeline.undoStack[nextHistoryIndex];
+        if (history) {
+          Object.assign(history.beforeTask, { start: state.rollbackBefore.start, end: state.rollbackBefore.end });
+          const prior = history.beforeState.tasks.find(task => task.instanceId === event.instanceId);
+          if (prior) Object.assign(prior, { start: state.rollbackBefore.start, end: state.rollbackBefore.end });
+        }
+      }
+      const task = timeline._findTask(event.instanceId);
+      if (!states.slice(states.indexOf(state) + 1).every(later => later.rejected)
+        || !task || task.start !== event.after.start || task.end !== event.after.end) return;
+      task.start = state.rollbackBefore.start;
+      task.end = state.rollbackBefore.end;
+      timeline.tasks.sort((left, right) => left.start - right.start || left.end - right.end);
+      timeline._renderAll();
+      styleTasks();
+    }
+
     const now = Number(initialProps.now) || Date.now();
     const initialMapping = mapItems(initialProps.items, now);
     const tasks = initialMapping.mapped;
@@ -301,13 +404,39 @@
         const item = callbackItem(task);
         if (!item || typeof props.onEditCommit !== 'function') return false;
         const kind = event.action === 'resize-start' ? 'resize-left' : event.action === 'resize-end' ? 'resize-right' : 'move';
-        const result = props.onEditCommit({
+        const edit = {
           id: String(event.instanceId),
           startedAt: event.after?.start,
           endedAt: event.after?.end,
           kind,
-        });
-        return retainExternalState(result);
+        };
+        savingKeys.add(edit.id);
+        pendingEdits.set(edit.id, (pendingEdits.get(edit.id) || 0) + 1);
+        const states = editStates.get(edit.id) || [];
+        const historyEntry = event.action === 'undo' ? timeline.undoStack.at(-1)
+          : event.action === 'redo' ? timeline.redoStack.at(-1) : null;
+        const state = { event, rollbackBefore: event.before, rejected: false, historyEntry };
+        states.push(state);
+        editStates.set(edit.id, states);
+        styleTasks();
+        void Promise.resolve().then(() => props.onEditCommit(edit))
+          .then(value => {
+            if (value === false) throw new Error('edit callback rejected operation');
+          })
+          .catch(error => {
+            if (!destroyed) rejectEdit(state);
+            props.onError?.(error, { action: 'edit', source: 'clockoli-adapter' });
+          })
+          .finally(() => {
+            const remaining = (pendingEdits.get(edit.id) || 1) - 1;
+            if (!remaining) {
+              pendingEdits.delete(edit.id);
+              savingKeys.delete(edit.id);
+              editStates.delete(edit.id);
+            } else pendingEdits.set(edit.id, remaining);
+            if (!destroyed) styleTasks();
+          });
+        return true;
       },
       onSelect() { queueMicrotask(renderActions); },
       onError(error, info) {
@@ -351,6 +480,26 @@
     function styleTasks() {
       if (destroyed) return;
       for (const element of timeline.shadow.querySelectorAll('.task[data-task-key], .calendar-task[data-task-key]')) {
+        const saving = savingKeys.has(element.dataset.taskKey) || Boolean(sourceItem(element.dataset.taskKey)?.isPending);
+        element.classList.toggle('clockoli-saving', saving);
+        if (saving) element.setAttribute('aria-busy', 'true');
+        else element.removeAttribute('aria-busy');
+        const indicator = element.querySelector('.clockoli-entry-saving');
+        if (saving && !indicator) {
+          const overlay = document.createElement('span');
+          overlay.className = 'clockoli-entry-saving';
+          const spinner = document.createElement('span');
+          spinner.className = 'clockoli-entry-saving-spinner';
+          spinner.setAttribute('aria-hidden', 'true');
+          const label = document.createElement('span');
+          label.className = 'clockoli-entry-saving-label';
+          label.textContent = 'Saving…';
+          overlay.append(spinner, label);
+          element.append(overlay);
+        } else if (!saving) indicator?.remove();
+        const label = element.getAttribute('aria-label') || '';
+        if (saving && !label.endsWith(' · Saving…')) element.setAttribute('aria-label', `${label} · Saving…`);
+        else if (!saving && label.endsWith(' · Saving…')) element.setAttribute('aria-label', label.slice(0, -' · Saving…'.length));
         const item = sourceItem(element.dataset.taskKey);
         element.style.setProperty('--clockoli-task-color', resolveColor(item || { id: element.dataset.taskKey }));
         if (element.classList.contains('task')) {
@@ -360,6 +509,7 @@
           const displayWidth = timeline._findTask?.(element.dataset.taskKey)?.displayWidth ?? task.width;
           const minimum = displayWidth <= MINIMUM_ITEM_WIDTH + 1;
           element.classList.toggle('clockoli-minimum-width', minimum);
+          element.classList.toggle('clockoli-compact-saving', saving && task.width < 110);
           if (minimum) {
             const start = element.querySelector('.edit-clock.start');
             const end = element.querySelector('.edit-clock.end');
