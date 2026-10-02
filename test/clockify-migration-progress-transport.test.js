@@ -19,7 +19,7 @@ test('Clockify migration progress uses a preview-only Port rather than a runtime
 });
 
 test('Clockify capture control messages bypass unrelated serialized work', () => {
-  assert.match(worker, /const direct = readOnly \|\| DIRECT_DEVICE_FLOW_MESSAGES\.has\(message\?\.type\)[^;]*\|\| \['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT'\]\.includes\(message\?\.type\)/);
+  assert.match(worker, /const direct = readOnly \|\| DIRECT_DEVICE_FLOW_MESSAGES\.has\(message\?\.type\)[^;]*\|\| \['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'\]\.includes\(message\?\.type\)/);
 });
 
 test('CSV and final DOM report pages enter the same annual history-to-preview pipeline after validating annual data', () => {

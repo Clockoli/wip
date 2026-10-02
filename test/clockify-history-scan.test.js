@@ -45,6 +45,39 @@ test('persists the selected capture transport across a service-worker restart', 
   assert.equal((await restarted.status()).transport, 'report');
 });
 
+test('counts email-only CSV offers for the active annual range across worker restarts and resets for the next year', async () => {
+  const storage = sessionStorage();
+  const create = () => createClockifyHistoryScanService({ storageSession: storage, currentYear: () => CURRENT_YEAR, earliestYear: 2025 });
+  const scan = create();
+  await scan.start('csv');
+  await scan.observeYear(2026, 1);
+  await scan.observeYear(2025, 1);
+  assert.equal(await scan.recordCsvEmailOffer(2026), 1);
+  assert.equal(await create().recordCsvEmailOffer(2026), 2);
+  assert.equal(await create().recordCsvEmailOffer(2026), 3);
+  await assert.rejects(() => create().recordCsvEmailOffer(2025), /expected.*year/i);
+  await scan.append(2026, report([entry('current')]));
+  assert.equal(await create().recordCsvEmailOffer(2025), 1);
+  await scan.reset();
+  await assert.rejects(() => create().recordCsvEmailOffer(2025), /expected.*year|unavailable/i);
+});
+
+test('email-only CSV offers cannot count during discovery, page capture, or beyond three attempts', async () => {
+  const storage = sessionStorage();
+  const scan = createClockifyHistoryScanService({ storageSession: storage, currentYear: () => CURRENT_YEAR, earliestYear: 2026 });
+  await scan.start('csv');
+  await assert.rejects(() => scan.recordCsvEmailOffer(2026), /capturing/i);
+  await scan.observeYear(2026, 1);
+  await scan.recordCsvEmailOffer(2026);
+  await scan.recordCsvEmailOffer(2026);
+  await scan.recordCsvEmailOffer(2026);
+  await assert.rejects(() => scan.recordCsvEmailOffer(2026), /limit/i);
+  await scan.reset();
+  await scan.start('report');
+  await scan.observeYear(2026, 1);
+  await assert.rejects(() => scan.recordCsvEmailOffer(2026), /CSV/i);
+});
+
 test('discovers contiguous Clockify history before capture and exposes a determinate annual plan', async () => {
   const storage = sessionStorage();
   const scan = createClockifyHistoryScanService({ storageSession: storage, currentYear: () => CURRENT_YEAR, earliestYear: 2024 });

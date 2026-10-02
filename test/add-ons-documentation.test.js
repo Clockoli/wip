@@ -41,12 +41,15 @@ test('first-party packaged add-ons have a constrained, user-disclosed contract',
   assert.match(addOns, /temporary, privileged extension IndexedDB storage/i);
   assert.match(addOns, /not constrained by `chrome\.storage\.session`’s quota/i);
   assert.match(addOns, /content scripts do not access extension storage/i);
-  assert.match(addOns, /Manually map the Clockify person.*explicitly \*\*Skip this person\*\* for everyone else/i);
+  assert.match(addOns, /For each person you want to import, select a GitHub account or enter its login/i);
+  assert.match(addOns, /Repository membership is only a suggestion, not a requirement/i);
+  assert.match(addOns, /\*\*Skip this person\*\* selected for anyone you do not want to import/i);
+  assert.match(addOns, /invitations require a separate explicit confirmation and are never sent automatically/i);
   assert.match(addOns, /\*\*CSV migration\*\*.*\*\*Page to page migration\*\*/i);
   assert.match(addOns, /non-navigable `owner\/project\/task-slug` identity/i);
 
-  assert.match(addOns, /branch already configured for the signed-in Clockoli user/i);
-  assert.match(addOns, /never creates or switches to an additional branch/i);
+  assert.match(addOns, /isolated `clockoli\/users\/<GitHub ID>` branch, with ownership metadata checked before writing/i);
+  assert.match(addOns, /configured user's records remain in their configured writer branch/i);
 
   assert.match(readme, /docs\/add-ons\.md/);
   assert.match(documentationIndex, /add-ons\.md/i);

@@ -33,6 +33,7 @@
   let armedAt = 0;
   let csvCaptured = false;
   let csvCaptureRequested = false;
+  let csvRetryAwaitingReport = false;
   let aggregate = null;
   let receiverReady = false;
   let pendingCapture = null;
@@ -242,6 +243,20 @@
 
   function observeResponse(url, text, requestStartedAt = null) {
     if (armed && reportEndpoint(url)) {
+      if (captureMode === 'csv') {
+        if (!csvRetryAwaitingReport || !Number.isInteger(expectedYear)) return;
+        const startedAfterArm = Number.isFinite(requestStartedAt) && requestStartedAt >= armedAt;
+        if (!startedAfterArm && !reportStartedAfterArm(url)) return;
+        const sanitized = sanitizeText(text);
+        if (!sanitized) return;
+        if (!reportMatchesExpectedYear(sanitized.output)) {
+          progress('report_year_mismatch');
+          return;
+        }
+        csvRetryAwaitingReport = false;
+        progress('csv_report_ready');
+        return;
+      }
       const taskId = reportTaskId(url);
       if (captureMode === 'discover' && taskId !== null && expectedReportTaskId !== null && taskId !== expectedReportTaskId) {
         progress('report_task_mismatch');
@@ -298,6 +313,7 @@
     armedAt = typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : 0;
     csvCaptured = false;
     csvCaptureRequested = false;
+    csvRetryAwaitingReport = mode === 'csv' && (event?.detail?.retry === 1 || event?.detail?.retry === 2);
     aggregate = null;
     pendingCapture = null;
     installInterceptors();
@@ -329,6 +345,7 @@
   function stopCapture() {
     armed = false;
     csvCaptureRequested = false;
+    csvRetryAwaitingReport = false;
     expectedYear = null;
     expectedReportTaskId = null;
     aggregate = null;
@@ -353,6 +370,8 @@
     if (!Number.isInteger(year) || year < 2016 || year > 9999) return;
     const mode = event?.detail?.mode;
     if (!['discover', 'csv', 'report'].includes(mode)) return;
+    const retry = event?.detail?.retry ?? 0;
+    if (!Number.isInteger(retry) || retry < 0 || retry > 2 || (retry && mode !== 'csv')) return;
     const url = new URL(location.href);
     if (url.protocol !== 'https:' || url.hostname !== 'app.clockify.me'
         || url.pathname.replace(/\/+$/, '') !== '/reports/detailed') return;
@@ -363,7 +382,7 @@
     // Switching the DOM fallback to 200 rows changes the already-discovered
     // annual URL, which makes Clockify request the first report page instead
     // of treating the same route as a no-op.
-    url.searchParams.set('pageSize', mode === 'report' ? '200' : '199');
+    url.searchParams.set('pageSize', mode === 'report' || retry === 1 ? '200' : '199');
     history.pushState({}, '', url.href);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }

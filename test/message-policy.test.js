@@ -9,6 +9,28 @@ const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id:
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 
+test('email-only CSV response is accepted only from the armed Clockify report tab and uses its URL year', async () => {
+  const clockify = { url: 'https://app.clockify.me/reports/detailed', tab: { id: 5 } };
+  assert.equal(assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', clockify, origin), 'clockify');
+  for (const sender of [extension, content, { url: 'https://app.clockify.me/other', tab: { id: 5 } }]) {
+    assert.throws(() => assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', sender, origin), /not allowed/i);
+  }
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const seen = [];
+  const context = vm.createContext({
+    assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin }, tabs: { get: async () => ({ url: 'https://app.clockify.me/reports/detailed?start=2026-01-01T00:00:00.000Z&end=2026-12-31T23:59:59.999Z' }) } },
+    clockifyDetailedReportYear: () => 2026,
+    clockifyCaptureArm: { isArmed: async tab => tab === 5, disarm: async tab => seen.push(['disarm', tab]) },
+    clockifyHistoryScan: { recordCsvEmailOffer: async year => { seen.push(['offer', year]); return 3; }, reset: async () => seen.push(['reset']) },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER', year: 2025 }, clockify), /payload/i);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, { ...clockify, tab: { id: 6 } }), /armed/i);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, clockify))), { attempts: 3, cancelled: true });
+  assert.deepEqual(seen, [['offer', 2026], ['disarm', 5], ['reset']]);
+});
+
 test('invoice number reservation is extension-only and the dispatcher ignores payloads', async () => {
   assert.equal(assertMessageAllowed('RESERVE_INVOICE_NUMBER', extension, origin), 'extension');
   assert.throws(() => assertMessageAllowed('RESERVE_INVOICE_NUMBER', content, origin), /not allowed/i);

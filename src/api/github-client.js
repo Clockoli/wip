@@ -331,6 +331,36 @@ export class GitHubClient {
     })), hasMore: collaborators.length > 4 };
   }
 
+  async listRepositoryCollaboratorProfiles() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborator suggestions');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    // A full first page might have a next page; never present a partial list as complete.
+    if (!Array.isArray(collaborators) || collaborators.length >= 100) {
+      throw new GitHubApiError('GitHub returned incomplete or invalid collaborator suggestions.', 502, 'invalid_github_response');
+    }
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    const profiles = await mapBounded(collaborators, 6, async collaborator => {
+      const profile = await this.request(`/users/${encodeURIComponent(collaborator.login)}`);
+      if (profile?.id !== collaborator.id || !validGitHubLogin(profile.login)
+          || profile.login.toLowerCase() !== collaborator.login.toLowerCase()
+          || !Object.hasOwn(profile, 'name') || (profile.name !== null && typeof profile.name !== 'string')) {
+        throw new GitHubApiError('GitHub returned an invalid collaborator profile.', 502, 'invalid_github_response');
+      }
+      return {
+        id: profile.id, login: profile.login, name: profile.name?.trim() || null,
+        avatarUrl: githubAvatarUrl(profile.avatar_url, profile.id),
+      };
+    });
+    return profiles.sort((left, right) => left.login.localeCompare(right.login, undefined, { sensitivity: 'accent' }));
+  }
+
   async listRepositoryPendingInvitations() {
     if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for invitations');
     const users = [], ids = new Set(), logins = new Set();

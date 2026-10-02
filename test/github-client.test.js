@@ -40,6 +40,84 @@ test('repository collaborator previews use verified identities and safe avatar U
   }
 });
 
+test('repository collaborator profiles include every first-page account with verified public names and safe avatars', async () => {
+  const calls = [];
+  const accounts = Array.from({ length: 12 }, (_, index) => ({
+    id: index + 1, login: `user${String(12 - index).padStart(2, '0')}`,
+    avatar_url: 'https://evil.example/untrusted-list-avatar',
+  }));
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url => {
+    const path = new URL(url).pathname + new URL(url).search;
+    calls.push(path);
+    if (path === '/repos/acme/time-data/collaborators?per_page=100') return response(200, accounts);
+    const account = accounts.find(user => path === `/users/${user.login}`);
+    assert.ok(account, `Unexpected request ${path}`);
+    return response(200, {
+      id: account.id, login: account.login.toUpperCase(),
+      name: account.id === 1 ? null : `Public name ${account.id}`,
+      avatar_url: account.id === 2 ? 'https://evil.example/u/2' : `https://avatars.githubusercontent.com/u/${account.id}?size=60`,
+    });
+  } });
+  const profiles = await client.listRepositoryCollaboratorProfiles();
+  assert.equal(profiles.length, 12, 'not truncated to the four-person avatar preview');
+  assert.deepEqual(profiles[0], { id: 12, login: 'USER01', name: 'Public name 12', avatarUrl: 'https://avatars.githubusercontent.com/u/12?v=4' });
+  assert.deepEqual(profiles.find(user => user.id === 1), { id: 1, login: 'USER12', name: null, avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' });
+  assert.equal(profiles.find(user => user.id === 2).avatarUrl, null);
+  assert.deepEqual(profiles.map(user => user.login), [...profiles.map(user => user.login)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'accent' })));
+  assert.equal(calls.length, 13);
+});
+
+test('repository collaborator profiles reject incomplete or malformed lists without requesting profiles', async () => {
+  for (const list of [null, [{ login: 'alice' }], [{ id: 1, login: 'alice' }, { id: 1, login: 'bob' }],
+    [{ id: 1, login: 'alice' }, { id: 2, login: 'ALICE' }],
+    Array.from({ length: 100 }, (_, index) => ({ id: index + 1, login: `user${index}` }))]) {
+    let calls = 0;
+    const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async () => {
+      calls += 1;
+      return response(200, list);
+    } });
+    await assert.rejects(() => client.listRepositoryCollaboratorProfiles(), error => error.code === 'invalid_github_response' && error.status === 502);
+    assert.equal(calls, 1);
+  }
+  const unconfigured = new GitHubClient({ token: 'secret' });
+  await assert.rejects(() => unconfigured.listRepositoryCollaboratorProfiles(), /repository is required/i);
+});
+
+test('repository collaborator profiles reject mismatched or malformed profile identities and names', async () => {
+  for (const profile of [
+    { id: 9, login: 'alice', name: 'Wrong id' },
+    { id: 1, login: 'bob', name: 'Wrong login' },
+    { id: 1, login: 'alice', name: 42 },
+    { id: 1, login: 'alice' },
+  ]) {
+    const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url => response(200,
+      url.includes('/collaborators?') ? [{ id: 1, login: 'alice' }] : profile) });
+    await assert.rejects(() => client.listRepositoryCollaboratorProfiles(), error => error.code === 'invalid_github_response' && error.status === 502);
+  }
+});
+
+test('repository collaborator profile lookups are concurrency-bounded and propagate GitHub failures', async () => {
+  let active = 0, peak = 0;
+  const list = Array.from({ length: 24 }, (_, index) => ({ id: index + 1, login: `user${index + 1}` }));
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url => {
+    if (url.includes('/collaborators?')) return response(200, list);
+    const login = new URL(url).pathname.split('/').at(-1);
+    const item = list.find(user => user.login === login);
+    active += 1; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    active -= 1;
+    return response(200, { ...item, name: '', avatar_url: `https://avatars.githubusercontent.com/u/${item.id + 1}` });
+  } });
+  const profiles = await client.listRepositoryCollaboratorProfiles();
+  assert.ok(peak > 1 && peak <= 6, `expected bounded parallel hydration, got ${peak}`);
+  assert.equal(profiles.length, 24);
+  assert.ok(profiles.every(user => user.name === null && user.avatarUrl === null));
+
+  const forbidden = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url =>
+    url.includes('/collaborators?') ? response(200, [{ id: 1, login: 'alice' }]) : response(403, { message: 'Forbidden' }) });
+  await assert.rejects(() => forbidden.listRepositoryCollaboratorProfiles(), GitHubPermissionError);
+});
+
 test('repository pending invitations expose only bounded verified account avatars', async () => {
   const requests = [];
   const client = new GitHubClient({ token: 'synthetic', owner: 'acme', repo: 'time-data', fetchImpl: async url => {

@@ -1,6 +1,8 @@
 import { resolveClockifyUserMappings } from './clockify-identity-mapping.js';
 import { importClockifyCompletedRecords } from './clockify-record-import.js';
 import { validateClockifyUserMapping } from '../addons/clockify/user-mapping.js';
+import { ensureUserStorageBranch, parseUserBranchMetadata, userStorageBranch, USER_METADATA_PATH } from './user-storage-branch.js';
+import { parseTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 
 const RESOLUTION_FAILURE_MESSAGE = 'Could not resolve all mapped GitHub users.';
 const IMPORT_STATUSES = new Set(['imported', 'already_present', 'conflict', 'failed']);
@@ -11,6 +13,8 @@ const IMPORT_FAILURE_REASONS = new Set([
   'github_write_rate_limited', 'github_write_authentication', 'github_write_permission',
   'github_write_target_missing', 'github_write_rejected', 'github_write_failed',
   'overlapping_intervals', 'record_write_failed',
+  'storage_branch_unavailable', 'github_rate_limited', 'github_authentication', 'github_permission',
+  'repository_or_branch_not_found',
 ]);
 
 function fail(message) { throw new Error(`Invalid Clockify organization import: ${message}`); }
@@ -184,13 +188,39 @@ function sameGithubUser(left, right) {
   return left.id === right.id && left.login.toLowerCase() === right.login.toLowerCase();
 }
 
+function branchFailure(error) {
+  if (error?.code === 'github_rate_limited' || error?.code === 'rate_limit' || error?.status === 429) return 'github_rate_limited';
+  if (error?.status === 401) return 'github_authentication';
+  if (error?.status === 403) return 'github_permission';
+  if (error?.status === 404) return 'repository_or_branch_not_found';
+  return 'storage_branch_incomplete';
+}
+
+async function verifiedBranch(github, user) {
+  const branch = userStorageBranch(user.id);
+  const target = github.forBranch(branch, 'custom');
+  // A branch-scoped client must retain the exact configured repository identity.
+  // Do not trust a collaborator's returned branch or silently fall back to the
+  // configured writer branch when another user's branch cannot be read.
+  if (target?.branch !== branch || target.owner !== github.owner || target.repo !== github.repo
+      || target.expectedRepositoryId !== github.expectedRepositoryId
+      || typeof target.assertDestinationReachable !== 'function' || typeof target.getText !== 'function') {
+    throw new Error('Clockoli storage branch client does not match its repository and user');
+  }
+  await target.assertDestinationReachable();
+  const metadata = parseUserBranchMetadata((await target.getText(USER_METADATA_PATH)).text);
+  if (!sameGithubUser(metadata, user)) throw new Error('Clockoli storage branch belongs to another user');
+  parseTaskIndex((await target.getText(TASK_INDEX_PATH)).text, { user: metadata.login });
+  return target;
+}
+
 /**
- * Import Clockify records only into the branch currently configured for the
- * signed-in Clockoli user. Clockify has no Git branch model; migration must
- * never create a second storage branch or write another user into this branch.
+ * Import each explicitly mapped person into their verified personal branch.
+ * Missing personal branches are initialized in the configured repository; a
+ * branch with invalid ownership metadata is never claimed or overwritten.
  */
 export async function importClockifyOrganization({ sourceUsers, entries, mappings, github, destinationUser,
-  resolveMappings = resolveClockifyUserMappings, importRecords = importClockifyCompletedRecords, onProgress,
+  sourceBranch, resolveMappings = resolveClockifyUserMappings, importRecords = importClockifyCompletedRecords, onProgress,
   now = () => performance.now() } = {}) {
   const startedAt = now();
   const elapsed = () => Math.max(0, Math.round(now() - startedAt));
@@ -210,36 +240,49 @@ export async function importClockifyOrganization({ sourceUsers, entries, mapping
   emitProgress(onProgress, 'resolving_identities', sourceUserTotal, sourceUserTotal, elapsed());
 
   const selectedMappings = verifiedMappings.filter(mapping => !mapping.skipped);
-  if (selectedMappings.some(mapping => !sameGithubUser(mapping.githubUser, destinationUser))) {
-    throw new Error('Clockify migration can import only entries mapped to the configured Clockoli user.');
-  }
-  if (selectedMappings.length > 1) {
-    throw new Error('Clockify migration requires at most one source user for the configured Clockoli user.');
-  }
-  const mapping = selectedMappings[0];
-  emitProgress(onProgress, 'preparing_storage', mapping ? 0 : 1, 1, elapsed());
-  emitProgress(onProgress, 'preparing_storage', 1, 1, elapsed());
-  if (!mapping) {
+  const total = selectedMappings.length;
+  if (!total) {
+    emitProgress(onProgress, 'preparing_storage', 1, 1, elapsed());
     emitProgress(onProgress, 'writing_records', 0, 0, elapsed());
     emitProgress(onProgress, 'completed', 0, 0, elapsed());
     return [];
   }
-
-  const selectedEntries = normalizedEntries.filter(entry => entry.userId === mapping.sourceUserId);
-  emitProgress(onProgress, 'writing_records', 0, 1, elapsed());
-  let imported;
-  try {
-    const request = { github, githubUser: { ...destinationUser }, entries: selectedEntries };
-    if (importRecords === importClockifyCompletedRecords) {
-      request.onProfile = profile => emitProgress(onProgress,
-        profile.stage === 'records_written' ? 'writing_records' : profile.stage,
-        0, 1, profile.elapsedMs);
-    }
-    imported = await importRecords(request);
+  if (!Number.isSafeInteger(github?.expectedRepositoryId) || github.expectedRepositoryId <= 0
+      || typeof github.owner !== 'string' || !github.owner || typeof github.repo !== 'string' || !github.repo
+      || github.branch !== userStorageBranch(destinationUser.id) || typeof github.forBranch !== 'function') {
+    throw new Error('The configured Clockoli repository and personal branch must be verified before importing.');
   }
-  catch { imported = { status: 'failed' }; }
-  const outcomes = [safeOutcome(mapping, imported)];
-  emitProgress(onProgress, 'writing_records', 1, 1, elapsed());
-  emitProgress(onProgress, 'completed', 1, 1, elapsed());
+  const outcomes = [];
+  emitProgress(onProgress, 'preparing_storage', 0, total, elapsed());
+  emitProgress(onProgress, 'writing_records', 0, total, elapsed());
+  for (const mapping of selectedMappings) {
+    let imported;
+    try {
+      let target;
+      try { target = await verifiedBranch(github, mapping.githubUser); }
+      catch (error) {
+        if (error?.status !== 404 || sameGithubUser(mapping.githubUser, destinationUser)
+            || typeof github.ensureBranchWithTexts !== 'function') throw error;
+        await ensureUserStorageBranch(github, mapping.githubUser, sourceBranch);
+        target = await verifiedBranch(github, mapping.githubUser);
+      }
+      emitProgress(onProgress, 'preparing_storage', outcomes.length + 1, total, elapsed());
+      const selectedEntries = normalizedEntries.filter(entry => entry.userId === mapping.sourceUserId);
+      const request = { github: target, githubUser: { ...mapping.githubUser }, entries: selectedEntries };
+      if (importRecords === importClockifyCompletedRecords) {
+        request.onProfile = profile => emitProgress(onProgress,
+          profile.stage === 'records_written' ? 'writing_records' : profile.stage,
+          outcomes.length, total, profile.elapsedMs);
+      }
+      try { imported = await importRecords(request); }
+      catch { imported = { status: 'failed', failureReason: 'record_write_failed' }; }
+    } catch (error) {
+      imported = { status: 'failed', failureReason: branchFailure(error) };
+      emitProgress(onProgress, 'preparing_storage', outcomes.length + 1, total, elapsed());
+    }
+    outcomes.push(safeOutcome(mapping, imported));
+    emitProgress(onProgress, 'writing_records', outcomes.length, total, elapsed());
+  }
+  emitProgress(onProgress, 'completed', total, total, elapsed());
   return outcomes;
 }

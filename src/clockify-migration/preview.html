@@ -26,7 +26,7 @@
     <div class="card-heading">
       <div>
         <h1 id="preview-title">Review Clockify migration</h1>
-        <p>Review the people in the currently open Clockify report, then manually assign every person to a GitHub login.</p>
+        <p>Review people in the current Clockify report. Skip anyone you do not want to import and map each selected person to a GitHub login.</p>
       </div>
     </div>
     <div id="message" class="card-header-message" role="alert" aria-live="assertive" hidden></div>
@@ -41,8 +41,7 @@
         <form id="mapping-form" novalidate>
           <fieldset>
             <legend>Manual GitHub account mapping</legend>
-            <p class="help">GitHub logins for people with access to this Clockoli repository are suggested as you type. Choose and confirm each mapping manually, or explicitly skip a person who should not be imported. Each GitHub login can be used only once.</p>
-            <datalist id="github-login-suggestions"></datalist>
+            <p class="help">Repository users appear when a login field is empty. Type at least two characters to search GitHub by login across all users, or enter a valid login manually. Confirm each mapping, or explicitly skip a person who should not be imported. Each GitHub login can be used only once.</p>
             <div id="source-users"></div>
           </fieldset>
           <label class="confirmation"><input id="confirmation" type="checkbox" required> I confirm that every GitHub login is correct and authorize this migration.</label>
@@ -63,6 +62,7 @@
           <p id="progress-summary"></p>
         </section>
         <ul id="outcomes" class="outcomes" aria-live="polite" hidden></ul>
+        <section id="migration-invitations" class="migration-invitations" aria-live="polite" hidden></section>
       </section>
     </div>
   </section>

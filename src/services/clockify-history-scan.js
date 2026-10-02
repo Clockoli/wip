@@ -4,6 +4,7 @@ const SCAN_KEY = 'clockify-migration-history-scan';
 const SCAN_VERSION = 6;
 const SCAN_TTL_MS = 30 * 60 * 1000;
 const SHARD_KEY_PREFIX = 'clockify-migration-history-scan-year:';
+const CSV_EMAIL_KEY_PREFIX = 'clockify-migration-csv-email-offers:';
 // Clockify launched in 2016. This is only a final safety floor when no
 // populated annual report establishes an earlier stopping boundary.
 const DEFAULT_EARLIEST_YEAR = 2016;
@@ -27,6 +28,7 @@ function validTransport(value) {
   return value;
 }
 function shardKey(sessionId, year) { return `${SHARD_KEY_PREFIX}${sessionId}:${year}`; }
+function csvEmailKey(sessionId) { return `${CSV_EMAIL_KEY_PREFIX}${sessionId}`; }
 
 function aggregate(shards) {
   const entries = new Map();
@@ -106,6 +108,7 @@ export function createClockifyHistoryScanService({
   const discard = async stored => {
     const keys = [SCAN_KEY];
     if (stored?.sessionId && Array.isArray(stored.yearsWithEntries)) {
+      if (validSessionId(stored.sessionId)) keys.push(csvEmailKey(stored.sessionId));
       for (const year of stored.yearsWithEntries) keys.push(shardKey(stored.sessionId, year));
     }
     try { await Promise.all(keys.map(key => storageSession.remove(key))); } catch { /* fail closed */ }
@@ -131,7 +134,27 @@ export function createClockifyHistoryScanService({
   });
 
   return Object.freeze({
-    reset() { return exclusive(discard); },
+    reset() { return exclusive(async () => discard(await storageSession.get(SCAN_KEY))); },
+    recordCsvEmailOffer(year) {
+      return exclusive(async () => {
+        const current = validNow(now);
+        const stored = await load(current);
+        const requestedYear = validYear(year, earliestYear);
+        if (!stored || stored.phase !== 'capturing' || stored.nextYear !== requestedYear) fail(`expected capturing year ${stored?.nextYear ?? 'none'}`);
+        if (stored.transport !== 'csv') fail('CSV email offer requires CSV capture');
+        const key = csvEmailKey(stored.sessionId);
+        const previous = await storageSession.get(key);
+        if (previous !== undefined && previous !== null
+            && (!previous || typeof previous !== 'object' || Array.isArray(previous)
+              || Object.getPrototypeOf(previous) !== Object.prototype || Object.keys(previous).length !== 2
+              || !Number.isInteger(previous.year) || previous.year < earliestYear || previous.year > stored.currentYear
+              || !Number.isInteger(previous.count) || previous.count < 1 || previous.count > 3)) fail('stored CSV email attempt count is malformed');
+        const count = previous?.year === requestedYear ? previous.count : 0;
+        if (count >= 3) fail('CSV email retry limit reached');
+        await storageSession.set(key, { year: requestedYear, count: count + 1 });
+        return count + 1;
+      });
+    },
     start(transport = 'csv') {
       return exclusive(async () => {
         const current = validNow(now);

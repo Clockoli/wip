@@ -37,30 +37,124 @@ function dependencies({ resolved = [
 }
 
 test('imports the selected Clockify user into the already configured Clockoli writer branch', async () => {
-  const github = { branch: 'clockoli/users/42' };
+  const { github } = verifiedGithub();
   const deps = dependencies();
   const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github, destinationUser, ...deps });
 
   assert.equal(deps.calls.resolve, 1);
-  assert.deepEqual(deps.calls.imports, [{
-    github,
-    githubUser: destinationUser,
-    entries: entries.slice(0, 2),
-  }]);
+  assert.equal(deps.calls.imports.length, 1);
+  assert.equal(deps.calls.imports[0].github.branch, 'clockoli/users/42');
+  assert.deepEqual(deps.calls.imports[0].githubUser, destinationUser);
+  assert.deepEqual(deps.calls.imports[0].entries, entries.slice(0, 2));
   assert.deepEqual(result, [{
     sourceUserId: 'clockify-ada', githubUser: destinationUser, status: 'imported', added: 2, alreadyPresent: 0,
   }]);
 });
 
-test('rejects selected mappings to another user instead of creating or writing a different branch', async () => {
-  const deps = dependencies({ resolved: [
-    { sourceUserId: 'clockify-ada', githubUser: { id: 9, login: 'other' } },
-    { sourceUserId: 'clockify-skip', skipped: true },
-  ] });
-  await assert.rejects(() => importClockifyOrganization({
-    sourceUsers, entries, mappings, github: {}, destinationUser, ...deps,
-  }), /configured Clockoli user/i);
-  assert.deepEqual(deps.calls.imports, []);
+function verifiedGithub({ missing = [], wrongOwner = [], wrongBranch = [], wrongIdentity = [], accessDenied = [] } = {}) {
+  const calls = [];
+  const root = { owner: 'acme', repo: 'times', expectedRepositoryId: 123, branch: 'clockoli/users/42' };
+  const forBranch = branch => ({
+    ...root, branch: wrongBranch.includes(branch) ? root.branch : branch,
+    owner: wrongOwner.includes(branch) ? 'attacker' : root.owner,
+    assertDestinationReachable: async () => {
+      calls.push(['access', branch]);
+      if (accessDenied.includes(branch)) throw Object.assign(new Error('provider secret'), { status: 403 });
+    },
+    getText: async path => {
+      calls.push(['read', branch, path]);
+      if (missing.includes(branch)) throw Object.assign(new Error('not found'), { status: 404 });
+      if (path === '.clockoli/user.json') return { text: JSON.stringify({ version: 1, githubUserId: wrongIdentity.includes(branch) ? 42 : Number(branch.split('/').at(-1)), storageLogin: branch.endsWith('/42') ? 'ada' : 'other' }) };
+      return { text: JSON.stringify({ version: 1, storageLogin: branch.endsWith('/42') ? 'ada' : 'other', tasks: {} }) };
+    },
+  });
+  return { github: { ...root, forBranch }, calls };
+}
+
+const multipleUsers = [...sourceUsers.slice(0, 1), { userId: 'clockify-other', displayName: 'Other', entryCount: 1 }, sourceUsers[1]];
+const multipleEntries = [...entries.slice(0, 2), { userId: 'clockify-other', entryId: 'other-1' }, entries[2]];
+const multipleMappings = [mappings[0], { sourceUserId: 'clockify-other', githubLogin: 'other' }, mappings[1]];
+const multipleResolved = [
+  { sourceUserId: 'clockify-ada', githubUser: destinationUser },
+  { sourceUserId: 'clockify-other', githubUser: { id: 9, login: 'other' } },
+  { sourceUserId: 'clockify-skip', skipped: true },
+];
+
+test('routes two explicitly mapped people to separately verified branches, never the configured branch for the other person', async () => {
+  const { github, calls } = verifiedGithub();
+  const imports = [];
+  const result = await importClockifyOrganization({ sourceUsers: multipleUsers, entries: multipleEntries, mappings: multipleMappings,
+    destinationUser, github, resolveMappings: async () => multipleResolved, importRecords: async request => {
+      imports.push(request);
+      return { status: 'imported', added: request.entries.length, alreadyPresent: 0 };
+    } });
+  assert.deepEqual(imports.map(({ github: target, githubUser, entries: items }) => [target.branch, githubUser.id, items.map(item => item.entryId)]), [
+    ['clockoli/users/42', 42, ['ada-1', 'ada-2']], ['clockoli/users/9', 9, ['other-1']],
+  ]);
+  assert.deepEqual(result.map(item => [item.sourceUserId, item.status, item.added]), [
+    ['clockify-ada', 'imported', 2], ['clockify-other', 'imported', 1],
+  ]);
+  assert(calls.some(call => call[0] === 'access' && call[1] === 'clockoli/users/9'));
+  assert(!calls.some(call => call[1] === 'clockoli/users/9' && call[2] === 'times/2026-08/ada.jsonl'));
+});
+
+test('missing or mismatched personal branch fails only that person and does not write their records elsewhere', async () => {
+  const { github } = verifiedGithub({ missing: ['clockoli/users/9'] });
+  const imports = [];
+  const outcomes = await importClockifyOrganization({ sourceUsers: multipleUsers, entries: multipleEntries, mappings: multipleMappings,
+    destinationUser, github, resolveMappings: async () => multipleResolved,
+    importRecords: async request => { imports.push(request); return { status: 'imported', added: 2, alreadyPresent: 0 }; } });
+  assert.deepEqual(imports.map(request => request.github.branch), ['clockoli/users/42']);
+  assert.deepEqual(outcomes[1], { sourceUserId: 'clockify-other', githubUser: { id: 9, login: 'other' }, status: 'failed', failureReason: 'repository_or_branch_not_found' });
+});
+
+test('rejects a branch client that points to another branch or repository before importing', async () => {
+  for (const options of [{ wrongBranch: ['clockoli/users/9'] }, { wrongOwner: ['clockoli/users/9'] }]) {
+    const { github } = verifiedGithub(options);
+    const imports = [];
+    const outcomes = await importClockifyOrganization({ sourceUsers: multipleUsers, entries: multipleEntries, mappings: multipleMappings,
+      destinationUser, github, resolveMappings: async () => multipleResolved,
+      importRecords: async request => { imports.push(request); return { status: 'imported', added: 1, alreadyPresent: 0 }; } });
+    assert.deepEqual(imports.map(request => request.github.branch), ['clockoli/users/42']);
+    assert.equal(outcomes[1].failureReason, 'storage_branch_incomplete');
+  }
+});
+
+test('identity mismatch and access denial fail independently with source-free diagnostics', async () => {
+  for (const options of [{ wrongIdentity: ['clockoli/users/9'] }, { accessDenied: ['clockoli/users/9'] }]) {
+    const { github } = verifiedGithub(options);
+    const imports = [];
+    const outcomes = await importClockifyOrganization({ sourceUsers: multipleUsers, entries: multipleEntries, mappings: multipleMappings,
+      destinationUser, github, resolveMappings: async () => multipleResolved,
+      importRecords: async request => { imports.push(request); return { status: 'imported', added: 1, alreadyPresent: 0 }; } });
+    assert.deepEqual(imports.map(request => request.github.branch), ['clockoli/users/42']);
+    assert.equal(outcomes[1].failureReason, options.accessDenied ? 'github_permission' : 'storage_branch_incomplete');
+    assert.equal(JSON.stringify(outcomes).includes('provider secret'), false);
+  }
+});
+
+test('default resolver looks up each explicit GitHub login and skips unselected source users', async () => {
+  const { github } = verifiedGithub();
+  const resolved = [];
+  github.getUserIdentity = async login => {
+    resolved.push(login);
+    return login === 'ada' ? destinationUser : { id: 9, login: 'other' };
+  };
+  const outcomes = await importClockifyOrganization({ sourceUsers: multipleUsers, entries: multipleEntries,
+    mappings: multipleMappings, destinationUser, github,
+    importRecords: async () => ({ status: 'already_present', added: 0, alreadyPresent: 1 }) });
+  assert.deepEqual(resolved, ['ada', 'other']);
+  assert.deepEqual(outcomes.map(outcome => outcome.status), ['already_present', 'already_present']);
+});
+
+test('rejects an unverified configured repository before any record write', async () => {
+  const { github } = verifiedGithub();
+  github.expectedRepositoryId = null;
+  let writes = 0;
+  await assert.rejects(() => importClockifyOrganization({ sourceUsers, entries, mappings, github, destinationUser,
+    resolveMappings: async () => [{ sourceUserId: 'clockify-ada', githubUser: destinationUser }, { sourceUserId: 'clockify-skip', skipped: true }],
+    importRecords: async () => { writes += 1; } }), /repository and personal branch must be verified/);
+  assert.equal(writes, 0);
 });
 
 test('does not invoke GitHub resolution or write records for malformed source association data', async () => {
@@ -74,7 +168,7 @@ test('does not invoke GitHub resolution or write records for malformed source as
 
 test('keeps importer failures privacy-safe in the migration result', async () => {
   const deps = dependencies({ imported: { status: 'failed', failureReason: 'github_write_permission', providerDetail: 'must not escape' } });
-  const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github: {}, destinationUser, ...deps });
+  const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github: verifiedGithub().github, destinationUser, ...deps });
   assert.deepEqual(result, [{
     sourceUserId: 'clockify-ada', githubUser: destinationUser, status: 'failed', failureReason: 'github_write_permission',
   }]);
@@ -96,7 +190,7 @@ test('forwards only the allowlisted source-free destination collision comparison
     collision: { incoming, existing, comparison: { sameProvenance: false, sameTimeRange: true, sameTaskFingerprint: false }, providerDetail: 'must not escape' },
   };
   const deps = dependencies({ imported: { status: 'failed', failureReason: 'invalid_imported_record', diagnostic } });
-  const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github: {}, destinationUser, ...deps });
+  const result = await importClockifyOrganization({ sourceUsers, entries, mappings, github: verifiedGithub().github, destinationUser, ...deps });
   assert.deepEqual(result, [{
     sourceUserId: 'clockify-ada', githubUser: destinationUser, status: 'failed', failureReason: 'invalid_imported_record',
     diagnostic: {

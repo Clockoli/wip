@@ -28,8 +28,10 @@ function handlerContext(overrides = {}) {
     assertMessageAllowed,
     isClockifyProgressRequestId,
     CLOCKIFY_MIGRATION_OUTCOME_KEY: 'clockify-migration-import-outcome-v1',
+    CLOCKIFY_MIGRATION_SUGGESTIONS_KEY: 'clockify-migration-suggestions-v1',
     chrome: { runtime: { getURL: path => `${origin}${path || ''}` }, tabs: { get: async () => ({ url: 'https://app.clockify.me/reports/detailed?year=2024' }) }, action: { setIcon: async () => {} } },
     clockifyMigrationStorage: { get: async () => null, set: async () => {} },
+    clockifyMigrationSession: { peek: async () => null },
     ...overrides,
   });
   vm.runInContext(between('async function handle(', 'chrome.runtime.onMessage.addListener'), context);
@@ -61,7 +63,7 @@ test('Clockify migration confirmation consumes once, imports the exact session d
   const context = handlerContext({
     clockifyMigrationProgressPorts: new Map([[requestId, { postMessage: message => portMessages.push(message) }]]),
     clockifyMigrationSession: { consume: async id => { consumed += 1; assert.equal(id, requestId); return { users: sourceUsers, entries }; } },
-    configuredSnapshot: async () => ({ config: { storageLogin: 'KlimTodrik' }, auth: { githubUserId: 'github-user', githubLogin: 'fallback-login' } }),
+    configuredSnapshot: async () => ({ config: { storageLogin: 'KlimTodrik', defaultBranch: 'main' }, destinationId: 'github:18', auth: { githubUserId: 'github-user', githubLogin: 'fallback-login' } }),
     githubForConfig: config => { assert.equal(config.storageLogin, 'KlimTodrik'); return github; },
     importClockifyOrganization: async request => {
       importRequest = request;
@@ -81,6 +83,7 @@ test('Clockify migration confirmation consumes once, imports the exact session d
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { outcomes: [{ sourceUserId: 'clockify-klim', status: 'imported' }] });
   assert.equal(consumed, 1);
   assert.equal(importRequest.github, github);
+  assert.equal(importRequest.sourceBranch, 'main');
   assert.deepEqual(JSON.parse(JSON.stringify(importRequest.sourceUsers)), sourceUsers);
   assert.deepEqual(JSON.parse(JSON.stringify(importRequest.entries)), entries);
   assert.deepEqual(JSON.parse(JSON.stringify(importRequest.mappings)), mappings);
@@ -88,8 +91,133 @@ test('Clockify migration confirmation consumes once, imports the exact session d
   assert.deepEqual(portMessages, [{ type: 'CLOCKIFY_MIGRATION_PROGRESS', phase: 'writing_records', completedUsers: 1, totalUsers: 1, elapsedMs: 42 }]);
   assert.deepEqual(JSON.parse(JSON.stringify(persistedOutcome)), {
     key: 'clockify-migration-import-outcome-v1',
-    value: { id: requestId, users: sourceUsers, outcomes: [{ sourceUserId: 'clockify-klim', status: 'imported' }] },
+    value: { id: requestId, destinationId: 'github:18', users: sourceUsers, outcomes: [{ sourceUserId: 'clockify-klim', status: 'imported' }] },
   });
+});
+
+test('migration suggestions read full collaborator profiles from the configured default destination', async () => {
+  const users = [{ id: 42, login: 'Ada', name: 'Ada Example', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }];
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ config: { repo: 'time' }, auth: { mode: 'github_app' }, destinationId: 'github:18' }),
+    githubForConfig: config => ({ listRepositoryCollaboratorProfiles: async () => { assert.equal(config.repo, 'time'); return users; } }),
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }, previewSender))),
+    { destinationId: 'github:18', users });
+  await assert.rejects(context.handle({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }, clockifySender), /not allowed/i);
+  await assert.rejects(context.handle({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS', destinationId: 'github:99' }, previewSender), /preview page/i);
+});
+
+test('opening the mapping page resets GitHub measurement, while an outcome refresh does not', async () => {
+  let starts = 0;
+  const context = handlerContext({
+    clockifyGitHubRequests: { start: async () => { starts++; } },
+    clockifyMigrationSession: { peek: async () => ({ id: requestId, data: { users: [{ id: 'a' }], entries: [1] } }) },
+  });
+  await assert.rejects(context.handle({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW', measureRequests: true }, clockifySender), /not allowed/i);
+  await assert.rejects(context.handle({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW', measureRequests: true, extra: 1 }, previewSender), /requires the preview page/i);
+  assert.equal(starts, 0);
+  await context.handle({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW', measureRequests: true }, previewSender);
+  await context.handle({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' }, previewSender);
+  assert.equal(starts, 1);
+});
+
+test('mapping search and collaborator suggestions use measured GitHub clients, not Settings search', async () => {
+  const measured = [];
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ config: { repo: 'time', repoId: 18, installationId: 42 }, auth: { mode: 'github_app', githubUserId: 7 }, destinationId: 'github:18' }),
+    requireConfiguredDestinationId: async (_store, id) => id,
+    store: {},
+    githubForConfig: (_config, options) => {
+      measured.push(options?.measureMigration === true);
+      return { listRepositoryCollaboratorProfiles: async () => [], request: async () => ({ items: [] }) };
+    },
+    RepositoryInvitationService: class { constructor({ github }) { this.github = github; } async search() { return []; } },
+  });
+  vm.runInContext(between('async function repositoryInvitationService(', 'async function contextForDestination('), context);
+  await context.handle({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }, previewSender);
+  await context.handle({ type: 'SEARCH_CLOCKIFY_GITHUB_USERS', payload: { destinationId: 'github:18', query: 'al' } }, previewSender);
+  await context.handle({ type: 'SEARCH_INVITEE_USERS', payload: { destinationId: 'github:18', query: 'al' } }, previewSender);
+  assert.deepEqual(measured, [true, true, false]);
+});
+
+test('migration suggestions reuse profiles for the same preview, destination and actor across worker restarts', async () => {
+  const values = new Map();
+  let calls = 0, previewId = requestId, destinationId = 'github:18', actorId = 7, authGeneration = 1;
+  const users = [{ id: 42, login: 'Ada', name: 'Ada Example', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }];
+  const storage = { get: async key => values.get(key), set: async (key, value) => { values.set(key, value); } };
+  const restart = () => handlerContext({
+    clockifyMigrationStorage: storage,
+    clockifyMigrationSession: { peek: async () => ({ id: previewId }) },
+    configuredSnapshot: async () => ({ config: { repo: 'time', repoId: Number(destinationId.split(':')[1]) }, auth: { githubUserId: actorId }, authGeneration, destinationId }),
+    githubForConfig: () => ({ listRepositoryCollaboratorProfiles: async () => { calls++; return users; } }),
+  });
+  const load = context => context.handle({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }, previewSender);
+  assert.deepEqual(JSON.parse(JSON.stringify(await load(restart()))), { destinationId: 'github:18', users });
+  assert.deepEqual(JSON.parse(JSON.stringify(await load(restart()))), { destinationId: 'github:18', users });
+  assert.equal(calls, 1);
+  previewId = '123e4567-e89b-42d3-a456-426614174001'; await load(restart());
+  destinationId = 'github:19'; await load(restart());
+  actorId = 8; await load(restart());
+  assert.equal(calls, 4);
+  values.get('clockify-migration-suggestions-v1').savedAt = Date.now() - 5 * 60 * 1000;
+  await load(restart());
+  assert.equal(calls, 5, 'expired suggestions must be fetched again');
+  authGeneration = 2; await load(restart());
+  assert.equal(calls, 6, 'new authentication must not reuse an old profile list');
+});
+
+test('lean migration search is preview-only, validates its destination and requests no profiles', async () => {
+  const calls = [];
+  const context = handlerContext({
+    repositoryInvitationService: async id => {
+      calls.push(id);
+      if (id !== 'github:18') throw new Error('The requested destination is not configured.');
+      return { search: async (query, options) => {
+        calls.push([query, options]);
+        return [{ id: 42, login: 'Ada', name: null, avatarUrl: null }];
+      } };
+    },
+  });
+  const request = { type: 'SEARCH_CLOCKIFY_GITHUB_USERS', payload: { destinationId: 'github:18', query: 'Ad' } };
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, previewSender))),
+    { users: [{ id: 42, login: 'Ada', name: null, avatarUrl: null }] });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), ['github:18', ['Ad', { profiles: false }]]);
+  for (const sender of [clockifySender, { url: `${origin}src/options/options.html` }]) {
+    await assert.rejects(context.handle(request, sender), /not allowed|Invalid migration user search/i);
+  }
+  for (const payload of [{ ...request.payload, profiles: true }, { ...request.payload, destinationId: 'github:99' }]) {
+    await assert.rejects(context.handle({ ...request, payload }, previewSender), /Invalid|not configured/i);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), ['github:18', ['Ad', { profiles: false }], 'github:99']);
+});
+
+test('migration invitation requires persisted successful outcome, matching default destination and preview sender', async () => {
+  const calls = [];
+  const outcome = { id: requestId, destinationId: 'github:18', outcomes: [
+    { sourceUserId: 'clockify-a', status: 'imported', githubUser: { id: 42, login: 'Ada' } },
+    { sourceUserId: 'clockify-b', status: 'failed', githubUser: { id: 43, login: 'Bob' } },
+  ] };
+  let currentId = 'github:18';
+  const context = handlerContext({
+    clockifyMigrationStorage: { get: async key => { assert.equal(key, 'clockify-migration-import-outcome-v1'); return outcome; } },
+    configuredSnapshot: async () => ({ config: { repo: 'time' }, auth: { mode: 'github_app' }, destinationId: currentId }),
+    repositoryInvitationService: async id => {
+      assert.equal(id, 'github:18');
+      return { invite: async (login, id) => { calls.push([login, id]); return { status: 'invited', login }; } };
+    },
+  });
+  const request = (id, sourceUserId) => ({ type: 'INVITE_MIGRATED_USER', payload: { id, sourceUserId } });
+  await assert.rejects(context.handle(request(requestId, 'clockify-a'), clockifySender), /not allowed/i);
+  await assert.rejects(context.handle(request(requestId, 'clockify-a'), { url: `${origin}src/options/options.html` }), /preview/i);
+  await assert.rejects(context.handle(request('wrong', 'clockify-a'), previewSender), /migration/i);
+  await assert.rejects(context.handle(request(requestId, 'clockify-b'), previewSender), /successful/i);
+  await assert.rejects(context.handle({ ...request(requestId, 'clockify-a'), payload: { id: requestId, sourceUserId: 'clockify-a', login: 'mallory' } }, previewSender), /invitation/i);
+  currentId = 'github:19';
+  await assert.rejects(context.handle(request(requestId, 'clockify-a'), previewSender), /default time repository/i);
+  assert.deepEqual(calls, []);
+  currentId = 'github:18';
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request(requestId, 'clockify-a'), previewSender))), { status: 'invited', login: 'Ada' });
+  assert.deepEqual(calls, [['Ada', 42]]);
 });
 
 test('Clockify migration preview returns a persisted import outcome after worker restart', async () => {

@@ -36,13 +36,13 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /event\.stopImmediatePropagation\(\)/);
   assert.match(source, /type: 'CLOCKIFY_CAPTURED_REPORT'/);
   assert.match(source, /const YEAR_REQUEST_EVENT = 'clockoli:clockify-detailed-report-request-year'/);
-  assert.match(source, /function requestReportYear\(year, mode\) \{\n\s*armBridge\(mode, year\);\n\s*EVENT_TARGET\.dispatchEvent/);
+  assert.match(source, /function requestReportYear\(year, mode, retry = 0\) \{\n\s*armBridge\(mode, year, retry\);\n\s*EVENT_TARGET\.dispatchEvent/);
   assert.match(source, /type: 'CLOCKIFY_YEAR_OBSERVED', entryCount: event\.data\.entryCount, year: event\.data\.year/);
-  assert.match(source, /function requestYearCsv\(button, year\) \{[\s\S]*if \(armedButton !== button \|\| armRequest !== request\) return;/);
+  assert.match(source, /function requestYearCsv\(button, year, retry = 0\) \{[\s\S]*if \(armedButton !== button \|\| armRequest !== request \|\| csvExportRequest !== exportRequest\) return;/);
   assert.match(source, /function requestDiscoveryYear\(button, year, deadline = Date\.now\(\) \+ 180_000\) \{[\s\S]{0,700}requestReportYear\(year, 'discover'\);/);
   assert.doesNotMatch(source, /table\.cl-detailed-reports-table tbody tr/);
   assert.match(source, /No export is requested\./);
-  assert.match(source, /EVENT_TARGET\.dispatchEvent\(new CustomEvent\(YEAR_REQUEST_EVENT, \{ detail: \{ year, mode \} \}\)/);
+  assert.match(source, /EVENT_TARGET\.dispatchEvent\(new CustomEvent\(YEAR_REQUEST_EVENT, \{ detail: retry \? \{ year, mode, retry \} : \{ year, mode \} \}\)/);
   assert.match(source, /'CLOCKIFY_ARM_CSV_CAPTURE'/);
   assert.match(source, /response\.data\?\.discovering/);
   assert.match(source, /response\.data\?\.capturing/);

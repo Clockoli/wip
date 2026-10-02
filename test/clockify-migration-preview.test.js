@@ -9,7 +9,78 @@ const scriptPath = new URL('../src/clockify-migration/preview.js', import.meta.u
 const [html, css, source] = await Promise.all([
   readFile(htmlPath, 'utf8'), readFile(cssPath, 'utf8'), readFile(scriptPath, 'utf8'),
 ]);
-const { mappingState } = await import('../src/clockify-migration/preview.js');
+const { mappingState, renderUsers } = await import('../src/clockify-migration/preview.js');
+
+// Minimal DOM for the row picker; exercises event handlers without a browser dependency.
+class Element {
+  constructor(tag) { this.tag = tag; this.children = []; this.events = new Map(); this.attrs = {}; this.value = ''; this.hidden = false; }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = [...children]; }
+  get childElementCount() { return this.children.filter(child => child instanceof Element).length; }
+  setAttribute(name, value) { this.attrs[name] = value; }
+  addEventListener(name, fn) { this.events.set(name, fn); }
+  dispatch(name, event = {}) { return this.events.get(name)?.(event); }
+  focus() { this.dispatch('focus'); }
+  contains(node) { return node === this || this.children.some(child => child instanceof Element && child.contains(node)); }
+  remove() { this.removed = true; }
+}
+const descendants = (root, className) => root.children.flatMap(child => child instanceof Element
+  ? [...(child.className?.split(' ').includes(className) ? [child] : []), ...descendants(child, className)] : []);
+
+async function withPicker(run) {
+  const previousDocument = globalThis.document;
+  const previousChrome = globalThis.chrome;
+  const root = new Element('div');
+  const requests = [];
+  globalThis.document = { getElementById: () => root, createElement: tag => new Element(tag) };
+  globalThis.chrome = { runtime: { lastError: null, sendMessage(request, callback) { requests.push({ request, callback }); } } };
+  try { await run(root, requests); } finally { globalThis.document = previousDocument; globalThis.chrome = previousChrome; }
+}
+
+test('mapping picker shows repository profiles on focus, searches by login, ignores stale replies and preserves manual entry/skip', async () => {
+  await withPicker(async (root, requests) => {
+    const defaults = { destinationId: 'github:42', users: [
+      { id: 1, login: 'octocat', name: 'The Octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' },
+      { login: 'evil', avatarUrl: 'https://attacker.example/avatar' },
+    ] };
+    let changed = 0;
+    const refresh = renderUsers([{ id: 'person', displayName: 'Avery', entryCount: 1 }], () => defaults, () => { changed++; });
+    const [input] = descendants(root, 'mapping-login-input');
+    const [menu] = descendants(root, 'mapping-choices');
+    const [skip] = descendants(root, 'mapping-skip-input');
+    input.focus();
+    assert.equal(menu.hidden, false);
+    assert.equal(input.value, '');
+    assert.equal(descendants(menu, 'mapping-choice').length, 2);
+    assert.equal(descendants(menu, 'mapping-avatar').length, 1);
+    assert.equal(descendants(menu, 'mapping-profile-login')[0].textContent, '@octocat');
+    assert.equal(descendants(menu, 'mapping-name')[0].textContent, 'The Octocat');
+    input.value = 'a'; input.dispatch('input');
+    assert.equal(requests.length, 0);
+    input.value = 'al'; input.dispatch('input');
+    await new Promise(resolve => setTimeout(resolve, 280));
+    assert.deepEqual(requests[0].request, { type: 'SEARCH_CLOCKIFY_GITHUB_USERS', payload: { destinationId: 'github:42', query: 'al' } });
+    input.value = 'ali'; input.dispatch('input');
+    await new Promise(resolve => setTimeout(resolve, 280));
+    requests[1].callback({ ok: true, data: { users: [{ id: 3, login: 'alice', name: null, avatarUrl: null }] } });
+    await Promise.resolve();
+    requests[0].callback({ ok: true, data: { users: [{ login: 'stale' }] } });
+    await Promise.resolve();
+    assert.equal(descendants(menu, 'mapping-profile-login')[0].textContent, '@alice');
+    assert.equal(descendants(menu, 'mapping-avatar').length, 0, 'searched users do not load avatars');
+    assert.equal(descendants(menu, 'mapping-name').length, 0, 'search does not fetch public names');
+    descendants(menu, 'mapping-choice')[0].dispatch('click');
+    assert.equal(input.value, 'alice'); assert.equal(menu.hidden, true); assert.equal(changed, 1);
+    input.value = 'manual-login'; input.dispatch('input');
+    assert.equal(input.value, 'manual-login');
+    input.value = ''; input.dispatch('input');
+    assert.equal(descendants(menu, 'mapping-avatar').length, 1, 'repository suggestions retain avatars');
+    skip.checked = true; skip.dispatch('change');
+    assert.equal(input.disabled, true); assert.equal(input.value, ''); assert.equal(menu.hidden, true);
+    assert.equal(changed, 2);
+    refresh();
+  });
+});
 
 test('Clockify migration preview is an extension page with Clockoli navigation and a safe-only roster', () => {
   assert.match(html, /<link rel="stylesheet" href="\.\.\/styles\/page-tabs\.css">/);
@@ -59,11 +130,15 @@ test('preview uses only the narrow callback message contract and neither storage
   assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|localStorage|sessionStorage|chrome\.storage|github\.com|clockify\.me)\b/i);
 });
 
-test('preview offers repository-collaborator logins as suggestions without assigning a mapping', () => {
-  assert.match(html, /id="github-login-suggestions"/);
-  assert.match(source, /input\.setAttribute\('list', 'github-login-suggestions'\)/);
-  assert.match(source, /function renderSuggestions\(logins\)/);
-  assert.doesNotMatch(source, /input\.value\s*=\s*logins/);
+test('preview uses a custom profile dropdown, not a native datalist, with destination-scoped login search', () => {
+  assert.doesNotMatch(html, /<datalist/);
+  assert.doesNotMatch(source, /setAttribute\('list'/);
+  assert.match(source, /type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS'/);
+  assert.match(source, /type: 'SEARCH_CLOCKIFY_GITHUB_USERS'/);
+  assert.match(source, /destinationId, query/);
+  assert.match(source, /className = 'mapping-choices'/);
+  assert.match(css, /\.mapping-choices/);
+  assert.match(css, /\.mapping-avatar/);
 });
 
 test('mapping state requires every manual GitHub login, makes target logins one-to-one, and requires explicit confirmation', () => {
@@ -105,7 +180,7 @@ test('preview styling keeps errors inline, shows current import progress, and su
 
 test('completed migration state is presented as a finished success, not an active step', () => {
   assert.match(source, /isCompleted \? 'Migration complete' : 'Saving migration'/);
-  assert.match(source, /isCompleted \? `Imported \$\{completed\} of \$\{total\} people`/);
+  assert.match(source, /isCompleted \? `Processed \$\{completed\} of \$\{total\} people`/);
 
 });
 

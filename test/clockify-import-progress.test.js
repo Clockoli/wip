@@ -22,7 +22,15 @@ const resolved = [
 test('reports finite privacy-safe progress and preserves an allowlisted record-write failure reason', async () => {
   const progress = [];
   const result = await importClockifyOrganization({
-    sourceUsers, entries, mappings, github: {}, destinationUser: { id: 1, login: 'ada' },
+    sourceUsers, entries, mappings, github: {
+      owner: 'acme', repo: 'times', expectedRepositoryId: 10, branch: 'clockoli/users/1',
+      forBranch: branch => ({ owner: 'acme', repo: 'times', expectedRepositoryId: 10, branch,
+        assertDestinationReachable: async () => {},
+        getText: async path => ({ text: path === '.clockoli/user.json'
+          ? JSON.stringify({ version: 1, githubUserId: 1, storageLogin: 'ada' })
+          : JSON.stringify({ version: 1, storageLogin: 'ada', tasks: {} }) }),
+      }),
+    }, destinationUser: { id: 1, login: 'ada' },
     onProgress: event => progress.push(event), now: () => 1_000,
     resolveMappings: async () => resolved,
     importRecords: async () => ({ status: 'failed', failureReason: 'storage_branch_incomplete' }),
@@ -32,8 +40,8 @@ test('reports finite privacy-safe progress and preserves an allowlisted record-w
     { stage: 'resolving_identities', completed: 0, total: 2, elapsedMs: 0 },
     { stage: 'resolving_identities', completed: 2, total: 2, elapsedMs: 0 },
     { stage: 'preparing_storage', completed: 0, total: 1, elapsedMs: 0 },
-    { stage: 'preparing_storage', completed: 1, total: 1, elapsedMs: 0 },
     { stage: 'writing_records', completed: 0, total: 1, elapsedMs: 0 },
+    { stage: 'preparing_storage', completed: 1, total: 1, elapsedMs: 0 },
     { stage: 'writing_records', completed: 1, total: 1, elapsedMs: 0 },
     { stage: 'completed', completed: 1, total: 1, elapsedMs: 0 },
   ]);

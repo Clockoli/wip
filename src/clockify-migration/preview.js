@@ -1,3 +1,5 @@
+import { renderMigrationInvitations } from './invitations.js';
+
 const $ = id => document.getElementById(id);
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const PROGRESS_LABELS = {
@@ -48,16 +50,39 @@ function safeUsers(value) {
   return users;
 }
 
-function renderSuggestions(logins) {
-  const root = $('github-login-suggestions');
-  root.replaceChildren();
-  if (!Array.isArray(logins)) return;
+function safeProfiles(users) {
+  if (!Array.isArray(users)) return [];
   const seen = new Set();
-  for (const login of logins) {
-    if (typeof login !== 'string' || !GITHUB_LOGIN.test(login) || seen.has(login.toLowerCase())) continue;
+  return users.flatMap(user => {
+    const login = user?.login;
+    if (typeof login !== 'string' || !GITHUB_LOGIN.test(login) || seen.has(login.toLowerCase())) return [];
     seen.add(login.toLowerCase());
-    const option = document.createElement('option'); option.value = login; root.append(option);
+    let avatarUrl = '';
+    try {
+      const url = new URL(user.avatarUrl);
+      if (url.protocol === 'https:' && url.hostname === 'avatars.githubusercontent.com') avatarUrl = url.href;
+    } catch {}
+    return [{ id: Number.isSafeInteger(user.id) && user.id > 0 ? user.id : null,
+      login, name: typeof user.name === 'string' ? user.name : '', avatarUrl }];
+  });
+}
+
+function profileRow(user, showAvatar) {
+  const row = document.createElement('span'); row.className = 'mapping-profile';
+  if (showAvatar && user.avatarUrl) {
+    const avatar = document.createElement('img'); avatar.className = 'mapping-avatar';
+    avatar.src = user.avatarUrl; avatar.alt = ''; avatar.setAttribute('aria-hidden', 'true');
+    avatar.addEventListener('error', () => avatar.remove()); row.append(avatar);
   }
+  const identity = document.createElement('span'); identity.className = 'mapping-identity';
+  const login = document.createElement('span'); login.className = 'mapping-profile-login'; login.textContent = `@${user.login}`;
+  identity.append(login);
+  if (user.name) {
+    const name = document.createElement('span'); name.className = 'mapping-name'; name.textContent = user.name;
+    identity.append(name);
+  }
+  row.append(identity);
+  return row;
 }
 
 function showMessage(text, kind = 'error') {
@@ -83,29 +108,86 @@ function renderProgress(progress) {
   $('import-status-title').textContent = isCompleted ? 'Migration complete' : 'Saving migration';
   $('progress-current-step').textContent = `Step ${activeIndex + 1} of ${phases.length}: ${label}`;
   $('import-progress').value = activeIndex + 1;
-  $('progress-summary').textContent = total ? (isCompleted ? `Imported ${completed} of ${total} people` : `Importing ${completed} of ${total} people`) : label;
+  $('progress-summary').textContent = total ? (isCompleted ? `Processed ${completed} of ${total} people` : `Importing ${completed} of ${total} people`) : label;
   element.hidden = false;
 }
 
-function renderUsers(users) {
+export function renderUsers(users, getSuggestions, updateValidity) {
   const root = $('source-users');
   root.replaceChildren();
+  const refresh = [];
   for (const [index, user] of users.entries()) {
     const row = document.createElement('div'); row.className = 'mapping-row';
     const source = document.createElement('p'); source.className = 'source-user'; source.textContent = user.displayName;
     const count = document.createElement('span'); count.className = 'source-user-count'; count.textContent = `${user.entryCount} ${user.entryCount === 1 ? 'entry' : 'entries'}`;
     source.append(count);
-    const label = document.createElement('label'); label.className = 'mapping-login'; label.htmlFor = `github-login-${index}`; label.append('GitHub login');
-    const input = document.createElement('input');
-    input.id = `github-login-${index}`; input.type = 'text'; input.required = true; input.autocomplete = 'username'; input.spellcheck = false; input.maxLength = 39;
-    input.setAttribute('list', 'github-login-suggestions');
+    const field = document.createElement('div'); field.className = 'mapping-field';
+    const label = document.createElement('label'); label.className = 'mapping-login'; label.htmlFor = `github-login-${index}`; label.textContent = 'GitHub login';
+    const input = document.createElement('input'); input.className = 'mapping-login-input';
+    input.id = `github-login-${index}`; input.type = 'text'; input.required = true; input.autocomplete = 'off'; input.spellcheck = false; input.maxLength = 39;
     input.setAttribute('aria-label', `GitHub login for ${user.displayName}`);
+    input.setAttribute('aria-controls', `github-choices-${index}`); input.setAttribute('aria-expanded', 'false');
+    const choices = document.createElement('div'); choices.id = `github-choices-${index}`; choices.className = 'mapping-choices'; choices.hidden = true;
+    const feedback = document.createElement('p'); feedback.className = 'mapping-search-feedback'; feedback.setAttribute('role', 'status');
+    let generation = 0, timer;
+    const close = () => { choices.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+    const open = () => { choices.hidden = false; input.setAttribute('aria-expanded', 'true'); };
+    const show = (profiles, emptyMessage, showAvatars = false) => {
+      choices.replaceChildren();
+      const validProfiles = safeProfiles(profiles);
+      for (const profile of validProfiles) {
+        const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'mapping-choice';
+        choice.append(profileRow(profile, showAvatars));
+        choice.addEventListener('click', () => {
+          ++generation; clearTimeout(timer); input.value = profile.login; close(); feedback.textContent = '';
+          updateValidity(); input.focus();
+        });
+        choices.append(choice);
+      }
+      feedback.textContent = validProfiles.length ? '' : emptyMessage;
+      choices.append(feedback); open();
+    };
+    const displayDefaults = () => {
+      const { users: defaults } = getSuggestions();
+      show(defaults, 'No repository users available. Enter a GitHub login manually.', true);
+    };
+    refresh.push(() => { if (!choices.hidden && !input.value.trim() && !input.disabled) displayDefaults(); });
+    input.addEventListener('focus', () => {
+      if (!input.disabled && !input.value.trim()) displayDefaults();
+    });
+    input.addEventListener('click', () => { if (!input.disabled && !input.value.trim() && choices.hidden) displayDefaults(); });
+    input.addEventListener('input', () => {
+      const current = ++generation; clearTimeout(timer);
+      const query = input.value.trim();
+      if (!query) { displayDefaults(); return; }
+      choices.replaceChildren(feedback);
+      if (query.length < 2) { feedback.textContent = 'Type at least 2 characters to search GitHub logins.'; open(); return; }
+      const { destinationId } = getSuggestions();
+      if (!destinationId) { feedback.textContent = 'Search is unavailable. Enter a GitHub login manually.'; open(); return; }
+      feedback.textContent = 'Searching GitHub users…'; open();
+      timer = setTimeout(async () => {
+        try {
+          const result = await send({ type: 'SEARCH_CLOCKIFY_GITHUB_USERS', payload: { destinationId, query } });
+          if (current === generation && !input.disabled) show(result?.users, 'No matching GitHub logins. You can still enter a login manually.');
+        } catch (error) {
+          if (current === generation && !input.disabled) { choices.replaceChildren(feedback); feedback.textContent = error.message; open(); }
+        }
+      }, 250);
+    });
+    input.addEventListener('keydown', event => { if (event.key === 'Escape') { ++generation; clearTimeout(timer); close(); } });
+    field.addEventListener('focusout', event => { if (!field.contains(event.relatedTarget)) { ++generation; clearTimeout(timer); close(); } });
     const skip = document.createElement('label'); skip.className = 'mapping-skip';
     const skipInput = document.createElement('input'); skipInput.type = 'checkbox'; skipInput.className = 'mapping-skip-input';
     skip.append(skipInput, ' Skip this person');
-    skipInput.addEventListener('change', () => { input.disabled = skipInput.checked; if (skipInput.checked) input.value = ''; });
-    label.append(input); row.append(source, label, skip); root.append(row);
+    skipInput.addEventListener('change', () => {
+      ++generation; clearTimeout(timer); close(); input.disabled = skipInput.checked;
+      if (skipInput.checked) input.value = '';
+      updateValidity();
+    });
+    field.append(label, input, choices); choices.append(feedback);
+    row.append(source, field, skip); root.append(row);
   }
+  return () => refresh.forEach(update => update());
 }
 
 function outcomeMessage(outcomes) {
@@ -179,14 +261,21 @@ function initialize() {
   let preview = null;
   let submitting = false;
   let finished = false;
+  let suggestions = { users: [], destinationId: '' };
   const form = $('mapping-form');
   const confirmation = $('confirmation');
   const importButton = $('import');
   const mappingView = $('mapping-view');
   const migrationView = $('migration-view');
+  const invitationSection = $('migration-invitations');
+  const renderInvitations = outcome => {
+    renderMigrationInvitations({ container: invitationSection, outcome, send, confirm: question => window.confirm(question),
+      collaboratorIds: new Set(suggestions.users.map(user => user.id).filter(Boolean)) });
+    invitationSection.hidden = !invitationSection.childElementCount;
+  };
 
   const updateValidity = () => {
-    const inputs = [...document.querySelectorAll('.mapping-login input')];
+    const inputs = [...document.querySelectorAll('.mapping-login-input')];
     const skipped = [...document.querySelectorAll('.mapping-skip-input')].map(input => input.checked);
     const state = mappingState(preview?.users || [], inputs.map(input => input.value), skipped, confirmation.checked);
     const duplicateLogins = inputs.map((input, index) => skipped[index] ? '' : input.value.trim().toLowerCase());
@@ -227,6 +316,10 @@ function initialize() {
       renderOutcomes(preview.users, data?.outcomes || data);
       finished = true; importButton.textContent = 'Migration imported';
       showMessage(outcomeMessage(data?.outcomes || data), 'success');
+      try {
+        const saved = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+        if (saved?.outcome?.id === preview.id) renderInvitations(saved.outcome);
+      } catch { invitationSection.textContent = 'Could not load invitation options. Reopen this preview to try again.'; invitationSection.hidden = false; }
     } catch (error) {
       $('import-status').hidden = true;
       importButton.textContent = 'Import completed time';
@@ -236,13 +329,18 @@ function initialize() {
 
   (async () => {
     try {
-      const data = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+      const data = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW', measureRequests: true });
       if (data?.outcome) {
         const users = safeUsers(data.outcome.users);
         if (!users.length || !Array.isArray(data.outcome.outcomes)) throw new Error('The recovered migration outcome is incomplete. Return to the Clockify report and capture it again.');
         preview = { id: String(data.outcome.id), users };
         mappingView.hidden = true; migrationView.hidden = false; finished = true;
         renderOutcomes(users, data.outcome.outcomes);
+        try {
+          const access = await send({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' });
+          suggestions = { users: safeProfiles(access?.users), destinationId: typeof access?.destinationId === 'string' ? access.destinationId : '' };
+        } catch { /* invitation checks still verify repository access server-side */ }
+        renderInvitations(data.outcome);
         renderProgress({ phase: 'completed', completedUsers: data.outcome.outcomes.length, totalUsers: data.outcome.outcomes.length });
         showMessage(outcomeMessage(data.outcome.outcomes), 'success');
         $('loading').hidden = true; $('preview').hidden = false;
@@ -253,8 +351,11 @@ function initialize() {
       if (!data?.id || !users.length || !Number.isSafeInteger(entryCount) || entryCount < 1) throw new Error('The migration preview is unavailable or incomplete. Return to the Clockify report and try again.');
       preview = { id: String(data.id), users };
       $('entry-count').textContent = String(entryCount);
-      renderUsers(users);
-      send({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }).then(data => renderSuggestions(data?.logins)).catch(() => renderSuggestions([]));
+      const refreshSuggestions = renderUsers(users, () => suggestions, updateValidity);
+      send({ type: 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS' }).then(data => {
+        suggestions = { users: safeProfiles(data?.users), destinationId: typeof data?.destinationId === 'string' ? data.destinationId : '' };
+        refreshSuggestions();
+      }).catch(() => {});
       $('loading').hidden = true; $('preview').hidden = false;
       updateValidity();
     } catch (error) {
