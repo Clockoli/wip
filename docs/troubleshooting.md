@@ -123,6 +123,10 @@ The GitHub stopwatch is an injected convenience. For another site, pin and open 
 
 Clockoli canonicalizes GitHub issue/PR URLs by removing query strings and fragments. The stored task should be the base issue or pull-request URL. Generic non-GitHub query strings are preserved because they may identify different work.
 
+### Start says the requested task URL does not match the current page
+
+Clockoli checks the current tab URL, including after GitHub navigates between issues or pull requests without reloading the page. If the page changed again while you clicked Start, open the intended task and retry. After updating an unpacked extension, reload both Clockoli and the open GitHub tab to use the new code.
+
 ### A long timer asks for confirmation
 
 Clockoli warns before saving an entry longer than 12 hours. This catches forgotten timers but does not reject them. Verify the duration, choose to save, or edit the time first.
