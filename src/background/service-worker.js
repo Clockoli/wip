@@ -770,6 +770,15 @@ async function handle(message, sender) {
     return message.type === 'SEARCH_INVITEE_USERS'
       ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
   }
+  if (message.type === 'REMOVE_REPOSITORY_USER') {
+    const payload = message.payload;
+    if (Object.keys(message).length !== 2 || !payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== 4 || typeof payload.destinationId !== 'string'
+        || typeof payload.login !== 'string' || !Number.isSafeInteger(payload.userId) || payload.userId <= 0
+        || !['collaborator', 'pending'].includes(payload.kind)) throw new Error('Invalid teammate removal request');
+    const invitation = await repositoryInvitationService(payload.destinationId);
+    return invitation.remove(payload.login, payload.userId, payload.kind);
+  }
   if (message.type === 'SELECT_REPOSITORY') return onboarding.selectRepository(message.payload);
   if (message.type === 'SET_DEFAULT_DESTINATION') {
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId || message.payload?.destinationId);

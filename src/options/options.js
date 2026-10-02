@@ -47,6 +47,7 @@ let pendingConfirmation = null;
 let repositoryActionApplying = false;
 let authorizationBlock = null;
 let projectSequence = 0;
+let closeActiveAvatarMenu = null;
 
 
 function message(text, kind = '') {
@@ -263,7 +264,6 @@ function renderTeammatePicker(details, destination, article) {
   const input = document.createElement('input'); input.type = 'search'; input.className = 'teammate-search';
   input.placeholder = 'Search by GitHub username'; input.autocomplete = 'off';
   const choices = document.createElement('div'); choices.className = 'teammate-choices';
-  const selectedProfile = document.createElement('div'); selectedProfile.className = 'teammate-selected';
   const invite = document.createElement('button'); invite.type = 'button'; invite.className = 'invite-teammate secondary';
   invite.textContent = 'Check access and invite'; invite.disabled = true;
   const feedback = document.createElement('p'); feedback.className = 'teammate-feedback form-feedback';
@@ -275,7 +275,7 @@ function renderTeammatePicker(details, destination, article) {
   const permissionDetails = document.createElement('p'); permissionDetails.className = 'help';
   permissionDetails.textContent = 'The App permission applies to every repository selected for this installation, not every repository in your account. Invitations grant repository write access; your teammate must accept on GitHub and join Clockoli separately.';
   permissions.append(permissionSummary, permissionDetails);
-  label.append(input); panel.append(label, choices, selectedProfile, invite, feedback, scope, permissions); details.append(panel);
+  label.append(input); panel.append(label, choices, invite, feedback, scope, permissions); details.append(panel);
   let selected = null, searchTimer = null, generation = 0;
   function profileRow(user) {
     const row = document.createElement('div'); row.className = 'teammate-profile';
@@ -297,7 +297,7 @@ function renderTeammatePicker(details, destination, article) {
   input.addEventListener('input', () => {
     const current = ++generation;
     clearTimeout(searchTimer); selected = null; invite.disabled = true;
-    choices.replaceChildren(); selectedProfile.replaceChildren(); feedback.textContent = '';
+    choices.replaceChildren(); feedback.textContent = '';
     const query = input.value.trim();
     if (query.length < 2) return;
     searchTimer = setTimeout(async () => {
@@ -310,9 +310,9 @@ function renderTeammatePicker(details, destination, article) {
           const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'teammate-choice secondary';
           choice.append(profileRow(user));
           choice.addEventListener('click', () => {
-            selected = user; input.value = user.login; choices.replaceChildren();
-            selectedProfile.replaceChildren(profileRow(user)); invite.disabled = false;
-            feedback.textContent = `Selected @${user.login}. Check access before inviting.`;
+            ++generation; clearTimeout(searchTimer);
+            selected = user; input.value = user.login; choices.replaceChildren(); invite.disabled = false;
+            feedback.textContent = `Selected @${user.login}${user.name ? ` (${user.name})` : ''}. Check access before inviting.`;
           });
           choices.append(choice);
         }
@@ -399,6 +399,61 @@ function renderTeammateInstructions(container, destination) {
   container.append(details);
 }
 
+function avatarAccessMenu(article, destination, root, avatar, user, kind) {
+  const wrapper = document.createElement('span'); wrapper.className = 'repository-avatar-wrap';
+  const menu = document.createElement('span'); menu.className = 'repository-avatar-actions'; menu.hidden = true;
+  const label = document.createElement('span'); label.textContent = `@${user.login}${kind === 'pending' ? ' · pending invitation' : ''}`;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-repository-user';
+  remove.textContent = kind === 'pending' ? `Cancel invitation for @${user.login}` : `Remove @${user.login}`;
+  menu.append(label, remove);
+  avatar.setAttribute('aria-expanded', 'false'); avatar.setAttribute('aria-haspopup', 'true');
+  const outside = event => { if (!wrapper.contains(event.target)) close(); };
+  const close = () => {
+    menu.hidden = true; avatar.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', outside);
+    if (closeActiveAvatarMenu === close) closeActiveAvatarMenu = null;
+  };
+  avatar.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation();
+    if (!menu.hidden) { close(); return; }
+    closeActiveAvatarMenu?.();
+    menu.hidden = false; avatar.setAttribute('aria-expanded', 'true'); closeActiveAvatarMenu = close;
+    if (menu.getBoundingClientRect?.().right > window.innerWidth - 12) { menu.style.left = 'auto'; menu.style.right = '0'; }
+    document.addEventListener('pointerdown', outside);
+    remove.focus();
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); avatar.focus(); }
+  });
+  avatar.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); avatar.focus(); }
+  });
+  remove.addEventListener('click', async event => {
+    event.preventDefault(); event.stopPropagation();
+    if (remove.disabled) return;
+    const action = kind === 'pending' ? 'cancel the pending invitation for' : 'remove repository access for';
+    if (!window.confirm(`In ${destinationLabel(destination)}, ${action} @${user.login}? This does not delete their existing time records.`)) return;
+    article.open = true;
+    const feedback = article.querySelector('.repository-manage-feedback');
+    remove.disabled = true; feedback.textContent = 'Checking GitHub access…'; feedback.className = 'repository-manage-feedback form-feedback';
+    try {
+      const outcome = await send({ type: 'REMOVE_REPOSITORY_USER', payload: {
+        destinationId: destination.id, login: user.login, userId: user.id, kind,
+      } });
+      if (outcome.status !== (kind === 'pending' ? 'cancelled' : 'removed')) throw new Error('GitHub did not confirm removal.');
+      feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
+      feedback.className = 'repository-manage-feedback form-feedback success';
+      close();
+      await loadRepositoryCollaborators(article, destination, root);
+      feedback.focus();
+    } catch (error) {
+      feedback.textContent = error.message; feedback.className = 'repository-manage-feedback form-feedback error';
+    } finally { remove.disabled = false; }
+  });
+  wrapper.append(avatar, menu);
+  return wrapper;
+}
+
 function renderRemoval(container, destination) {
   const panel = document.createElement('section'); panel.className = 'repository-removal notice'; panel.hidden = true;
   const title = document.createElement('h4'); title.textContent = `Remove ${destinationLabel(destination)} from Clockoli?`;
@@ -432,9 +487,18 @@ function renderDestinationCard(destination, isDefault) {
   const header = document.createElement('summary'); header.className = 'repository-card-heading';
   const title = document.createElement('h3'); title.textContent = destinationLabel(destination);
   const headingMain = document.createElement('div'); headingMain.className = 'repository-heading-main';
+  const headingTitle = document.createElement('div'); headingTitle.className = 'repository-heading-title';
+  const disclosure = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  disclosure.setAttribute('class', 'repository-disclosure-icon');
+  disclosure.setAttribute('viewBox', '0 0 16 16'); disclosure.setAttribute('aria-hidden', 'true');
+  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  chevron.setAttribute('d', 'M3 6l5 5 5-5');
+  chevron.setAttribute('fill', 'none'); chevron.setAttribute('stroke', 'currentColor');
+  chevron.setAttribute('stroke-width', '1.75'); chevron.setAttribute('stroke-linecap', 'round'); chevron.setAttribute('stroke-linejoin', 'round');
+  disclosure.append(chevron); headingTitle.append(disclosure, title);
   const people = document.createElement('div'); people.className = 'repository-people';
   const collaborators = document.createElement('div'); collaborators.className = 'repository-collaborators';
-  people.append(collaborators); headingMain.append(title, people);
+  people.append(collaborators); headingMain.append(headingTitle, people);
   if (destination.initialized !== false && state?.auth?.mode === 'github_app'
       && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)) {
     const add = document.createElement('button'); add.type = 'button'; add.className = 'repository-add-teammate';
@@ -491,6 +555,10 @@ function renderDestinationCard(destination, isDefault) {
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Remove from Clockoli'; actions.append(remove);
   article.append(actions, feedback);
   if (destination.initialized !== false) renderTeammateInstructions(article, destination);
+  const teammateFeedback = document.createElement('p'); teammateFeedback.className = 'repository-manage-feedback form-feedback';
+  teammateFeedback.tabIndex = -1;
+  teammateFeedback.setAttribute('role', 'status'); teammateFeedback.setAttribute('aria-live', 'polite');
+  article.append(teammateFeedback);
   const removalPanel = renderRemoval(article, destination);
   remove.addEventListener('click', () => { removalPanel.hidden = false; removalPanel.focus?.(); });
   return article;
@@ -505,6 +573,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
     const users = Array.isArray(result?.users) ? result.users : [];
     const pending = Array.isArray(result?.pendingUsers) ? result.pendingUsers : [];
     const labels = users.map(user => `@${user.login}`);
+    closeActiveAvatarMenu?.();
     display.replaceChildren();
     display.setAttribute('role', 'group');
     display.setAttribute('aria-label', `Repository collaborators: ${labels.join(', ')}${result?.hasMore ? ', and more' : ''}${pending.length || result?.pendingHasMore ? `; pending invitations: ${pending.map(user => `@${user.login}`).join(', ')}${result?.pendingHasMore ? ', and more' : ''}` : ''}`);
@@ -513,16 +582,21 @@ async function loadRepositoryCollaborators(article, destination, root) {
       return;
     }
     for (const [user, isPending] of [...users.map(user => [user, false]), ...pending.map(user => [user, true])]) {
-      const avatar = document.createElement('span'); avatar.className = `repository-collaborator${isPending ? ' repository-invitation' : ''}`;
+      const interactive = state?.auth?.mode === 'github_app' && destination.initialized !== false
+        && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)
+        && user.login.toLowerCase() !== state.auth.githubLogin?.toLowerCase();
+      const avatar = document.createElement(interactive ? 'button' : 'span');
+      avatar.className = `repository-collaborator${isPending ? ' repository-invitation' : ''}`;
       avatar.dataset.login = `@${user.login}${isPending ? ' · pending invitation' : ''}`;
-      avatar.setAttribute('role', 'img'); avatar.setAttribute('aria-label', `@${user.login}${isPending ? ', pending invitation' : ''}`);
+      if (interactive) { avatar.type = 'button'; avatar.setAttribute('aria-label', `Manage @${user.login}${isPending ? ' pending invitation' : ' repository access'}`); }
+      else { avatar.setAttribute('role', 'img'); avatar.setAttribute('aria-label', `@${user.login}${isPending ? ', pending invitation' : ''}`); }
       avatar.textContent = user.login[0].toUpperCase();
       if (user.avatarUrl) {
         const image = document.createElement('img'); image.src = user.avatarUrl; image.alt = '';
         image.referrerPolicy = 'no-referrer'; image.addEventListener('error', () => image.remove());
         avatar.append(image);
       }
-      display.append(avatar);
+      display.append(interactive ? avatarAccessMenu(article, destination, root, avatar, user, isPending ? 'pending' : 'collaborator') : avatar);
     }
     if (result.hasMore) {
       const extra = document.createElement('span'); extra.className = 'repository-collaborator repository-collaborator-more';
@@ -535,6 +609,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
+      closeActiveAvatarMenu?.();
     }
   }
 }
@@ -554,6 +629,7 @@ function canFinishRepositorySetup() {
 
 function renderDestinationCards() {
   const destinations = configuredDestinations();
+  closeActiveAvatarMenu?.();
   const root = $('time-repository-list'); root.replaceChildren();
   $('time-repositories-empty').hidden = destinations.length > 0;
   $('add-time-repository').hidden = state?.auth?.mode === 'pat';

@@ -49,7 +49,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [];
   const context = vm.createContext({
-    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener() {} },
+    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener() {}, removeEventListener() {} },
     window: { addEventListener() {}, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeTaskUrl,
@@ -1483,8 +1483,10 @@ test('teammate picker selects a searched GitHub user and requires confirmation b
   assert.equal(choice.querySelector('.teammate-avatar').src, 'https://avatars.githubusercontent.com/u/42?v=4');
   await choice.listeners.click();
   assert.equal(invite.disabled, false);
-  assert.equal(picker.querySelector('.teammate-selected').querySelector('.teammate-name').textContent, 'Bob Example');
-  assert.equal(picker.querySelector('.teammate-selected').querySelector('.teammate-avatar').src, 'https://avatars.githubusercontent.com/u/42?v=4');
+  assert.equal(input.value, 'Bob');
+  assert.equal(picker.querySelector('.teammate-choice'), null);
+  assert.equal(picker.querySelector('.teammate-selected'), null);
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /Selected @Bob.*Bob Example/);
   await invite.listeners.click();
   assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'INVITE_REPOSITORY_USER').payload)),
     { destinationId: 'github:20', login: 'Bob', userId: 42 });
@@ -1505,6 +1507,28 @@ test('teammate picker does not invite when confirmation is cancelled', async () 
   await picker.querySelector('.teammate-choice').listeners.click();
   await picker.querySelector('.invite-teammate').listeners.click();
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+});
+
+test('an earlier teammate search cannot reopen suggestions after a user is selected', async () => {
+  let finishEarlierSearch;
+  const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? request.payload.query === 'Al'
+      ? new Promise(resolve => { finishEarlierSearch = resolve; })
+      : { users: [{ id: 42, login: 'Bob' }] }
+    : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search');
+  input.value = 'Al'; input.listeners.input();
+  const earlierSearch = page.timers.find(timer => timer.delay === 250).callback();
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  finishEarlierSearch({ users: [{ id: 99, login: 'Alice' }] });
+  await earlierSearch;
+  assert.equal(picker.querySelector('.teammate-choice'), null);
+  assert.equal(input.value, 'Bob');
+  assert.equal(picker.querySelector('.invite-teammate').disabled, false);
 });
 
 test('repository confirmation sends the one action allowed by the inspected repository state', async () => {
@@ -1591,11 +1615,29 @@ test('connected repository rows show collaborators by destination and ignore sta
   page.render({ ...connectedState, destinations: [second] });
   await new Promise(resolve => setImmediate(resolve));
   const row = page.nodes.get('time-repository-list').children[0];
-  assert.equal(row.querySelector('.repository-collaborators').children[0].textContent, 'N');
+  assert.equal(row.querySelector('.repository-collaborator').textContent, 'N');
   resolveFirst({ users: [{ id: 8, login: 'Stale', avatarUrl: null }], hasMore: false });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(row.querySelector('.repository-collaborators').children.length, 1);
-  assert.equal(row.querySelector('.repository-collaborators').children[0].dataset.login, '@New');
+  assert.equal(row.querySelector('.repository-collaborator').dataset.login, '@New');
+});
+
+test('each repository disclosure has a decorative chevron that changes direction when open', async () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ] });
+  const rows = page.nodes.get('time-repository-list').children;
+  for (const row of rows) {
+    const icon = row.querySelector('.repository-heading-title').children[0];
+    assert.equal(icon.tagName, 'svg');
+    assert.equal(icon.attributes.class, 'repository-disclosure-icon');
+    assert.equal(icon.attributes['aria-hidden'], 'true');
+    assert.equal(icon.children[0].attributes.d, 'M3 6l5 5 5-5');
+  }
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.time-repository\[open\] \.repository-disclosure-icon\{[^}]*rotate\(180deg\)/);
 });
 
 test('reloading repository access indicators replaces old avatars and pending status on the same card', async () => {
@@ -1662,6 +1704,108 @@ test('repository add circle opens only its own teammate form and focuses GitHub 
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
   const pat = harness(); pat.render({ ...connectedState, auth: { mode: 'pat' }, destinations });
   assert.equal(pat.nodes.get('time-repository-list').querySelector('.repository-add-teammate'), null);
+});
+
+test('managing repository access requires confirmation and removes only the chosen collaborator', async () => {
+  const destinations = [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ];
+  let confirmed = false, removed = false;
+  const page = harness({ collaboratorReplies: true, confirm: () => confirmed, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: request.destinationId === 'github:20' && !removed ? [{ id: 42, login: 'Bob', avatarUrl: null }] : [], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') { removed = true; return { status: 'removed', login: 'Bob' }; }
+    return {};
+  } });
+  page.render({ ...connectedState, destinations });
+  await new Promise(resolve => setImmediate(resolve));
+  const rows = page.nodes.get('time-repository-list').children;
+  const first = rows.find(row => row.dataset.destinationId === 'github:20');
+  const second = rows.find(row => row.dataset.destinationId === 'github:21');
+  const avatar = first.querySelector('.repository-collaborator');
+  const menu = first.querySelector('.repository-avatar-actions');
+  assert.equal(avatar.tagName, 'button');
+  assert.equal(avatar.attributes['aria-expanded'], 'false');
+  assert.equal(menu.hidden, true);
+  assert.equal(first.querySelector('.repository-manage-teammates'), null);
+  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(first.open, false);
+  assert.equal(menu.hidden, false);
+  assert.equal(avatar.attributes['aria-expanded'], 'true');
+  const button = menu.querySelector('.remove-repository-user');
+  assert.match(button.textContent, /Remove @Bob/);
+  await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_REPOSITORY_USER'), false);
+  confirmed = true;
+  await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'REMOVE_REPOSITORY_USER').payload)),
+    { destinationId: 'github:20', login: 'Bob', userId: 42, kind: 'collaborator' });
+  assert.match(first.querySelector('.repository-manage-feedback').textContent, /removed/i);
+  assert.equal(first.querySelector('.repository-manage-feedback').focused, true);
+  assert.equal(first.querySelector('.remove-repository-user'), null);
+  assert.equal(second.querySelector('.remove-repository-user'), null);
+});
+
+test('pending account invitation can be cancelled but a failed removal retains its action', async () => {
+  let fail = true;
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return { users: [], hasMore: false,
+      pendingUsers: fail ? [{ id: 43, login: 'Alice', avatarUrl: null }] : [], pendingHasMore: false };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return fail ? Promise.reject(new Error('GitHub declined')) : { status: 'cancelled', login: 'Alice' };
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const avatar = row.querySelector('.repository-invitation');
+  const menu = row.querySelector('.repository-avatar-actions');
+  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const cancel = menu.querySelector('.remove-repository-user');
+  assert.match(cancel.textContent, /Cancel invitation for @Alice/);
+  await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.match(row.querySelector('.repository-manage-feedback').textContent, /GitHub declined/);
+  assert.equal(cancel.disabled, false);
+  assert.ok(menu.querySelector('.remove-repository-user'));
+  fail = false;
+  await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.filter(request => request.type === 'REMOVE_REPOSITORY_USER').at(-1).payload)),
+    { destinationId: 'github:20', login: 'Alice', userId: 43, kind: 'pending' });
+  assert.match(row.querySelector('.repository-manage-feedback').textContent, /cancelled/i);
+});
+
+test('avatar menu closes on Escape and does not open the repository or send a mutation', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
+    { id: 7, login: 'Member' }, { id: 8, login: 'Teammate' },
+  ], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const [first, second] = row.querySelectorAll('.repository-collaborator');
+  await first.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(row.querySelectorAll('.repository-avatar-actions').filter(menu => !menu.hidden).length, 1);
+  await second.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(first.attributes['aria-expanded'], 'false');
+  assert.equal(second.attributes['aria-expanded'], 'true');
+  second.listeners.keydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  assert.equal(second.attributes['aria-expanded'], 'false');
+  assert.equal(second.focused, true);
+  assert.equal(row.open, false);
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_REPOSITORY_USER'), false);
+});
+
+test('signed-in account avatar is not offered a self-removal action', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
+    { id: 7, login: 'Octocat' }, { id: 8, login: 'Teammate' },
+  ], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const avatars = page.nodes.get('time-repository-list').querySelectorAll('.repository-collaborator');
+  assert.equal(avatars[0].tagName, 'span');
+  assert.equal(avatars[0].attributes.role, 'img');
+  assert.equal(avatars[1].tagName, 'button');
+  assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.remove-repository-user').length, 1);
 });
 
 test('repository avatar hover uses the GitHub login and overflow does not impersonate add', async () => {

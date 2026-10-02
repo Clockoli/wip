@@ -143,7 +143,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
     'MERGE_TASKS',
   ];
   for (const type of privileged) {
@@ -192,6 +192,25 @@ test('repository collaborator read checks sender and configured destination befo
   pendingFails = true;
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
     { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, pendingUnavailable: true });
+});
+
+test('repository access removal validates payload and sender before loading a destination or mutating', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async id => { calls.push(id); if (id !== 'github:20') throw new Error('not configured');
+      return { remove: async (...args) => { calls.push(args); return { status: 'removed', login: 'Bob' }; } }; },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'REMOVE_REPOSITORY_USER', payload: { destinationId: 'github:20', login: 'Bob', userId: 42, kind: 'collaborator' } };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  for (const payload of [{ ...request.payload, userId: 0 }, { ...request.payload, kind: 'other' },
+    { ...request.payload, extra: true }, { ...request.payload, destinationId: 'github:21' }]) {
+    await assert.rejects(context.handle({ ...request, payload }, extension));
+  }
+  assert.deepEqual(calls, ['github:21']);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))), { status: 'removed', login: 'Bob' });
+  assert.deepEqual(calls, ['github:21', 'github:20', ['Bob', 42, 'collaborator']]);
 });
 
 test('any GitHub page can start a URL task only for its exact sender URL', () => {
