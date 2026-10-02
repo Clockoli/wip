@@ -22,7 +22,7 @@ Clockoli patches `_renderDays()` so each band starts at local `00:00` instead of
 babd006be2f7c47768ba6b8aea960d650815af10eb50b1a867d8bee38ae1c8fe
 ```
 
-The Clockoli patch also keeps Calendar tasks below sticky labels and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible.
+The Clockoli patch also keeps Calendar tasks below sticky labels, preserves focused tasks across Timeline renders so keyboard edits remain available, and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible.
 
 ## Commands
 

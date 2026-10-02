@@ -2566,6 +2566,7 @@
     }
 
     _renderTasks() {
+      const focusedTaskKey = this.shadow.activeElement?.closest?.('.task')?.dataset.taskKey;
       this.taskRow.innerHTML = '';
       this.editGuideLayer.innerHTML = '';
       if (!this.editState) {
@@ -2607,6 +2608,7 @@
       this._renderEditGuides();
       this._updateRowLabelPositions();
       this._renderDetailsPointer();
+      if (focusedTaskKey != null) this._taskElementByKey(focusedTaskKey)?.focus({ preventScroll: true });
     }
 
     _createTaskElement(task) {
