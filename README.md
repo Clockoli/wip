@@ -26,7 +26,7 @@ Clockoli currently runs as a trusted unpacked extension. Use the current checkou
    ```
 
 2. In Chrome or another Chromium browser, open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**. Choose the repository root containing `manifest.json`, then pin Clockoli to the toolbar.
-3. Open **Settings** and sign in with GitHub. Check a listed repository with **Check repository**, or enter a URL or `owner/name` and leave the field or press Enter to check it. Then explicitly confirm **Connect repository** if ready, or the offered setup action if not. Choose **Default time repository**, then select **Finish setup**.
+3. Open **Settings** and sign in with GitHub. Paste a time repository URL or `owner/name` and leave the field or press Enter to check it; you can also choose a matching App-granted suggestion. Explicitly confirm **Connect repository** if ready, or the offered setup action if not. The first confirmed connection completes initial setup when it becomes the usable default. For later additions, choose **Default time repository** if needed, then select **Finish setup**.
 4. Open a page, select the Clockoli toolbar icon, and choose **Track this task** in the full-width panel. When finished, choose **Stop and save**.
 
 Your **GitHub account** authenticates you; a **source repository** may own a tracked issue or pull request; a **time repository** stores your records. These can be different repositories. The [setup guide](docs/getting-started.md) explains repository access and confirmation.

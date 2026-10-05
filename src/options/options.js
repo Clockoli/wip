@@ -19,6 +19,7 @@ const choiceStore = new ChromeStore();
 let repositoryTarget = '';
 let repositoryInputDirty = false;
 let checkingRepositoryTarget = '';
+let autoCheckingRepositoryTarget = '';
 let queuedRepositoryCheck = null;
 let repositoryCheckFeedback = '';
 let repositoryCheckFeedbackError = false;
@@ -28,6 +29,10 @@ let installations = [];
 let choiceWrite = Promise.resolve();
 let discoveryPromise = null;
 let githubHandoff = false;
+let repositoryGrantAwaitingDeparture = false;
+let repositoryGrantLeftPage = false;
+let repositoryGrantReturnTimer = null;
+let repositoryReturnLeftPage = false;
 let repositoryRecoveryHandoff = false;
 let discoveryStatus = 'idle';
 let setupCancelled = false;
@@ -35,7 +40,9 @@ let repositoryMonitorTimer = null;
 let repositoryLifecycle = 0;
 let repositoryPollingStopped = false;
 let repositoryListSignature = '';
+let repositorySuggestionsOpen = false;
 let repositoryDiscoveryKnown = false;
+let autoInspectedGrantKey = '';
 let renderedOnboardingStep = null;
 let localPreferences = null;
 let mergeTasks = [];
@@ -619,8 +626,9 @@ function readySetupDestination(destination) {
   if (!['write_verified', 'access_checked'].includes(destination.verificationStatus || destination.status)
       && !(destination.id === defaultDestinationId() && state?.ready)) return false;
   if (!repositoryDiscoveryKnown) return true;
-  return repositories.some(repository => repository.ready !== false && repository.eligible && (repository.storageState || repository.state) === 'initialized_member'
-    && repository.canAdd === true && repository.fullName?.toLowerCase() === `${destination.owner}/${destination.repo}`.toLowerCase());
+  return repositories.some(repository => repository.ready !== false && repository.eligible
+    && repository.fullName?.toLowerCase() === `${destination.owner}/${destination.repo}`.toLowerCase()
+    && (repository.storageState || repository.state) === 'initialized_member' && repository.canAdd === true);
 }
 function canFinishRepositorySetup() {
   return !repositoryActionApplying && !state?.candidateAuth
@@ -643,13 +651,15 @@ function renderDestinationCards() {
   }
   chooser.value = fallback;
   chooser.disabled = repositoryActionApplying || Boolean(state?.candidateAuth);
-  $('finish-setup').hidden = !showOnboarding && destinations.length > 0;
+  $('finish-setup').hidden = !showOnboarding || destinations.length === 0;
   $('finish-setup').disabled = !canFinishRepositorySetup();
+  $('setup-ready-summary').hidden = !destinations.length && !authorizationBlock
+    && !repositoryInputDirty && repositoryCanBeSelected(selectedRepository);
   $('setup-ready-summary').textContent = state?.candidateAuth && authorizationBlock
     ? authorizationBlock.message
     : destinations.length
       ? `Connected repositories are listed above with their status. Default: ${destinationLabel(destinations.find(destination => destination.id === fallback))}. Choose a ready default, or check another repository.`
-      : 'Check a repository first, then choose Connect repository when it is ready. Setup actions require confirmation.';
+      : 'Check a repository first, then choose the offered setup action. Repository changes require confirmation.';
   for (const destination of [...destinations].sort((a, b) => destinationLabel(a).localeCompare(destinationLabel(b)))) {
     const article = renderDestinationCard(destination, destination.id === fallback);
     root.append(article);
@@ -709,6 +719,7 @@ function renderState() {
   $('revoke-action').hidden = state.auth?.mode !== 'github_app';
   setLink('manage-authorization', state.authorizationSettingsUrl || 'https://github.com/settings/apps/authorizations');
   renderRepositoryAccess();
+  renderRepositoryList();
   renderDestinationCards();
   renderDestinationControls(localPreferences || {});
   renderMergeDestinationOptions();
@@ -807,10 +818,19 @@ function closeRepositoryAccess() {
   dialog.hidden = true;
 }
 
+function renderRepositoryRefresh() {
+  const refresh = $('refresh-repository-target');
+  const busy = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget
+    || (discoveryStatus === 'loading' && repositoryTarget && !repositoryInputDirty));
+  refresh.disabled = !$('repository-target').value.trim() || busy;
+  refresh.setAttribute('aria-busy', String(busy));
+}
+
 function renderRepositoryAccess() {
   const owner = repositoryTarget.split('/')[0].toLowerCase();
   const installation = installations.find(item => item.accountLogin.toLowerCase() === owner);
-  const missing = !repositoryInputDirty && Boolean(repositoryTarget) && discoveryStatus === 'ready' && !selectedRepository;
+  const missing = !repositoryInputDirty && Boolean(repositoryTarget) && discoveryStatus === 'ready'
+    && !selectedRepository && autoCheckingRepositoryTarget !== repositoryTarget;
   const needsAppWrite = selectedRepository?.reasons?.includes('app_contents_write_required');
   // Rendering (including background discovery/reload) never opens the modal.
   if (!(missing || needsAppWrite)) closeRepositoryAccess();
@@ -829,21 +849,28 @@ function renderRepositoryAccess() {
     : 'Clockoli needs Contents: Read and write permission for this repository.';
   const targetStatus = $('repository-target-status');
   const input = $('repository-target');
-  $('refresh-repository-target').disabled = !input.value.trim() || Boolean(checkingRepositoryTarget);
-  $('connect-checked-repository').hidden = !input.value.trim() || repositoryInputDirty || Boolean(checkingRepositoryTarget)
+  renderRepositoryRefresh();
+  const action = repositoryActionKey(selectedRepository);
+  const actionButton = $('connect-checked-repository');
+  actionButton.textContent = repositoryAction(selectedRepository);
+  actionButton.hidden = !input.value.trim() || repositoryInputDirty || Boolean(checkingRepositoryTarget) || Boolean(autoCheckingRepositoryTarget)
     || selectedRepository?.fullName.toLowerCase() !== repositoryTarget.toLowerCase()
-    || repositoryActionKey(selectedRepository) !== 'connect' || !repositoryCanBeSelected(selectedRepository);
+    || !action || !repositoryCanBeSelected(selectedRepository);
   const listed = repositories.some(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase());
   const manual = Boolean(input.value.trim()) && !listed;
   const failed = manual && repositoryCheckError === repositoryTarget && !repositoryInputDirty;
   const unavailable = manual && missing && !checkingRepositoryTarget;
-  targetStatus.className = `help${repositoryCheckFeedbackError || failed || unavailable ? ' repository-target-error' : ''}`;
+  const error = repositoryCheckFeedbackError || failed || (unavailable && !repositoryGrantAwaitingDeparture);
+  const attention = !error && !repositoryInputDirty && Boolean(action) && repositoryCanBeSelected(selectedRepository);
+  targetStatus.className = `repository-check-status${error ? ' repository-target-error' : ''}`;
+  targetStatus.dataset.kind = error ? 'error' : attention ? 'attention' : selectedRepository?.ready ? 'ready' : 'neutral';
   targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? 'Checking when you leave this field.'
     : checkingRepositoryTarget === repositoryTarget ? 'Checking access and storage… No changes will be made.'
     : failed ? 'Check failed. Edit the name or press Enter to retry.' : unavailable
     ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
     : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
-  if (repositoryCheckFeedbackError || failed || unavailable) input.setAttribute('aria-invalid', 'true');
+  targetStatus.hidden = !targetStatus.textContent;
+  if (error) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
 }
 
@@ -915,60 +942,55 @@ function repositoryStatusKind(label) {
 }
 
 function renderRepositoryList() {
-  const query = $('repository-search').value.trim().toLowerCase();
-  const visible = repositories.filter(repository => !query || repository.fullName.toLowerCase().includes(query))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName));
-  const signature = JSON.stringify([Boolean(checkingRepositoryTarget), visible.map(repository => [repository.fullName, repository.installationId, repository.repoId,
-    repositoryInspectionStatus(repository), repositoryCanBeSelected(repository), repositoryActionKey(repository)])]);
+  const query = $('repository-target').value.trim().toLowerCase();
+  const open = repositorySuggestionsOpen && query.length >= 2 && !checkingRepositoryTarget;
+  const visible = open ? repositories.filter(repository => repository.fullName.toLowerCase().includes(query))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName)).slice(0, 8) : [];
+  const loading = open && discoveryStatus === 'loading';
+  $('repository-list-loading').hidden = !loading;
+  $('repository-choice-fieldset').hidden = !open;
+  $('repository-list').hidden = !open || loading;
+  $('repository-target').setAttribute('aria-expanded', String(open));
+  const signature = JSON.stringify([open, loading, query, visible.map(repository => [repository.fullName, repository.installationId, repository.repoId, repositoryInspectionStatus(repository)])]);
   if (repositoryListSignature === signature) return;
   repositoryListSignature = signature;
   const root = $('repository-list');
   const focused = document.activeElement?.dataset?.repositoryAction;
   root.replaceChildren();
+  if (!open || loading) return;
   if (!visible.length) {
     const empty = document.createElement('p'); empty.className = 'help';
-    empty.textContent = repositories.length ? 'No repository matches this search.' : 'No accessible repositories yet. Enter a repository URL or owner/name above.';
+    empty.textContent = repositories.length ? 'No granted repository matches. Paste a full URL to check another repository.' : 'No granted repositories found. Paste a full URL to check one.';
     root.append(empty); return;
   }
   for (const repository of visible) {
-    const row = document.createElement('div'); row.className = 'repository-option';
-    const icon = document.createElement('span'); icon.className = 'repository-icon'; icon.setAttribute('aria-hidden', 'true');
-    const copy = document.createElement('span');
-    const name = document.createElement('a'); name.textContent = repository.fullName;
-    name.href = `https://github.com/${repository.fullName}`; name.target = '_blank'; name.rel = 'noreferrer';
-    const status = document.createElement('small');
-    const statusLabel = repositoryInspectionStatus(repository);
-    status.className = `repository-status repository-status-${repositoryStatusKind(statusLabel)}`;
-    status.textContent = statusLabel;
-    copy.append(name, status);
-    const action = document.createElement('button'); action.type = 'button'; action.className = 'secondary';
-    action.dataset.repositoryAction = repository.fullName;
-    const selectable = repositoryCanBeSelected(repository);
-    action.textContent = checkingRepositoryTarget === repository.fullName ? 'Checking…'
-      : selectable ? repositoryAction(repository) : repositoryIsConnected(repository) ? 'Connected' : 'Check repository';
-    action.disabled = repositoryActionApplying || Boolean(checkingRepositoryTarget)
-      || (repositoryIsConnected(repository) && !repository.branchSetupRequired);
-    action.addEventListener('click', async () => {
+    const option = document.createElement('button'); option.type = 'button'; option.className = 'repository-suggestion';
+    option.setAttribute('role', 'option'); option.dataset.repositoryAction = repository.fullName;
+    option.textContent = repository.fullName;
+    option.disabled = repositoryActionApplying || Boolean(checkingRepositoryTarget);
+    option.addEventListener('click', () => {
       if (checkingRepositoryTarget || repositoryActionApplying) return;
-      if (selectable) {
-        selectedRepository = repository;
-        await rememberRepositoryTarget(repository.fullName, false);
-        $('repository-target').value = '';
-        updateRepositoryConfirmation(); renderRepositoryAccess();
-        reviewSelectedRepository();
-      } else await checkRepositoryTarget(repository.fullName, true);
+      repositorySuggestionsOpen = false;
+      $('repository-target').value = repository.fullName;
+      renderRepositoryList();
+      return checkRepositoryTarget(repository.fullName, false, true);
     });
-    row.append(icon, copy);
-    if (!repository.ready || selectable) row.append(action);
-    root.append(row);
-    if ((!repository.ready || selectable) && focused === repository.fullName) action.focus();
+    option.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); repositorySuggestionsOpen = false; renderRepositoryList(); $('repository-target').focus(); }
+      else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const options = [...root.children];
+        options[(options.indexOf(option) + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length].focus();
+      }
+    });
+    root.append(option);
+    if (focused === repository.fullName) option.focus();
   }
 }
 
 function renderRepositoryLoading() {
-  const loading = discoveryStatus === 'loading';
-  $('repository-list-loading').hidden = !loading;
-  $('repository-choice-fieldset').hidden = !loading && repositories.length === 0;
+  renderRepositoryList();
+  renderRepositoryRefresh();
 }
 
 function renderRepositories(result) {
@@ -979,12 +1001,6 @@ function renderRepositories(result) {
     ? repositories.find(repository => repository.fullName.toLowerCase() === repositoryTarget.toLowerCase()) || null
     : selectOnlyEligibleRepository(repositories.filter(repositoryCanBeSelected));
   renderRepositoryLoading();
-  const searchHidden = repositories.length < 5;
-  $('repository-search-label').hidden = searchHidden;
-  if (searchHidden && $('repository-search').value) {
-    $('repository-search').value = '';
-    repositoryListSignature = '';
-  }
   updateRepositoryConfirmation();
   renderRepositoryList();
   renderRepositoryAccess();
@@ -1039,6 +1055,7 @@ function reviewSelectedRepository() {
 async function confirmRepositoryAction() {
   if (!pendingConfirmation || repositoryActionApplying) return false;
   const confirmation = { ...pendingConfirmation };
+  const firstDestination = configuredDestinations().length === 0;
   repositoryActionApplying = true;
   $('finish-setup').disabled = true;
   $('confirm-repository-action').disabled = true;
@@ -1056,21 +1073,33 @@ async function confirmRepositoryAction() {
     } });
     stopRepositoryMonitoring();
     await rememberRepositoryTarget('');
+    repositoryCheckFeedback = '';
+    repositoryCheckFeedbackError = false;
+    repositoryCheckError = '';
+    repositoryDiscoveryKnown = false;
     showOnboarding = true;
     selectedRepository = null;
     updateRepositoryConfirmation();
     pendingConfirmation = null;
     await refreshState();
     renderRepositoryList();
-    $('time-repositories-title').focus();
     await refreshLocalPreferences();
-    message(confirmation.intent.startsWith('initialize_')
+    repositoryActionApplying = false;
+    if (firstDestination && canFinishRepositorySetup()) {
+      showOnboarding = false;
+      renderState();
+      $('time-repositories-title').focus();
+      message(`Setup complete. ${confirmation.fullName} is connected as the default time repository.`, 'success');
+    } else {
+      $('time-repositories-title').focus();
+      message(confirmation.intent.startsWith('initialize_')
       ? 'Repository initialized. Clockoli verified the setup write.'
       : confirmation.intent === 'connect'
         ? 'Repository connected locally. No repository files were changed.'
         : confirmation.intent === 'join'
         ? 'Repository joined. Clockoli registered your storage branch.'
         : 'Repository added. Existing Clockoli membership was validated.', 'success');
+    }
     return true;
   } catch (error) {
     message(error.message, 'error');
@@ -1106,7 +1135,48 @@ async function inspectSelectedRepository(target, revision, account) {
   if (index < 0) return;
   repositories[index] = result.repository;
   selectedRepository = result.repository;
+  if (result.repository.state) autoInspectedGrantKey = `${account}:${candidate.installationId}:${candidate.repoId}:${target}`;
   renderRepositoryList(); renderRepositoryAccess(); renderDestinationCards();
+}
+
+async function inspectNewlyGrantedTarget(revision, account) {
+  const inspectedTarget = repositoryTarget;
+  const target = repositories.find(repository => repository.fullName.toLowerCase() === inspectedTarget.toLowerCase());
+  const grantKey = target && `${account}:${target.installationId}:${target.repoId}:${inspectedTarget}`;
+  if (!target?.eligible
+      || repositoryInputDirty || selectedRepository?.state || checkingRepositoryTarget || autoInspectedGrantKey === grantKey) return;
+  autoCheckingRepositoryTarget = inspectedTarget;
+  repositoryCheckError = '';
+  repositoryCheckFeedback = `Checking ${repositoryTarget} after GitHub access changed…`;
+  repositoryCheckFeedbackError = false;
+  renderRepositoryAccess();
+  try {
+    await inspectSelectedRepository(inspectedTarget, revision, account);
+    if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount()
+        || repositoryInputDirty || repositoryTarget !== inspectedTarget
+        || selectedRepository?.fullName.toLowerCase() !== inspectedTarget.toLowerCase()) return;
+    repositoryCheckError = '';
+    const action = repositoryCanBeSelected(selectedRepository) ? repositoryAction(selectedRepository) : '';
+    const reviewInitialization = repositoryActionKey(selectedRepository)?.startsWith('initialize_')
+      && !pendingConfirmation && !repositoryActionApplying && !$('repository-access-panel').open;
+    repositoryCheckFeedback = `Checked ${repositoryTarget}: ${repositoryInspectionStatus(selectedRepository)}.${reviewInitialization
+      ? ' Review the initialization details and confirm to continue.' : action ? ` Choose ${action} to continue.` : ''}`;
+    if (reviewInitialization) reviewSelectedRepository();
+    if (action) message(reviewInitialization
+      ? 'Repository access confirmed. Review the initialization details and confirm to continue.'
+      : `Repository access confirmed. Choose ${action} below to review the next step.`, 'success');
+  } catch (error) {
+    if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount()
+        || repositoryInputDirty || repositoryTarget !== inspectedTarget) return;
+    repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`;
+    repositoryCheckFeedbackError = true;
+  } finally {
+    if (autoCheckingRepositoryTarget === inspectedTarget) autoCheckingRepositoryTarget = '';
+    if (revision === repositoryLifecycle && account === repositoryChoiceAccount()) {
+      renderRepositoryAccess();
+      renderDestinationCards();
+    }
+  }
 }
 
 async function discoverRepositories({ silent = false } = {}) {
@@ -1170,12 +1240,16 @@ async function discoverRepositories({ silent = false } = {}) {
       discoveryStatus = 'ready'; repositoryDiscoveryKnown = true; renderRepositories(result); renderDestinationCards();
       message(repositoryTarget && !selectedRepository ? $('repository-target-status').textContent : 'Enter a repository URL or owner/name, review a repository action, or finish setup with a ready default.');
     }
+    await inspectNewlyGrantedTarget(revision, account);
     return result;
   } catch (error) {
     if (!silent && revision === repositoryLifecycle) {
       discoveryStatus = 'error'; selectedRepository = null; updateRepositoryConfirmation();
       renderRepositoryLoading();
       $('repository-target-status').textContent = 'Repository check failed. Retry when GitHub is available.';
+      $('repository-target-status').className = 'repository-check-status repository-target-error';
+      $('repository-target-status').dataset.kind = 'error';
+      $('repository-target-status').hidden = false;
       message(error.message, 'error'); throw error;
     }
   } finally {
@@ -1184,20 +1258,30 @@ async function discoverRepositories({ silent = false } = {}) {
 }
 
 function repositoryPollingActive() {
-  return !repositoryPollingStopped && !setupCancelled && isAppAuthorized()
+  return !repositoryPollingStopped && !setupCancelled && !repositoryGrantAwaitingDeparture && isAppAuthorized()
     && (showOnboarding || Boolean(state?.candidateAuth) || configuredDestinations().length === 0);
+}
+function cancelRepositoryGrantHandoff() {
+  if (!repositoryGrantAwaitingDeparture) return;
+  clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
+  githubHandoff = false;
+  repositoryGrantAwaitingDeparture = false;
+  repositoryGrantLeftPage = false;
 }
 function stopRepositoryMonitoring() {
   repositoryLifecycle++;
   if (discoveryStatus === 'loading') { discoveryStatus = 'idle'; renderRepositoryLoading(); }
   clearTimeout(repositoryMonitorTimer); repositoryMonitorTimer = null;
+  cancelRepositoryGrantHandoff();
+  clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
+  repositoryReturnLeftPage = false;
 }
 function scheduleRepositoryPolling() {
   if (repositoryMonitorTimer || !repositoryPollingActive()) return;
   repositoryMonitorTimer = setTimeout(async () => {
     repositoryMonitorTimer = null;
     if (!repositoryPollingActive()) return;
-    if (!pendingConfirmation && !repositoryActionApplying && !$('repository-access-panel').open && !discoveryPromise) {
+    if ((repositoryTarget || state?.candidateAuth) && !pendingConfirmation && !repositoryActionApplying && !$('repository-access-panel').open && !discoveryPromise) {
       await discoverRepositories({ silent: true });
     }
     scheduleRepositoryPolling();
@@ -1643,7 +1727,7 @@ async function refreshState() {
     if (repositoryTarget) showOnboarding = true;
   }
   renderState();
-  if (isAppAuthorized() && !setupCancelled && (showOnboarding || configuredDestinations().length === 0) && discoveryStatus === 'idle') {
+  if (isAppAuthorized() && !setupCancelled && (repositoryTarget || state?.candidateAuth) && discoveryStatus === 'idle') {
     await discoverRepositories().catch(() => {});
   }
 }
@@ -1690,7 +1774,6 @@ $('device-done').addEventListener('click', async () => {
   } finally { $('device-done').disabled = !state?.deviceAttempt; }
 });
 
-$('repository-search').addEventListener('input', renderRepositoryList);
 function beginRepositoryChange() {
   if (state?.auth?.mode === 'pat') {
     $('more-settings').open = true;
@@ -1704,7 +1787,7 @@ function beginRepositoryChange() {
   showOnboarding = true;
   discoveryStatus = 'idle';
   renderState();
-  void discoverRepositories().catch(() => {});
+  if (repositoryTarget || state?.candidateAuth) void discoverRepositories().catch(() => {});
 }
 async function checkRepositoryAccess() {
   message('Checking GitHub repository access…');
@@ -1773,12 +1856,16 @@ for (const id of ['open-device-page']) {
 }
 async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = false) {
   if (checkingRepositoryTarget) { queuedRepositoryCheck = { rawTarget, fromList, keepInput }; return; }
+  clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
+  repositoryReturnLeftPage = false;
+  if (repositoryGrantAwaitingDeparture) { cancelRepositoryGrantHandoff(); scheduleRepositoryPolling(); }
   const revision = repositoryLifecycle;
   const account = repositoryChoiceAccount();
   let completed = false;
   try {
     const target = parseRepositoryTarget(rawTarget);
     checkingRepositoryTarget = target;
+    repositorySuggestionsOpen = false;
     repositoryCheckError = '';
     repositoryCheckFeedback = keepInput ? `Checking ${target}… Repository files will not be changed.` : '';
     repositoryCheckFeedbackError = false;
@@ -1825,6 +1912,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
         repositoryCheckFeedbackError = status.startsWith('Unavailable');
       }
       renderRepositoryAccess();
+      renderDestinationCards();
     } else if (keepInput) repositoryCheckFeedback = '';
     const queued = queuedRepositoryCheck;
     queuedRepositoryCheck = null;
@@ -1836,24 +1924,36 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
 }
 $('repository-target-form').addEventListener('submit', event => {
   event.preventDefault();
-  return checkRepositoryTarget($('repository-target').value);
+  repositorySuggestionsOpen = false;
+  renderRepositoryList();
+  return checkRepositoryTarget($('repository-target').value, false, true);
 });
 $('repository-target').addEventListener('blur', event => {
   const input = $('repository-target');
-  if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id) || event?.relatedTarget?.dataset?.repositoryAction
+  if (event?.relatedTarget?.dataset?.repositoryAction) return;
+  repositorySuggestionsOpen = false;
+  renderRepositoryList();
+  if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id)
       || !input.value.trim() || !repositoryInputDirty) return;
   try { parseRepositoryTarget(input.value); }
   catch {
     input.setAttribute('aria-invalid', 'true');
-    $('repository-target-status').className = 'help repository-target-error';
+    $('repository-target-status').className = 'repository-check-status repository-target-error';
+    $('repository-target-status').dataset.kind = 'error';
     $('repository-target-status').textContent = 'Enter a valid GitHub repository URL or owner/name.';
+    $('repository-target-status').hidden = false;
     return;
   }
-  return checkRepositoryTarget(input.value);
+  return checkRepositoryTarget(input.value, false, true);
 });
 $('refresh-repository-target').addEventListener('click', () => checkRepositoryTarget($('repository-target').value, false, true));
 $('connect-checked-repository').addEventListener('click', () => reviewSelectedRepository());
 $('repository-target').addEventListener('input', () => {
+  clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
+  repositoryReturnLeftPage = false;
+  if (repositoryGrantAwaitingDeparture) { cancelRepositoryGrantHandoff(); scheduleRepositoryPolling(); }
+  const inputValue = $('repository-target').value.trim();
+  repositorySuggestionsOpen = inputValue.length >= 2 && !inputValue.includes('://');
   // Editing is not permission to apply an earlier inspection/confirmation.
   repositoryInputDirty = true;
   repositoryCheckError = '';
@@ -1861,9 +1961,21 @@ $('repository-target').addEventListener('input', () => {
   updateRepositoryConfirmation();
   repositoryCheckFeedback = '';
   repositoryCheckFeedbackError = false;
+  autoInspectedGrantKey = '';
   $('repository-access-panel').hidden = true;
   $('repository-target').removeAttribute('aria-invalid');
   renderRepositoryAccess();
+  renderRepositoryList();
+  if (repositorySuggestionsOpen && !$('repository-target').value.includes('/') && isAppAuthorized() && !repositoryDiscoveryKnown && !discoveryPromise) {
+    void discoverRepositories().catch(() => {});
+  }
+});
+$('repository-target').addEventListener('keydown', event => {
+  if (event.key === 'Escape') { repositorySuggestionsOpen = false; renderRepositoryList(); }
+  if (event.key === 'ArrowDown' && !$('repository-list').hidden && $('repository-list').children[0]?.dataset?.repositoryAction) {
+    event.preventDefault();
+    $('repository-list').children[0].focus();
+  }
 });
 $('close-repository-access').addEventListener('click', closeRepositoryAccess);
 $('repository-access-panel').addEventListener('cancel', event => { event.preventDefault(); closeRepositoryAccess(); });
@@ -1877,17 +1989,51 @@ $('install-app').addEventListener('click', event => {
   const url = $('install-app').href;
   closeRepositoryAccess();
   stopRepositoryMonitoring();
-  scheduleRepositoryPolling();
-  githubHandoff = false;
+  githubHandoff = true;
+  repositoryGrantAwaitingDeparture = true;
+  repositoryGrantLeftPage = false;
   try {
     if (!openGitHubHandoff(url)) throw new Error('Browser blocked the GitHub access tab. Allow popups and try again.');
-    message('The repository list updates automatically. Return and check its row, or re-enter its URL.');
-  } catch (error) { message(error.message, 'error'); }
+    message('Grant access on GitHub, then return here. Clockoli will check this repository automatically; review the setup action before any changes.');
+  } catch (error) {
+    githubHandoff = false; repositoryGrantAwaitingDeparture = false;
+    scheduleRepositoryPolling(); message(error.message, 'error');
+  }
 });
 for (const id of ['new-time-repository', 'modal-new-time-repository']) $(id).addEventListener('click', () => {
   closeRepositoryAccess();
   githubHandoff = false;
-  message('Create a private repository on GitHub, then return and enter its URL. Nothing is initialized automatically.');
+  const dialog = $('new-repository-guidance');
+  $('new-repository-target').value = '';
+  $('new-repository-target').removeAttribute('aria-invalid');
+  $('new-repository-target-error').textContent = '';
+  dialog.hidden = false;
+  dialog.showModal();
+  message('Create a private repository on GitHub, then return and paste its URL into the dialog. Nothing is initialized automatically.');
+});
+$('new-repository-target').addEventListener('input', () => {
+  $('new-repository-target').removeAttribute('aria-invalid');
+  $('new-repository-target-error').textContent = '';
+});
+$('new-repository-target-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const input = $('new-repository-target');
+  const rawTarget = input.value.trim();
+  try { parseRepositoryTarget(rawTarget); }
+  catch {
+    input.setAttribute('aria-invalid', 'true');
+    $('new-repository-target-error').textContent = 'Enter a valid GitHub repository URL or owner/name.';
+    input.focus();
+    return;
+  }
+  $('repository-target').value = rawTarget;
+  $('new-repository-guidance').close();
+  return checkRepositoryTarget(rawTarget, false, true);
+});
+$('close-new-repository-guidance').addEventListener('click', () => $('new-repository-guidance').close());
+$('new-repository-guidance').addEventListener('close', () => {
+  $('new-repository-guidance').hidden = true;
+  if (!$('repository-access-panel').open && !$('repository-confirmation').open) $('repository-target').focus();
 });
 $('setup-default-destination').addEventListener('change', async () => {
   const chooser = $('setup-default-destination'); chooser.disabled = true; $('finish-setup').disabled = true;
@@ -1914,6 +2060,8 @@ $('finish-setup').addEventListener('click', async () => {
 $('add-time-repository').addEventListener('click', async event => {
   event.preventDefault();
   stopRepositoryMonitoring();
+  repositoryDiscoveryKnown = false;
+  repositories = [];
   setupCancelled = false;
   showOnboarding = true;
   selectedRepository = null;
@@ -1921,11 +2069,59 @@ $('add-time-repository').addEventListener('click', async event => {
   try {
     await rememberRepositoryTarget('');
     renderState();
-    await discoverRepositories();
+    if (state?.candidateAuth) await discoverRepositories();
   } catch (error) { message(error.message, 'error'); }
 });
 async function rediscoverAfterGitHubHandoff() {
-  if (!githubHandoff || document.visibilityState !== 'visible') return;
+  if (document.visibilityState !== 'visible') return;
+  if (!githubHandoff) {
+    const returned = repositoryReturnLeftPage;
+    repositoryReturnLeftPage = false;
+    if (!returned || repositoryGrantReturnTimer || !isAppAuthorized() || $('onboarding').hidden || $('onboarding-flow').hidden || !repositoryTarget
+        || repositoryInputDirty || checkingRepositoryTarget || pendingConfirmation || repositoryActionApplying
+        || $('repository-access-panel').open
+        || (selectedRepository?.state && !selectedRepository.reasons?.includes('app_contents_write_required'))
+        || configuredDestinations().some(destination => `${destination.owner}/${destination.repo}`.toLowerCase() === repositoryTarget.toLowerCase())) return;
+    const target = repositoryTarget;
+    const revision = repositoryLifecycle;
+    const account = repositoryChoiceAccount();
+    repositoryGrantReturnTimer = setTimeout(async () => {
+      repositoryGrantReturnTimer = null;
+      if (repositoryReturnLeftPage || document.visibilityState !== 'visible' || revision !== repositoryLifecycle
+          || account !== repositoryChoiceAccount() || target !== repositoryTarget || repositoryInputDirty
+          || setupCancelled || pendingConfirmation || repositoryActionApplying) return;
+      autoInspectedGrantKey = '';
+      await discoverRepositories().catch(() => {});
+      scheduleRepositoryPolling();
+    }, 1000);
+    return;
+  }
+  repositoryReturnLeftPage = false;
+  if (repositoryGrantAwaitingDeparture) {
+    if (!repositoryGrantLeftPage || repositoryGrantReturnTimer) return;
+    repositoryGrantLeftPage = false;
+    const target = repositoryTarget;
+    const revision = repositoryLifecycle;
+    repositoryGrantReturnTimer = setTimeout(async () => {
+      repositoryGrantReturnTimer = null;
+      if (!repositoryGrantAwaitingDeparture || repositoryGrantLeftPage || document.visibilityState !== 'visible'
+          || revision !== repositoryLifecycle || target !== repositoryTarget || setupCancelled) return;
+      autoInspectedGrantKey = '';
+      await discoverRepositories().catch(() => {});
+      if (!repositoryGrantAwaitingDeparture || repositoryGrantLeftPage || revision !== repositoryLifecycle || target !== repositoryTarget) return;
+      const candidate = repositories.find(repository => repository.fullName.toLowerCase() === target.toLowerCase());
+      if (candidate && !candidate.reasons?.includes('app_contents_write_required')) {
+        cancelRepositoryGrantHandoff();
+        scheduleRepositoryPolling();
+      } else if (discoveryStatus === 'ready') {
+        repositoryCheckFeedback = `GitHub access to ${target} is not available yet. Finish granting access, then return here to check again. Repository files were not changed.`;
+        repositoryCheckFeedbackError = false;
+        renderRepositoryAccess();
+        message('GitHub access is not available yet. Return here after granting access to check again.');
+      }
+    }, 1000);
+    return;
+  }
   githubHandoff = false;
   if (repositoryRecoveryHandoff) {
     repositoryRecoveryHandoff = false;
@@ -1937,12 +2133,31 @@ async function rediscoverAfterGitHubHandoff() {
     await poll(state.deviceAttempt.attemptId);
     return;
   }
-  if (state?.candidateAuth?.mode === 'github_app' || state?.auth?.mode === 'github_app') {
+  if (state?.candidateAuth?.mode === 'github_app' || (state?.auth?.mode === 'github_app' && repositoryTarget)) {
     await discoverRepositories().catch(() => {});
+    scheduleRepositoryPolling();
   }
 }
+function markRepositoryGrantDeparture() {
+  repositoryReturnLeftPage = true;
+  if (!repositoryGrantAwaitingDeparture && !repositoryGrantReturnTimer) return;
+  if (repositoryGrantAwaitingDeparture) repositoryGrantLeftPage = true;
+  clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
+}
+window.addEventListener('blur', markRepositoryGrantDeparture);
 window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
-document.addEventListener('visibilitychange', () => void rediscoverAfterGitHubHandoff());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') markRepositoryGrantDeparture();
+  else void rediscoverAfterGitHubHandoff();
+});
+void chrome.tabs.getCurrent().then(tab => {
+  if (!tab) return;
+  chrome.tabs.onActivated.addListener(info => {
+    if (info.windowId !== tab.windowId) return;
+    if (info.tabId === tab.id) void rediscoverAfterGitHubHandoff();
+    else markRepositoryGrantDeparture();
+  });
+}).catch(() => {});
 $('recovery-action').addEventListener('click', () => {
   if (!recoveryAction) return;
   if (recoveryAction.kind === 'connect') { $('authorize').click(); return; }
