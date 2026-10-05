@@ -98,35 +98,44 @@
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
-          <a id="new-time-repository" class="button-link secondary-link" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
-          <p class="help">Skip this if you already have a time repository you want to connect to.</p>
-          <p id="repository-step-instruction">Repositories granted to the GitHub App appear below as Not checked. Check verifies access and Clockoli storage without connecting or changing repository files. If ready, choose Connect repository separately; initialization and joining also require confirmation.</p>
+          <a id="new-time-repository" class="button-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
+          <dialog id="new-repository-guidance" class="repository-access-dialog" aria-labelledby="new-repository-guidance-title" aria-describedby="new-repository-guidance-body" hidden>
+            <header class="repository-access-header"><h3 id="new-repository-guidance-title">After creating your repository</h3></header>
+            <div class="repository-access-content">
+              <p id="new-repository-guidance-body">Create your private repository on GitHub, then copy its URL from the address bar and paste it here. Checking access does not connect or initialize it; review and confirm the offered setup action afterward.</p>
+              <form id="new-repository-target-form">
+                <label for="new-repository-target">New repository URL</label>
+                <input id="new-repository-target" type="text" inputmode="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste GitHub repository URL" aria-describedby="new-repository-target-error">
+                <p id="new-repository-target-error" class="help repository-target-error" role="status" aria-live="polite"></p>
+                <div class="actions"><button type="submit">Check repository</button><button id="close-new-repository-guidance" type="button" class="secondary">Not now</button></div>
+              </form>
+            </div>
+          </dialog>
           <form id="repository-target-form">
             <label for="repository-target">Enter a repository URL or owner/name</label>
             <div class="repository-target-control">
-              <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="acme/time-data" aria-describedby="repository-target-status">
+              <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste URL or type a repository name" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="repository-list" aria-describedby="repository-target-status">
               <button id="refresh-repository-target" type="button" class="repository-target-refresh" aria-label="Recheck repository" title="Recheck repository" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6A5.5 5.5 0 0 0 3.5 4L2 5.5M2 2.5v3h3M3 10a5.5 5.5 0 0 0 9.5 2L14 10.5m0 3v-3h-3"/></svg></button>
+              <div id="repository-choice-fieldset" class="repository-suggestions" hidden>
+                <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Finding granted repositories…</div>
+                <div id="repository-list" class="repository-list" role="listbox" aria-label="Granted repository suggestions" hidden></div>
+              </div>
             </div>
           </form>
-          <p id="repository-target-status" class="help" role="status" aria-live="polite"></p>
-          <button id="connect-checked-repository" type="button" class="secondary" hidden>Connect repository</button>
+          <p id="repository-target-status" class="repository-check-status" role="status" aria-live="polite" hidden></p>
+          <button id="connect-checked-repository" type="button" hidden>Connect repository</button>
           <dialog id="repository-access-panel" class="repository-access-dialog" aria-labelledby="repository-access-title" aria-describedby="repository-access-instruction" hidden>
             <header class="repository-access-header"><h3 id="repository-access-title">Grant repository access</h3><button id="close-repository-access" type="button" class="secondary" aria-label="Close repository access dialog">×</button></header>
             <div class="repository-access-content">
               <p id="repository-access-target" class="repository-access-target"></p>
               <p id="repository-access-instruction"></p>
               <p>On GitHub, choose <strong>Only select repositories</strong> and select <strong id="repository-access-name"></strong>.</p>
-              <p class="help">The list updates automatically. Return here to set up the repository, or use Check repository. The owner may need to approve access. Nothing is initialized automatically.</p>
+              <p class="help">Return here after granting access. Clockoli will check this target when it appears; review and confirm the offered setup action. The owner may need to approve access. Nothing is initialized automatically.</p>
               <a id="install-app" class="button-link secondary-link" target="_blank" rel="noreferrer">Grant access</a>
               <p class="help">Need a new time repository? <a id="modal-new-time-repository" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create one on GitHub.</a></p>
             </div>
           </dialog>
-          <fieldset id="repository-choice-fieldset" hidden>
-            <legend id="repository-choice-legend">Repositories granted to the GitHub App</legend>
-            <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Loading granted repositories…</div>
-            <label id="repository-search-label" hidden>Search repositories<input id="repository-search" type="search" autocomplete="off" placeholder="Search by owner or repository"></label>
-            <div id="repository-list" class="repository-list"></div>
-          </fieldset>
+
           <p class="help privacy-disclosure">Anyone with read access to these repositories can see stored task URLs, titles, timestamps, and descriptions. Use a separate repository for each privacy boundary.</p>
     <p id="setup-ready-summary" class="help" role="status"></p>
     <label id="setup-default-destination-label">Default time repository<select id="setup-default-destination"></select></label>

@@ -8,6 +8,18 @@ const worker = await readFile(new URL('../src/background/service-worker.js', imp
 const recovery = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
 
+test('repository creation is an attention cue only during the authorized repository step and respects reduced motion', () => {
+  assert.match(source, /id="new-time-repository" class="[^"]*new-repository-action[^"]*"/);
+  assert.match(styles, /#repository-step:not\(\[hidden\]\) \.new-repository-action\{[^}]*background:#238636/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{#repository-step:not\(\[hidden\]\) \.new-repository-action\{animation:none\}\}/);
+});
+
+test('repository setup omits redundant instructions while retaining actionable controls', () => {
+  assert.doesNotMatch(source, /Opens GitHub; creating the repository/);
+  assert.doesNotMatch(source, /Paste a repository URL or start typing its name/);
+  assert.match(source, /id="repository-target-form"/);
+});
+
 test('settings links directly to fine-grained token creation', () => {
   assert.match(source, /href="https:\/\/github\.com\/settings\/personal-access-tokens"/);
   assert.match(source, /target="_blank"/);
@@ -62,9 +74,9 @@ test('repository-first choice has no scenario or owner preselection', () => {
   assert.match(script, /configuredDestinations\(\)\.length === 0[\s\S]*discoverRepositories/);
 });
 
-test('repository list has independent actions and local icons, not radio selection', () => {
-  assert.match(styles, /\.repository-icon/);
-  assert.match(script, /selectable \? repositoryAction\(repository\)/);
+test('repository autocomplete is a dropdown, not radio selection', () => {
+  assert.match(styles, /\.repository-suggestion/);
+  assert.match(script, /option\.setAttribute\('role', 'option'\)/);
   assert.doesNotMatch(script, /radio.type = 'radio'/);
   assert.match(source, /id="setup-default-destination"/);
 });
@@ -252,13 +264,16 @@ test('compliance documentation matches any-owner tracking and durable v1 work-it
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Repositories granted to the GitHub App/i);
+  assert.match(source, /Enter a repository URL or owner\/name/i);
   assert.match(source, /explicitly connect a ready repository, regardless of who owns it/i);
   assert.match(source, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
   assert.match(styles, /#message\.error\{[^}]*z-index:/);
 });
 
+test('visible repository check status keeps space below the input form', () => {
+  assert.match(styles, /#repository-step>\.repository-check-status:not\(\[hidden\]\)\{[^}]*margin:16px 0 18px/);
+});
 
 test('options mounts the shared running status directly below the tabs', () => {
   assert.match(source, /<\/nav>\s*<\/div>\s*<div id="running-status"/);
@@ -329,7 +344,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   for (const label of ['Check repository']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
-  assert.match(gettingStarted, /manual target.*leave the field or press Enter/);
+  assert.match(gettingStarted, /repository field and leave the field or press Enter/);
   assert.match(gettingStarted, /Discovery and inspection never write to GitHub/i);
   assert.match(gettingStarted, /then explicitly confirm the offered action/i);
   assert.match(gettingStarted, /requires fresh GitHub repository-admin permission/i);
