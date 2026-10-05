@@ -152,9 +152,9 @@ test('background timer sync never blocks timer actions and drives a disabled spi
     'timer acceptance must not wait behind the remote synchronization executor');
   assert.match(worker, /acceptsLocally = \[[\s\S]*QUEUE_ENTRY_EDIT[\s\S]*QUEUE_ENTRY_DELETE[\s\S]*QUEUE_ENTRIES_EDIT[\s\S]*QUEUE_ACTIVE_START_EDIT[\s\S]*\]\.includes/,
     'queued timeline edits must be durably accepted without waiting behind remote synchronization');
-  assert.match(worker, /chrome\.alarms\.create\('sync-pending-now'/,
+  assert.match(worker, /scheduleSyncAlarm\('sync-pending-now'/,
     'accepted mutations schedule a durable one-shot alarm that wakes the MV3 worker');
-  assert.match(worker, /function requestPendingSync\(\) \{\s*chrome\.alarms\.create\('sync-pending-now', \{ when: Date\.now\(\) \+ 250 \}\);\s*\}/,
+  assert.match(worker, /function requestPendingSync\(\) \{\s*void scheduleSyncAlarm\('sync-pending-now', \{ when: Date\.now\(\) \+ 250 \}\);\s*\}/,
     'accepted mutations wait for the debounce alarm so superseding queue edits can coalesce');
   assert.doesNotMatch(worker, /function requestPendingSync\(\) \{[^}]*syncPendingNow\(\)/);
   assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);

@@ -39,6 +39,22 @@ function sourceBetween(start, end) {
   return worker.slice(first, last);
 }
 
+test('startup handles an alarm rejection while Chrome replaces the service worker', async () => {
+  const calls = [];
+  const context = vm.createContext({
+    chrome: { alarms: { create: (...args) => { calls.push(args); return Promise.reject(new Error('No SW')); } } },
+    store: { migrateLegacyPatAuth: async () => {} },
+    syncPendingNow: async () => {},
+  });
+  vm.runInContext(sourceBetween('function scheduleSyncAlarm(', 'function hasRunnablePending(')
+    + sourceBetween('function scheduleSync() {', 'async function openTimesPage()'), context);
+  const scheduled = context.scheduleSync();
+  assert.equal(typeof scheduled?.then, 'function', 'startup must observe the alarm promise');
+  await scheduled;
+  await context.scheduleSyncAlarm('sync-pending-now', { when: 250 });
+  assert.deepEqual(calls.map(([name]) => name), ['sync-pending', 'sync-pending-now']);
+});
+
 function handlerContext(overrides = {}) {
   const context = vm.createContext({
     URL, TextEncoder, Date, Map, AbortController,

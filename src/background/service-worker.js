@@ -1117,6 +1117,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+function scheduleSyncAlarm(name, options) {
+  return Promise.resolve(chrome.alarms.create(name, options))
+    .catch(error => { if (error?.message !== 'No SW') console.warn('Could not schedule pending sync alarm.'); });
+}
 function hasRunnablePending(queue) {
   const first = queue?.[0];
   if (!first) return false;
@@ -1140,11 +1144,11 @@ function syncPendingNow() {
     if (!(await store.getPendingDestinationIds()).length) return;
     await syncPendingAll({ store, trackerForDestination });
     if (await shouldContinuePendingSync()) {
-      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
     }
   })).catch(async error => {
     if (await shouldContinuePendingSync().catch(() => false)) {
-      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
     }
     throw error;
   }).finally(() => { pendingSync = null; });
@@ -1152,13 +1156,14 @@ function syncPendingNow() {
 }
 
 function requestPendingSync() {
-  chrome.alarms.create('sync-pending-now', { when: Date.now() + 250 });
+  void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 250 });
 }
 
 function scheduleSync() {
-  chrome.alarms.create('sync-pending', { periodInMinutes: 1 });
+  const alarm = scheduleSyncAlarm('sync-pending', { periodInMinutes: 1 });
   void store.migrateLegacyPatAuth().catch(() => {});
   void syncPendingNow().catch(() => {});
+  return alarm;
 }
 
 async function openTimesPage() {
