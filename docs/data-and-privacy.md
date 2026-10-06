@@ -185,7 +185,7 @@ The settings JSON backup can include rates and invoicing details, so protect tha
 
 ## Invoice privacy
 
-Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in `chrome.storage.local`. Hourly rates, computed amounts, seller details, and client details never leave the browser.
+Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in extension-local IndexedDB. Hourly rates, computed amounts, seller details, and client details never leave the browser.
 
 An invoice exists only as the on-screen preview and as a file the user prints or downloads. Clockoli does not archive invoices, and no invoice or invoice number is ever written to the time-data repository.
 
