@@ -869,7 +869,7 @@ function renderRepositoryAccess() {
     : failed ? 'Check failed. Edit the name or press Enter to retry.' : unavailable
     ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
     : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
-  targetStatus.hidden = !targetStatus.textContent;
+  targetStatus.hidden = discoveryStatus === 'loading' || !targetStatus.textContent;
   if (error) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
 }
@@ -991,6 +991,7 @@ function renderRepositoryList() {
 function renderRepositoryLoading() {
   renderRepositoryList();
   renderRepositoryRefresh();
+  $('repository-target-status').hidden = discoveryStatus === 'loading' || !$('repository-target-status').textContent;
 }
 
 function renderRepositories(result) {

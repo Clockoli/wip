@@ -846,6 +846,26 @@ test('repository list shows a local loader until the first discovery completes',
   assert.equal(page.nodes.get('repository-list').children.length, 1);
 });
 
+test('repository check hides target status during repository discovery and restores inspection feedback', async () => {
+  let releaseDiscovery;
+  const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? new Promise(resolve => { releaseDiscovery = resolve; })
+    : { repository: { ...repository, state: 'initialized_member', ready: true, canAdd: true } } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  input.value = repository.fullName; input.listeners.input();
+  const check = page.nodes.get('refresh-repository-target').listeners.click();
+  const status = page.nodes.get('repository-target-status');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'true');
+  assert.equal(status.hidden, true, 'the target status must not compete with discovery loading');
+  releaseDiscovery({ repositories: [repository], installations: [] });
+  await check;
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /Checked acme\/time-data/);
+});
+
 test('repository list loader clears on failure and silent refresh leaves existing rows visible', async () => {
   let release;
   const page = harness({ reply: () => new Promise(resolve => { release = resolve; }) });
