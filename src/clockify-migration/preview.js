@@ -91,21 +91,48 @@ function showMessage(text, kind = 'error') {
   element.className = `card-header-message ${kind}`;
   element.hidden = !text;
 }
+export function formatRateLimitWait(retryAt, now = Date.now()) {
+  if (typeof retryAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(retryAt)
+      || !Number.isFinite(Date.parse(retryAt)) || new Date(retryAt).toISOString() !== retryAt) return null;
+  const seconds = Math.max(0, Math.ceil((Date.parse(retryAt) - now) / 1000));
+  if (!seconds) return 'GitHub rate limit reset. Resuming migration…';
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remaining = hours ? `${hours} hour${hours === 1 ? '' : 's'} ${minutes} minute${minutes === 1 ? '' : 's'}`
+    : minutes ? `${minutes} minute${minutes === 1 ? '' : 's'} ${seconds % 60} second${seconds % 60 === 1 ? '' : 's'}`
+      : `${seconds} second${seconds === 1 ? '' : 's'}`;
+  return `GitHub rate limit reached. Resuming automatically in ${remaining}.`;
+}
 
+let waitTicker = null;
 
-function renderProgress(progress) {
+export function renderProgress(progress) {
   const element = $('import-status');
-  const label = PROGRESS_LABELS[progress?.phase];
+  const waiting = progress?.phase === 'waiting_for_github';
+  const label = waiting ? 'Waiting for GitHub rate limit' : PROGRESS_LABELS[progress?.phase];
   const completed = progress?.completedUsers;
   const total = progress?.totalUsers;
-  if (!label || !Number.isSafeInteger(completed) || !Number.isSafeInteger(total) || completed < 0 || total < completed) {
+  if (!label || !Number.isSafeInteger(completed) || !Number.isSafeInteger(total) || completed < 0 || total < completed
+      || (waiting && (!formatRateLimitWait(progress.retryAt) || Date.parse(progress.retryAt) - Date.now() > 2 * 60 * 60 * 1000))) {
     element.hidden = true;
+    return;
+  }
+  clearInterval(waitTicker);
+  waitTicker = null;
+  if (waiting) {
+    $('import-status-title').textContent = label;
+    $('progress-current-step').textContent = `Paused after ${completed} of ${total} people. No new GitHub requests until the limit resets.`;
+    const update = () => { $('progress-summary').textContent = formatRateLimitWait(progress.retryAt) || ''; };
+    update();
+    waitTicker = setInterval(update, 1000);
+    element.hidden = false;
     return;
   }
   const isCompleted = progress.phase === 'completed';
   const phases = Object.keys(PROGRESS_LABELS);
   const activeIndex = phases.indexOf(progress.phase);
-  $('import-status-title').textContent = isCompleted ? 'Migration complete' : 'Saving migration';
+  const partialHeading = isCompleted && $('import-status-title').textContent === 'Migration finished with errors';
+  if (!partialHeading) $('import-status-title').textContent = isCompleted ? 'Migration complete' : 'Saving migration';
   $('progress-current-step').textContent = `Step ${activeIndex + 1} of ${phases.length}: ${label}`;
   $('import-progress').value = activeIndex + 1;
   $('progress-summary').textContent = total ? (isCompleted ? `Processed ${completed} of ${total} people` : `Importing ${completed} of ${total} people`) : label;
@@ -194,7 +221,7 @@ function outcomeMessage(outcomes) {
   if (!Array.isArray(outcomes)) return 'Migration request completed.';
   const completed = outcomes.filter(outcome => ['imported', 'completed', 'already_present'].includes(outcome?.status)).length;
   const failed = outcomes.length - completed;
-  return failed ? `Migration completed for ${completed} user${completed === 1 ? '' : 's'}; ${failed} user${failed === 1 ? '' : 's'} were not imported.`
+  return failed ? `Migration finished with errors: ${completed} user${completed === 1 ? '' : 's'} processed successfully; ${failed} user${failed === 1 ? '' : 's'} were not imported.`
     : `Migration completed for ${completed} user${completed === 1 ? '' : 's'}.`;
 }
 
@@ -268,6 +295,7 @@ function initialize() {
   const mappingView = $('mapping-view');
   const migrationView = $('migration-view');
   const invitationSection = $('migration-invitations');
+  let pendingTimer = null;
   const renderInvitations = outcome => {
     renderMigrationInvitations({ container: invitationSection, outcome, send, confirm: question => window.confirm(question),
       collaboratorIds: new Set(suggestions.users.map(user => user.id).filter(Boolean)) });
@@ -284,6 +312,50 @@ function initialize() {
     return state;
   };
 
+  const completeImport = async outcomes => {
+    clearTimeout(pendingTimer); pendingTimer = null;
+    renderOutcomes(preview.users, outcomes);
+    const partial = outcomes.some(outcome => !['imported', 'completed', 'already_present'].includes(outcome?.status));
+    finished = true; importButton.textContent = partial ? 'Migration finished with errors' : 'Migration imported';
+    $('import-status-title').textContent = partial ? 'Migration finished with errors' : 'Migration complete';
+    renderProgress({ phase: 'completed', completedUsers: outcomes.length, totalUsers: outcomes.length });
+    showMessage(outcomeMessage(outcomes), partial ? 'error' : 'success');
+    try {
+      const saved = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+      if (saved?.outcome?.id === preview.id) renderInvitations(saved.outcome);
+    } catch { invitationSection.textContent = 'Could not load invitation options. Reopen this preview to try again.'; invitationSection.hidden = false; }
+    updateValidity();
+  };
+  const watchPending = pending => {
+    if (pending?.id !== preview?.id) return;
+    mappingView.hidden = true; migrationView.hidden = false;
+    $('repair-mappings').hidden = !['mapping_unresolved', 'connection_changed'].includes(pending.blockedReason);
+    if (pending.blockedReason === 'mapping_unresolved') {
+      renderProgress({ phase: 'resolving_identities', completedUsers: pending.completedUsers, totalUsers: pending.totalUsers });
+      showMessage('A mapped GitHub account could not be verified. Your source data is saved. Edit the mappings to try again; already written records remain in GitHub.');
+    } else if (pending.blocked) {
+      renderProgress({ phase: 'writing_records', completedUsers: pending.completedUsers, totalUsers: pending.totalUsers });
+      showMessage('Migration is paused because the connected repository, GitHub identity or authentication changed. Restore the original connection to resume, or edit the mappings to start a new confirmed import. Already written records remain in GitHub.');
+    } else {
+      renderProgress({ phase: pending.retryAt && Date.parse(pending.retryAt) > Date.now() ? 'waiting_for_github' : 'writing_records',
+        completedUsers: pending.completedUsers, totalUsers: pending.totalUsers, ...(pending.retryAt ? { retryAt: pending.retryAt } : {}) });
+      showMessage('The saved migration is continuing. You can close this page and reopen it to check progress.', '');
+    }
+    if (pendingTimer) return;
+    pendingTimer = setTimeout(async () => {
+      pendingTimer = null;
+      try {
+        const status = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+        if (status?.outcome?.id === preview.id) await completeImport(status.outcome.outcomes);
+        else if (status?.pending?.id === preview.id) watchPending(status.pending);
+        else showMessage('The saved migration state changed. Reopen the preview before continuing.');
+      } catch {
+        showMessage('Could not check saved migration progress. Retrying locally…');
+        pendingTimer = setTimeout(() => { pendingTimer = null; watchPending(pending); }, 5000);
+      }
+    }, 3000);
+  };
+
   const openProgressPort = () => new Promise((resolve, reject) => {
     const requestId = crypto.randomUUID();
     const port = chrome.runtime.connect({ name: 'CLOCKIFY_MIGRATION_PROGRESS_V1' });
@@ -295,11 +367,28 @@ function initialize() {
       }
       if (subscribed && message?.type === 'CLOCKIFY_MIGRATION_PROGRESS' && (Object.keys(message).length === 4 || Object.keys(message).length === 5)) renderProgress(message);
     });
-    port.onDisconnect.addListener(() => { if (subscribed && submitting) showMessage('Import is continuing; waiting for the final result…', ''); });
+    port.onDisconnect.addListener(() => {
+      if (subscribed && submitting) {
+        clearInterval(waitTicker); waitTicker = null;
+        showMessage('Connection to the import worker was lost. Checking the saved import status…');
+      }
+    });
     port.postMessage({ type: 'SUBSCRIBE_CLOCKIFY_MIGRATION_PROGRESS', requestId });
   });
 
   form.addEventListener('input', updateValidity);
+  $('repair-mappings').addEventListener('click', async () => {
+    if (!preview?.id || !confirm('Return to mapping? Records already imported remain in GitHub. Review all mappings before importing again.')) return;
+    const button = $('repair-mappings');
+    button.disabled = true;
+    try {
+      await send({ type: 'RESTORE_CLOCKIFY_MIGRATION_PREVIEW', id: preview.id });
+      location.reload();
+    } catch (error) {
+      showMessage(error.message || 'Could not restore the saved mapping preview.');
+      button.disabled = false;
+    }
+  });
   confirmation.addEventListener('change', updateValidity);
   form.addEventListener('submit', async event => {
     event.preventDefault();
@@ -313,23 +402,37 @@ function initialize() {
     try {
       progress = await openProgressPort();
       const data = await send({ type: 'CONFIRM_CLOCKIFY_MIGRATION', payload: { id: preview.id, mappings: state.mappings, requestId: progress.requestId } });
-      renderOutcomes(preview.users, data?.outcomes || data);
-      finished = true; importButton.textContent = 'Migration imported';
-      showMessage(outcomeMessage(data?.outcomes || data), 'success');
-      try {
-        const saved = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
-        if (saved?.outcome?.id === preview.id) renderInvitations(saved.outcome);
-      } catch { invitationSection.textContent = 'Could not load invitation options. Reopen this preview to try again.'; invitationSection.hidden = false; }
+      if (data?.pending) {
+        const status = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+        if (status?.pending?.id === preview.id) watchPending(status.pending);
+        else if (status?.outcome?.id === preview.id) await completeImport(status.outcome.outcomes);
+      } else await completeImport(data?.outcomes || data);
     } catch (error) {
-      $('import-status').hidden = true;
-      importButton.textContent = 'Import completed time';
-      showMessage(error.message || 'Could not confirm the migration.');
+      try {
+        const status = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW' });
+        if (status?.pending?.id === preview.id) watchPending(status.pending);
+        else if (status?.outcome?.id === preview.id) await completeImport(status.outcome.outcomes);
+        else throw error;
+      } catch {
+        $('import-status').hidden = true;
+        importButton.textContent = 'Import completed time';
+        mappingView.hidden = false; migrationView.hidden = true;
+        showMessage(error.message || 'Could not confirm the migration.');
+      }
     } finally { submitting = false; try { progress?.port.disconnect(); } catch {} updateValidity(); }
   });
 
   (async () => {
     try {
       const data = await send({ type: 'GET_CLOCKIFY_MIGRATION_PREVIEW', measureRequests: true });
+      if (data?.pending) {
+        const users = safeUsers(data.pending.users);
+        if (!users.length) throw new Error('The saved migration roster is unavailable.');
+        preview = { id: String(data.pending.id), users };
+        $('loading').hidden = true; $('preview').hidden = false;
+        watchPending(data.pending);
+        return;
+      }
       if (data?.outcome) {
         const users = safeUsers(data.outcome.users);
         if (!users.length || !Array.isArray(data.outcome.outcomes)) throw new Error('The recovered migration outcome is incomplete. Return to the Clockify report and capture it again.');
@@ -342,7 +445,9 @@ function initialize() {
         } catch { /* invitation checks still verify repository access server-side */ }
         renderInvitations(data.outcome);
         renderProgress({ phase: 'completed', completedUsers: data.outcome.outcomes.length, totalUsers: data.outcome.outcomes.length });
-        showMessage(outcomeMessage(data.outcome.outcomes), 'success');
+        const partial = data.outcome.outcomes.some(outcome => !['imported', 'completed', 'already_present'].includes(outcome?.status));
+        if (partial) $('import-status-title').textContent = 'Migration finished with errors';
+        showMessage(outcomeMessage(data.outcome.outcomes), partial ? 'error' : 'success');
         $('loading').hidden = true; $('preview').hidden = false;
         return;
       }

@@ -236,4 +236,5 @@ export function createClockifyMigrationSessionService({ storageSession, now = ()
   });
 }
 
-export { MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS };
+export { MAX_CLOCKIFY_MIGRATION_SESSION_TTL_MS, SESSION_KEY as CLOCKIFY_MIGRATION_PREVIEW_KEY,
+  snapshotStored as snapshotStoredClockifyMigrationPreview };

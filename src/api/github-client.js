@@ -27,6 +27,55 @@ export class GitHubRateLimitError extends GitHubApiError {
   }
 }
 
+// Shared by the migration's root client and its personal-branch clients.
+// Only an explicit GitHub rate-limit response closes this gate.
+export function createGitHubRateLimitGate({ now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  onWait = () => {}, onResume = () => {}, onReady = () => {} } = {}) {
+  let blockedUntil = 0;
+  let pending = null;
+  // Serialize persisted deadlines and resume: an older resume must never write
+  // null after a newer deadline has been saved.
+  let writes = Promise.resolve();
+  return Object.freeze({
+    ready: async () => { if (pending) await pending; await onReady(); },
+    pause(error, { wait = true } = {}) {
+      const current = now();
+      const reset = Date.parse(error?.retryAt);
+      const deadline = Number.isFinite(reset) && reset > current ? reset : current + 60_000;
+      if (deadline - current > 2 * 60 * 60 * 1000) throw error;
+      if (deadline > blockedUntil) {
+        blockedUntil = deadline;
+        writes = writes.then(() => onWait(new Date(deadline).toISOString()));
+      }
+      const recorded = writes;
+      if (!pending) {
+        pending = (async () => {
+          try {
+            for (;;) {
+              await writes;
+              if (blockedUntil > now()) {
+                await sleep(Math.min(blockedUntil - now(), 20_000));
+                continue;
+              }
+              // A concurrent pause may extend the gate while onResume is in flight.
+              // Its write queues behind this clear; recheck before reopening.
+              writes = writes.then(() => onResume());
+              await writes;
+              if (blockedUntil <= now()) return;
+            }
+          } finally { pending = null; }
+        })();
+      }
+      // On the terminal retry persist the alarm deadline without waiting for it.
+      if (!wait) {
+        pending.catch(() => {}); // The caller observes any persistence failure via recorded.
+        return recorded;
+      }
+      return pending;
+    },
+  });
+}
+
 const MILLISECONDS_PER_SECOND = 1000;
 
 function rateLimitRetryAt(response, now) {
@@ -193,7 +242,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -212,11 +261,26 @@ export class GitHubClient {
     this.now = now;
     this.validationCache = validationCache;
     this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
+    this.rateLimitGate = rateLimitGate;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
 
-  async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
+  async requestDetailed(path, options = {}, settings = {}) {
+    for (let retries = 0;; retries += 1) {
+      try { return await this.requestDetailedOnce(path, options, settings); }
+      catch (error) {
+        if (error?.code !== 'rate_limit' || !this.rateLimitGate) throw error;
+        if (retries >= 2) {
+          await this.rateLimitGate.pause(error, { wait: false });
+          throw error;
+        }
+        await this.rateLimitGate.pause(error);
+      }
+    }
+  }
+
+  async requestDetailedOnce(path, options = {}, { allowNotModified = false } = {}) {
     const startedAt = Date.now();
     const report = status => {
       try {
@@ -226,17 +290,20 @@ export class GitHubClient {
         });
       } catch { /* Diagnostics must never affect GitHub operations. */ }
     };
-    const requestWithToken = token => this.fetchImpl(`https://api.github.com${path}`, {
-      ...options,
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    });
+    const requestWithToken = async token => {
+      await this.rateLimitGate?.ready();
+      return this.fetchImpl(`https://api.github.com${path}`, {
+        ...options,
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...options.headers,
+        },
+      });
+    };
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
     let response;
     try { response = await requestWithToken(token); }
@@ -421,7 +488,7 @@ export class GitHubClient {
       token: this.token, credentialProvider: this.credentialProvider,
       owner: this.owner, repo: this.repo, branch,
       expectedRepositoryId: this.expectedRepositoryId,
-      branchMode, fetchImpl: this.fetchImpl,
+      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate,
     });
   }
 

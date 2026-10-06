@@ -26,7 +26,7 @@ function dependencies({ resolved = [
     calls,
     resolveMappings: async input => {
       calls.resolve += 1;
-      assert.deepEqual(input, { sourceUsers, mappings, github: input.github });
+      assert.deepEqual(input, { sourceUsers, mappings, github: input.github, completedOutcomes: [] });
       return resolved;
     },
     importRecords: async input => {
@@ -96,6 +96,62 @@ test('routes two explicitly mapped people to separately verified branches, never
   ]);
   assert(calls.some(call => call[0] === 'access' && call[1] === 'clockoli/users/9'));
   assert(!calls.some(call => call[1] === 'clockoli/users/9' && call[2] === 'times/2026-08/ada.jsonl'));
+});
+
+test('restart skips only checkpointed people, and a checkpoint failure stops later writes', async () => {
+  const { github, calls } = verifiedGithub();
+  const first = { sourceUserId: 'clockify-ada', githubUser: destinationUser, status: 'imported', added: 2, alreadyPresent: 0 };
+  const imports = [], checkpoints = [];
+  const request = { sourceUsers: multipleUsers, entries: multipleEntries, mappings: multipleMappings,
+    destinationUser, github, resolveMappings: async () => multipleResolved,
+    importRecords: async value => { imports.push(value.github.branch); return { status: 'imported', added: value.entries.length, alreadyPresent: 0 }; },
+    completedOutcomes: [first], onOutcome: async value => { checkpoints.push(value); } };
+  const result = await importClockifyOrganization(request);
+  assert.deepEqual(imports, ['clockoli/users/9']);
+  assert.deepEqual(checkpoints.map(value => value.sourceUserId), ['clockify-other']);
+  assert.equal(result[0], first);
+  assert.equal(calls.some(call => call[1] === 'clockoli/users/42'), false);
+  await assert.rejects(importClockifyOrganization({ ...request, completedOutcomes: [{ ...first, githubUser: { id: 99, login: 'ada' } }] }), /checkpoint/i);
+  imports.length = 0;
+  await assert.rejects(importClockifyOrganization({ ...request, completedOutcomes: [], onOutcome: async () => { throw new Error('storage unavailable'); } }), /storage unavailable/);
+  assert.deepEqual(imports, ['clockoli/users/42']);
+});
+
+test('repeated GitHub throttling preserves the current person and does not checkpoint failure', async () => {
+  const { github } = verifiedGithub();
+  const checkpoints = [];
+  const throttle = Object.assign(new Error('throttled'), { code: 'rate_limit' });
+  await assert.rejects(importClockifyOrganization({ sourceUsers, entries, mappings, destinationUser, github,
+    resolveMappings: async () => [{ sourceUserId: 'clockify-ada', githubUser: destinationUser }, mappings[1]],
+    importRecords: async () => { throw throttle; }, onOutcome: outcome => checkpoints.push(outcome),
+  }), error => error === throttle);
+  assert.deepEqual(checkpoints, []);
+});
+
+test('transient identity lookup failures do not block a valid mapping; a missing account does', async () => {
+  const { github } = verifiedGithub();
+  for (const failure of [Object.assign(new Error('GitHub unavailable'), { status: 503, code: 'github_api_error' }),
+    new TypeError('Failed to fetch')]) {
+    let checkpoints = 0;
+    await assert.rejects(importClockifyOrganization({ sourceUsers, entries, mappings, destinationUser, github,
+      resolveMappings: async () => { throw failure; }, onOutcome: () => { checkpoints += 1; },
+    }), error => error === failure);
+    assert.equal(checkpoints, 0);
+  }
+  await assert.rejects(importClockifyOrganization({ sourceUsers, entries, mappings, destinationUser, github,
+    resolveMappings: async () => { throw Object.assign(new Error('unknown login'), { status: 404, code: 'not_found' }); },
+  }), error => error.code === 'mapping_unresolved');
+});
+
+test('a changed connection aborts before checkpointing the current person', async () => {
+  const { github } = verifiedGithub();
+  const checkpoints = [];
+  const changed = Object.assign(new Error('connection changed'), { code: 'migration_paused' });
+  await assert.rejects(importClockifyOrganization({ sourceUsers, entries, mappings, destinationUser, github,
+    resolveMappings: async () => [{ sourceUserId: 'clockify-ada', githubUser: destinationUser }, mappings[1]],
+    importRecords: async () => { throw changed; }, onOutcome: outcome => checkpoints.push(outcome),
+  }), error => error === changed);
+  assert.deepEqual(checkpoints, []);
 });
 
 test('missing or mismatched personal branch fails only that person and does not write their records elsewhere', async () => {

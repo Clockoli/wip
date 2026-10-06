@@ -42,6 +42,22 @@ test('resolves exact GitHub logins once and returns the verified mapping in sour
   ]);
 });
 
+test('resume reuses checkpointed GitHub IDs without looking up an old login', async () => {
+  const { github, calls } = githubStub({ 'lin-torres': { id: 42, login: 'lin-torres' } });
+  const result = await resolveClockifyUserMappings({ sourceUsers, mappings, github,
+    completedOutcomes: [{ sourceUserId: 'clockify-ada', githubUser: { id: 7, login: 'ada-lovelace' }, status: 'imported' }] });
+  assert.deepEqual(calls, ['lin-torres']);
+  assert.equal(result[0].githubUser.id, 7);
+});
+
+test('renamed pending GitHub login must be repaired before writing, not rejected at checkpoint', async () => {
+  const { github } = githubStub({
+    'lin-torres': { id: 42, login: 'new-lin-login' },
+    'Ada-Lovelace': { id: 7, login: 'ada-lovelace' },
+  });
+  await assert.rejects(resolveClockifyUserMappings({ sourceUsers, mappings, github }), /mapping|login/i);
+});
+
 test('rejects untrusted mapping fields, credentials, prototypes, and accessors before GitHub resolution', async () => {
   const cases = [
     [{ sourceUserId: 'clockify-lin', githubLogin: 'lin-torres', githubUser: { id: 42 } }, mappings[1]],

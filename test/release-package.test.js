@@ -85,6 +85,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/clockify-history-scan.js',
   'src/services/clockify-identity-mapping.js',
   'src/services/clockify-import-cleanup.js',
+  'src/services/clockify-migration-job.js',
   'src/services/clockify-migration-session.js',
   'src/services/clockify-organization-import.js',
   'src/services/clockify-record-import.js',

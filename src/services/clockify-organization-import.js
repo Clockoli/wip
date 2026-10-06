@@ -221,7 +221,7 @@ async function verifiedBranch(github, user) {
  */
 export async function importClockifyOrganization({ sourceUsers, entries, mappings, github, destinationUser,
   sourceBranch, resolveMappings = resolveClockifyUserMappings, importRecords = importClockifyCompletedRecords, onProgress,
-  now = () => performance.now() } = {}) {
+  completedOutcomes = [], onOutcome, now = () => performance.now() } = {}) {
   const startedAt = now();
   const elapsed = () => Math.max(0, Math.round(now() - startedAt));
   const snapshot = { sourceUsers: snapshotData(sourceUsers, 'source users'), entries: snapshotData(entries, 'entries') };
@@ -232,15 +232,22 @@ export async function importClockifyOrganization({ sourceUsers, entries, mapping
   let verifiedMappings;
   emitProgress(onProgress, 'resolving_identities', 0, sourceUserTotal, elapsed());
   try {
-    const resolved = await resolveMappings({ sourceUsers: snapshot.sourceUsers, mappings, github });
+    const resolved = await resolveMappings({ sourceUsers: snapshot.sourceUsers, mappings, github, completedOutcomes });
     verifiedMappings = validateClockifyUserMapping(snapshot.sourceUsers, resolved);
-  } catch {
-    throw new Error(RESOLUTION_FAILURE_MESSAGE);
+  } catch (error) {
+    if (error?.code === 'rate_limit' || error?.code === 'migration_paused'
+        || (error?.status >= 500 && error?.code !== 'invalid_github_response')
+        || error instanceof TypeError) throw error;
+    throw Object.assign(new Error(RESOLUTION_FAILURE_MESSAGE), { code: 'mapping_unresolved' });
   }
   emitProgress(onProgress, 'resolving_identities', sourceUserTotal, sourceUserTotal, elapsed());
 
   const selectedMappings = verifiedMappings.filter(mapping => !mapping.skipped);
   const total = selectedMappings.length;
+  if (!Array.isArray(completedOutcomes) || completedOutcomes.length > total
+      || completedOutcomes.some((outcome, index) => outcome?.sourceUserId !== selectedMappings[index].sourceUserId
+        || !sameGithubUser(outcome?.githubUser ?? {}, selectedMappings[index].githubUser)
+        || !IMPORT_STATUSES.has(outcome.status))) throw new Error('Migration checkpoint does not match verified user mappings');
   if (!total) {
     emitProgress(onProgress, 'preparing_storage', 1, 1, elapsed());
     emitProgress(onProgress, 'writing_records', 0, 0, elapsed());
@@ -252,10 +259,10 @@ export async function importClockifyOrganization({ sourceUsers, entries, mapping
       || github.branch !== userStorageBranch(destinationUser.id) || typeof github.forBranch !== 'function') {
     throw new Error('The configured Clockoli repository and personal branch must be verified before importing.');
   }
-  const outcomes = [];
-  emitProgress(onProgress, 'preparing_storage', 0, total, elapsed());
-  emitProgress(onProgress, 'writing_records', 0, total, elapsed());
-  for (const mapping of selectedMappings) {
+  const outcomes = [...completedOutcomes];
+  emitProgress(onProgress, 'preparing_storage', outcomes.length, total, elapsed());
+  emitProgress(onProgress, 'writing_records', outcomes.length, total, elapsed());
+  for (const mapping of selectedMappings.slice(outcomes.length)) {
     let imported;
     try {
       let target;
@@ -275,12 +282,18 @@ export async function importClockifyOrganization({ sourceUsers, entries, mapping
           outcomes.length, total, profile.elapsedMs);
       }
       try { imported = await importRecords(request); }
-      catch { imported = { status: 'failed', failureReason: 'record_write_failed' }; }
+      catch (error) {
+        if (error?.code === 'rate_limit' || error?.code === 'migration_paused') throw error;
+        imported = { status: 'failed', failureReason: 'record_write_failed' };
+      }
     } catch (error) {
+      if (error?.code === 'rate_limit' || error?.code === 'migration_paused') throw error;
       imported = { status: 'failed', failureReason: branchFailure(error) };
       emitProgress(onProgress, 'preparing_storage', outcomes.length + 1, total, elapsed());
     }
-    outcomes.push(safeOutcome(mapping, imported));
+    const outcome = safeOutcome(mapping, imported);
+    await onOutcome?.(outcome);
+    outcomes.push(outcome);
     emitProgress(onProgress, 'writing_records', outcomes.length, total, elapsed());
   }
   emitProgress(onProgress, 'completed', total, total, elapsed());

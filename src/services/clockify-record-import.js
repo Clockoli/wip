@@ -445,7 +445,24 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
     const files = new Map();
     stage = 'reading_existing_records';
     profile(stage);
+    // A missing month is normal for a first import. One branch-tree read avoids
+    // a separate GitHub Contents 404 for every empty monthly partition.
+    let branchPaths = null;
+    if (byPath.size && typeof storageGithub.listRepositoryEntries === 'function') {
+      try {
+        const branchEntries = await storageGithub.listRepositoryEntries();
+        if (Array.isArray(branchEntries) && branchEntries.every(item => typeof item?.path === 'string' && typeof item?.type === 'string')) {
+          branchPaths = new Map(branchEntries.map(item => [item.path, item.type]));
+        }
+      } catch (error) {
+        if (error?.code === 'rate_limit' || error?.code === 'migration_paused') throw error;
+        // A rejected or truncated tree cannot prove that a month is absent.
+        // Contents reads still validate any existing monthly records.
+      }
+    }
     const loadedFiles = await mapBounded([...byPath.keys()], DESTINATION_READ_CONCURRENCY, async path => {
+      if (branchPaths && !branchPaths.has(path)) return { path, sha: null, entries: [] };
+      if (branchPaths && branchPaths.get(path) !== 'blob') throw new Error('Clockoli monthly storage path is not a file');
       try {
         const file = await storageGithub.getText(path);
         return { path, sha: file.sha, entries: parseMonthlyRecords(file.text, { user: githubUser.login, path, sha: file.sha }) };
@@ -581,6 +598,7 @@ export async function importClockifyCompletedRecords({ github, githubUser, entri
     profile('records_written');
     return { status: 'imported', added: additions.length, alreadyPresent };
   } catch (error) {
+    if (error?.code === 'rate_limit' || error?.code === 'migration_paused') throw error;
     // Import failures are intentionally reduced to a stable UI reason. Keep a
     // source-data-free diagnostic for the privileged runtime console.
     console.warn('Clockify import failed', { stage, error: String(error?.message || error) });

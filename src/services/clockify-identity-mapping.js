@@ -25,9 +25,22 @@ function validateRequestedMappings(mappings) {
   });
 }
 function validateRosterBeforeResolution(sourceUsers, requestedMappings) { validateClockifyUserMapping(sourceUsers, requestedMappings.map((mapping, index) => mapping.skipped ? mapping : ({ sourceUserId: mapping.sourceUserId, githubUser: { id: index + 1, login: `placeholder-${index}` } }))); }
-export async function resolveClockifyUserMappings({ sourceUsers, mappings, github }) {
-  const requestedMappings = validateRequestedMappings(mappings); validateRosterBeforeResolution(sourceUsers, requestedMappings);
+export function snapshotClockifyRequestedMappings(sourceUsers, mappings) {
+  const requested = validateRequestedMappings(mappings);
+  validateRosterBeforeResolution(sourceUsers, requested);
+  return requested;
+}
+export async function resolveClockifyUserMappings({ sourceUsers, mappings, github, completedOutcomes = [] }) {
+  const requestedMappings = snapshotClockifyRequestedMappings(sourceUsers, mappings);
+  const completed = new Map(completedOutcomes.map(outcome => [outcome.sourceUserId, outcome.githubUser]));
   const resolvedMappings = [];
-  for (const mapping of requestedMappings) resolvedMappings.push(mapping.skipped ? mapping : { sourceUserId: mapping.sourceUserId, githubUser: await github.getUserIdentity(mapping.githubLogin) });
+  for (const mapping of requestedMappings) {
+    if (mapping.skipped) { resolvedMappings.push(mapping); continue; }
+    const previous = completed.get(mapping.sourceUserId);
+    if (previous && previous.login.toLowerCase() !== mapping.githubLogin.toLowerCase()) fail('checkpoint does not match requested login');
+    const githubUser = previous || await github.getUserIdentity(mapping.githubLogin);
+    if (githubUser.login.toLowerCase() !== mapping.githubLogin.toLowerCase()) fail('mapped GitHub login has changed');
+    resolvedMappings.push({ sourceUserId: mapping.sourceUserId, githubUser });
+  }
   return validateClockifyUserMapping(sourceUsers, resolvedMappings);
 }
