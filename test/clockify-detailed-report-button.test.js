@@ -38,7 +38,7 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /const YEAR_REQUEST_EVENT = 'clockoli:clockify-detailed-report-request-year'/);
   assert.match(source, /function requestReportYear\(year, mode, retry = 0\) \{\n\s*armBridge\(mode, year, retry\);\n\s*EVENT_TARGET\.dispatchEvent/);
   assert.match(source, /type: 'CLOCKIFY_YEAR_OBSERVED', entryCount: event\.data\.entryCount, year: event\.data\.year/);
-  assert.match(source, /function requestYearCsv\(button, year, retry = 0\) \{[\s\S]*if \(armedButton !== button \|\| armRequest !== request \|\| csvExportRequest !== exportRequest\) return;/);
+  assert.match(source, /function requestYearCsv\(button, year, retry = 0\) \{[\s\S]*if \(!csvRetryWait \|\| csvRetryWait\.exportRequest !== exportRequest \|\| armedButton !== button \|\| armRequest !== request\) return;/);
   assert.match(source, /function requestDiscoveryYear\(button, year, deadline = Date\.now\(\) \+ 180_000\) \{[\s\S]{0,700}requestReportYear\(year, 'discover'\);/);
   assert.doesNotMatch(source, /table\.cl-detailed-reports-table tbody tr/);
   assert.match(source, /No export is requested\./);
@@ -188,6 +188,12 @@ test('Clockify adapter only considers a validated captured page as the initial r
   assert.doesNotMatch(source, /if \(code === 'report_response_observed'\) initialReportResponseObserved = true;/);
   assert.match(source, /report_year_mismatch: 'Clockify returned a completed report for a different year; waiting for the requested year\.'/);
   assert.match(source, /response_not_json: 'Clockify is still preparing the requested report\.'/);
+});
+
+test('the first CSV export waits for an observed annual report rather than a one-second timer', () => {
+  assert.match(source, /csvRetryWait = \{ button, arm: armRequest, exportRequest \};/);
+  assert.match(source, /if \(code === 'csv_report_ready'\) \{\s*retryCsvReportReady\(\);/);
+  assert.doesNotMatch(source, /\}, 1_000\);\s*\}\s*function requestYearPages/);
 });
 
 test('Clockify discovery retries a transient native report failure within its existing deadline', () => {

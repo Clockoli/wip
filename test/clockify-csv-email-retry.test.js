@@ -27,6 +27,12 @@ test('CSV retry requests a different route for the same annual range without cha
   vm.runInContext(functionBlock(buttonSource, '  function requestReportYear(year, mode', '  function labelOf('), context);
   vm.runInContext(functionBlock(bridgeSource, '  function requestReportYear(event)', '  EVENT_TARGET.addEventListener(ARM_EVENT')
     .replace('function requestReportYear(event)', 'function requestBridgeReportYear(event)'), context);
+  context.requestReportYear(2026, 'discover');
+  context.requestBridgeReportYear({ detail: calls.pop() });
+  assert.equal(new URL(context.location.href).searchParams.get('pageSize'), '200', 'discovery leaves an already-open 199-row route');
+  context.requestReportYear(2026, 'csv', 0);
+  context.requestBridgeReportYear({ detail: calls.pop() });
+  assert.equal(new URL(context.location.href).searchParams.get('pageSize'), '199', 'first CSV request differs from the discovery route');
   context.requestReportYear(2026, 'csv', 1);
   context.requestBridgeReportYear({ detail: calls.pop() });
   let route = new URL(context.location.href);
@@ -45,7 +51,7 @@ test('a refreshed annual report signals CSV readiness but is never forwarded as 
   const context = vm.createContext({
     armed: true, captureMode: 'csv', expectedYear: 2026, armedAt: 1, csvRetryAwaitingReport: true,
     reportEndpoint: () => true, reportTaskId: () => null, reportStartedAfterArm: () => true,
-    sanitizeText: () => ({ output: { timeentries: [], totals: [] } }),
+    sanitizeText: () => ({ output: { timeentries: [{}], totals: [] } }),
     reportMatchesExpectedYear: () => true,
     progress: code => progress.push(code), captureText: () => { captured += 1; },
   });
@@ -53,6 +59,39 @@ test('a refreshed annual report signals CSV readiness but is never forwarded as 
   context.observeResponse('https://app.clockify.me/report/workspaces/w/reports/detailed', '{}', 2);
   assert.equal(captured, 0);
   assert.ok(progress.includes('csv_report_ready'));
+});
+
+test('CSV readiness observes a completed XHR report even when Clockify never reads its response getter', () => {
+  const progress = [];
+  const context = vm.createContext({
+    armed: true, captureMode: 'csv', expectedYear: 2026, armedAt: 10, csvRetryAwaitingReport: true,
+    reportCreationEndpoint: () => false, reportEndpoint: () => true,
+    reportTaskId: () => null, reportStartedAfterArm: () => false,
+    sanitizeText: () => ({ output: { timeentries: [{}], totals: [] } }),
+    reportMatchesExpectedYear: () => true,
+    progress: code => progress.push(code),
+  });
+  vm.runInContext(functionBlock(bridgeSource, '  function observeResponse(url, text,', '  function observeResponseBody('), context);
+  vm.runInContext(functionBlock(bridgeSource, '  function observeXhrResponse(request)', '  function requestStartedAfterArm('), context);
+  context.observeXhrResponse({
+    responseURL: 'https://app.clockify.me/report/workspaces/w/async/reports/detailed/task',
+    status: 200, responseType: 'text', responseText: '{}', __clockoliDetailedReportStartedAt: 11,
+  });
+  assert.ok(progress.includes('csv_report_ready'));
+});
+
+test('CSV readiness rejects an empty interim report for a populated year', () => {
+  const codes = [];
+  const context = vm.createContext({
+    armed: true, captureMode: 'csv', expectedYear: 2026, armedAt: 1, csvRetryAwaitingReport: true,
+    reportEndpoint: () => true, reportStartedAfterArm: () => true,
+    sanitizeText: () => ({ output: { timeentries: [], totals: [] } }),
+    progress: code => codes.push(code),
+  });
+  vm.runInContext(functionBlock(bridgeSource, '  function reportMatchesExpectedYear(output)', '  function captureText('), context);
+  vm.runInContext(functionBlock(bridgeSource, '  function observeResponse(url, text,', '  function observeResponseBody('), context);
+  context.observeResponse('https://app.clockify.me/report/workspaces/w/reports/detailed', '{}', 2);
+  assert.ok(!codes.includes('csv_report_ready'));
 });
 
 test('email-only CSV path records offers in the background, stops on the third, and names the page-by-page fallback', () => {
@@ -95,7 +134,7 @@ test('three email-only screens cause two same-year report re-requests, then canc
     disarmBridge: () => { disarms += 1; context.armRequest += 1; },
     requestReportYear: (...args) => {
       requests.push(args);
-      if (args[2]) queue.push(() => context.retryCsvReportReady());
+      queue.push(() => context.retryCsvReportReady());
     },
   });
   vm.runInContext(functionBlock(buttonSource, '  function exportCurrentYearCsv(', '  function requestYearPages('), context);

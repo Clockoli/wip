@@ -146,6 +146,31 @@ test('fills the known annual plan only after each complete annual report and rej
   assert.equal(storage.values.size, 0);
 });
 
+test('does not complete a discovered populated year from an empty export', async () => {
+  const storage = sessionStorage();
+  const scan = createClockifyHistoryScanService({ storageSession: storage, currentYear: () => CURRENT_YEAR, earliestYear: 2025 });
+  await scan.start('csv');
+  await scan.observeYear(2026, 1010);
+  await scan.observeYear(2025, 1664);
+
+  await assert.rejects(() => scan.append(2026, report([])), /populated.*empty|empty.*populated/i);
+  assert.deepEqual(await scan.status(), {
+    phase: 'capturing',
+    history: { totalYears: 2, completedYears: 0, yearsWithEntries: [2026, 2025] },
+    transport: 'csv',
+  });
+  assert.equal((await scan.append(2026, report([entry('current')]))).nextYear, 2025);
+});
+
+test('page capture can complete a discovered year whose normalized entries were all skipped', async () => {
+  const scan = createClockifyHistoryScanService({ storageSession: sessionStorage(), currentYear: () => CURRENT_YEAR, earliestYear: 2026 });
+  await scan.start('report');
+  await scan.observeYear(2026, 1);
+  const result = await scan.append(2026, report([]));
+  assert.equal(result.complete, true);
+  assert.equal(result.data.entries.length, 0);
+});
+
 test('fails closed and removes all annual shards when final aggregation finds a malformed prior shard', async () => {
   const storage = sessionStorage();
   const scan = createClockifyHistoryScanService({ storageSession: storage, currentYear: () => CURRENT_YEAR, earliestYear: 2025 });

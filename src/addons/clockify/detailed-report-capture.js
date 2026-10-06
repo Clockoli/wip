@@ -249,7 +249,7 @@
         if (!startedAfterArm && !reportStartedAfterArm(url)) return;
         const sanitized = sanitizeText(text);
         if (!sanitized) return;
-        if (!reportMatchesExpectedYear(sanitized.output)) {
+        if (!sanitized.output.timeentries.length || !reportMatchesExpectedYear(sanitized.output)) {
           progress('report_year_mismatch');
           return;
         }
@@ -313,7 +313,7 @@
     armedAt = typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : 0;
     csvCaptured = false;
     csvCaptureRequested = false;
-    csvRetryAwaitingReport = mode === 'csv' && (event?.detail?.retry === 1 || event?.detail?.retry === 2);
+    csvRetryAwaitingReport = mode === 'csv';
     aggregate = null;
     pendingCapture = null;
     installInterceptors();
@@ -372,17 +372,21 @@
     if (!['discover', 'csv', 'report'].includes(mode)) return;
     const retry = event?.detail?.retry ?? 0;
     if (!Number.isInteger(retry) || retry < 0 || retry > 2 || (retry && mode !== 'csv')) return;
-    const url = new URL(location.href);
+    const current = new URL(location.href);
+    const url = new URL(current);
     if (url.protocol !== 'https:' || url.hostname !== 'app.clockify.me'
         || url.pathname.replace(/\/+$/, '') !== '/reports/detailed') return;
-    url.searchParams.set('start', `${year}-01-01T00:00:00.000Z`);
-    url.searchParams.set('end', `${year}-12-31T23:59:59.999Z`);
+    const start = `${year}-01-01T00:00:00.000Z`;
+    const end = `${year}-12-31T23:59:59.999Z`;
+    const sameYear = current.searchParams.get('start') === start && current.searchParams.get('end') === end;
+    url.searchParams.set('start', start);
+    url.searchParams.set('end', end);
     url.searchParams.set('page', '1');
-    // Discovery and native CSV exports use Clockify's observed 199-row route.
-    // Switching the DOM fallback to 200 rows changes the already-discovered
-    // annual URL, which makes Clockify request the first report page instead
-    // of treating the same route as a no-op.
-    url.searchParams.set('pageSize', mode === 'report' || retry === 1 ? '200' : '199');
+    // Clockify can treat a same-route pushState as a no-op. Alternate report
+    // page sizes whenever discovery, CSV capture, or an email retry revisits
+    // the same annual range, so each step receives a fresh report response.
+    const pageSize = mode === 'report' || sameYear && current.searchParams.get('pageSize') === '199' ? '200' : '199';
+    url.searchParams.set('pageSize', pageSize);
     history.pushState({}, '', url.href);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
@@ -440,7 +444,8 @@
     if (!reportEndpoint(url)) return;
     if (captureMode === 'csv' && request.status >= 200 && request.status < 300 && request.responseType === 'blob') {
       captureCsvBlob(request.response);
-    } else if (captureMode !== 'csv' && request.status >= 200 && request.status < 300) {
+    } else if (request.status >= 200 && request.status < 300
+        && (captureMode !== 'csv' || csvRetryAwaitingReport && ['', 'text'].includes(request.responseType))) {
       observeResponse(url, request.responseText, request.__clockoliDetailedReportStartedAt);
     } else if (request.status < 200 || request.status >= 300) {
       progress('report_response_not_success');

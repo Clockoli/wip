@@ -418,24 +418,17 @@
   function requestYearCsv(button, year, retry = 0) {
     csvExportYear = year;
     const exportRequest = ++csvExportRequest;
-    csvRetryWait = retry ? { button, arm: armRequest, exportRequest } : null;
+    csvRetryWait = { button, arm: armRequest, exportRequest };
     captureParsingProgress = null;
     capturePhase = null;
     setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
     requestReportYear(year, 'csv', retry);
     const request = armRequest;
-    if (retry) {
-      setTimeout(() => {
-        if (!csvRetryWait || csvRetryWait.exportRequest !== exportRequest || armedButton !== button || armRequest !== request) return;
-        disarmBridge();
-        setCaptureState(button, false, 'Clockify did not finish refreshing this report. Code: CSV_REPORT_REFRESH_UNAVAILABLE. Try Page to page migration.');
-      }, 30_000);
-      return;
-    }
     setTimeout(() => {
-      if (armedButton !== button || armRequest !== request || csvExportRequest !== exportRequest) return;
-      exportCurrentYearCsv(button);
-    }, 1_000);
+      if (!csvRetryWait || csvRetryWait.exportRequest !== exportRequest || armedButton !== button || armRequest !== request) return;
+      disarmBridge();
+      setCaptureState(button, false, 'Clockify did not finish refreshing this report. Code: CSV_REPORT_REFRESH_UNAVAILABLE. Try Page to page migration.');
+    }, retry ? 30_000 : 180_000);
   }
 
   function requestYearPages(button, year) {

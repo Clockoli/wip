@@ -213,6 +213,7 @@ export function createClockifyHistoryScanService({
         const requestedYear = validYear(year, earliestYear);
         if (!stored || stored.phase !== 'capturing' || requestedYear !== stored.nextYear) fail(`expected report year ${stored?.nextYear ?? 'none'}`);
         const shard = snapshotClockifyMigrationData(normalized);
+        if (stored.transport === 'csv' && shard.entries.length === 0) fail(`populated year ${requestedYear} has an empty capture`);
         await storageSession.set(shardKey(stored.sessionId, requestedYear), shard);
         const completedYears = stored.captureIndex + 1;
         const completedHistory = history(stored.yearsWithEntries, completedYears);
