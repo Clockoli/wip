@@ -273,10 +273,20 @@ test('Timeline shows darker end grips without top or bottom bands', async ({ pag
   await mount(page);
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await page.mouse.move(0, 0);
-  const idleBorders = await block.evaluate(element => {
-    const style = getComputedStyle(element);
-    return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
-  });
+  let idleBorders;
+  await expect.poll(async () => {
+    const borders = await block.evaluate(element => {
+      if (!window.__gripBaselineRerendered) {
+        window.__gripBaselineRerendered = true;
+        window.__timeline.update({ items: window.__items });
+      }
+      if (!element.isConnected) return null;
+      const style = getComputedStyle(element);
+      return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
+    });
+    if (borders?.every(Boolean)) idleBorders = borders;
+    return Boolean(idleBorders);
+  }).toBe(true);
   await block.hover();
   await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
     .map(handle => handle.getBoundingClientRect().width))).toEqual([14, 14]);
