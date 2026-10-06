@@ -197,6 +197,52 @@ test('annual page capture rejects a report whose entries do not overlap the requ
   assert.ok(progress(events).includes('report_year_mismatch'));
 });
 
+test('annual page capture ignores an earlier page response arriving after the next page is armed', async () => {
+  const { events, armReport, setPerformance, XMLHttpRequest } = await loadBridge();
+  const path = 'https://app.clockify.me/report/workspaces/workspace-1/reports/detailed';
+  setPerformance({ now: 10, entries: [] });
+  armReport(2026);
+  const earlier = new XMLHttpRequest();
+  earlier.open('GET', path);
+  earlier.send();
+
+  setPerformance({ now: 20, entries: [] });
+  armReport(2026);
+  earlier.finish(JSON.stringify(report));
+  assert.equal(captures(events).length, 0, 'the late response must not replace page two');
+
+  setPerformance({ now: 21, entries: [] });
+  const next = new XMLHttpRequest();
+  next.open('GET', path);
+  next.send();
+  next.finish(JSON.stringify(report));
+  assert.equal(captures(events).length, 1);
+});
+
+test('annual page capture binds the result to the matching native pagination request', async () => {
+  const { events, armReport, location, XMLHttpRequest } = await loadBridge();
+  location.href = location.href.replace('page=1', 'page=2');
+  armReport(2026);
+  const creation = 'https://app.clockify.me/report/workspaces/workspace-1/async/reports/detailed';
+  for (const [page, task] of [[1, 'old-task'], [2, 'current-task']]) {
+    const request = new XMLHttpRequest();
+    request.open('POST', creation);
+    request.send(JSON.stringify({ dateRangeStart: '2026-01-01T00:00:00.000Z', dateRangeEnd: '2026-12-31T23:59:59.999Z', detailedFilter: { page, pageSize: 200 } }));
+    request.finish(JSON.stringify({ reportTaskId: task }));
+  }
+  const old = new XMLHttpRequest();
+  old.open('GET', `${creation}/old-task`);
+  old.send();
+  old.finish(JSON.stringify(report));
+  assert.equal(captures(events).length, 0, 'a completed result for another page is not page two');
+
+  const current = new XMLHttpRequest();
+  current.open('GET', `${creation}/current-task`);
+  current.send();
+  current.finish(JSON.stringify(report));
+  assert.equal(captures(events).length, 1);
+});
+
 test('discovers the armed annual result when Clockify does not expose its creation request to the bridge', async () => {
   const { context, events, armDiscover, setPerformance } = await loadBridge();
   const path = 'https://app.clockify.me/report/workspaces/workspace-1/async/reports/detailed/result-1';

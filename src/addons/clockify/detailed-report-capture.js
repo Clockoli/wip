@@ -110,13 +110,18 @@
   }
 
   function observeCreationResponse(url, body, text, requestStartedAt = null) {
-    if (!armed || captureMode !== 'discover' || expectedReportTaskId || !reportCreationEndpoint(url)) return;
+    if (!armed || !['discover', 'report'].includes(captureMode) || expectedReportTaskId || !reportCreationEndpoint(url)) return;
     try {
       const request = typeof body === 'string' ? JSON.parse(body) : null;
       const hasExpectedRequestBody = request?.dateRangeStart === `${expectedYear}-01-01T00:00:00.000Z`
         && request?.dateRangeEnd === `${expectedYear}-12-31T23:59:59.999Z`;
       const isExpectedRoute = currentRouteMatchesExpectedYear();
-      if (!hasExpectedRequestBody && (!isExpectedRoute || !Number.isFinite(requestStartedAt) || requestStartedAt < armedAt)) return;
+      if (captureMode === 'report') {
+        const page = Number(new URL(location.href).searchParams.get('page'));
+        if (!hasExpectedRequestBody || !isExpectedRoute || !Number.isInteger(page) || page < 1
+            || request?.detailedFilter?.page !== page || request?.detailedFilter?.pageSize !== 200
+            || Number.isFinite(requestStartedAt) && requestStartedAt < armedAt) return;
+      } else if (!hasExpectedRequestBody && (!isExpectedRoute || !Number.isFinite(requestStartedAt) || requestStartedAt < armedAt)) return;
       const taskId = JSON.parse(text)?.reportTaskId;
       if (typeof taskId !== 'string' || taskId.length === 0) throw new TypeError('missing task id');
       expectedReportTaskId = taskId;
@@ -243,6 +248,11 @@
 
   function observeResponse(url, text, requestStartedAt = null) {
     if (armed && reportEndpoint(url)) {
+      if (captureMode === 'report' && (Number.isFinite(requestStartedAt)
+        ? requestStartedAt < armedAt : !reportStartedAfterArm(url))) {
+        progress('report_response_precedes_arm');
+        return;
+      }
       if (captureMode === 'csv') {
         if (!csvRetryAwaitingReport || !Number.isInteger(expectedYear)) return;
         const startedAfterArm = Number.isFinite(requestStartedAt) && requestStartedAt >= armedAt;
@@ -258,6 +268,11 @@
         return;
       }
       const taskId = reportTaskId(url);
+      if (captureMode === 'report' && Number.isInteger(expectedYear) && taskId !== null
+          && (expectedReportTaskId === null || taskId !== expectedReportTaskId)) {
+        progress('report_task_mismatch');
+        return;
+      }
       if (captureMode === 'discover' && taskId !== null && expectedReportTaskId !== null && taskId !== expectedReportTaskId) {
         progress('report_task_mismatch');
         return;
@@ -276,7 +291,7 @@
     }
   }
 
-  function observeResponseBody(response) {
+  function observeResponseBody(response, requestStartedAt = null) {
     if (!armed || !response || !reportEndpoint(response.url) || observedResponses.has(response) || typeof nativeResponseText !== 'function') return;
     observedResponses.add(response);
     let text;
@@ -285,7 +300,7 @@
       observingClones.add(clone);
       text = clone.text();
     } catch { return; }
-    Promise.resolve(text).then(value => observeResponse(response.url, value)).catch(() => {});
+    Promise.resolve(text).then(value => observeResponse(response.url, value, requestStartedAt)).catch(() => {});
   }
 
   function observeCsvResponseBody(response) {
@@ -402,26 +417,27 @@
   restoreBridgeArm();
   restoreReceiverReady();
 
-  function observeFetchCreation(url, input, init, response) {
+  function observeFetchCreation(url, input, init, response, requestStartedAt) {
     const request = init || {};
     const source = globalThis.Request && input instanceof globalThis.Request ? input : null;
     const method = request.method || source?.method;
     if (!armed || !response?.ok || !reportCreationEndpoint(url) || method !== 'POST') return;
     const body = request.body === undefined && source ? source.clone().text() : request.body;
     Promise.all([Promise.resolve(body), response.clone().text()])
-      .then(([requestBody, text]) => observeCreationResponse(url, requestBody, text)).catch(() => {});
+      .then(([requestBody, text]) => observeCreationResponse(url, requestBody, text, requestStartedAt)).catch(() => {});
   }
 
   function clockoliFetch(...args) {
+    const requestStartedAt = typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : null;
     const result = nativeFetch.apply(this, args);
     return Promise.resolve(result).then(response => {
       const url = response?.url || args[0];
       const request = args[1] || {};
       if (armed && response?.ok && reportCreationEndpoint(url)) {
-        observeFetchCreation(url, args[0], request, response);
+        observeFetchCreation(url, args[0], request, response, requestStartedAt);
       } else if (armed && response?.ok && reportEndpoint(url)) {
         if (captureMode === 'csv') observeCsvResponseBody(response);
-        else observeResponseBody(response);
+        else observeResponseBody(response, captureMode === 'report' ? requestStartedAt : null);
       } else if (armed && reportEndpoint(url)) {
         progress('report_response_not_success');
       }
@@ -435,7 +451,7 @@
   function observeXhrResponse(request) {
     const url = request.responseURL || request.__clockoliDetailedReportUrl;
     if (!armed) return;
-    if (captureMode === 'discover' && request.__clockoliDetailedReportMethod === 'POST'
+    if (['discover', 'report'].includes(captureMode) && request.__clockoliDetailedReportMethod === 'POST'
         && reportCreationEndpoint(url) && request.status >= 200 && request.status < 300) {
       observeCreationResponse(url, request.__clockoliDetailedReportBody, request.responseText,
         request.__clockoliDetailedReportStartedAt);

@@ -82,7 +82,7 @@
         ? response.data.history.nextYear : null;
       if (['csv', 'report'].includes(response.data.history?.transport)) captureTransport = response.data.history.transport;
       restoredCaptureArm = true;
-      if (captureHistory) armBridge(captureTransport);
+      if (captureHistory) armBridge(captureTransport, captureHistory.yearsWithEntries?.[captureHistory.completedYears]);
       log('persisted_arm_restored');
       schedulePlacement();
     });
@@ -205,7 +205,7 @@
       setCaptureState(button, false, 'Clockoli could not refresh the Clockify report. Code: PAGINATION_UNAVAILABLE.');
       return;
     }
-    armBridge();
+    armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
     log('bridge_rearmed_after_page_size_refresh');
     control.click();
     chooseCustomPageSize(button, control);
@@ -317,7 +317,7 @@
       setCaptureState(button, false, 'Clockoli could not load the next report page. Code: PAGINATION_UNAVAILABLE.');
       return;
     }
-    armBridge();
+    armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
     next.click();
     log('next_page_control_click_dispatched');
     setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
@@ -326,7 +326,7 @@
   function resumeCaptureAfterReload(button, deadline = Date.now() + 10_000) {
     const previous = pageControl(['PREVIOUS', 'PREVIOUS PAGE']) || arrowPageControl('Left');
     if (previous) {
-      armBridge();
+      armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
       previous.click();
       setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
       return;

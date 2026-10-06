@@ -58,10 +58,12 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /200 results per page/i);
   assert.match(source, /page_captured/);
   assert.match(source, /function requestNextPage\(button, deadline = Date\.now\(\) \+ 60_000\)/);
+  assert.equal(source.match(/armBridge\('report', captureHistory\?\.yearsWithEntries\?\.\[captureHistory\.completedYears\]\)/g)?.length, 3,
+    'page-size refresh, next-page navigation and reload recovery must all retain the annual capture identity');
   assert.match(source, /function resumeCaptureAfterReload\(button, deadline = Date\.now\(\) \+ 10_000\)/);
   assert.doesNotMatch(source, /deadline = Date\.now\(\) \+ (?:[0-9]{1,3}|[1-9]_[0-9]{1,3})\)/);
   assert.match(source, /function waitForInitialReport\(button, applyDispatched = false, deadline = Date\.now\(\) \+ 60_000\)/);
-  assert.match(source, /armBridge\(\);\n\s*previous\.click\(\);/);
+  assert.match(source, /armBridge\('report', captureHistory\?\.yearsWithEntries\?\.\[captureHistory\.completedYears\]\);\n\s*previous\.click\(\);/);
   assert.match(source, /function arrowPageControl\(direction\)/);
   assert.match(source, /button\.cl-page-link/);
   assert.match(source, /setTimeout\(\(\) => requestNextPage\(button, deadline\), 50\)/);
