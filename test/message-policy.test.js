@@ -127,9 +127,11 @@ test('page Start does not fall back to the original document when the tab has le
   assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);
 });
 
-test('an imported identity cannot be started or switched from an extension page', () => {
-  assert.throws(() => taskUrlForStart('acme/project/imported-task', extension, origin), /task URL/i);
-  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), /task URL/i);
+test('only extension pages can start an imported identity', () => {
+  assert.equal(taskUrlForStart('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
+  assert.throws(() => taskUrlForStart('acme/project/imported-task', content, origin), /task URL/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /task URL/i);
+  assert.throws(() => taskUrlForStart('acme/project/bad task', extension, origin), /task URL/i);
 });
 
 test('timeline task switching may select a previously tracked task from another GitHub page', () => {
