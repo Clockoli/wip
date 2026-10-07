@@ -257,9 +257,18 @@ test('Calendar resize bars stay visible on selection after the pointer leaves', 
   const block = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
   const opacities = () => block.evaluate(element => [...element.querySelectorAll('.calendar-resize-handle')]
     .map(handle => Number(getComputedStyle(handle, '::after').opacity)));
+  // Resolve and measure in one evaluate: the host ResizeObserver re-renders the
+  // calendar after the view switch and can replace the block between a locator
+  // lookup and its evaluate, which reads a detached node as empty styles.
+  const idle = () => page.evaluate(() => {
+    const element = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-task[data-task-key="entry:a"]');
+    return {
+      opacities: [...element.querySelectorAll('.calendar-resize-handle')].map(handle => Number(getComputedStyle(handle, '::after').opacity)),
+      boxShadow: getComputedStyle(element).boxShadow,
+    };
+  });
   await page.mouse.move(0, 0);
-  expect(await opacities()).toEqual([0, 0]);
-  expect(await block.evaluate(element => getComputedStyle(element).boxShadow)).toBe('none');
+  expect(await idle()).toEqual({ opacities: [0, 0], boxShadow: 'none' });
   await block.hover();
   await expect.poll(opacities).toEqual([1, 1]);
   await block.click();
