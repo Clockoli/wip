@@ -99,8 +99,7 @@ function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
   button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
   button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-  button.disabled = Boolean(!/^https?:\/\//.test(task.taskUrl) || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
-  if (!/^https?:\/\//.test(task.taskUrl)) button.title = 'Imported task has no URL to track.';
+  button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
     task = state.tasks.find(item => item.taskUrl === task.taskUrl);
@@ -178,7 +177,7 @@ function updateRows() {
     row.classList.toggle('running', active);
     button.classList.toggle('stop', active);
     button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
-    button.disabled = Boolean(!task || !/^https?:\/\//.test(task.taskUrl) || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
+    button.disabled = Boolean(!task || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
     if (task) row.querySelector('.tracked-time').textContent = formatClockDuration(taskTotalSeconds(task));
   }
 }

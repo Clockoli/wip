@@ -304,6 +304,19 @@ test('Top tasks hides repository provenance while timer actions keep the task UR
   assert.equal('destinationId' in start, false);
 });
 
+test('Top tasks starts and switches imported identities without making them links', async () => {
+  const imported = { taskUrl: 'acme/project/imported-task', title: 'Imported task', totalSeconds: 120 };
+  const page = await tasksHarness({ tasks: [imported, taskA] });
+  const row = page.rows().find(item => item.dataset.taskUrl === imported.taskUrl);
+  assert.equal(row.querySelector('.task-title').tag, 'span');
+  assert.equal(row.querySelector('.timer-button').disabled, false);
+  await row.querySelector('.timer-button').click(); await page.settle();
+  assert.equal(page.messages.find(message => message.type === 'START')?.taskUrl, imported.taskUrl);
+  const switching = await tasksHarness({ tasks: [imported, taskA], active: { taskUrl: taskA.taskUrl, startedAt: '2026-09-05T09:00:00Z' } });
+  await switching.rows().find(item => item.dataset.taskUrl === imported.taskUrl).querySelector('.timer-button').click();
+  assert.equal(switching.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, imported.taskUrl);
+});
+
 test('Top tasks distinguishes read failures from conflict-only omissions', async () => {
   const failed = await tasksHarness({ respond: message => message.type === 'LOAD_TASKS' ? {
     configured: true, tasks: [taskA], active: null, pendingWrites: [], partial: true,

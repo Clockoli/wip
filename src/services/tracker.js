@@ -3,7 +3,7 @@ import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTim
 import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
-import { entryDateParts, entryDateValue, localDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
+import { entryDateParts, entryDateValue, localDateParts, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 export class TrackerConflictError extends Error {
   constructor(message, reason = '') { super(message); this.name = 'TrackerConflictError'; this.code = 'conflict'; this.reason = reason; }
@@ -322,9 +322,9 @@ export class TrackerService {
   }
 
   validateTaskUrl(value) { return normalizeTaskUrl(value); }
-
   buildActive(values) {
-    return buildActiveTimer({ user: this.user, actor: this.actor, producer: this.producer, timezone: this.timezone, ...values });
+    return buildActiveTimer({ user: this.user, actor: this.actor, producer: this.producer, timezone: this.timezone,
+      ...values, importedStoredIdentity: !/^https?:\/\//.test(values.taskUrl) });
   }
 
   async enrichGitHubMetadata(active) {
@@ -443,7 +443,7 @@ export class TrackerService {
     const existing = await this.refreshActive();
     if (existing) throw new Error(`A timer is already tracking ${taskLabel(existing)}`);
     const now = this.clock(), id = this.idFactory(now.getTime());
-    const active = await this.enrichGitHubMetadata(this.buildActive({ id, taskUrl: this.validateTaskUrl(taskUrl), startedAt: now, description, taskTitle }));
+    const active = await this.enrichGitHubMetadata(this.buildActive({ id, taskUrl: normalizeStoredTaskIdentity(taskUrl), startedAt: now, description, taskTitle }));
     const path = activeRecordPath(this.user);
     try {
       const result = await this.github.putText(path, serializeActiveRecord(active), `timer: start ${this.user}`);
@@ -469,7 +469,7 @@ export class TrackerService {
 
   prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null } = {}) {
     const start = new Date(startedAt), activeId = id || this.idFactory(start.getTime());
-    const active = this.buildActive({ id: activeId, taskUrl: this.validateTaskUrl(taskUrl), startedAt: start, description, taskTitle });
+    const active = this.buildActive({ id: activeId, taskUrl: normalizeStoredTaskIdentity(taskUrl), startedAt: start, description, taskTitle });
     const operation = {
       operation: 'startTimer', id: activeId, status: 'pending', retryCount: 0,
       stage: blockedBy ? 'awaitSourceCompletion' : 'startNext',
@@ -483,7 +483,7 @@ export class TrackerService {
   }
 
   async switchTask(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
-    const targetUrl = this.validateTaskUrl(taskUrl);
+    const targetUrl = normalizeStoredTaskIdentity(taskUrl);
     if (background) return this.queueTaskSwitch(targetUrl, taskTitle, description);
     const current = await this.refreshActive();
     if (!current) return { stopped: null, active: await this.queueStart(targetUrl, taskTitle, ''), pending: true };

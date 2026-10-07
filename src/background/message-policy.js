@@ -1,4 +1,4 @@
-import { normalizeIssue, normalizeTaskUrl, parseIssueUrl } from '../domain/values.js';
+import { normalizeIssue, normalizeStoredTaskIdentity, normalizeTaskUrl, parseIssueUrl } from '../domain/values.js';
 
 const CONTENT_MESSAGES = new Set([
   'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
@@ -62,7 +62,7 @@ export function destinationIdForCompletedMutation(type, payload, sender, extensi
 
 export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
   const kind = assertMessageAllowed('START', sender, extensionOrigin);
-  const requested = normalizeTaskUrl(payloadTaskUrl);
+  const requested = kind === 'extension' ? normalizeStoredTaskIdentity(payloadTaskUrl) : normalizeTaskUrl(payloadTaskUrl);
   if (kind === 'content') {
     // GitHub changes the tab URL in-place; sender.url can still be the original document URL.
     const pageTaskUrl = normalizeTaskUrl(sender.tab?.url || sender.url || '');

@@ -816,6 +816,31 @@ test('start persists an arbitrary task URL with an optional empty title', async 
   assert.equal(parseActiveRecord(file.text, { user: 'alice' }).taskUrl, result.taskUrl);
 });
 
+test('queued imported-identity tracking survives restart and synchronization', async () => {
+  const identity = 'acme/project/imported-task', github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store });
+  const accepted = await tracker.start(identity, 'Imported task', '', { background: true });
+  assert.equal(accepted.taskUrl, identity);
+  await service({ github, store }).syncPending();
+  const stored = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(stored.taskUrl, identity);
+  assert.equal(stored.taskTitle, 'Imported task');
+  assert.equal(github.metadataReads.length, 0);
+  assert.throws(() => tracker.validateTaskUrl(identity), /task URL/i, 'manual edit targets remain URL-only');
+});
+
+test('switching to an imported identity preserves the previous completion', async () => {
+  const identity = 'acme/project/imported-task', github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:00:00.000Z')), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const tracker = service({ github, store });
+  const result = await tracker.switchTask(identity, 'Imported task', '', { background: true });
+  assert.equal(result.stopped.entry.taskUrl, issue.url);
+  assert.equal(result.active.taskUrl, identity);
+  await service({ github, store }).syncPending();
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).taskUrl, identity);
+});
+
 test('queued Start persists a GitHub metadata snapshot and actor relationship when sync becomes available', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   github.metadata.set(issue.url, {
