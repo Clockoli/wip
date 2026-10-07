@@ -230,9 +230,16 @@ test('Timeline hover and selection reveal controls without moving or restyling t
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await page.mouse.move(0, 0);
   const appearance = () => block.evaluate(element => {
+    // Reconcile once while the locator still holds the old node: a real timer
+    // update can replace the task between resolution and computed-style reads.
+    if (!window.__appearanceReconciled) {
+      window.__appearanceReconciled = true;
+      window.__timeline.update({ items: window.__items, now: Date.now() });
+    }
     const style = getComputedStyle(element);
     const label = element.querySelector('.task-name').getBoundingClientRect();
     return {
+      connected: element.isConnected,
       labelX: label.x - element.getBoundingClientRect().x,
       labelWidth: label.width,
       padding: getComputedStyle(element.querySelector('.task-main')).paddingLeft,
@@ -241,7 +248,13 @@ test('Timeline hover and selection reveal controls without moving or restyling t
       borders: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
     };
   });
-  const idle = await appearance();
+  let idle;
+  await expect.poll(async () => {
+    const current = await appearance();
+    if (current.connected && current.labelWidth > 0 && current.padding && current.shadow
+      && current.background && current.borders.every(Boolean)) idle = current;
+    return Boolean(idle);
+  }).toBe(true);
   await block.hover();
   await expect.poll(() => block.evaluate(element => [...element.querySelectorAll('.resize-handle')]
     .map(handle => getComputedStyle(handle, '::after').opacity))).toEqual(['1', '1']);
