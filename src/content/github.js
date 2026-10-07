@@ -3168,6 +3168,14 @@
     if (menuOpen && !path.includes(root)) closeMenu();
   }
 
+  if (!popupMode && !timesMode) document.addEventListener('visibilitychange', () => {
+    if (document.hidden && fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+    if (!actionSurfaceMode) updateTaskAnimation();
+  });
+  if (!popupMode && !timesMode) globalThis.addEventListener?.('blur', () => {
+    if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+  });
+
   if (timesMode) {
     mountInHeader(); renderUi();
     void loadSelectedTimes();
@@ -3189,6 +3197,10 @@
   } else if (actionSurfaceMode) {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (handleLocalPreferencesChanged(message)) return undefined;
+      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
+        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+        return undefined;
+      }
       if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -3201,6 +3213,10 @@
   } else {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (handleLocalPreferencesChanged(message)) return undefined;
+      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
+        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+        return undefined;
+      }
       if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
       void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
@@ -3210,7 +3226,6 @@
       if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) { closeFullWidthPopup(); return; }
       if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
     });
-    document.addEventListener('visibilitychange', updateTaskAnimation);
     motionPreference?.addEventListener?.('change', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();

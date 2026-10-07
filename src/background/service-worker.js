@@ -1418,12 +1418,22 @@ async function toggleActionSurface(tab) {
   }
 }
 
+async function dismissInactivePanels({ windowId }) {
+  const tabs = await chrome.tabs.query({ windowId });
+  await Promise.allSettled(tabs
+    .filter(tab => Number.isInteger(tab.id) && !tab.active)
+    .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'DISMISS_FULL_WIDTH_POPUP' })));
+}
+
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();
 });
 chrome.action.onClicked.addListener(tab => {
   void toggleActionSurface(tab).catch(() => {});
+});
+chrome.tabs.onActivated.addListener(info => {
+  void dismissInactivePanels(info).catch(() => {});
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {

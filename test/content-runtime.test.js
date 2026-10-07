@@ -2034,9 +2034,9 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });
 
-function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
+function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
   const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [];
-  const documentListeners = new Map();
+  const documentListeners = new Map(), windowListeners = new Map(), runtimeListeners = [];
   const timeouts = new Map();
   let timeoutId = 0;
   class PanelNode extends FakeNode {
@@ -2053,7 +2053,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     cloneNode() { const node = this.ownerDocument.createElement(this.tag); node.textContent = this.textContent; return node; }
     attachShadow() { const node = this.ownerDocument.createElement('shadow'); this.ownerDocument.panelShadow = node; return node; }
   }
-  const document = { activeElement: null, panelShadow: null, createElement(tag) { const node = new PanelNode(tag); node.ownerDocument = this; return node; }, createElementNS(_ns, tag) { return this.createElement(tag); }, createTextNode: text => ({ textContent: text }), querySelector: () => null };
+  const document = { activeElement: null, panelShadow: null, createElement(tag) { const node = new PanelNode(tag); node.ownerDocument = this; return node; }, createElementNS(_ns, tag) { return this.createElement(tag); }, createTextNode: text => ({ textContent: text }), querySelector: () => null, addEventListener: (type, listener) => documentListeners.set(type, listener) };
   document.body = document.createElement('body');
   if (header) {
     const actions = document.createElement('div'), avatar = document.createElement('img');
@@ -2061,13 +2061,13 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     document.documentElement = document.body;
     document.querySelector = selector => selector === '.AppHeader-actions' ? actions : null;
     document.getElementById = id => document.body.walk().find(node => node.id === id) || null;
-    document.addEventListener = (type, listener) => documentListeners.set(type, listener);
   }
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-  const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl),
+  const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl), __CLOCKOLI_ACTION_SURFACE__: actionSurface,
+    addEventListener: (type, listener) => windowListeners.set(type, listener),
     requestAnimationFrame: callback => frames.push(callback), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
     setTimeout: (callback, delay) => { const id = ++timeoutId; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
-    confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
+    confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
     ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
       timelineMounts.push(options);
       return { update() {}, destroy() {} };
@@ -2095,7 +2095,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     };
   })();`, context);
   if (state && !header) context.panel.set(state, records, participants);
-  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, messages, frames, intervals, confirmations, timelineMounts, timeouts, advance(ms) { now += ms; } };
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timeouts, advance(ms) { now += ms; } };
 }
 
 test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
@@ -2875,6 +2875,63 @@ test('clicking the GitHub page closes the full-width panel but clicking inside i
   h.documentListeners.get('click')({ composedPath: () => [h.document.body] });
   assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
   assert.equal(h.document.activeElement, pageInput, 'clicking elsewhere must not return focus to the launcher');
+});
+
+test('switching tabs dismisses the GitHub panel without restoring focus; returning requires a fresh open', async () => {
+  const h = dailyPanelHarness({ header: true, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const launcherShadow = h.document.panelShadow;
+  await launcherShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
+  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
+  const focused = h.document.activeElement;
+
+  h.document.hidden = true;
+  h.documentListeners.get('visibilitychange')();
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+  assert.equal(h.document.activeElement, focused, 'tab switch must not focus a hidden tab');
+  h.document.hidden = false;
+  h.documentListeners.get('visibilitychange')();
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+
+  const readsBeforeReopen = h.messages.filter(message => message.type === 'GET_PAGE_STATE').length;
+  await launcherShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
+  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
+  assert.ok(h.messages.filter(message => message.type === 'GET_PAGE_STATE').length > readsBeforeReopen);
+});
+
+test('switching tabs dismisses the injected toolbar panel on other HTTP(S) pages', async () => {
+  const h = dailyPanelHarness({ header: true, actionSurface: true, pageUrl: 'https://example.com/task', state: { configured: true, active: null, recent: [], pendingWrites: [] } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
+  h.document.hidden = true;
+  h.documentListeners.get('visibilitychange')();
+  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+});
+
+test('losing window focus dismisses an open panel even while the document remains visible', async () => {
+  for (const actionSurface of [false, true]) {
+    const h = dailyPanelHarness({ header: true, actionSurface, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (!actionSurface) await h.document.panelShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
+    assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
+    h.document.hidden = false;
+    const focused = h.document.activeElement;
+    assert.equal(typeof h.windowListeners.get('blur'), 'function');
+    h.windowListeners.get('blur')();
+    assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+    assert.equal(h.document.activeElement, focused);
+  }
+});
+
+test('background tab-activation message dismisses an open panel with no visibility or blur event', async () => {
+  for (const actionSurface of [false, true]) {
+    const h = dailyPanelHarness({ header: true, actionSurface, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (!actionSurface) await h.document.panelShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
+    assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
+    h.runtimeListeners[0]({ type: 'DISMISS_FULL_WIDTH_POPUP' }, {}, () => {});
+    assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
+  }
 });
 
 test('daily panel shows pending operations without a visible entry but avoids duplicate entry status', async () => {
