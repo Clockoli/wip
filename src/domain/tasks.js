@@ -81,6 +81,7 @@ export function sortTrackedTasks(tasks, options = {}) {
 
 export function aggregateTrackedTasks(records, { user, currentUsers = null, metadata = new Map(), active = null, pendingWrites = [], startDate = '', endDate = '' } = {}) {
   const users = new Set(currentUsers ?? (typeof user === 'string' && user ? [user] : []));
+  if (Array.isArray(currentUsers) && !currentUsers.length) return [];
   if (!users.size) throw new Error('Task owner is required');
   const persisted = [...(records ?? [])];
   const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry)

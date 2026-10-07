@@ -1,4 +1,4 @@
-import { GitHubClient } from '../api/github-client.js';
+import { GitHubClient, createGitHubRateLimitGate } from '../api/github-client.js';
 import { CredentialBroker, DeviceFlowService } from '../auth/github-app-auth.js';
 import {
   GITHUB_APP_CLIENT_ID, githubAppInstallationUrl,
@@ -14,6 +14,7 @@ import { setAddonEnabled } from '../addons/service.js';
 import { normalizeClockifyDetailedReport } from '../addons/clockify/report-normalizer.js';
 import { normalizeClockifyDetailedCsv } from '../addons/clockify/csv-normalizer.js';
 import { createClockifyMigrationSessionService } from '../services/clockify-migration-session.js';
+import { createClockifyMigrationJobService } from '../services/clockify-migration-job.js';
 import { createClockifyCaptureArmService } from '../services/clockify-capture-arm.js';
 import { createClockifyHistoryScanService } from '../services/clockify-history-scan.js';
 import { clockifyDetailedReportYear } from '../services/clockify-report-route.js';
@@ -33,12 +34,14 @@ import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
+import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
 import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
+import { ClockifyGitHubRequestCounter } from './clockify-github-request-counter.js';
 import { ConfigurationLoadCoordinator, finalizeTaskLoad, refreshTaskState } from './task-load.js';
 
 const store = new ChromeStore();
@@ -68,7 +71,18 @@ const clockifyMigrationStorage = Object.freeze({
   async remove(key) { await clockifyMigrationBackend.deleteMany([key]); },
 });
 const CLOCKIFY_MIGRATION_OUTCOME_KEY = 'clockify-migration-import-outcome-v1';
+const CLOCKIFY_MIGRATION_SUGGESTIONS_KEY = 'clockify-migration-suggestions-v1';
 const clockifyMigrationSession = createClockifyMigrationSessionService({ storageSession: clockifyMigrationStorage });
+const clockifyMigrationJobs = createClockifyMigrationJobService({ backend: clockifyMigrationBackend });
+const clockifyGitHubRequests = new ClockifyGitHubRequestCounter({ storage: clockifyMigrationStorage });
+function createMigrationConfiguration(rateLimitGate = null) {
+  return new ConfigurationService({
+    store,
+    credentialProvider: currentCredentialProvider,
+    githubFactory: options => new GitHubClient({ ...options, rateLimitGate, fetchImpl: clockifyGitHubRequests.wrapFetch(fetch) }),
+  });
+}
+const migrationConfiguration = createMigrationConfiguration();
 const clockifyCaptureArm = createClockifyCaptureArmService({ storageSession: clockifyMigrationStorage });
 const clockifyHistoryScan = createClockifyHistoryScanService({ storageSession: clockifyMigrationStorage });
 
@@ -76,13 +90,15 @@ function isNotFound(error) { return error?.status === 404 || error?.code === 'no
 
 registerClockifyMigrationProgressPort(chrome.runtime, clockifyMigrationProgressPorts);
 
-function githubForConfig(config) {
+function githubForConfig(config, { measureMigration = false, rateLimitGate = null } = {}) {
   return new GitHubClient({
     credentialProvider: currentCredentialProvider,
     owner: config.owner, repo: config.repo, branch: config.branch || 'main',
     expectedRepositoryId: config.repoId || null,
     branchMode: config.branchMode || 'custom',
     validationCache: destinationValidationCache,
+    rateLimitGate,
+    ...(measureMigration ? { fetchImpl: clockifyGitHubRequests.wrapFetch(fetch) } : {}),
   });
 }
 
@@ -148,12 +164,13 @@ function safeAttempt(attempt) {
   };
 }
 
-async function configuredSnapshot({ localOnly = false, destinationId = null } = {}) {
+async function configuredSnapshot({ localOnly = false, destinationId = null, measureMigration = false, rateLimitGate = null } = {}) {
   await store.migrateLegacyPatAuth();
   await store.ensureDataVersion(5);
   if (!localOnly) {
-    await configuration.ensureRepositoryIdentity();
-    await configuration.ensurePersonalStorageBranch();
+    const service = measureMigration ? (rateLimitGate ? createMigrationConfiguration(rateLimitGate) : migrationConfiguration) : configuration;
+    await service.ensureRepositoryIdentity();
+    await service.ensurePersonalStorageBranch();
   }
   const [configurationSnapshot, authSnapshot] = await Promise.all([
     store.getConfigurationSnapshot(destinationId), store.getAuthSnapshot(),
@@ -172,7 +189,7 @@ async function completeClockifyCapture({ tabId, year, data }) {
       const snapshot = await configuredSnapshot();
       return { config: snapshot.config, auth: snapshot.auth };
     },
-    createPreview: preview => clockifyMigrationSession.create(preview),
+    createPreview: preview => clockifyMigrationJobs.createPreview(preview),
     peekPreview: () => clockifyMigrationSession.peek(),
     openPreview: () => chrome.tabs.create({ url: chrome.runtime.getURL('src/clockify-migration/preview.html') }),
     emitPhase: (capturedTabId, progress) => {
@@ -236,6 +253,15 @@ async function checkCurrentRepositoryAccess(destinationId = null) {
     repository: { id: repository.id, fullName: repository.full_name },
     lastVerifiedAt, verificationStatus: 'access_checked',
   };
+}
+
+async function repositoryInvitationService(destinationId, { measureMigration = false } = {}) {
+  const id = await requireConfiguredDestinationId(store, destinationId);
+  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration });
+  if (!config || auth?.mode !== 'github_app' || !Number.isSafeInteger(config.repoId)) {
+    throw new Error('Invite teammates only from a connected GitHub App time repository.');
+  }
+  return new RepositoryInvitationService({ github: githubForConfig(config, { measureMigration }), installationId: config.installationId });
 }
 
 async function contextForDestination(destinationId, { localOnly = false } = {}) {
@@ -678,6 +704,83 @@ async function loadRecentAcrossDestinations(message, sender, extensionOrigin) {
   };
 }
 
+function migrationDestinationPin({ config, auth, destinationId, authGeneration }) {
+  return {
+    destinationId, repoId: config.repoId, owner: config.owner, repo: config.repo,
+    branch: config.branch, defaultBranch: config.defaultBranch,
+    actorId: auth.githubUserId, login: config.storageLogin || auth.githubLogin,
+    authGeneration,
+    ...(auth.mode === 'github_app' && auth.candidateId ? { authCandidateId: auth.candidateId } : {}),
+  };
+}
+
+function sameMigrationDestination(snapshot, pin) {
+  if (!snapshot?.config || !snapshot?.auth || snapshot.destinationId !== pin.destinationId) return false;
+  const current = migrationDestinationPin(snapshot);
+  return Object.keys(pin).every(key => key === 'login'
+    ? current.login?.toLowerCase() === pin.login.toLowerCase()
+    : key === 'authGeneration' && pin.authCandidateId ? true : current[key] === pin[key]);
+}
+
+let runningClockifyMigration = null;
+let restoringClockifyMigration = false;
+function resumeClockifyMigration(requestId = null) {
+  if (restoringClockifyMigration) return Promise.resolve(null);
+  if (runningClockifyMigration) return runningClockifyMigration;
+  runningClockifyMigration = (async () => {
+    const job = await clockifyMigrationJobs.load();
+    if (!job) return null;
+    if (job.blockedReason) return null;
+    // Inspect local configuration before any operation capable of creating a
+    // personal branch. A changed destination or actor must never be reused.
+    const local = await configuredSnapshot({ localOnly: true });
+    if (!sameMigrationDestination(local, job.pin)) return null;
+    if (job.retryAt && Date.parse(job.retryAt) > Date.now()) {
+      await scheduleSyncAlarm('clockify-migration-retry', { when: Date.parse(job.retryAt) });
+      return null;
+    }
+    const publish = progress => {
+      if (requestId) emitClockifyMigrationProgress(clockifyMigrationProgressPorts, requestId, progress);
+    };
+    let latestProgress = { stage: 'preparing_repository', completed: job.outcomes.length,
+      total: job.mappings.filter(mapping => !mapping.skipped).length };
+    const gate = createGitHubRateLimitGate({
+      onReady: async () => {
+        if (!sameMigrationDestination(await configuredSnapshot({ localOnly: true }), job.pin)) {
+          throw Object.assign(new Error('Migration destination or GitHub identity changed; restore the original connection to resume.'), { code: 'migration_paused' });
+        }
+      },
+      onWait: async retryAt => {
+        await clockifyMigrationJobs.retry(job.id, retryAt);
+        await scheduleSyncAlarm('clockify-migration-retry', { when: Date.parse(retryAt) });
+        publish({ ...latestProgress, stage: 'waiting_for_github', retryAt });
+      },
+      onResume: async () => { await clockifyMigrationJobs.retry(job.id, null); publish(latestProgress); },
+    });
+    const verified = await configuredSnapshot({ measureMigration: true, rateLimitGate: gate });
+    if (!sameMigrationDestination(verified, job.pin)) return null;
+    let outcomes;
+    try {
+      outcomes = await importClockifyOrganization({
+        sourceUsers: job.data.users, entries: job.data.entries, mappings: job.mappings,
+        github: githubForConfig(verified.config, { measureMigration: true, rateLimitGate: gate }),
+        sourceBranch: verified.config.defaultBranch,
+        destinationUser: { id: verified.auth.githubUserId, login: verified.config.storageLogin || verified.auth.githubLogin },
+        completedOutcomes: job.outcomes,
+        onOutcome: outcome => clockifyMigrationJobs.checkpoint(job.id, outcome),
+        onProgress: progress => { latestProgress = progress; publish(progress); },
+      });
+    } catch (error) {
+      if (error?.code !== 'mapping_unresolved') throw error;
+      await clockifyMigrationJobs.block(job.id, 'mapping_unresolved');
+      return null;
+    }
+    await clockifyMigrationJobs.finish(job.id);
+    return { outcomes };
+  })().finally(() => { runningClockifyMigration = null; });
+  return runningClockifyMigration;
+}
+
 async function handle(message, sender) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid extension message');
   const extensionOrigin = chrome.runtime.getURL('');
@@ -731,6 +834,53 @@ async function handle(message, sender) {
     return { ...result, onboardingState: await onboardingState() };
   }
   if (message.type === 'CHECK_REPOSITORY_ACCESS') return checkCurrentRepositoryAccess(message.destinationId || message.payload?.destinationId || null);
+  if (message.type === 'LOAD_REPOSITORY_COLLABORATORS') {
+    if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid collaborator request');
+    const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
+    const { config, auth } = await configuredSnapshot({ destinationId });
+    if (!config || !auth) throw new Error('Connect a time repository before viewing collaborators.');
+    const github = githubForConfig(config);
+    await github.assertDestinationReachable();
+    const collaborators = await github.listRepositoryCollaborators();
+    try {
+      const pending = await github.listRepositoryPendingInvitations();
+      return { ...collaborators, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+        ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
+    } catch {
+      return { ...collaborators, pendingUnavailable: true };
+    }
+  }
+  if (message.type === 'SEARCH_INVITEE_USERS' || message.type === 'INVITE_REPOSITORY_USER') {
+    const payload = message.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== (message.type === 'SEARCH_INVITEE_USERS' ? 2 : 3)
+        || typeof payload.destinationId !== 'string'
+        || typeof payload[message.type === 'SEARCH_INVITEE_USERS' ? 'query' : 'login'] !== 'string'
+        || (message.type === 'INVITE_REPOSITORY_USER' && (!Number.isSafeInteger(payload.userId) || payload.userId <= 0))) {
+      throw new Error('Invalid teammate request');
+    }
+    const invitation = await repositoryInvitationService(payload.destinationId);
+    return message.type === 'SEARCH_INVITEE_USERS'
+      ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
+  }
+  if (message.type === 'REMOVE_REPOSITORY_USER') {
+    const payload = message.payload;
+    if (Object.keys(message).length !== 2 || !payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== 4 || typeof payload.destinationId !== 'string'
+        || typeof payload.login !== 'string' || !Number.isSafeInteger(payload.userId) || payload.userId <= 0
+        || !['collaborator', 'pending'].includes(payload.kind)) throw new Error('Invalid teammate removal request');
+    const invitation = await repositoryInvitationService(payload.destinationId);
+    return invitation.remove(payload.login, payload.userId, payload.kind);
+  }
+  if (message.type === 'SEARCH_CLOCKIFY_GITHUB_USERS') {
+    const payload = message.payload;
+    if (Object.keys(message).length !== 2 || sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')
+        || !payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== 2 || typeof payload.destinationId !== 'string'
+        || typeof payload.query !== 'string') throw new Error('Invalid migration user search');
+    const invitation = await repositoryInvitationService(payload.destinationId, { measureMigration: true });
+    return { users: await invitation.search(payload.query, { profiles: false }) };
+  }
   if (message.type === 'SELECT_REPOSITORY') return onboarding.selectRepository(message.payload);
   if (message.type === 'SET_DEFAULT_DESTINATION') {
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId || message.payload?.destinationId);
@@ -771,22 +921,69 @@ async function handle(message, sender) {
     return setAddonEnabled({ store, permissions: chrome.permissions }, message.payload.id, message.payload.enabled);
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_PREVIEW') {
+    if (sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')) {
+      throw new Error('Migration status requires the preview page.');
+    }
+    if (Object.keys(message).length !== (message.measureRequests === true ? 2 : 1)) {
+      throw new Error('Migration request measurement requires the preview page and exact payload.');
+    }
+    const job = await clockifyMigrationJobs.load();
+    if (job) {
+      const local = await configuredSnapshot({ localOnly: true });
+      return { pending: { id: job.id, users: job.data.users, outcomes: job.outcomes,
+        completedUsers: job.outcomes.length, totalUsers: job.mappings.filter(mapping => !mapping.skipped).length,
+        ...(job.retryAt ? { retryAt: job.retryAt } : {}),
+        ...((job.blockedReason || !sameMigrationDestination(local, job.pin))
+          ? { blockedReason: job.blockedReason || 'connection_changed' } : {}),
+        blocked: Boolean(job.blockedReason) || !sameMigrationDestination(local, job.pin) } };
+    }
     const preview = await clockifyMigrationSession.peek();
     if (!preview) {
       const outcome = await clockifyMigrationStorage.get(CLOCKIFY_MIGRATION_OUTCOME_KEY);
       if (outcome?.id && Array.isArray(outcome?.users) && Array.isArray(outcome?.outcomes)) return { outcome };
       throw new Error('The Clockify migration preview is unavailable or expired. Return to the Clockify report and capture it again.');
     }
+    if (message.measureRequests === true) await clockifyGitHubRequests.start()
+      .catch(() => console.warn('[Clockify mapping GitHub requests] measurement unavailable'));
     return { id: preview.id, users: preview.data.users, entries: preview.data.entries.length };
   }
   if (message.type === 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS') {
-    const { config, auth } = await configuredSnapshot();
-    if (!config || !auth) return { logins: [] };
+    if (Object.keys(message).length !== 1 || sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')) throw new Error('Migration suggestions require the preview page.');
+    const { config, auth, authGeneration, destinationId } = await configuredSnapshot({ measureMigration: true });
+    if (!config || !auth || !destinationId) return { users: [], destinationId: null };
     try {
-      return { logins: await githubForConfig(config).listRepositoryCollaboratorLogins() };
-    } catch {
-      return { logins: [] };
+      const preview = await clockifyMigrationSession.peek().catch(() => null);
+      const actorId = auth.githubUserId;
+      const cacheable = preview?.id && actorId && config.repoId && Number.isSafeInteger(authGeneration);
+      if (cacheable) {
+        const cached = await clockifyMigrationStorage.get(CLOCKIFY_MIGRATION_SUGGESTIONS_KEY).catch(() => null);
+        const age = Date.now() - cached?.savedAt;
+        if (cached?.previewId === preview.id && cached.destinationId === destinationId
+            && cached.actorId === actorId && cached.repoId === config.repoId && cached.authGeneration === authGeneration
+            && age >= 0 && age < 5 * 60 * 1000 && Array.isArray(cached.users)) {
+          return { users: cached.users, destinationId };
+        }
+      }
+      const users = await githubForConfig(config, { measureMigration: true }).listRepositoryCollaboratorProfiles();
+      if (cacheable) await clockifyMigrationStorage.set(CLOCKIFY_MIGRATION_SUGGESTIONS_KEY,
+        { previewId: preview.id, destinationId, repoId: config.repoId, actorId, authGeneration, savedAt: Date.now(), users }).catch(() => {});
+      return { users, destinationId };
     }
+    catch { return { users: [], destinationId }; }
+  }
+  if (message.type === 'RESTORE_CLOCKIFY_MIGRATION_PREVIEW') {
+    if (sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')
+        || Object.keys(message).length !== 2 || typeof message.id !== 'string') {
+      throw new Error('Mapping repair requires the migration preview page and its saved job ID.');
+    }
+    if (runningClockifyMigration || restoringClockifyMigration) throw new Error('Migration import is still running. Wait for the current request to settle before repairing the mapping.');
+    restoringClockifyMigration = true;
+    try {
+      const job = await clockifyMigrationJobs.load();
+      if (!job || job.id !== message.id) throw new Error('Migration mapping repair is unavailable');
+      const local = await configuredSnapshot({ localOnly: true });
+      return await clockifyMigrationJobs.restorePreview(message.id, { connectionChanged: !sameMigrationDestination(local, job.pin) });
+    } finally { restoringClockifyMigration = false; }
   }
   if (message.type === 'CONFIRM_CLOCKIFY_MIGRATION') {
     const payload = message.payload;
@@ -795,20 +992,37 @@ async function handle(message, sender) {
         || !isClockifyProgressRequestId(payload.requestId)) {
       throw new Error('Invalid Clockify migration confirmation');
     }
-    const { config, auth } = await configuredSnapshot();
-    if (!config || !auth) throw new Error('Connect a Clockoli GitHub repository before importing.');
-    const data = await clockifyMigrationSession.consume(payload.id);
-    if (!data) throw new Error('The Clockify migration confirmation expired. Return to the report and capture it again.');
-    const outcomes = await importClockifyOrganization({
-      sourceUsers: data.users,
-      entries: data.entries,
-      mappings: payload.mappings,
-      github: githubForConfig(config),
-      destinationUser: { id: auth.githubUserId, login: config.storageLogin || auth.githubLogin },
-      onProgress: progress => emitClockifyMigrationProgress(clockifyMigrationProgressPorts, payload.requestId, progress),
-    });
-    await clockifyMigrationStorage.set(CLOCKIFY_MIGRATION_OUTCOME_KEY, { id: payload.id, users: data.users, outcomes });
-    return { outcomes };
+    if (sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')) {
+      throw new Error('Migration confirmation requires the preview page.');
+    }
+    const { config, auth, destinationId, authGeneration } = await configuredSnapshot({ localOnly: true });
+    if (!config || !auth || !destinationId) throw new Error('Connect a Clockoli GitHub repository before importing.');
+    await clockifyMigrationJobs.claim(payload.id, payload.mappings, migrationDestinationPin({ config, auth, destinationId, authGeneration }));
+    await scheduleSyncAlarm('clockify-migration-retry', { when: Date.now() + 60_000 });
+    void resumeClockifyMigration(payload.requestId).catch(() => {});
+    return { pending: true };
+  }
+  if (message.type === 'INVITE_MIGRATED_USER') {
+    if (sender?.url !== chrome.runtime.getURL('src/clockify-migration/preview.html')) throw new Error('Migration invitations require the preview page.');
+    const payload = message.payload;
+    if (Object.keys(message).length !== 2 || !payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).length !== 2 || typeof payload.id !== 'string' || !payload.id
+        || typeof payload.sourceUserId !== 'string' || !payload.sourceUserId) throw new Error('Invalid migration invitation request.');
+    const saved = await clockifyMigrationStorage.get(CLOCKIFY_MIGRATION_OUTCOME_KEY);
+    if (saved?.id !== payload.id || !/^github:[1-9]\d*$/.test(saved.destinationId || '') || !Array.isArray(saved.outcomes)) {
+      throw new Error('A completed migration outcome is required before inviting.');
+    }
+    const outcome = saved.outcomes.find(value => value?.sourceUserId === payload.sourceUserId);
+    if (!['imported', 'already_present'].includes(outcome?.status)
+        || !Number.isSafeInteger(outcome?.githubUser?.id) || outcome.githubUser.id <= 0
+        || typeof outcome.githubUser.login !== 'string'
+        || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(outcome.githubUser.login)) {
+      throw new Error('Only a successful mapped migration can be invited.');
+    }
+    const snapshot = await configuredSnapshot({ measureMigration: true });
+    if (snapshot.destinationId !== saved.destinationId) throw new Error('The default time repository changed after migration. Review access before inviting.');
+    const invitation = await repositoryInvitationService(saved.destinationId, { measureMigration: true });
+    return invitation.invite(outcome.githubUser.login, outcome.githubUser.id);
   }
   if (message.type === 'CLOCKIFY_ARM_CAPTURE' || message.type === 'CLOCKIFY_ARM_CSV_CAPTURE') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Clockify capture requires a browser tab');
@@ -824,6 +1038,15 @@ async function handle(message, sender) {
   if (message.type === 'CLOCKIFY_DISARM_CAPTURE') {
     await Promise.all([clockifyCaptureArm.disarm(sender?.tab?.id), clockifyHistoryScan.reset()]);
     return { disarmed: true };
+  }
+  if (message.type === 'CLOCKIFY_CSV_EMAIL_OFFER') {
+    if (Object.keys(message).length !== 1 || !Number.isInteger(sender?.tab?.id)) throw new Error('Invalid Clockify CSV email offer payload');
+    if (!await clockifyCaptureArm.isArmed(sender.tab.id)) throw new Error('Clockify CSV capture is not armed');
+    const tab = await chrome.tabs.get(sender.tab.id);
+    const year = clockifyDetailedReportYear(tab?.url || '');
+    const attempts = await clockifyHistoryScan.recordCsvEmailOffer(year);
+    if (attempts === 3) await Promise.all([clockifyCaptureArm.disarm(sender.tab.id), clockifyHistoryScan.reset()]);
+    return { attempts, cancelled: attempts === 3 };
   }
   if (message.type === 'CLOCKIFY_YEAR_OBSERVED') {
     if (!Number.isSafeInteger(message.entryCount) || message.entryCount < 0 || !Number.isInteger(message.year) || !Number.isInteger(sender?.tab?.id)) {
@@ -1089,8 +1312,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW'].includes(message?.type);
-  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
     try {
@@ -1098,9 +1321,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       operation = acceptanceExecutor.run(() => loadCoordinator.save(() => cancelReports(), () => handle(message, sender)));
     } catch (error) { operation = Promise.reject(error); }
   } else {
-    const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type)
+    const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
       || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
-      || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT'].includes(message?.type);
+      || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
@@ -1117,6 +1340,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+function scheduleSyncAlarm(name, options) {
+  return Promise.resolve(chrome.alarms.create(name, options))
+    .catch(error => { if (error?.message !== 'No SW') console.warn('Could not schedule pending sync alarm.'); });
+}
 function hasRunnablePending(queue) {
   const first = queue?.[0];
   if (!first) return false;
@@ -1140,11 +1367,11 @@ function syncPendingNow() {
     if (!(await store.getPendingDestinationIds()).length) return;
     await syncPendingAll({ store, trackerForDestination });
     if (await shouldContinuePendingSync()) {
-      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
     }
   })).catch(async error => {
     if (await shouldContinuePendingSync().catch(() => false)) {
-      chrome.alarms.create('sync-pending-now', { when: Date.now() + 5_000 });
+      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
     }
     throw error;
   }).finally(() => { pendingSync = null; });
@@ -1152,13 +1379,16 @@ function syncPendingNow() {
 }
 
 function requestPendingSync() {
-  chrome.alarms.create('sync-pending-now', { when: Date.now() + 250 });
+  void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 250 });
 }
 
 function scheduleSync() {
-  chrome.alarms.create('sync-pending', { periodInMinutes: 1 });
+  const alarm = scheduleSyncAlarm('sync-pending', { periodInMinutes: 1 });
+  void scheduleSyncAlarm('clockify-migration-resume', { periodInMinutes: 1 });
   void store.migrateLegacyPatAuth().catch(() => {});
   void syncPendingNow().catch(() => {});
+  void resumeClockifyMigration().catch(() => {});
+  return alarm;
 }
 
 async function openTimesPage() {
@@ -1198,6 +1428,7 @@ chrome.action.onClicked.addListener(tab => {
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
+  if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 
 scheduleSync();

@@ -27,6 +27,55 @@ export class GitHubRateLimitError extends GitHubApiError {
   }
 }
 
+// Shared by the migration's root client and its personal-branch clients.
+// Only an explicit GitHub rate-limit response closes this gate.
+export function createGitHubRateLimitGate({ now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  onWait = () => {}, onResume = () => {}, onReady = () => {} } = {}) {
+  let blockedUntil = 0;
+  let pending = null;
+  // Serialize persisted deadlines and resume: an older resume must never write
+  // null after a newer deadline has been saved.
+  let writes = Promise.resolve();
+  return Object.freeze({
+    ready: async () => { if (pending) await pending; await onReady(); },
+    pause(error, { wait = true } = {}) {
+      const current = now();
+      const reset = Date.parse(error?.retryAt);
+      const deadline = Number.isFinite(reset) && reset > current ? reset : current + 60_000;
+      if (deadline - current > 2 * 60 * 60 * 1000) throw error;
+      if (deadline > blockedUntil) {
+        blockedUntil = deadline;
+        writes = writes.then(() => onWait(new Date(deadline).toISOString()));
+      }
+      const recorded = writes;
+      if (!pending) {
+        pending = (async () => {
+          try {
+            for (;;) {
+              await writes;
+              if (blockedUntil > now()) {
+                await sleep(Math.min(blockedUntil - now(), 20_000));
+                continue;
+              }
+              // A concurrent pause may extend the gate while onResume is in flight.
+              // Its write queues behind this clear; recheck before reopening.
+              writes = writes.then(() => onResume());
+              await writes;
+              if (blockedUntil <= now()) return;
+            }
+          } finally { pending = null; }
+        })();
+      }
+      // On the terminal retry persist the alarm deadline without waiting for it.
+      if (!wait) {
+        pending.catch(() => {}); // The caller observes any persistence failure via recorded.
+        return recorded;
+      }
+      return pending;
+    },
+  });
+}
+
 const MILLISECONDS_PER_SECOND = 1000;
 
 function rateLimitRetryAt(response, now) {
@@ -84,6 +133,15 @@ function encodePath(path) {
 
 function validGitHubLogin(login) {
   try { validatePathSegment(login, 'user'); return true; } catch { return false; }
+}
+
+export function githubAvatarUrl(value, id) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'avatars.githubusercontent.com'
+      && !url.username && !url.password && url.pathname === `/u/${id}`
+      ? `https://avatars.githubusercontent.com/u/${id}?v=4` : null;
+  } catch { return null; }
 }
 
 async function mapBounded(items, limit, operation) {
@@ -184,7 +242,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -203,11 +261,26 @@ export class GitHubClient {
     this.now = now;
     this.validationCache = validationCache;
     this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
+    this.rateLimitGate = rateLimitGate;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
 
-  async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
+  async requestDetailed(path, options = {}, settings = {}) {
+    for (let retries = 0;; retries += 1) {
+      try { return await this.requestDetailedOnce(path, options, settings); }
+      catch (error) {
+        if (error?.code !== 'rate_limit' || !this.rateLimitGate) throw error;
+        if (retries >= 2) {
+          await this.rateLimitGate.pause(error, { wait: false });
+          throw error;
+        }
+        await this.rateLimitGate.pause(error);
+      }
+    }
+  }
+
+  async requestDetailedOnce(path, options = {}, { allowNotModified = false } = {}) {
     const startedAt = Date.now();
     const report = status => {
       try {
@@ -217,17 +290,20 @@ export class GitHubClient {
         });
       } catch { /* Diagnostics must never affect GitHub operations. */ }
     };
-    const requestWithToken = token => this.fetchImpl(`https://api.github.com${path}`, {
-      ...options,
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    });
+    const requestWithToken = async token => {
+      await this.rateLimitGate?.ready();
+      return this.fetchImpl(`https://api.github.com${path}`, {
+        ...options,
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...options.headers,
+        },
+      });
+    };
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
     let response;
     try { response = await requestWithToken(token); }
@@ -305,6 +381,74 @@ export class GitHubClient {
     return logins.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'accent' }));
   }
 
+  async listRepositoryCollaborators() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborators');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    if (!Array.isArray(collaborators) || collaborators.length > 100) throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    return { users: collaborators.slice(0, 4).map(user => ({
+      id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
+    })), hasMore: collaborators.length > 4 };
+  }
+
+  async listRepositoryCollaboratorProfiles() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborator suggestions');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    // A full first page might have a next page; never present a partial list as complete.
+    if (!Array.isArray(collaborators) || collaborators.length >= 100) {
+      throw new GitHubApiError('GitHub returned incomplete or invalid collaborator suggestions.', 502, 'invalid_github_response');
+    }
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    const profiles = await mapBounded(collaborators, 6, async collaborator => {
+      const profile = await this.request(`/users/${encodeURIComponent(collaborator.login)}`);
+      if (profile?.id !== collaborator.id || !validGitHubLogin(profile.login)
+          || profile.login.toLowerCase() !== collaborator.login.toLowerCase()
+          || !Object.hasOwn(profile, 'name') || (profile.name !== null && typeof profile.name !== 'string')) {
+        throw new GitHubApiError('GitHub returned an invalid collaborator profile.', 502, 'invalid_github_response');
+      }
+      return {
+        id: profile.id, login: profile.login, name: profile.name?.trim() || null,
+        avatarUrl: githubAvatarUrl(profile.avatar_url, profile.id),
+      };
+    });
+    return profiles.sort((left, right) => left.login.localeCompare(right.login, undefined, { sensitivity: 'accent' }));
+  }
+
+  async listRepositoryPendingInvitations() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for invitations');
+    const users = [], ids = new Set(), logins = new Set();
+    for (let page = 1; page <= 5; page += 1) {
+      const invitations = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/invitations?per_page=100${page > 1 ? `&page=${page}` : ''}`);
+      if (!Array.isArray(invitations) || invitations.length > 100) throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+      for (const invitation of invitations) {
+        const user = invitation?.invitee;
+        if (user === null) continue; // Email invitations have no GitHub account avatar.
+        if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+            || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+          throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+        }
+        ids.add(user.id); logins.add(user.login.toLowerCase());
+        users.push({ id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) });
+      }
+      if (users.length > 4 || invitations.length < 100) return { users: users.slice(0, 4), hasMore: users.length > 4 };
+    }
+    return { users: users.slice(0, 4), hasMore: false, incomplete: true };
+  }
+
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
 
   async resolveRepositoryIssue({ repository, number, title } = {}) {
@@ -344,7 +488,7 @@ export class GitHubClient {
       token: this.token, credentialProvider: this.credentialProvider,
       owner: this.owner, repo: this.repo, branch,
       expectedRepositoryId: this.expectedRepositoryId,
-      branchMode, fetchImpl: this.fetchImpl,
+      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate,
     });
   }
 

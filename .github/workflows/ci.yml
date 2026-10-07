@@ -19,4 +19,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - run: xvfb-run -a npm run test:options:functional
       - run: npm run check

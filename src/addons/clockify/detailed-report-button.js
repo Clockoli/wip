@@ -43,13 +43,15 @@
   let discoveryRetryCount = 0;
   let captureTransport = 'csv';
   let armRequest = 0;
-  let csvEmailExportAttempts = 0;
+  let csvExportRequest = 0;
+  let csvExportYear = null;
+  let csvRetryWait = null;
 
   function log() {}
 
-  function armBridge(mode = 'report', year = null) {
+  function armBridge(mode = 'report', year = null, retry = 0) {
     document.documentElement?.setAttribute(BRIDGE_ARM_ATTRIBUTE, 'armed');
-    EVENT_TARGET.dispatchEvent(new CustomEvent(ARM_EVENT, { detail: { mode, year } }));
+    EVENT_TARGET.dispatchEvent(new CustomEvent(ARM_EVENT, { detail: { mode, year, retry } }));
   }
 
   function disarmBridge() {
@@ -64,7 +66,9 @@
     captureParsingProgress = null;
     capturePhase = null;
     discoveryYear = null;
-    csvEmailExportAttempts = 0;
+    csvExportRequest += 1;
+    csvExportYear = null;
+    csvRetryWait = null;
     document.documentElement?.removeAttribute(BRIDGE_ARM_ATTRIBUTE);
     EVENT_TARGET.dispatchEvent(new CustomEvent(DISARM_EVENT));
     chrome.runtime.sendMessage({ type: 'CLOCKIFY_DISARM_CAPTURE' }, () => void chrome.runtime.lastError);
@@ -78,7 +82,7 @@
         ? response.data.history.nextYear : null;
       if (['csv', 'report'].includes(response.data.history?.transport)) captureTransport = response.data.history.transport;
       restoredCaptureArm = true;
-      if (captureHistory) armBridge(captureTransport);
+      if (captureHistory) armBridge(captureTransport, captureHistory.yearsWithEntries?.[captureHistory.completedYears]);
       log('persisted_arm_restored');
       schedulePlacement();
     });
@@ -90,9 +94,9 @@
       && location.pathname.replace(/\/+$/, '') === DETAILED_REPORT_PATH;
   }
 
-  function requestReportYear(year, mode) {
-    armBridge(mode, year);
-    EVENT_TARGET.dispatchEvent(new CustomEvent(YEAR_REQUEST_EVENT, { detail: { year, mode } }));
+  function requestReportYear(year, mode, retry = 0) {
+    armBridge(mode, year, retry);
+    EVENT_TARGET.dispatchEvent(new CustomEvent(YEAR_REQUEST_EVENT, { detail: retry ? { year, mode, retry } : { year, mode } }));
   }
 
   function labelOf(element) {
@@ -201,7 +205,7 @@
       setCaptureState(button, false, 'Clockoli could not refresh the Clockify report. Code: PAGINATION_UNAVAILABLE.');
       return;
     }
-    armBridge();
+    armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
     log('bridge_rearmed_after_page_size_refresh');
     control.click();
     chooseCustomPageSize(button, control);
@@ -313,7 +317,7 @@
       setCaptureState(button, false, 'Clockoli could not load the next report page. Code: PAGINATION_UNAVAILABLE.');
       return;
     }
-    armBridge();
+    armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
     next.click();
     log('next_page_control_click_dispatched');
     setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
@@ -322,7 +326,7 @@
   function resumeCaptureAfterReload(button, deadline = Date.now() + 10_000) {
     const previous = pageControl(['PREVIOUS', 'PREVIOUS PAGE']) || arrowPageControl('Left');
     if (previous) {
-      armBridge();
+      armBridge('report', captureHistory?.yearsWithEntries?.[captureHistory.completedYears]);
       previous.click();
       setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
       return;
@@ -350,17 +354,51 @@
         EVENT_TARGET.dispatchEvent(new CustomEvent(CSV_CAPTURE_INTENT_EVENT));
         csv.click();
         const request = armRequest;
-        setTimeout(() => {
-          if (armedButton !== button || armRequest !== request || !/report will be sent to your email/i.test(String(document.body?.innerText || ''))) return;
-          csvEmailExportAttempts += 1;
-          pageControl(['CLOSE', 'CANCEL'])?.click();
-          if (csvEmailExportAttempts >= 3) {
-            disarmBridge();
-            setCaptureState(button, false, 'Clockify offered email delivery instead of a CSV download. Code: CSV_EMAIL_EXPORT_UNAVAILABLE.');
+        const exportRequest = csvExportRequest;
+        const year = csvExportYear;
+        const emailDeadline = Date.now() + 10_000;
+        const checkEmailOffer = () => {
+          if (armedButton !== button || armRequest !== request || csvExportRequest !== exportRequest || csvExportYear !== year) return;
+          if (!/report will be sent to your email/i.test(String(document.body?.innerText || ''))) {
+            if (Date.now() < emailDeadline) setTimeout(checkEmailOffer, 250);
             return;
           }
-          setTimeout(() => exportCurrentYearCsv(button, deadline), 500);
-        }, 1_000);
+          csvExportRequest += 1;
+          chrome.runtime.sendMessage({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, response => {
+            if (armedButton !== button || armRequest !== request || csvExportYear !== year) return;
+            if (chrome.runtime.lastError || !response?.ok || !Number.isInteger(response.data?.attempts)
+                || response.data.attempts < 1 || response.data.attempts > 3) {
+              disarmBridge();
+              setCaptureState(button, false, 'Clockoli could not record the Clockify email-only export. Code: CSV_EMAIL_RETRY_UNAVAILABLE. Try Page to page migration.');
+              return;
+            }
+            const attempts = response.data.attempts;
+            if (attempts === 3 && response.data.cancelled === true) {
+              pageControl(['CLOSE', 'CANCEL'])?.click();
+              disarmBridge();
+              setCaptureState(button, false, `Clockify offered email delivery three times for ${year}. CSV migration cancelled. Code: CSV_EMAIL_EXPORT_UNAVAILABLE. Try Page to page migration.`);
+              return;
+            }
+            if (attempts >= 3 || response.data.cancelled !== false) {
+              disarmBridge();
+              setCaptureState(button, false, 'Clockoli could not confirm the CSV retry. Code: CSV_EMAIL_RETRY_UNAVAILABLE. Try Page to page migration.');
+              return;
+            }
+            const close = pageControl(['CLOSE', 'CANCEL']);
+            if (!close) {
+              disarmBridge();
+              setCaptureState(button, false, 'Clockoli could not close the Clockify email prompt. Code: CSV_EMAIL_RETRY_UNAVAILABLE. Try Page to page migration.');
+              return;
+            }
+            close.click();
+            setCaptureState(button, true, `Clockify offered email delivery for ${year}. Re-requesting this report (${attempts} of 3).`);
+            setTimeout(() => {
+              if (armedButton !== button || armRequest !== request || csvExportYear !== year) return;
+              requestYearCsv(button, year, attempts);
+            }, 500);
+          });
+        };
+        setTimeout(checkEmailOffer, 250);
         return;
       }
       if (Date.now() < deadline) { setTimeout(selectCsv, 100); return; }
@@ -370,16 +408,27 @@
     selectCsv();
   }
 
-  function requestYearCsv(button, year) {
+  function retryCsvReportReady() {
+    const pending = csvRetryWait;
+    if (!pending || armedButton !== pending.button || armRequest !== pending.arm || csvExportRequest !== pending.exportRequest) return;
+    csvRetryWait = null;
+    exportCurrentYearCsv(pending.button);
+  }
+
+  function requestYearCsv(button, year, retry = 0) {
+    csvExportYear = year;
+    const exportRequest = ++csvExportRequest;
+    csvRetryWait = { button, arm: armRequest, exportRequest };
     captureParsingProgress = null;
     capturePhase = null;
     setCaptureState(button, true, CAPTURE_PARSING_MESSAGE);
-    requestReportYear(year, 'csv');
+    requestReportYear(year, 'csv', retry);
     const request = armRequest;
     setTimeout(() => {
-      if (armedButton !== button || armRequest !== request) return;
-      exportCurrentYearCsv(button);
-    }, 1_000);
+      if (!csvRetryWait || csvRetryWait.exportRequest !== exportRequest || armedButton !== button || armRequest !== request) return;
+      disarmBridge();
+      setCaptureState(button, false, 'Clockify did not finish refreshing this report. Code: CSV_REPORT_REFRESH_UNAVAILABLE. Try Page to page migration.');
+    }, retry ? 30_000 : 180_000);
   }
 
   function requestYearPages(button, year) {
@@ -878,6 +927,10 @@
     const code = event.data.code;
     if (!button || typeof code !== 'string') return;
     log(`bridge:${code}`);
+    if (code === 'csv_report_ready') {
+      retryCsvReportReady();
+      return;
+    }
     if (code === 'page_captured' || code === 'captured_sanitized') initialReportResponseObserved = true;
     const messages = {
       bridge_armed: CAPTURE_PARSING_MESSAGE,

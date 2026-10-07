@@ -1,0 +1,123 @@
+import { test, expect, chromium } from '@playwright/test';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const ROOT = new URL('..', import.meta.url);
+const testWorker = `
+const destinations = [
+  { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+  { id: 'github:21', owner: 'acme', repo: 'a-very-long-repository-name-for-narrow-screens', installationId: 10 },
+];
+globalThis.requests = [];
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  globalThis.requests.push(message.type);
+  const responses = {
+    GET_ONBOARDING_STATE: {
+      ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' },
+      config: { owner: 'acme', repo: 'time-data', branch: 'main', recentDays: 7 },
+      verificationStatus: 'write_verified', destinations,
+    },
+    RESUME_DEVICE_FLOW: null,
+    GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
+    GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
+    GET_ADDON_SETTINGS: {},
+    LOAD_TASKS: { tasks: [], currentUsers: {}, availableUsers: [] },
+    LOAD_REPOSITORY_COLLABORATORS: {
+      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: false,
+      pendingUsers: [], pendingHasMore: false,
+    },
+  };
+  if (!Object.hasOwn(responses, message.type)) {
+    sendResponse({ ok: false, error: { message: 'Unexpected test request' } });
+    return;
+  }
+  sendResponse({ ok: true, data: responses[message.type] });
+});
+`;
+
+async function openOptions() {
+  const extensionDirectory = await mkdtemp(join(tmpdir(), 'clockoli-options-functional-'));
+  const profileDirectory = await mkdtemp(join(tmpdir(), 'clockoli-options-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extensionDirectory, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await Promise.all([
+      writeFile(join(extensionDirectory, 'manifest.json'), `${JSON.stringify(manifest)}\n`),
+      writeFile(join(extensionDirectory, 'test-worker.js'), testWorker),
+    ]);
+    context = await chromium.launchPersistentContext(profileDirectory, {
+      channel: 'chromium', headless: false,
+      args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    return { page, worker, context, extensionDirectory, profileDirectory };
+  } catch (error) {
+    await context?.close();
+    await rm(extensionDirectory, { recursive: true, force: true });
+    await rm(profileDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function closeOptions(fixture) {
+  await fixture.context.close();
+  await rm(fixture.extensionDirectory, { recursive: true, force: true });
+  await rm(fixture.profileDirectory, { recursive: true, force: true });
+}
+
+async function expectReadOnlyRequests(worker) {
+  const requests = await worker.evaluate(() => globalThis.requests);
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every(type => [
+    'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'GET_PAGE_STATE', 'GET_LOCAL_PREFERENCES',
+    'GET_ADDON_SETTINGS', 'LOAD_TASKS', 'LOAD_REPOSITORY_COLLABORATORS',
+  ].includes(type)), `Unexpected request types: ${requests.join(', ')}`).toBe(true);
+}
+
+test('repository disclosures rotate in Chromium and remain usable at narrow widths', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page } = fixture;
+    await page.setViewportSize({ width: 320, height: 700 });
+    const rows = page.locator('.time-repository');
+    for (const row of await rows.all()) {
+      const icon = row.locator('.repository-disclosure-icon');
+      await expect(icon).toHaveAttribute('aria-hidden', 'true');
+      await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('none');
+      await row.locator(':scope > summary').click();
+      await expect(row).toHaveAttribute('open', '');
+      await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('matrix(-1, 0, 0, -1, 0, 0)');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await row.locator(':scope > summary').focus();
+      await page.keyboard.press('Enter');
+      await expect(row).not.toHaveAttribute('open', '');
+      await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('none');
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});
+
+test('repository avatar menu closes on outside click without requesting access removal', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page } = fixture;
+    const row = page.locator('.time-repository').first();
+    const avatar = row.locator('.repository-collaborator').first();
+    const menu = row.locator('.repository-avatar-actions');
+    await avatar.click();
+    await expect(avatar).toHaveAttribute('aria-expanded', 'true');
+    await expect(menu).toBeVisible();
+    await page.locator('#connection-title').click();
+    await expect(menu).toBeHidden();
+    await expect(avatar).toHaveAttribute('aria-expanded', 'false');
+    await expect(row).not.toHaveAttribute('open', '');
+    await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});

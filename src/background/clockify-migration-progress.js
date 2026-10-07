@@ -10,12 +10,18 @@ export function emitClockifyMigrationProgress(ports, requestId, progress) {
   const { stage, completed, total, elapsedMs } = progress;
   if (typeof stage !== 'string' || !Number.isSafeInteger(completed) || !Number.isSafeInteger(total)
       || completed < 0 || total < completed) return;
+  const retryAt = progress.retryAt;
+  if (stage === 'waiting_for_github' && (typeof retryAt !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(retryAt)
+      || !Number.isFinite(Date.parse(retryAt)) || new Date(retryAt).toISOString() !== retryAt
+      || Date.parse(retryAt) - Date.now() > 2 * 60 * 60 * 1000)) return;
   try {
     port.postMessage({
       type: 'CLOCKIFY_MIGRATION_PROGRESS',
       phase: stage,
       completedUsers: completed,
       totalUsers: total,
+      ...(stage === 'waiting_for_github' ? { retryAt } : {}),
       ...(Number.isSafeInteger(elapsedMs) && elapsedMs >= 0 ? { elapsedMs } : {}),
     });
   } catch {

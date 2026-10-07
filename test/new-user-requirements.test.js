@@ -16,7 +16,7 @@ test('repository-first setup requests App access only for the concrete target', 
   assert.equal((optionsHtml.match(/id="install-app"/g) || []).length, 1);
   assert.match(optionsHtml, /id="install-app"[^>]*>Grant access<\/a>/);
   const access = optionsJs.slice(optionsJs.indexOf('function renderRepositoryAccess()'), optionsJs.indexOf('function repositoryActionKey('));
-  assert.match(access, /Boolean\(repositoryTarget\).*discoveryStatus === 'ready' && !selectedRepository/);
+  assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready'[\s\S]*&& !selectedRepository/);
   assert.match(access, /app_contents_write_required/);
   assert.match(access, /if \(!\(missing \|\| needsAppWrite\)\) closeRepositoryAccess\(\)/);
   assert.doesNotMatch(access, /showModal/);
@@ -26,9 +26,8 @@ test('repository-first setup requests App access only for the concrete target', 
 });
 
 test('repository discovery honors an explicit dirty target and never confirms writes automatically', () => {
-  assert.match(optionsHtml, /id="repository-step-instruction"/);
-  assert.match(optionsHtml, /If ready, choose Connect repository separately/i);
-  assert.match(optionsHtml, /Repositories granted to the GitHub App appear below as Not checked/i);
+  assert.doesNotMatch(optionsHtml, /id="repository-step-instruction"/);
+  assert.doesNotMatch(optionsHtml, /Checking verifies access and Clockoli storage without connecting or changing files|Connecting, initialization and joining require a separate confirmation/i);
   assert.match(optionsHtml, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/);
   const render = optionsJs.slice(optionsJs.indexOf('function renderRepositories(result)'), optionsJs.indexOf('function reviewSelectedRepository()'));
   assert.match(render, /selectedRepository = repositoryInputDirty \? null : repositoryTarget/);
@@ -42,16 +41,16 @@ test('repository discovery honors an explicit dirty target and never confirms wr
   assert.match(close, /pendingConfirmation = null/);
 });
 
-test('repository controls offer row checks and manual recheck, informational links, default and Finish', () => {
+test('repository controls offer autocomplete and manual recheck, default and Finish', () => {
   assert.match(optionsHtml, /id="repository-target-form"/);
   assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>/);
   assert.match(optionsHtml, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
   assert.doesNotMatch(optionsHtml, /id="check-repository-target"/);
   assert.doesNotMatch(optionsHtml, /id="refresh-repositories"|id="connect-repository"/);
   assert.doesNotMatch(optionsJs, /radio\.type = 'radio'/);
-  assert.match(optionsCss, /\.repository-icon/);
-  assert.match(optionsJs, /name\.href = `https:\/\/github\.com\/\$\{repository.fullName\}`/);
-  assert.match(optionsJs, /const statusLabel = repositoryInspectionStatus\(repository\)/);
+  assert.match(optionsCss, /\.repository-suggestion/);
+  assert.match(optionsJs, /option\.textContent = repository\.fullName/);
+  assert.match(optionsJs, /checkRepositoryTarget\(repository\.fullName, false, true\)/);
   assert.match(optionsHtml, /Default time repository<select id="setup-default-destination"/);
   assert.match(optionsHtml, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
 });

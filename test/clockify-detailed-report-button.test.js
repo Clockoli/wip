@@ -36,13 +36,13 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /event\.stopImmediatePropagation\(\)/);
   assert.match(source, /type: 'CLOCKIFY_CAPTURED_REPORT'/);
   assert.match(source, /const YEAR_REQUEST_EVENT = 'clockoli:clockify-detailed-report-request-year'/);
-  assert.match(source, /function requestReportYear\(year, mode\) \{\n\s*armBridge\(mode, year\);\n\s*EVENT_TARGET\.dispatchEvent/);
+  assert.match(source, /function requestReportYear\(year, mode, retry = 0\) \{\n\s*armBridge\(mode, year, retry\);\n\s*EVENT_TARGET\.dispatchEvent/);
   assert.match(source, /type: 'CLOCKIFY_YEAR_OBSERVED', entryCount: event\.data\.entryCount, year: event\.data\.year/);
-  assert.match(source, /function requestYearCsv\(button, year\) \{[\s\S]*if \(armedButton !== button \|\| armRequest !== request\) return;/);
+  assert.match(source, /function requestYearCsv\(button, year, retry = 0\) \{[\s\S]*if \(!csvRetryWait \|\| csvRetryWait\.exportRequest !== exportRequest \|\| armedButton !== button \|\| armRequest !== request\) return;/);
   assert.match(source, /function requestDiscoveryYear\(button, year, deadline = Date\.now\(\) \+ 180_000\) \{[\s\S]{0,700}requestReportYear\(year, 'discover'\);/);
   assert.doesNotMatch(source, /table\.cl-detailed-reports-table tbody tr/);
   assert.match(source, /No export is requested\./);
-  assert.match(source, /EVENT_TARGET\.dispatchEvent\(new CustomEvent\(YEAR_REQUEST_EVENT, \{ detail: \{ year, mode \} \}\)/);
+  assert.match(source, /EVENT_TARGET\.dispatchEvent\(new CustomEvent\(YEAR_REQUEST_EVENT, \{ detail: retry \? \{ year, mode, retry \} : \{ year, mode \} \}\)/);
   assert.match(source, /'CLOCKIFY_ARM_CSV_CAPTURE'/);
   assert.match(source, /response\.data\?\.discovering/);
   assert.match(source, /response\.data\?\.capturing/);
@@ -58,10 +58,12 @@ test('Clockify adapter arms a separate capture bridge without invoking native ex
   assert.match(source, /200 results per page/i);
   assert.match(source, /page_captured/);
   assert.match(source, /function requestNextPage\(button, deadline = Date\.now\(\) \+ 60_000\)/);
+  assert.equal(source.match(/armBridge\('report', captureHistory\?\.yearsWithEntries\?\.\[captureHistory\.completedYears\]\)/g)?.length, 3,
+    'page-size refresh, next-page navigation and reload recovery must all retain the annual capture identity');
   assert.match(source, /function resumeCaptureAfterReload\(button, deadline = Date\.now\(\) \+ 10_000\)/);
   assert.doesNotMatch(source, /deadline = Date\.now\(\) \+ (?:[0-9]{1,3}|[1-9]_[0-9]{1,3})\)/);
   assert.match(source, /function waitForInitialReport\(button, applyDispatched = false, deadline = Date\.now\(\) \+ 60_000\)/);
-  assert.match(source, /armBridge\(\);\n\s*previous\.click\(\);/);
+  assert.match(source, /armBridge\('report', captureHistory\?\.yearsWithEntries\?\.\[captureHistory\.completedYears\]\);\n\s*previous\.click\(\);/);
   assert.match(source, /function arrowPageControl\(direction\)/);
   assert.match(source, /button\.cl-page-link/);
   assert.match(source, /setTimeout\(\(\) => requestNextPage\(button, deadline\), 50\)/);
@@ -188,6 +190,12 @@ test('Clockify adapter only considers a validated captured page as the initial r
   assert.doesNotMatch(source, /if \(code === 'report_response_observed'\) initialReportResponseObserved = true;/);
   assert.match(source, /report_year_mismatch: 'Clockify returned a completed report for a different year; waiting for the requested year\.'/);
   assert.match(source, /response_not_json: 'Clockify is still preparing the requested report\.'/);
+});
+
+test('the first CSV export waits for an observed annual report rather than a one-second timer', () => {
+  assert.match(source, /csvRetryWait = \{ button, arm: armRequest, exportRequest \};/);
+  assert.match(source, /if \(code === 'csv_report_ready'\) \{\s*retryCsvReportReady\(\);/);
+  assert.doesNotMatch(source, /\}, 1_000\);\s*\}\s*function requestYearPages/);
 });
 
 test('Clockify discovery retries a transient native report failure within its existing deadline', () => {

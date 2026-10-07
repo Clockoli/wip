@@ -9,6 +9,28 @@ const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id:
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 
+test('email-only CSV response is accepted only from the armed Clockify report tab and uses its URL year', async () => {
+  const clockify = { url: 'https://app.clockify.me/reports/detailed', tab: { id: 5 } };
+  assert.equal(assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', clockify, origin), 'clockify');
+  for (const sender of [extension, content, { url: 'https://app.clockify.me/other', tab: { id: 5 } }]) {
+    assert.throws(() => assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', sender, origin), /not allowed/i);
+  }
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const seen = [];
+  const context = vm.createContext({
+    assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin }, tabs: { get: async () => ({ url: 'https://app.clockify.me/reports/detailed?start=2026-01-01T00:00:00.000Z&end=2026-12-31T23:59:59.999Z' }) } },
+    clockifyDetailedReportYear: () => 2026,
+    clockifyCaptureArm: { isArmed: async tab => tab === 5, disarm: async tab => seen.push(['disarm', tab]) },
+    clockifyHistoryScan: { recordCsvEmailOffer: async year => { seen.push(['offer', year]); return 3; }, reset: async () => seen.push(['reset']) },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER', year: 2025 }, clockify), /payload/i);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, { ...clockify, tab: { id: 6 } }), /armed/i);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, clockify))), { attempts: 3, cancelled: true });
+  assert.deepEqual(seen, [['offer', 2026], ['disarm', 5], ['reset']]);
+});
+
 test('invoice number reservation is extension-only and the dispatcher ignores payloads', async () => {
   assert.equal(assertMessageAllowed('RESERVE_INVOICE_NUMBER', extension, origin), 'extension');
   assert.throws(() => assertMessageAllowed('RESERVE_INVOICE_NUMBER', content, origin), /not allowed/i);
@@ -157,7 +179,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
     'MERGE_TASKS',
   ];
   for (const type of privileged) {
@@ -166,6 +188,66 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   }
 });
 
+
+test('repository collaborator read checks sender and configured destination before GitHub access', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  let pendingFails = false, pendingIncomplete = false;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    store: {}, requireConfiguredDestinationId: async (_store, id) => {
+      calls.push(['destination', id]);
+      if (id !== 'github:20') throw new Error('The requested destination is not configured.');
+      return id;
+    }, configuredSnapshot: async ({ destinationId }) => {
+      calls.push(['snapshot', destinationId]); return { config: { repoId: 20 }, auth: { mode: 'github_app' } };
+    }, githubForConfig: () => ({
+      assertDestinationReachable: async () => { calls.push(['verified']); },
+      listRepositoryCollaborators: async () => { calls.push(['listed']); return { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false }; },
+      listRepositoryPendingInvitations: async () => {
+        calls.push(['pending']);
+        if (pendingFails) throw new Error('No permission');
+        return { users: [{ id: 43, login: 'alice', avatarUrl: null }], hasMore: false,
+          ...(pendingIncomplete ? { incomplete: true } : {}) };
+      },
+    }),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'LOAD_REPOSITORY_COLLABORATORS', destinationId: 'github:20' };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  await assert.rejects(context.handle({ ...request, destinationId: 'github:21' }, extension), /not configured/i);
+  await assert.rejects(context.handle({ ...request, extra: 'ignored' }, extension), /invalid collaborator request/i);
+  assert.deepEqual(calls, [['destination', 'github:21']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
+  assert.deepEqual(calls.slice(1), [['destination', 'github:20'], ['snapshot', 'github:20'], ['verified'], ['listed'], ['pending']]);
+  pendingIncomplete = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
+  pendingFails = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, pendingUnavailable: true });
+});
+
+test('repository access removal validates payload and sender before loading a destination or mutating', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async id => { calls.push(id); if (id !== 'github:20') throw new Error('not configured');
+      return { remove: async (...args) => { calls.push(args); return { status: 'removed', login: 'Bob' }; } }; },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'REMOVE_REPOSITORY_USER', payload: { destinationId: 'github:20', login: 'Bob', userId: 42, kind: 'collaborator' } };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  for (const payload of [{ ...request.payload, userId: 0 }, { ...request.payload, kind: 'other' },
+    { ...request.payload, extra: true }, { ...request.payload, destinationId: 'github:21' }]) {
+    await assert.rejects(context.handle({ ...request, payload }, extension));
+  }
+  assert.deepEqual(calls, ['github:21']);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))), { status: 'removed', login: 'Bob' });
+  assert.deepEqual(calls, ['github:21', 'github:20', ['Bob', 42, 'collaborator']]);
+});
 
 test('any GitHub page can start a URL task only for its exact sender URL', () => {
   const sender = { url: 'https://github.com/acme/app/actions/runs/123?check_suite_focus=true', tab: { id: 9 } };

@@ -31,11 +31,12 @@ function element(tagName = 'div') {
     hidden: false, open: false, disabled: false, value: '', textContent: '', className: '',
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
-    replaceChildren(...children) { this.children = []; this.append(...children); },
+    replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
     setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
     querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className && child.className.split(' ').includes(className); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+    contains(child) { return this === child || this.children.some(node => node.contains(child)); },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
 
     addEventListener(type, handler) { this.listeners[type] = handler; },
@@ -43,19 +44,23 @@ function element(tagName = 'div') {
   return node;
 }
 
-function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map() } = {}) {
+function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map(), collaboratorReplies = false } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
-  const requests = [], timers = [];
+  const requests = [], timers = [], windowListeners = {}, documentListeners = {}, tabListeners = {};
   const context = vm.createContext({
-    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), addEventListener() {} },
-    window: { addEventListener() {}, confirm }, URL,
+    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
+    window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeTaskUrl,
     ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
 
     ClockoliRecovery: { actionFor: () => null },
-    chrome: { runtime: { sendMessage(request, callback) {
+    chrome: { tabs: { getCurrent: async () => ({ id: 11, windowId: 1 }), onActivated: { addListener(handler) { tabListeners.activated = handler; } } }, runtime: { sendMessage(request, callback) {
+      if (request.type === 'LOAD_REPOSITORY_COLLABORATORS' && !collaboratorReplies) {
+        callback({ ok: true, data: { users: [], hasMore: false } });
+        return;
+      }
       requests.push(request);
       const result = reply(request);
       const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message } } : { ok: true, data: value });
@@ -66,7 +71,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
   return {
-    nodes, requests, timers, context,
+    nodes, requests, timers, context, windowListeners, documentListeners, tabListeners,
     render(state) { context.nextState = state; vm.runInContext('state = nextState; renderState();', context); },
     submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
   };
@@ -121,6 +126,440 @@ test('ready discovery populates both default options without selection writes an
   assert.equal(page.nodes.get('repository-list').children[0], row);
 });
 
+test('a newly granted manual target opens the initialization review without a second button click', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY'
+      ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  assert.match(page.nodes.get('repository-target-status').textContent, /cannot access/);
+  granted = true;
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Needs setup/);
+  assert.equal(page.nodes.get('repository-target').attributes['aria-invalid'], undefined);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(vm.runInContext('selectedRepository.canInitialize', page.context), true);
+  assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
+  assert.equal(page.nodes.get('connect-checked-repository').textContent, 'Initialize repository');
+  assert.match(page.nodes.get('repository-target-status').className, /repository-check-status/);
+  assert.equal(page.nodes.get('repository-target-status').dataset.kind, 'attention');
+  assert.equal(page.nodes.get('setup-ready-summary').hidden, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  page.context.closeRepositoryConfirmation();
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, false, 'polling must not reopen a dismissed review');
+  await page.nodes.get('connect-checked-repository').listeners.click();
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('automatic inspection clears its busy state when GitHub returns canonical mixed-case spelling', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'Acme/Time-Data', eligible: true };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [target], installations: [] }
+    : { repository: { ...target, state: 'uninitialized', canInitialize: true } } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.rememberRepositoryTarget('acme/time-data');
+  await page.context.discoverRepositories();
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'false');
+  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
+  assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
+});
+
+test('a failed automatic inspection retries on the next discovery without a second user action', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let attempts = 0;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [target], installations: [] }
+    : ++attempts === 1 ? new Error('GitHub unavailable')
+      : { repository: { ...target, state: 'uninitialized', canInitialize: true } } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.rememberRepositoryTarget(target.fullName);
+  await page.context.discoverRepositories();
+  assert.match(page.nodes.get('repository-target-status').textContent, /Check failed/);
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(attempts, 2);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('an old automatic inspection failure does not mark an edited repository target invalid', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/first', eligible: true };
+  let rejectInspection, inspectionStarted;
+  const started = new Promise(resolve => { inspectionStarted = resolve; });
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [target], installations: [] }
+    : new Promise((resolve, reject) => { rejectInspection = reject; inspectionStarted(); }) });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.rememberRepositoryTarget(target.fullName);
+  const pending = page.context.discoverRepositories();
+  await started;
+  const input = page.nodes.get('repository-target');
+  input.value = 'acme/second'; input.listeners.input();
+  rejectInspection(new Error('Old repository failed'));
+  await pending;
+  assert.doesNotMatch(page.nodes.get('repository-target-status').textContent, /Old repository failed/);
+  assert.equal(input.attributes['aria-invalid'], undefined);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('grant becoming eligible rechecks a remembered target even when the old reason is not Contents-write', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data' };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [{ ...target, eligible: granted, reasons: granted ? [] : ['user_write_required'] }], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, eligible: true, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.rememberRepositoryTarget(target.fullName);
+  await page.context.discoverRepositories();
+  assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY'), false);
+  granted = true;
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('connect-checked-repository').textContent, 'Initialize repository');
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.nodes.get('repository-target').attributes['aria-invalid'], undefined);
+});
+
+test('return from a grant refreshes the remembered target once without accepting a repository action', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  granted = true;
+  await page.context.discoverRepositories();
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Needs setup/);
+});
+
+test('grant return waits one second after focus and rechecks on a later return if access is not yet visible', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  page.context.window.open = () => ({ opener: {}, location: { replace() {} } });
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  assert.equal(page.context.repositoryPollingActive(), false, 'do not poll for the grant while the GitHub tab is open');
+  page.context.document.visibilityState = 'visible';
+  await page.context.rediscoverAfterGitHubHandoff();
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1,
+    'modal focus must not consume the GitHub handoff');
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1,
+    'focus does not query GitHub before it has time to publish the grant');
+  page.documentListeners.visibilitychange();
+  const first = page.timers.filter(timer => timer.delay === 1000 && !timer.cleared);
+  assert.equal(first.length, 1, 'focus and visibility together schedule only one check');
+  first[0].cleared = true;
+  first[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 2);
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 0);
+  assert.equal(page.context.repositoryPollingActive(), false, 'missing grant stays event-driven');
+  assert.match(page.nodes.get('repository-target-status').textContent, /not available yet/);
+  assert.equal(page.nodes.get('repository-target-status').dataset.kind, 'neutral');
+  page.windowListeners.blur();
+  granted = true;
+  page.windowListeners.focus();
+  const second = page.timers.filter(timer => timer.delay === 1000 && !timer.cleared);
+  assert.equal(second.length, 1);
+  second[0].cleared = true;
+  second[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.context.repositoryPollingActive(), true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('a remembered unavailable target rechecks on tab return without an armed grant tab', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
+  page.nodes.get('close-repository-access').listeners.click();
+  const before = page.requests.length;
+  page.context.document.visibilityState = 'visible';
+  page.windowListeners.focus();
+  assert.equal(page.requests.length, before, 'ordinary focus without leaving Settings does not check');
+  page.windowListeners.blur();
+  granted = true;
+  page.windowListeners.focus();
+  page.documentListeners.visibilitychange();
+  const delayed = page.timers.filter(timer => timer.delay === 1000 && !timer.cleared);
+  assert.equal(delayed.length, 1);
+  assert.equal(page.requests.length, before, 'grant propagation gets a settling delay');
+  delayed[0].cleared = true;
+  delayed[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 2);
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  page.nodes.get('close-repository-confirmation').listeners.click();
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  assert.equal(page.timers.filter(timer => timer.delay === 1000 && !timer.cleared).length, 0,
+    'dismissed initialization review does not reopen on focus');
+});
+
+test('Chrome tab activation rechecks a remembered target when focus and visibility events are absent', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  page.nodes.get('close-repository-access').listeners.click();
+  page.context.document.visibilityState = 'visible';
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof page.tabListeners.activated, 'function');
+  page.tabListeners.activated({ tabId: 15, windowId: 2 });
+  page.tabListeners.activated({ tabId: 11, windowId: 1 });
+  assert.equal(page.timers.filter(timer => timer.delay === 1000 && !timer.cleared).length, 0,
+    'an activation in another window is not a departure from Settings');
+  page.tabListeners.activated({ tabId: 12, windowId: 1 });
+  granted = true;
+  page.tabListeners.activated({ tabId: 11, windowId: 1 });
+  const delayed = page.timers.filter(timer => timer.delay === 1000 && !timer.cleared);
+  assert.equal(delayed.length, 1);
+  page.windowListeners.focus();
+  assert.equal(page.timers.filter(timer => timer.delay === 1000 && !timer.cleared).length, 1,
+    'duplicate focus must not schedule a second check');
+  delayed[0].cleared = true;
+  delayed[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('Chrome tab activation completes the Grant access handoff without page focus events', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  page.context.window.open = () => ({ opener: {}, location: { replace() {} } });
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  page.context.document.visibilityState = 'visible';
+  await new Promise(resolve => setImmediate(resolve));
+  page.tabListeners.activated({ tabId: 12, windowId: 1 });
+  granted = true;
+  page.tabListeners.activated({ tabId: 11, windowId: 1 });
+  const delayed = page.timers.filter(timer => timer.delay === 1000 && !timer.cleared);
+  assert.equal(delayed.length, 1);
+  delayed[0].cleared = true;
+  delayed[0].callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('a restored unavailable target rechecks on visibility return after a Settings reload', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ savedChoices: new Map([['octocat', target.fullName]]), reply: request => {
+    if (request.type === 'GET_ONBOARDING_STATE') return { appConfigured: true, auth: connectedState.auth };
+    if (request.type === 'RESUME_DEVICE_FLOW') return null;
+    if (request.type === 'DISCOVER_REPOSITORIES') return { repositories: granted ? [target] : [], installations: [] };
+    if (request.type === 'INSPECT_REPOSITORY') return { repository: { ...target, state: 'uninitialized', canInitialize: true } };
+    return {};
+  } });
+  page.context.document.visibilityState = 'visible';
+  await page.context.refreshState();
+  assert.equal(page.nodes.get('repository-target').value, target.fullName);
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  page.context.document.visibilityState = 'hidden';
+  page.documentListeners.visibilitychange();
+  granted = true;
+  page.context.document.visibilityState = 'visible';
+  page.documentListeners.visibilitychange();
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  delayed.cleared = true;
+  delayed.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('editing a remembered unavailable target cancels its return check', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  page.nodes.get('close-repository-access').listeners.click();
+  page.context.document.visibilityState = 'visible';
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  page.nodes.get('repository-target').value = 'acme/other-data';
+  page.nodes.get('repository-target').listeners.input();
+  assert.equal(delayed.cleared, true);
+  const before = page.requests.length;
+  delayed.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.length, before);
+});
+
+test('grant return checks immediately after a hidden tab becomes visible even without a window blur', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: { ...target, state: 'uninitialized', canInitialize: true } } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  page.context.window.open = () => ({ opener: {}, location: { replace() {} } });
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  page.context.document.visibilityState = 'hidden';
+  page.documentListeners.visibilitychange();
+  granted = true;
+  page.context.document.visibilityState = 'visible';
+  page.documentListeners.visibilitychange();
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  delayed.cleared = true;
+  delayed.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('blocked GitHub access tab does not arm a return check', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  page.context.window.open = () => null;
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  assert.match(page.nodes.get('message').textContent, /blocked the GitHub access tab/);
+  assert.equal(page.context.repositoryPollingActive(), true);
+  const before = page.requests.length;
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.length, before);
+});
+
+test('editing the target cancels a pending grant return check', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = 'acme/time-data';
+  await page.submit('repository-target-form');
+  page.context.window.open = () => ({ opener: {}, location: { replace() {} } });
+  page.nodes.get('install-app').listeners.click({ preventDefault() {} });
+  page.context.document.visibilityState = 'visible';
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  page.nodes.get('repository-target').value = 'acme/other-data';
+  page.nodes.get('repository-target').listeners.input();
+  assert.equal(delayed.cleared, true);
+  const before = page.requests.length;
+  delayed.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.length, before);
+  assert.equal(page.context.repositoryPollingActive(), true);
+});
+
+test('ineligible newly granted target is not auto-inspected or connected', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: false };
+  let granted = false;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted ? [target] : [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.submit('repository-target-form');
+  granted = true;
+  await page.context.discoverRepositories({ silent: true });
+  assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY'), false);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  assert.equal(page.nodes.get('repository-confirmation').open, false);
+});
+
+test('successful initialization completes first-time setup without a page reload or second action', async () => {
+  const repo = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true,
+    state: 'uninitialized', canInitialize: true };
+  const ready = { ...connectedState, config: null, ready: true,
+    destinationRegistry: { defaultDestinationId: 'github:20', destinations: { 'github:20': {
+      owner: 'acme', repo: 'time-data', verificationStatus: 'write_verified', id: 'github:20',
+    } } } };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES' ? { repositories: [repo], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: repo }
+    : request.type === 'GET_ONBOARDING_STATE' ? ready : preferences });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.discoverRepositories();
+  page.nodes.get('repository-target').value = repo.fullName;
+  await page.submit('repository-target-form');
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Needs setup/);
+  await page.context.confirmRepositoryAction();
+  assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('onboarding').hidden, true, page.nodes.get('message').textContent);
+  assert.match(page.nodes.get('message').textContent, /setup complete/i);
+  assert.equal(page.nodes.get('setup-default-destination').children[0].textContent, 'acme/time-data');
+  assert.equal(page.nodes.get('finish-setup').disabled, false);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true, 'completed setup must not retain the old inspection');
+  assert.equal(page.nodes.get('repository-target-status').textContent, '');
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  assert.equal(page.nodes.get('onboarding').hidden, false);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true, 'reopening setup must not resurrect the old status');
+});
+
+test('confirmed initialization does not claim setup complete until a default is registered', async () => {
+  const repo = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true,
+    state: 'uninitialized', canInitialize: true };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES' ? { repositories: [repo], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: repo }
+    : request.type === 'GET_ONBOARDING_STATE' ? { appConfigured: true, auth: connectedState.auth, ready: false } : preferences });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  await page.context.discoverRepositories();
+  page.nodes.get('repository-target').value = repo.fullName;
+  await page.submit('repository-target-form');
+  await page.context.confirmRepositoryAction();
+  assert.equal(page.nodes.get('onboarding').hidden, false);
+  assert.doesNotMatch(page.nodes.get('message').textContent, /setup complete/i);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true, 'successful connection clears stale setup guidance even when onboarding stays open');
+});
+
 test('silent discovery revokes inspected Ready on semantic changes without re-inspecting rows', async () => {
   const base = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data',
     private: true, visibility: 'private', archived: false, disabled: false, defaultBranch: 'main',
@@ -133,21 +572,20 @@ test('silent discovery revokes inspected Ready on semantic changes without re-in
   await page.context.discoverRepositories();
   page.nodes.get('repository-target').value = base.fullName;
   await page.submit('repository-target-form');
-  assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Ready — not connected');
-  const unchangedRow = page.nodes.get('repository-list').children[0];
+  assert.equal(vm.runInContext('selectedRepository.ready', page.context), true);
+  const unchanged = vm.runInContext('selectedRepository', page.context);
   await page.context.discoverRepositories({ silent: true });
-  assert.equal(page.nodes.get('repository-list').children[0], unchangedRow);
+  assert.equal(vm.runInContext('selectedRepository', page.context), unchanged);
   for (const changed of [{ archived: true, eligible: false, reasons: ['archived'] },
     { private: false, visibility: 'public', eligible: false, reasons: ['private_required'] }]) {
     discovered = { ...base, ...changed };
     await page.context.discoverRepositories({ silent: true });
-    assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Not checked');
-    assert.equal(page.nodes.get('repository-list').children[0].children[2].textContent, 'Check repository');
+    assert.equal(vm.runInContext('repositoryCanBeSelected(selectedRepository)', page.context), false);
     assert.equal(page.context.reviewSelectedRepository(), false);
     assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
     discovered = base;
     await page.context.discoverRepositories({ silent: true });
-    assert.notEqual(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Ready — not connected');
+    assert.equal(vm.runInContext('selectedRepository?.ready === true', page.context), false);
   }
 });
 
@@ -172,7 +610,7 @@ test('blurred B is checked after an in-flight A inspection without applying stal
   releaseFirst();
   await checkingFirst;
   assert.deepEqual(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').map(request => request.payload.repoId), [20, 21]);
-  assert.equal(page.nodes.get('repository-list').children[1].children[1].children[1].textContent, 'Ready — not connected');
+  assert.equal(vm.runInContext('selectedRepository.fullName', page.context), second.fullName);
   assert.equal(page.context.reviewSelectedRepository(), true);
   assert.equal(page.nodes.get('repository-confirmation-title').textContent, 'Connect acme/second?');
 });
@@ -305,36 +743,127 @@ test('People multi-select filters checkboxes and Select all toggles every person
   assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople])', page.context)), []);
 });
 
-test('repository search is shown only for five or more discovered repositories', () => {
+test('repository suggestions stay collapsed until typing and show at most eight matching names', () => {
   const page = harness();
   const repositories = count => Array.from({ length: count }, (_, index) => ({
     installationId: 10, repoId: index + 1, fullName: `acme/time-${index + 1}`,
     state: 'initialized_member', canAdd: true, eligible: true,
   }));
-  page.context.renderRepositories({ repositories: repositories(4), installations: [] });
-  assert.equal(page.nodes.get('repository-choice-fieldset').hidden, false);
-  assert.equal(page.nodes.get('repository-search-label').hidden, true);
-  page.context.renderRepositories({ repositories: repositories(5), installations: [] });
-  assert.equal(page.nodes.get('repository-search-label').hidden, false);
-  page.nodes.get('repository-search').value = 'time-5';
-  page.context.renderRepositoryList();
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.context.renderRepositories({ repositories: repositories(30), installations: [] });
+  vm.runInContext('repositoryDiscoveryKnown = true; discoveryStatus = "ready";', page.context);
+  assert.equal(page.nodes.get('repository-list').hidden, true);
+  assert.equal(page.nodes.get('repository-list').children.length, 0);
+  const input = page.nodes.get('repository-target');
+  input.value = 'time-'; input.listeners.input();
+  assert.equal(page.nodes.get('repository-list').hidden, false);
+  assert.equal(page.nodes.get('repository-list').children.length, 8);
+  assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY' || request.type === 'SELECT_REPOSITORY'), false);
+  input.value = 'time-25'; input.listeners.input();
   assert.equal(page.nodes.get('repository-list').children.length, 1);
-  page.context.renderRepositories({ repositories: repositories(4), installations: [] });
-  assert.equal(page.nodes.get('repository-search').value, '');
-  assert.equal(page.nodes.get('repository-list').children.length, 4);
+  assert.match(page.nodes.get('repository-list').children[0].textContent, /acme\/time-25/);
+});
+
+test('repository catalog is not requested on initial setup without a remembered target', async () => {
+  const page = harness({ reply: request => request.type === 'GET_ONBOARDING_STATE'
+    ? { appConfigured: true, auth: connectedState.auth, config: null } : null });
+  await page.context.refreshState();
+  assert.equal(page.requests.some(request => request.type === 'DISCOVER_REPOSITORIES'), false);
+  page.context.renderRepositoryList();
+  assert.equal(page.nodes.get('repository-list').hidden, true);
+});
+
+test('typing a repository name loads suggestions once, while a pasted URL waits for explicit Check', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [{ installationId: 10, repoId: 20, fullName: 'acme/time-data' }], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  input.value = 't'; input.listeners.input();
+  assert.equal(page.requests.length, 0);
+  input.value = 'ti'; input.listeners.input();
+  await vm.runInContext('discoveryPromise', page.context);
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  input.value = 'time'; input.listeners.input();
+  assert.equal(page.nodes.get('repository-list').children[0].textContent, 'acme/time-data');
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  input.value = 'https://github.com/acme/time-data'; input.listeners.input();
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY'), false);
+  assert.equal(page.nodes.get('repository-list').hidden, true);
+});
+
+test('reopening completed setup refreshes the granted catalog before showing suggestions', async () => {
+  const old = { installationId: 10, repoId: 20, fullName: 'acme/time-old', eligible: true };
+  const added = { installationId: 10, repoId: 21, fullName: 'acme/time-new', eligible: true };
+  let granted = [old];
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: granted, installations: [] } : {} });
+  page.render(connectedState);
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  await page.context.discoverRepositories();
+  await page.nodes.get('finish-setup').listeners.click();
+  granted = [old, added];
+  await page.nodes.get('add-time-repository').listeners.click({ preventDefault() {} });
+  const input = page.nodes.get('repository-target');
+  input.value = 'time'; input.listeners.input();
+  await vm.runInContext('discoveryPromise', page.context);
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 2);
+  assert.deepEqual(page.nodes.get('repository-list').children.map(item => item.textContent), ['acme/time-new', 'acme/time-old']);
+});
+
+test('repository autocomplete supports keyboard navigation and Escape without checking', () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.context.renderRepositories({ repositories: [
+    { installationId: 10, repoId: 20, fullName: 'acme/time-data' },
+    { installationId: 10, repoId: 21, fullName: 'acme/time-other' },
+  ], installations: [] });
+  vm.runInContext('repositoryDiscoveryKnown = true; discoveryStatus = "ready";', page.context);
+  const input = page.nodes.get('repository-target');
+  input.value = 'time'; input.listeners.input();
+  let prevented = false;
+  input.listeners.keydown({ key: 'ArrowDown', preventDefault() { prevented = true; } });
+  const first = page.nodes.get('repository-list').children[0];
+  assert.equal(prevented, true);
+  assert.equal(first.focused, true);
+  first.listeners.keydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(page.nodes.get('repository-list').hidden, true);
+  assert.equal(input.focused, true);
+  assert.equal(page.requests.length, 0);
 });
 
 test('repository list shows a local loader until the first discovery completes', async () => {
   let release;
   const page = harness({ reply: () => new Promise(resolve => { release = resolve; }) });
   page.render({ appConfigured: true, auth: connectedState.auth });
-  const pending = page.context.discoverRepositories();
+  page.nodes.get('repository-target').value = 'time'; page.nodes.get('repository-target').listeners.input();
+  const pending = vm.runInContext('discoveryPromise', page.context);
   assert.equal(page.nodes.get('repository-choice-fieldset').hidden, false);
   assert.equal(page.nodes.get('repository-list-loading').hidden, false);
   release({ repositories: [{ installationId: 1, repoId: 2, fullName: 'acme/time-data' }], installations: [] });
   await pending;
   assert.equal(page.nodes.get('repository-list-loading').hidden, true);
   assert.equal(page.nodes.get('repository-list').children.length, 1);
+});
+
+test('repository check hides target status during repository discovery and restores inspection feedback', async () => {
+  let releaseDiscovery;
+  const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? new Promise(resolve => { releaseDiscovery = resolve; })
+    : { repository: { ...repository, state: 'initialized_member', ready: true, canAdd: true } } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  input.value = repository.fullName; input.listeners.input();
+  const check = page.nodes.get('refresh-repository-target').listeners.click();
+  const status = page.nodes.get('repository-target-status');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'true');
+  assert.equal(status.hidden, true, 'the target status must not compete with discovery loading');
+  releaseDiscovery({ repositories: [repository], installations: [] });
+  await check;
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /Checked acme\/time-data/);
 });
 
 test('repository list loader clears on failure and silent refresh leaves existing rows visible', async () => {
@@ -347,6 +876,8 @@ test('repository list loader clears on failure and silent refresh leaves existin
   assert.equal(page.nodes.get('repository-list-loading').hidden, true);
   const existing = { installationId: 1, repoId: 2, fullName: 'acme/time-data' };
   page.context.renderRepositories({ repositories: [existing], installations: [] });
+  vm.runInContext('repositoryDiscoveryKnown = true; discoveryStatus = "ready";', page.context);
+  page.nodes.get('repository-target').value = 'time'; page.nodes.get('repository-target').listeners.input();
   const row = page.nodes.get('repository-list').children[0];
   vm.runInContext('showOnboarding = true; renderState();', page.context);
   const refresh = page.context.discoverRepositories({ silent: true });
@@ -471,7 +1002,7 @@ test('unverified rows show their status and checking an arbitrary name inspects 
   page.render({ ready: false, appConfigured: true, auth: connectedState.auth });
   await page.context.discoverRepositories();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 0);
-  assert.equal(page.nodes.get('repository-list').children[1].children[1].children[1].textContent, 'Not checked');
+  assert.equal(page.nodes.get('repository-list').children.length, 0);
   page.nodes.get('repository-target').value = 'zalupa/picropenis';
   await page.submit('repository-target-form');
   const checks = page.requests.filter(request => request.type === 'INSPECT_REPOSITORY');
@@ -479,10 +1010,10 @@ test('unverified rows show their status and checking an arbitrary name inspects 
   assert.equal(checks[0].payload.installationId, 11);
   assert.equal(checks[0].payload.repoId, 21);
   assert.equal(page.nodes.get('repository-confirmation').open, true);
-  assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Not checked');
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
 });
 
-test('checking a list row shows named read-only progress before its inspected result', async () => {
+test('choosing an autocomplete suggestion checks access without connecting', async () => {
   let release;
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
@@ -490,18 +1021,18 @@ test('checking a list row shows named read-only progress before its inspected re
     : { repositories: [repository], installations: [] } });
   page.render({ appConfigured: true, auth: connectedState.auth });
   await page.context.discoverRepositories();
-  const action = page.nodes.get('repository-list').children[0].children[2];
+  const input = page.nodes.get('repository-target');
+  input.value = 'time'; input.listeners.input();
+  const action = page.nodes.get('repository-list').children[0];
+  assert.equal(action.textContent, repository.fullName);
   const click = action.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
-  const row = page.nodes.get('repository-list').children[0];
-  assert.match(row.children[1].children[1].textContent, /Checking access and storage/);
-  assert.equal(row.children[2].disabled, true);
-  assert.equal(page.nodes.get('repository-target').value, '', 'List selection does not populate the manual field');
-  assert.equal(page.nodes.get('repository-target-status').textContent, '', 'List status is not repeated above');
+  assert.equal(page.nodes.get('repository-list').hidden, true);
+  assert.equal(input.value, repository.fullName);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Checking acme\/time-data/);
   release({ repository: { ...repository, state: 'incompatible', eligible: false } });
   await click;
-  assert.match(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, /Unavailable/);
-  assert.equal(page.nodes.get('repository-list').children[0].children[2].disabled, false);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
   assert.equal(page.nodes.get('repository-confirmation').open, false);
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
@@ -518,9 +1049,8 @@ test('finishing a manual repository name checks it without a second button', asy
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 0);
   await input.listeners.blur();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
-  assert.equal(input.value, '', 'Known repositories report results in their list row');
-  assert.equal(page.nodes.get('repository-target-status').textContent, '');
-  assert.match(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, /Unavailable/);
+  assert.equal(input.value, 'acme/typed');
+  assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
@@ -587,6 +1117,7 @@ test('manual refresh gives visible pending and completed feedback even when the 
   assert.match(status.textContent, /Checking acme\/time-data/);
   assert.match(status.textContent, /Repository files will not be changed/);
   assert.equal(refresh.disabled, true);
+  assert.equal(refresh.attributes['aria-busy'], 'true', 'the reload icon signals the pending inspection');
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
   release({ repository: { ...repository, state: 'incompatible', eligible: false } });
   await click;
@@ -594,6 +1125,34 @@ test('manual refresh gives visible pending and completed feedback even when the 
   assert.match(status.textContent, /Unavailable/);
   assert.match(status.textContent, /Repository files were not changed/);
   assert.equal(refresh.disabled, false);
+  assert.equal(refresh.attributes['aria-busy'], 'false');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('automatic grant-return check keeps the reload icon busy through discovery and inspection', async () => {
+  const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  let releaseDiscovery, releaseInspection;
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? new Promise(resolve => { releaseDiscovery = resolve; })
+    : request.type === 'INSPECT_REPOSITORY'
+      ? new Promise(resolve => { releaseInspection = resolve; }) : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = target.fullName;
+  await page.context.rememberRepositoryTarget(target.fullName);
+  page.context.document.visibilityState = 'visible';
+  page.windowListeners.blur();
+  page.windowListeners.focus();
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  delayed.callback();
+  const refresh = page.nodes.get('refresh-repository-target');
+  assert.equal(refresh.attributes['aria-busy'], 'true', 'show activity during discovery');
+  releaseDiscovery({ repositories: [target], installations: [] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(refresh.attributes['aria-busy'], 'true', 'keep showing activity during inspection');
+  releaseInspection({ repository: { ...target, state: 'uninitialized', canInitialize: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(refresh.attributes['aria-busy'], 'false', 'stop after the read-only check settles');
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
@@ -610,6 +1169,7 @@ test('manual refresh exposes a retryable local failure when the listed target in
   assert.match(status.textContent, /Check failed.*GitHub unavailable/);
   assert.match(status.className, /repository-target-error/);
   assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
+  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'false');
 });
 
 test('manual refresh reports authorization blocks beside the field without inspecting', async () => {
@@ -633,13 +1193,13 @@ test('choosing a list row while editing a manual target does not check the aband
   page.render({ appConfigured: true, auth: connectedState.auth });
   await page.context.discoverRepositories();
   const input = page.nodes.get('repository-target');
-  input.value = 'acme/manual'; input.listeners.input();
-  const action = page.nodes.get('repository-list').children[0].children[2];
+  input.value = 'listed'; input.listeners.input();
+  const action = page.nodes.get('repository-list').children[0];
   await input.listeners.blur({ relatedTarget: action });
   await action.listeners.click();
   assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 2);
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
-  assert.equal(input.value, '');
+  assert.equal(input.value, 'acme/listed');
 });
 
 test('inspection failure clears checking state and keeps a retryable row', async () => {
@@ -649,11 +1209,9 @@ test('inspection failure clears checking state and keeps a retryable row', async
   page.render({ appConfigured: true, auth: connectedState.auth });
   await page.context.discoverRepositories();
   page.nodes.get('repository-target').value = 'acme/time-data';
-  await page.submit('repository-target-form');
-  assert.equal(page.nodes.get('repository-target-status').textContent, '');
-  assert.equal(page.nodes.get('repository-list').children[0].children[2].textContent, 'Check repository');
-  assert.equal(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, 'Not checked');
-  assert.equal(page.nodes.get('repository-list').children[0].children[2].disabled, false);
+  await page.nodes.get('refresh-repository-target').listeners.click();
+  assert.match(page.nodes.get('repository-target-status').textContent, /Check failed/);
+  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
 });
 
 test('checking a ready repository offers a separate connect confirmation without connecting it', async () => {
@@ -674,9 +1232,7 @@ test('checking a ready repository offers a separate connect confirmation without
   await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
   await page.nodes.get('back-to-repository-selection').listeners.click();
-  const action = page.nodes.get('repository-list').children[0].children[2];
-  assert.equal(action.textContent, 'Connect repository');
-  await action.listeners.click();
+  await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
   assert.equal(page.nodes.get('repository-write-details').hidden, true);
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
@@ -711,10 +1267,10 @@ test('manual check of a repository outside the list prevents competing row check
   const check = page.submit('repository-target-form');
   for (let i = 0; i < 10 && !release; i += 1) await new Promise(resolve => setImmediate(resolve));
   assert.equal(typeof release, 'function');
-  assert.equal(page.nodes.get('repository-list').children[0].children[2].disabled, true);
+  assert.equal(page.nodes.get('refresh-repository-target').disabled, true);
   release({ repositories: [repository], installations: [] });
   await check;
-  assert.equal(page.nodes.get('repository-list').children[0].children[2].disabled, false);
+  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
 });
 
 test('access create link uses the checked target and preserves private template defaults', async () => {
@@ -730,6 +1286,52 @@ test('access create link uses the checked target and preserves private template 
   assert.equal(url.searchParams.get('template_name'), 'data-template');
 });
 
+test('creating a repository offers the URL field inside the handoff dialog without checking on open', () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('new-time-repository').listeners.click();
+  const dialog = page.nodes.get('new-repository-guidance');
+  assert.equal(dialog.open, true);
+  assert.match(html, /id="new-repository-guidance"[\s\S]*<form id="new-repository-target-form"[\s\S]*<label for="new-repository-target">New repository URL<\/label>/i);
+  assert.equal(page.nodes.get('new-repository-target').value, '');
+  assert.equal(page.requests.length, 0);
+  page.nodes.get('close-new-repository-guidance').listeners.click();
+  assert.equal(dialog.open, false);
+  assert.equal(page.nodes.get('repository-target').focused, true);
+});
+
+test('submitting a URL in the handoff dialog checks the target without connecting it', async () => {
+  const listed = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  const ready = { ...listed, owner: 'acme', repo: 'time-data', state: 'initialized_member', canAdd: true, ready: true };
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [listed], installations: [] }
+    : request.type === 'INSPECT_REPOSITORY' ? { repository: ready } : {} });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('new-time-repository').listeners.click();
+  page.nodes.get('new-repository-target').value = 'https://github.com/acme/time-data';
+  await page.submit('new-repository-target-form');
+  assert.equal(page.nodes.get('new-repository-guidance').open, false);
+  assert.equal(page.nodes.get('repository-target').value, 'acme/time-data');
+  assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY'), true);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+  assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
+  assert.equal(page.nodes.get('repository-confirmation').open, false);
+});
+
+test('invalid handoff URL remains editable in the dialog and cannot inspect an old target', async () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  page.nodes.get('repository-target').value = 'acme/previous';
+  page.nodes.get('new-time-repository').listeners.click();
+  page.nodes.get('new-repository-target').value = 'https://example.com/acme/time-data';
+  await page.submit('new-repository-target-form');
+  assert.equal(page.nodes.get('new-repository-guidance').open, true);
+  assert.equal(page.nodes.get('repository-target').value, 'acme/previous');
+  assert.equal(page.nodes.get('new-repository-target').attributes['aria-invalid'], 'true');
+  assert.match(page.nodes.get('new-repository-target-error').textContent, /GitHub repository URL/);
+  assert.equal(page.requests.length, 0);
+});
+
 test('setup exposes connected repositories and finishes without another repository write', async () => {
   const page = harness();
   page.render(connectedState);
@@ -743,6 +1345,18 @@ test('setup exposes connected repositories and finishes without another reposito
   assert.equal(page.nodes.get('finish-setup').disabled, true);
 });
 
+test('a discovered default whose Clockoli membership is missing cannot finish setup', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [{ installationId: 10, repoId: 20, fullName: 'octocat/clockoli-data',
+      eligible: true, ready: true, state: 'uninitialized', canAdd: false }], installations: [] } : {} });
+  page.render(connectedState);
+  vm.runInContext('showOnboarding = true; renderState();', page.context);
+  await page.context.discoverRepositories();
+  assert.equal(page.nodes.get('finish-setup').disabled, true);
+  await page.nodes.get('finish-setup').listeners.click();
+  assert.equal(page.nodes.get('onboarding').hidden, false);
+});
+
 test('pending reauthorization has no per-repository confirmation action and cannot finish before automatic promotion', () => {
   const page = harness();
   page.render({ ...connectedState, candidateAuth: { mode: 'github_app', githubLogin: 'octocat' } });
@@ -752,7 +1366,7 @@ test('pending reauthorization has no per-repository confirmation action and cann
   assert.equal(page.context.reviewSelectedRepository(), false);
   assert.ok(page.nodes.get('repository-list').children.every(row => row.children.length === 2));
   assert.equal(page.nodes.get('repository-confirmation').open, false);
-  assert.doesNotMatch(page.nodes.get('repository-list').children[0].children[1].children[1].textContent, /confirm authorization/i);
+  assert.equal(page.nodes.get('repository-list').hidden, true);
 });
 
 test('Finish clears remembered target and reviewed writes without changing connected settings', async () => {
@@ -776,6 +1390,7 @@ test('Finish is blocked throughout an in-flight repository connection', async ()
   page.render(connectedState);
   vm.runInContext('showOnboarding = true; renderState();', page.context);
   page.context.renderRepositories({ repositories: [{ installationId: 10, repoId: 21, fullName: 'acme/more-time', state: 'initialized_member', canAdd: true, eligible: true }], installations: [] });
+  vm.runInContext('selectedRepository = repositories[0];', page.context);
   assert.equal(page.context.reviewSelectedRepository(), true);
   const pending = page.context.confirmRepositoryAction();
   assert.equal(page.nodes.get('finish-setup').disabled, true);
@@ -827,7 +1442,7 @@ test('manual target survives page reload and never falls back to another owner w
   };
   const page = harness({ reply, savedChoices });
   await page.context.refreshState();
-  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
+  assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 0);
   assert.equal(page.nodes.get('repository-access-panel').hidden, true);
   page.nodes.get('repository-target').value = 'https://github.com/acme/time-data';
   await page.submit('repository-target-form');
@@ -835,7 +1450,7 @@ test('manual target survives page reload and never falls back to another owner w
   assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
   assert.equal(page.nodes.get('repository-access-panel').hidden, false);
   assert.equal(page.nodes.get('install-app').href, 'https://github.com/settings/installations/11');
-  assert.match(page.nodes.get('repository-target-status').textContent, /existence is not confirmed/);
+  assert.match(page.nodes.get('repository-target-status').textContent, /cannot access this repository/);
   const reopened = harness({ reply, savedChoices });
   await reopened.context.refreshState();
   assert.equal(reopened.nodes.get('repository-target').value, 'acme/time-data');
@@ -863,11 +1478,11 @@ test('discovery failure keeps the manual target without misreporting missing per
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
 
-test('access modal closes on Grant and return remains read-only until manual Check', async () => {
+test('access modal closes on Grant and return checks only the remembered target without connecting it', async () => {
   let granted = false;
   const target = { installationId: 11, repoId: 21, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', ownerType: 'Organization', state: 'initialized_joinable', canJoin: true, eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
-    ? { repository: target } : { repositories: granted ? [{ ...target, state: undefined, canJoin: undefined, eligible: false }] : [], installations: [] } });
+    ? { repository: target } : { repositories: granted ? [{ ...target, state: undefined, canJoin: undefined }] : [], installations: [] } });
   page.context.window.open = () => ({ opener: {}, location: { replace(url) { assert.equal(url, 'https://github.com/apps/clockoli/installations/new'); } } });
   page.render({ ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alice' }, installationUrl: 'https://github.com/apps/clockoli/installations/new' });
   page.nodes.get('repository-target').value = 'acme/time-data';
@@ -876,13 +1491,17 @@ test('access modal closes on Grant and return remains read-only until manual Che
   page.nodes.get('install-app').listeners.click({ preventDefault() {} });
   assert.equal(page.nodes.get('repository-access-panel').open, false);
   assert.equal(page.nodes.get('repository-target').focused, true);
-  const before = page.requests.length;
+  page.windowListeners.blur();
   granted = true;
+  page.context.document.visibilityState = 'visible';
   await page.context.rediscoverAfterGitHubHandoff();
-  assert.equal(page.requests.length, before);
-  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), true);
-  await page.submit('repository-target-form');
-  assert.equal(vm.runInContext('!repositoryCanBeSelected(selectedRepository)', page.context), false);
+  const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
+  assert.ok(delayed);
+  delayed.cleared = true;
+  delayed.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(vm.runInContext('repositoryCanBeSelected(selectedRepository)', page.context), true);
   assert.equal(page.nodes.get('repository-access-panel').open, false);
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
@@ -1449,11 +2068,81 @@ test('connected sharing instructions use the owner-neutral path for user and org
   ]) {
     page.context.testDestination = destination;
     const text = vm.runInContext('teammateInstructions(testDestination)', page.context);
-    assert.match(text, /2\. Install Clockoli and select Sign in with GitHub\./);
-    assert.match(text, /3\. Select .* or enter its GitHub URL in Connect time repositories\./);
+    assert.match(text, /Install Clockoli and sign in with GitHub\./);
+    assert.match(text, /Connect .* in Time repositories/);
     assert.match(text, new RegExp(`grant the Clockoli GitHub App access to ${destination.owner}\/${destination.repo}`));
     assert.doesNotMatch(text, /Connect GitHub|Join an organization repository/);
   }
+});
+
+test('teammate picker selects a searched GitHub user and requires confirmation before inviting', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  let invited = false;
+  const page = harness({ confirm: () => true, collaboratorReplies: true, reply: request => {
+    if (request.type === 'SEARCH_INVITEE_USERS') return { users: [{ id: 42, login: 'Bob', name: 'Bob Example', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] };
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return { users: [], hasMore: false,
+      pendingUsers: invited ? [{ id: 42, login: 'Bob', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] : [], pendingHasMore: false };
+    invited = true; return { status: 'invited', login: 'Bob' };
+  } });
+  page.render({ ...connectedState, destinations: [destination] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  assert.ok(picker);
+  const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  assert.equal(invite.disabled, true);
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.find(timer => timer.delay === 250).callback();
+  const choice = picker.querySelector('.teammate-choice');
+  assert.equal(choice.querySelector('.teammate-login').textContent, '@Bob');
+  assert.equal(choice.querySelector('.teammate-name').textContent, 'Bob Example');
+  assert.equal(choice.querySelector('.teammate-avatar').src, 'https://avatars.githubusercontent.com/u/42?v=4');
+  await choice.listeners.click();
+  assert.equal(invite.disabled, false);
+  assert.equal(input.value, 'Bob');
+  assert.equal(picker.querySelector('.teammate-choice'), null);
+  assert.equal(picker.querySelector('.teammate-selected'), null);
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /Selected @Bob.*Bob Example/);
+  await invite.listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'INVITE_REPOSITORY_USER').payload)),
+    { destinationId: 'github:20', login: 'Bob', userId: 42 });
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /invitation sent/i);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-invitation').dataset.login, '@Bob · pending invitation');
+  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-collaborators').textContent, '');
+});
+
+test('teammate picker does not invite when confirmation is cancelled', async () => {
+  const page = harness({ confirm: () => false, reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? { users: [{ id: 42, login: 'Bob' }] } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.find(timer => timer.delay === 250).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  await picker.querySelector('.invite-teammate').listeners.click();
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+});
+
+test('an earlier teammate search cannot reopen suggestions after a user is selected', async () => {
+  let finishEarlierSearch;
+  const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? request.payload.query === 'Al'
+      ? new Promise(resolve => { finishEarlierSearch = resolve; })
+      : { users: [{ id: 42, login: 'Bob' }] }
+    : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search');
+  input.value = 'Al'; input.listeners.input();
+  const earlierSearch = page.timers.find(timer => timer.delay === 250).callback();
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  finishEarlierSearch({ users: [{ id: 99, login: 'Alice' }] });
+  await earlierSearch;
+  assert.equal(picker.querySelector('.teammate-choice'), null);
+  assert.equal(input.value, 'Bob');
+  assert.equal(picker.querySelector('.invite-teammate').disabled, false);
 });
 
 test('repository confirmation sends the one action allowed by the inspected repository state', async () => {
@@ -1524,4 +2213,322 @@ test('payment terms days load and save one numeric setting with explanatory help
   await page.submit('invoicing-form');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(save.payload.invoicing.paymentTermsDays, 45); assert.equal(Object.hasOwn(save.payload.invoicing, 'paymentTerms'), false);
+});
+
+test('connected repository rows show collaborators by destination and ignore stale responses', async () => {
+  let resolveFirst;
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const second = { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 };
+  const page = harness({ collaboratorReplies: true, reply: request => {
+    if (request.type !== 'LOAD_REPOSITORY_COLLABORATORS') return {};
+    if (request.destinationId === destination.id) return new Promise(resolve => { resolveFirst = resolve; });
+    return { users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: false };
+  } });
+  page.render({ ...connectedState, destinations: [destination] });
+  assert.deepEqual(page.requests.filter(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS').map(request => request.destinationId), ['github:20']);
+  page.render({ ...connectedState, destinations: [second] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  assert.equal(row.querySelector('.repository-collaborator').textContent, 'N');
+  resolveFirst({ users: [{ id: 8, login: 'Stale', avatarUrl: null }], hasMore: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(row.querySelector('.repository-collaborators').children.length, 1);
+  assert.equal(row.querySelector('.repository-collaborator').dataset.login, '@New');
+});
+
+test('each repository disclosure has a decorative chevron that changes direction when open', async () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ] });
+  const rows = page.nodes.get('time-repository-list').children;
+  for (const row of rows) {
+    const icon = row.querySelector('.repository-heading-title').children[0];
+    assert.equal(icon.tagName, 'svg');
+    assert.equal(icon.attributes.class, 'repository-disclosure-icon');
+    assert.equal(icon.attributes['aria-hidden'], 'true');
+    assert.equal(icon.children[0].attributes.d, 'M3 6l5 5 5-5');
+  }
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.time-repository\[open\] \.repository-disclosure-icon\{[^}]*rotate\(180deg\)/);
+});
+
+test('reloading repository access indicators replaces old avatars and pending status on the same card', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const replies = [
+    { users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false,
+      pendingUsers: [{ id: 8, login: 'Invitee', avatarUrl: null }], pendingHasMore: false },
+    { users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false, pendingUnavailable: true },
+  ];
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS' ? replies.shift() : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = page.nodes.get('time-repository-list'), row = root.children[0];
+  assert.equal(row.querySelectorAll('.repository-invitation').length, 1);
+  await page.context.loadRepositoryCollaborators(row, destination, root);
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.querySelectorAll('.repository-collaborator').length, 1);
+  assert.equal(display.querySelectorAll('.repository-invitation').length, 0);
+  assert.equal(display.attributes['aria-label'], 'Repository collaborators: @Member');
+});
+
+test('repository avatar refresh removes an old empty state and ignores a late older response', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  let resolveOld;
+  const replies = [
+    { users: [], hasMore: false, pendingUsers: [], pendingHasMore: false },
+    new Promise(resolve => { resolveOld = resolve; }),
+    { users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: false },
+  ];
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS' ? replies.shift() : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = page.nodes.get('time-repository-list'), row = root.children[0];
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.textContent, 'No collaborators or pending invitations');
+  const oldLoad = page.context.loadRepositoryCollaborators(row, destination, root);
+  await page.context.loadRepositoryCollaborators(row, destination, root);
+  assert.equal(display.textContent, '');
+  assert.equal(display.querySelectorAll('.repository-collaborator').length, 1);
+  resolveOld({ users: [{ id: 8, login: 'Old', avatarUrl: null }], hasMore: false });
+  await oldLoad;
+  assert.equal(display.querySelector('.repository-collaborator').dataset.login, '@New');
+});
+
+test('repository add circle opens only its own teammate form and focuses GitHub search', () => {
+  const destinations = [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ];
+  const page = harness(); page.render({ ...connectedState, destinations });
+  const rows = page.nodes.get('time-repository-list').children;
+  const first = rows.find(row => row.dataset.destinationId === 'github:20');
+  const second = rows.find(row => row.dataset.destinationId === 'github:21');
+  const add = second.querySelector('.repository-add-teammate');
+  assert.equal(add.tagName, 'button');
+  assert.match(add.attributes['aria-label'], /add.*acme\/other/i);
+  let prevented = false, stopped = false;
+  add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+  assert.equal(prevented, true); assert.equal(stopped, true);
+  assert.equal(first.open, false);
+  assert.equal(second.open, true);
+  assert.equal(second.querySelector('.teammate-instructions').open, true);
+  assert.equal(second.querySelector('.teammate-search').focused, true);
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+  const pat = harness(); pat.render({ ...connectedState, auth: { mode: 'pat' }, destinations });
+  assert.equal(pat.nodes.get('time-repository-list').querySelector('.repository-add-teammate'), null);
+});
+
+test('managing repository access requires confirmation and removes only the chosen collaborator', async () => {
+  const destinations = [
+    { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
+    { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
+  ];
+  let confirmed = false, removed = false;
+  const page = harness({ collaboratorReplies: true, confirm: () => confirmed, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: request.destinationId === 'github:20' && !removed ? [{ id: 42, login: 'Bob', avatarUrl: null }] : [], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') { removed = true; return { status: 'removed', login: 'Bob' }; }
+    return {};
+  } });
+  page.render({ ...connectedState, destinations });
+  await new Promise(resolve => setImmediate(resolve));
+  const rows = page.nodes.get('time-repository-list').children;
+  const first = rows.find(row => row.dataset.destinationId === 'github:20');
+  const second = rows.find(row => row.dataset.destinationId === 'github:21');
+  const avatar = first.querySelector('.repository-collaborator');
+  const menu = first.querySelector('.repository-avatar-actions');
+  assert.equal(avatar.tagName, 'button');
+  assert.equal(avatar.attributes['aria-expanded'], 'false');
+  assert.equal(menu.hidden, true);
+  assert.equal(first.querySelector('.repository-manage-teammates'), null);
+  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(first.open, false);
+  assert.equal(menu.hidden, false);
+  assert.equal(avatar.attributes['aria-expanded'], 'true');
+  const button = menu.querySelector('.remove-repository-user');
+  assert.match(button.textContent, /Remove @Bob/);
+  await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_REPOSITORY_USER'), false);
+  confirmed = true;
+  await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'REMOVE_REPOSITORY_USER').payload)),
+    { destinationId: 'github:20', login: 'Bob', userId: 42, kind: 'collaborator' });
+  assert.match(first.querySelector('.repository-manage-feedback').textContent, /removed/i);
+  assert.equal(first.querySelector('.repository-manage-feedback').focused, true);
+  assert.equal(first.querySelector('.remove-repository-user'), null);
+  assert.equal(second.querySelector('.remove-repository-user'), null);
+});
+
+test('pending account invitation can be cancelled but a failed removal retains its action', async () => {
+  let fail = true;
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return { users: [], hasMore: false,
+      pendingUsers: fail ? [{ id: 43, login: 'Alice', avatarUrl: null }] : [], pendingHasMore: false };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return fail ? Promise.reject(new Error('GitHub declined')) : { status: 'cancelled', login: 'Alice' };
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const avatar = row.querySelector('.repository-invitation');
+  const menu = row.querySelector('.repository-avatar-actions');
+  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const cancel = menu.querySelector('.remove-repository-user');
+  assert.match(cancel.textContent, /Cancel invitation for @Alice/);
+  await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.match(row.querySelector('.repository-manage-feedback').textContent, /GitHub declined/);
+  assert.equal(cancel.disabled, false);
+  assert.ok(menu.querySelector('.remove-repository-user'));
+  fail = false;
+  await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.filter(request => request.type === 'REMOVE_REPOSITORY_USER').at(-1).payload)),
+    { destinationId: 'github:20', login: 'Alice', userId: 43, kind: 'pending' });
+  assert.match(row.querySelector('.repository-manage-feedback').textContent, /cancelled/i);
+});
+
+test('avatar menu closes on Escape and does not open the repository or send a mutation', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
+    { id: 7, login: 'Member' }, { id: 8, login: 'Teammate' },
+  ], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const [first, second] = row.querySelectorAll('.repository-collaborator');
+  await first.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(row.querySelectorAll('.repository-avatar-actions').filter(menu => !menu.hidden).length, 1);
+  await second.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(first.attributes['aria-expanded'], 'false');
+  assert.equal(second.attributes['aria-expanded'], 'true');
+  second.listeners.keydown({ key: 'Escape', preventDefault() {}, stopPropagation() {} });
+  assert.equal(second.attributes['aria-expanded'], 'false');
+  assert.equal(second.focused, true);
+  assert.equal(row.open, false);
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_REPOSITORY_USER'), false);
+});
+
+test('signed-in account avatar is not offered a self-removal action', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
+    { id: 7, login: 'Octocat' }, { id: 8, login: 'Teammate' },
+  ], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const avatars = page.nodes.get('time-repository-list').querySelectorAll('.repository-collaborator');
+  assert.equal(avatars[0].tagName, 'span');
+  assert.equal(avatars[0].attributes.role, 'img');
+  assert.equal(avatars[1].tagName, 'button');
+  assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.remove-repository-user').length, 1);
+});
+
+test('repository avatar hover uses the GitHub login and overflow does not impersonate add', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const avatar = row.querySelector('.repository-collaborator');
+  assert.equal(avatar.dataset.login, '@New');
+  assert.equal(row.querySelector('.repository-collaborator-more').textContent, '…');
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-collaborator\[data-login\]:hover::after\{[^}]*content:attr\(data-login\)/);
+});
+
+test('pending GitHub invitations show distinct noninteractive avatars and accessible status', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false,
+    pendingUsers: [{ id: 8, login: 'Invitee', avatarUrl: 'https://avatars.githubusercontent.com/u/8?v=4' }], pendingHasMore: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const pending = row.querySelector('.repository-invitation');
+  assert.equal(pending.dataset.login, '@Invitee · pending invitation');
+  assert.match(pending.attributes['aria-label'], /@Invitee.*pending invitation/i);
+  assert.equal(pending.children.find(child => child.tagName === 'img').src, 'https://avatars.githubusercontent.com/u/8?v=4');
+  assert.match(row.querySelector('.repository-collaborators').attributes['aria-label'], /pending invitation/i);
+  assert.match(row.querySelector('.repository-invitation-more').title, /pending invitation/i);
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-invitation\{[^}]*border-style:dashed/);
+});
+
+test('unavailable pending invitations stay silent without erasing verified collaborators', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [{ id: 7, login: 'Member', avatarUrl: null }], hasMore: false, pendingUnavailable: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  assert.equal(row.querySelector('.repository-collaborator').dataset.login, '@Member');
+  assert.equal(row.querySelector('.repository-collaborators').attributes['aria-label'], 'Repository collaborators: @Member');
+  assert.equal(row.querySelector('.repository-invitations-unavailable'), null);
+  assert.equal(row.querySelector('.repository-collaborators').textContent.includes('Pending unavailable'), false);
+});
+
+test('failed pending lookup with no collaborators does not claim there are no invitations', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({
+    users: [], hasMore: false, pendingUnavailable: true,
+  }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const display = row.querySelector('.repository-collaborators');
+  assert.equal(display.textContent, 'No collaborators');
+  assert.doesNotMatch(display.attributes['aria-label'], /pending|unavailable/i);
+  assert.equal(row.querySelector('.repository-invitation'), null);
+  assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
+});
+
+test('invite section leads with search and keeps teammate setup steps behind a disclosure', () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  const invite = row.querySelector('.teammate-instructions');
+  assert.equal(invite.children[0].textContent, 'Invite teammates');
+  assert.match(invite.querySelector('.teammate-intro').textContent, /acme\/time-data/);
+  const picker = invite.querySelector('.teammate-picker');
+  const setup = invite.querySelector('.teammate-setup');
+  assert.ok(invite.children.indexOf(picker) < invite.children.indexOf(setup));
+  assert.equal(setup.open, false);
+  assert.equal(setup.querySelector('.teammate-steps').tagName, 'ol');
+  assert.equal(invite.children.some(child => child.tagName === 'pre'), false);
+  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search by GitHub username');
+  assert.match(picker.querySelector('.help').textContent, /repository admin/i);
+});
+
+test('add teammate control has a hover title and a compact icon next to avatars', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [{ id: 7, login: 'New' }], hasMore: false }) });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const people = page.nodes.get('time-repository-list').querySelector('.repository-people');
+  const add = people.querySelector('.repository-add-teammate');
+  assert.equal(add.title, 'Add teammate');
+  assert.equal(add.children[0].tagName, 'svg');
+  assert.equal(people.children[0].className, 'repository-collaborators');
+  assert.equal(people.children[1], add);
+  const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
+  assert.match(css, /\.repository-people\{[^}]*gap:3px/);
+  assert.match(css, /\.repository-add-teammate\{[^}]*width:24px;height:24px/);
+});
+
+test('shareable teammate steps copy the rewritten guide and expose a readable fallback', async () => {
+  const page = harness();
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const setup = page.nodes.get('time-repository-list').querySelector('.teammate-setup');
+  const copy = setup.children.find(child => child.textContent === 'Copy instructions');
+  const feedback = setup.querySelector('.form-feedback');
+  let copied = '';
+  page.context.navigator = { clipboard: { async writeText(text) { copied = text; } } };
+  await copy.listeners.click();
+  assert.match(copied, /Join acme\/time-data in Clockoli/);
+  assert.match(copied, /Do not create clockoli\/users/);
+  assert.match(feedback.textContent, /copied/);
+  page.context.navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); };
+  await copy.listeners.click();
+  assert.equal(setup.open, true);
+  assert.match(feedback.textContent, /Select the steps above/);
 });

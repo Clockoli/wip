@@ -51,6 +51,12 @@ test('tracked tasks aggregate current users by URL with sorted destination prove
   }]);
 });
 
+test('an empty selected-user set is an empty Top tasks result, not a missing-owner error', () => {
+  assert.deepEqual(aggregateTrackedTasks([], { currentUsers: [] }), []);
+  assert.deepEqual(aggregateTrackedTasks([record(issue(1), 60, '2026-08-20')], { currentUsers: [] }), []);
+  assert.throws(() => aggregateTrackedTasks([]), /Task owner is required/);
+});
+
 test('persisted record titles are used without display-time metadata resolution', () => {
   const storedIssue = issue(8);
   const stored = { user: 'alice', issue: storedIssue, issueTitle: 'Stored ranking regression', durationSeconds: 120 };

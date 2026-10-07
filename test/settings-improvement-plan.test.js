@@ -45,7 +45,7 @@ test('step two offers repositories and a manual target with conditional App acce
   assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice|id="choose-existing-repository"/);
   assert.match(script, /\$\('repository-step'\)\.hidden = step !== 2/);
   const access = script.slice(script.indexOf('function renderRepositoryAccess()'), script.indexOf('function repositoryActionKey('));
-  assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready' && !selectedRepository/);
+  assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready'[\s\S]*&& !selectedRepository/);
   assert.match(access, /selectedRepository\?\.reasons\?\.includes\('app_contents_write_required'\)/);
   assert.match(access, /if \(!\(missing \|\| needsAppWrite\)\) closeRepositoryAccess\(\)/);
   assert.match(access, /Its existence is not confirmed/);
@@ -183,7 +183,7 @@ test('discovery never writes and explicit modal confirmation discloses administr
 
 test('repository polling stays silent and read-only until its lifecycle stops', () => {
   const polling = script.slice(script.indexOf('function repositoryPollingActive('), script.indexOf('function addRateRow('));
-  assert.match(polling, /!repositoryPollingStopped && !setupCancelled && isAppAuthorized\(\)/);
+  assert.match(polling, /!repositoryPollingStopped && !setupCancelled && !repositoryGrantAwaitingDeparture && isAppAuthorized\(\)/);
   assert.match(polling, /repositoryLifecycle\+\+/);
   assert.match(polling, /clearTimeout\(repositoryMonitorTimer\)/);
   assert.match(polling, /!pendingConfirmation && !repositoryActionApplying/);
@@ -226,11 +226,11 @@ test('direct repository selection is accessible and exposes check progress and f
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
   assert.match(html, /id="confirm-repository-action"[^>]*type="button"/);
   assert.doesNotMatch(html, /Unavailable repositories include the reason/);
-  assert.match(styles, /\.repository-option/);
-  assert.match(styles, /\.repository-icon/);
+  assert.match(styles, /\.repository-suggestion/);
+  assert.match(styles, /\.repository-suggestions\[hidden\]/);
   assert.doesNotMatch(script, /radio\.type = 'radio'/);
-  assert.match(script, /status\.textContent = statusLabel/);
-  assert.match(script, /action\.textContent = checkingRepositoryTarget === repository.fullName \? 'Checking…'/);
+  assert.match(script, /option\.textContent = repository\.fullName/);
+  assert.match(script, /option\.disabled = repositoryActionApplying/);
   const check = script.slice(script.indexOf('async function checkRepositoryTarget'), script.indexOf("$('close-repository-access').addEventListener"));
   assert.match(check, /!repositoryInputDirty && repositoryTarget === target/);
   assert.match(check, /repositoryActionKey\(selectedRepository\) !== 'connect' && !reviewSelectedRepository\(\)/);

@@ -110,6 +110,13 @@ test('same provenance already present and duplicate input perform no write', asy
   assert.equal(github.writes.length, writes);
 });
 
+test('a throttled record write remains retryable rather than becoming a failed outcome', async () => {
+  const github = prepared();
+  github.updateTextsAtomic = async () => { throw Object.assign(new Error('throttled'), { code: 'rate_limit', retryAt: '2026-09-01T09:00:00.000Z' }); };
+  await assert.rejects(importClockifyCompletedRecords({ github, githubUser, entries: [entry('2026-08-18', 'throttle')],
+    idFactory: () => '01K2ABCDEF0123456789ABCDEF' }), error => error.code === 'rate_limit');
+});
+
 test('replays a shifted prior Clockify import by title, project, date, author, and duration', async () => {
   const github = prepared();
   const source = entry('2026-08-18', 'replay');
@@ -270,6 +277,94 @@ test('replays a large imported set through indexed provenance lookups', { timeou
     status: 'already_present', added: 0, alreadyPresent: 4_000,
   });
   assert.ok(performance.now() - startedAt < 3_000, 'replay matching must not rescan every record for every source entry');
+});
+
+test('skips missing monthly contents requests when the branch tree proves they are absent', async () => {
+  const github = prepared();
+  const originalGetText = github.getText;
+  let monthlyReads = 0, treeReads = 0;
+  github.listRepositoryEntries = async () => {
+    treeReads += 1;
+    return [...github.files].map(([path, file]) => ({ path, type: 'blob', sha: file.sha }));
+  };
+  github.getText = async path => {
+    if (path.startsWith('times/')) monthlyReads += 1;
+    return originalGetText(path);
+  };
+  const entries = Array.from({ length: 12 }, (_, month) => entry(`2025-${String(month + 1).padStart(2, '0')}-01`, `month-${month}`));
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries }), {
+    status: 'imported', added: 12, alreadyPresent: 0,
+  });
+  assert.equal(treeReads, 1);
+  assert.equal(monthlyReads, 0);
+});
+
+test('a month created after tree discovery conflicts instead of overwriting the concurrent file', async () => {
+  const github = prepared();
+  github.listRepositoryEntries = async () => [...github.files].map(([path, file]) => ({ path, type: 'blob', sha: file.sha }));
+  const updateTextsAtomic = github.updateTextsAtomic;
+  github.updateTextsAtomic = async (...args) => {
+    github.seed('times/2026-08/ada.jsonl', serializeMonthlyRecords([]), 'concurrent-sha');
+    return updateTextsAtomic(...args);
+  };
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [entry('2026-08-18', 'race')] }), { status: 'conflict' });
+  assert.equal(github.writes.length, 0);
+  assert.equal(github.files.get('times/2026-08/ada.jsonl').sha, 'concurrent-sha');
+});
+
+test('tree discovery still reads and replays existing monthly records', async () => {
+  const github = prepared(), source = entry('2026-08-18', 'replay');
+  assert.equal((await importClockifyCompletedRecords({ github, githubUser, entries: [source] })).status, 'imported');
+  let monthlyReads = 0;
+  const originalGetText = github.getText;
+  github.getText = async path => {
+    if (path.startsWith('times/')) monthlyReads += 1;
+    return originalGetText(path);
+  };
+  github.listRepositoryEntries = async () => [...github.files].map(([path, file]) => ({ path, type: 'blob', sha: file.sha }));
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source] }), {
+    status: 'already_present', added: 0, alreadyPresent: 1,
+  });
+  assert.equal(monthlyReads, 1);
+});
+
+test('a rejected or invalid recursive tree falls back to Contents for a one-month replay', async () => {
+  for (const treeFailure of [Object.assign(new Error('tree too large'), { status: 422 }),
+    Object.assign(new Error('tree unavailable'), { status: 503 }), null]) {
+    const github = prepared(), source = entry('2026-08-18', 'replay');
+    assert.equal((await importClockifyCompletedRecords({ github, githubUser, entries: [source] })).status, 'imported');
+    const path = 'times/2026-08/ada.jsonl';
+    const originalGetText = github.getText;
+    let reads = 0;
+    github.getText = async name => { if (name === path) reads += 1; return originalGetText(name); };
+    github.listRepositoryEntries = async () => { if (treeFailure) throw treeFailure; return [{ path: null, type: 'blob' }]; };
+    assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source] }), {
+      status: 'already_present', added: 0, alreadyPresent: 1,
+    });
+    assert.equal(reads, 1);
+    github.seed(path, '{malformed}\n');
+    assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries: [source] }), {
+      status: 'failed', failureReason: 'storage_data_unreadable',
+    });
+    assert.equal(reads, 2);
+  }
+});
+
+test('many entries in one existing month cause one Contents read per import attempt', async () => {
+  const github = prepared(), path = 'times/2026-08/ada.jsonl';
+  github.seed(path, serializeMonthlyRecords([]));
+  github.listRepositoryEntries = async () => [...github.files].map(([name, file]) => ({ path: name, type: 'blob', sha: file.sha }));
+  const originalGetText = github.getText;
+  const monthlyReads = [];
+  github.getText = async name => {
+    if (name.startsWith('times/')) monthlyReads.push(name);
+    return originalGetText(name);
+  };
+  const entries = Array.from({ length: 12 }, (_, day) => entry(`2026-08-${String(day + 1).padStart(2, '0')}`, `day-${day}`));
+  assert.deepEqual(await importClockifyCompletedRecords({ github, githubUser, entries }), {
+    status: 'imported', added: 12, alreadyPresent: 0,
+  });
+  assert.deepEqual(monthlyReads, [path]);
 });
 
 test('reads affected monthly destination files with bounded concurrency', async () => {

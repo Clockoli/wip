@@ -276,10 +276,15 @@ test('Timeline shows darker end grips without top or bottom bands', async ({ pag
   let idleBorders;
   await expect.poll(async () => {
     const borders = await block.evaluate(element => {
+      if (!window.__gripBaselineRerendered) {
+        window.__gripBaselineRerendered = true;
+        window.__timeline.update({ items: window.__items });
+      }
+      if (!element.isConnected) return null;
       const style = getComputedStyle(element);
       return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor];
     });
-    if (borders.every(Boolean)) idleBorders = borders;
+    if (borders?.every(Boolean)) idleBorders = borders;
     return Boolean(idleBorders);
   }).toBe(true);
   await block.hover();
@@ -789,7 +794,7 @@ test('Calendar task cards show their site favicons', async ({ page }) => {
   const now = Date.now();
   await mount(page, { items: [{ id: 'entry:icon', url: 'https://example.com/icon', title: 'Icon task', faviconUrl: favicon, startedAt: now - HOUR, endedAt: now - 30 * 60_000, rowId: 'one', isEditable: true }] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  const image = page.locator('#timeline .calendar-task .clockoli-calendar-favicon');
+  const image = page.locator('#timeline .calendar-task:not(.segment-continuation) .clockoli-calendar-favicon');
   await expect(image).toHaveCount(1);
   await expect(image).toHaveAttribute('src', favicon);
 });
@@ -819,7 +824,7 @@ test('a failed Calendar favicon stays failed without an observer recreate loop',
   const now = Date.now();
   await mount(page, { items: [{ id: 'entry:broken-icon', url: 'https://example.com/broken', title: 'Broken icon', faviconUrl: 'data:image/png;base64,broken', startedAt: now - HOUR, endedAt: now - 30 * 60_000, rowId: 'one', isEditable: true }] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  const image = page.locator('#timeline .calendar-task .clockoli-calendar-favicon');
+  const image = page.locator('#timeline .calendar-task:not(.segment-continuation) .clockoli-calendar-favicon');
   await expect(image).toHaveCount(1);
   await expect(image).toBeHidden();
   await page.waitForTimeout(50);

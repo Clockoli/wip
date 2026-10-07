@@ -9,24 +9,25 @@ const [optionsHtml, optionsJs, contentJs, tasksHtml, reportsHtml, reportsJs, rea
   read('../src/tasks/tasks.html'), read('../src/reports/reports.html'), read('../src/reports/reports.js'), read('../README.md'),
 ]);
 
-test('first run presents sign-in then an owner-neutral repository list and manual target', () => {
+test('first run presents sign-in then an owner-neutral repository autocomplete and manual target', () => {
   assert.match(optionsHtml, /id="connection-title"[^>]*>Set up Clockoli</);
   assert.match(optionsHtml, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
   assert.match(optionsHtml, /Step <span id="current-step">1<\/span> of 2/);
   assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(optionsHtml, /id="repository-target-form"[\s\S]*id="repository-target"/);
-  assert.match(optionsHtml, /id="repository-list"/);
+  assert.match(optionsHtml, /id="repository-list"[^>]*role="listbox"/);
   assert.match(optionsHtml, /explicitly connect a ready repository, regardless of who owns it/);
   assert.doesNotMatch(optionsHtml, /Use an existing Clockoli repository|Set up a new time repository|data-repository-choice/);
 });
 
-test('repository selection is owner-neutral, classified, and explicitly confirmed before any write', () => {
+test('repository suggestions are owner-neutral and require a separate check and confirmation', () => {
   const list = optionsJs.slice(optionsJs.indexOf('function renderRepositoryList('), optionsJs.indexOf('function renderRepositories('));
-  assert.match(list, /className = 'repository-option'/);
-  assert.match(list, /className = 'repository-icon'/);
+  assert.match(list, /className = 'repository-suggestion'/);
+  assert.match(list, /\.slice\(0, 8\)/);
   assert.doesNotMatch(list, /ownerType|ownership|Personal|Organization/);
   assert.doesNotMatch(list, /radio/);
-  assert.match(list, /action\.disabled = repositoryActionApplying/);
+  assert.match(list, /option\.disabled = repositoryActionApplying/);
+  assert.match(list, /checkRepositoryTarget\(repository\.fullName, false, true\)/);
   assert.match(optionsJs, /function repositoryInspectionStatus/);
   assert.match(optionsJs, /initialized_member/);
   assert.match(optionsHtml, /id="repository-confirmation"/);
