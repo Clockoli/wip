@@ -3182,9 +3182,12 @@ test('Activity edits imported time and metadata without submitting a non-URL as 
 test('Imported identities cannot be restarted from the timeline', async () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const entry = activityEntry('1', '2026-09-05', '08', identity);
-  const h = dailyPanelHarness({ records: [entry], now: new Date('2026-09-05T12:00:00').getTime(),
+  // activityEntry times are UTC, so `now` must be a UTC instant too; a local
+  // noon at UTC+4 or further east is not after the entry's start, so it is dropped.
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const h = dailyPanelHarness({ records: [entry], now,
     state: { configured: true, active: null, pendingWrites: [] } });
-  assert.equal(h.timelineItems(0, new Date('2026-09-05T12:00:00').getTime())[0].isStartDisabled, true);
+  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, true);
   assert.equal(await h.restartTimelineEntry(entry), false);
   assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
 });
