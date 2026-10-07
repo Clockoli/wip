@@ -75,7 +75,7 @@ A future storage profile may repartition records without changing their logical 
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.30"
+    "version": "0.2.0"
   },
   "description": "Investigated replication failure and prepared fix",
   "metadata": {
@@ -288,7 +288,7 @@ Rules:
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.30"
+    "version": "0.2.0"
   }
 }
 ```

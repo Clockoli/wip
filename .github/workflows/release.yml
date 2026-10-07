@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      tag: { description: 'Tag to release', required: true, type: string }
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run check
+      # The archive is uploaded to the Chrome Web Store as-is, so it must carry the tagged version.
+      - name: Check tag matches manifest version
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "Error: tag $TAG does not match manifest.json version $VERSION"
+            exit 1
+          fi
+      - run: python3 scripts/build-release.py "$RUNNER_TEMP/Clockoli-$TAG.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ runner.temp }}/Clockoli-${{ env.TAG }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: package
+    permissions:
+      contents: write
+    uses: Muvon/ci-workflow/.github/workflows/release.yml@master
+    with:
+      tag: ${{ inputs.tag }}
+      artifacts: release-zip
+      draft: false

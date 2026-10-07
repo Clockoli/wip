@@ -5,7 +5,7 @@ import {
 import { createUlid } from './ulid.js';
 
 export const DEFAULT_PRODUCER = Object.freeze({
-  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.30',
+  kind: 'browser_extension', name: 'clockoli-chrome', version: '0.2.0',
 });
 
 const TIMEZONE_FORMATTER_CACHE_LIMIT = 64;

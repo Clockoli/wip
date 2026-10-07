@@ -174,6 +174,17 @@ The packaging script:
 
 Before publishing, inspect the archive inventory and load the unpacked release contents in a clean browser profile. Do not publish an archive built from an uncommitted or unverified tree.
 
+### Release from a tag
+
+Releases are tagged `X.Y.Z` with no `v` prefix. Pushing a tag runs `.github/workflows/release.yml`, which:
+
+- runs `npm test` and `npm run check`;
+- fails unless the tag equals the `manifest.json` version;
+- builds `Clockoli-X.Y.Z.zip` with `scripts/build-release.py`;
+- creates the GitHub release through the shared `Muvon/ci-workflow` release workflow, using the `## [X.Y.Z]` section of `CHANGELOG.md` as the release notes, and attaches the archive.
+
+Before tagging, bump the version, add its `CHANGELOG.md` section, and merge to `main`. Then upload the attached archive to the Chrome Web Store by hand. The workflow does not publish to the store.
+
 ## Pull requests
 
 A pull request should contain:
