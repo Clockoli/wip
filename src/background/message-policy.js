@@ -72,8 +72,8 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
 }
 
 export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin) {
-  assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin);
-  return normalizeTaskUrl(payloadTaskUrl);
+  const kind = assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin);
+  return kind === 'extension' ? normalizeStoredTaskIdentity(payloadTaskUrl) : normalizeTaskUrl(payloadTaskUrl);
 }
 
 export function taskUrlForParticipantLoad(payloadTaskUrl, sender, extensionOrigin) {

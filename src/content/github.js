@@ -34,12 +34,14 @@
   let fullWidthPopupOpen = false;
   let timelineWindowTimer = null;
   let timelineView = null;
+  let timesTimelineView = null;
   let timelineViewMode = 'timeline';
   let timelineGraphicViewMode = 'timeline';
   let timelineInstance = null;
   let timelineWindow = null;
   let timelineEntriesById = new Map();
   let timelineQueueIndicator = null;
+  let timelineEditError = '';
 
   let timelineOptimisticEdits = new Map();
   const timelineOptimisticEditGenerations = new Map();
@@ -69,11 +71,17 @@
   let recentLoad = null;
   let recentLoadId = 0;
   let timesLoadId = 0;
+  let timesLoadedRange = null;
+  let timesRequestedRange = null;
+  let timesHistoryRange = null;
+  let timesHistoryLoad = null;
   let activeInlineKey = null;
   let timesPeriod = 'last-three-days';
+  let periodMenuCleanup = null;
   let timesStartDate = '';
   let timesEndDate = '';
   let timesFilter = '';
+  let timesViewMode = 'timeline';
   let timesHasTrackedTime = null;
   let bulkDraft = '';
   let bulkMutation = false;
@@ -132,6 +140,7 @@
       && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
       && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
   }
+  function trackableTaskIdentityOf(value) { return timesMode || popupMode ? storedTaskIdentityOf(value) : taskUrlOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
@@ -180,7 +189,7 @@
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
-  function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+  function sameTask(left, right) { const a = storedTaskIdentityOf(left), b = storedTaskIdentityOf(right); return Boolean(a && b && a === b); }
   function activeDescriptionValue(active = pageState.active) {
     if (!active) return '';
     const id = active.id || active.startedAt;
@@ -644,23 +653,25 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   }
 
-  function timesRange() {
+  function timesRange(period = timesPeriod) {
     const today = new Date(), endToday = localDateValue(today), start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
     const date = value => localDateValue(value), move = days => { const value = new Date(start); value.setDate(value.getDate() + days); return value; };
-    if (timesPeriod === 'last-three-days') return { startDate: date(move(-2)), endDate: endToday };
-    if (timesPeriod === 'today') return { startDate: endToday, endDate: endToday };
-    if (timesPeriod === 'yesterday') { const value = date(move(-1)); return { startDate: value, endDate: value }; }
+    if (period === 'last-three-days') return { startDate: date(move(-2)), endDate: endToday };
+    if (period === 'today') return { startDate: endToday, endDate: endToday };
+    if (period === 'yesterday') { const value = date(move(-1)); return { startDate: value, endDate: value }; }
     const mondayOffset = (today.getDay() + 6) % 7;
-    if (timesPeriod === 'this-week') return { startDate: date(move(-mondayOffset)), endDate: endToday };
-    if (timesPeriod === 'last-week') return { startDate: date(move(-mondayOffset - 7)), endDate: date(move(-mondayOffset - 1)) };
-    if (timesPeriod === 'this-month') return { startDate: `${endToday.slice(0, 7)}-01`, endDate: endToday };
-    if (timesPeriod === 'last-month') {
+    if (period === 'this-week') return { startDate: date(move(-mondayOffset)), endDate: endToday };
+    if (period === 'last-week') return { startDate: date(move(-mondayOffset - 7)), endDate: date(move(-mondayOffset - 1)) };
+    if (period === 'this-month') return { startDate: `${endToday.slice(0, 7)}-01`, endDate: endToday };
+    if (period === 'last-month') {
       const last = new Date(today.getFullYear(), today.getMonth(), 0, 12), first = new Date(last.getFullYear(), last.getMonth(), 1, 12);
       return { startDate: date(first), endDate: date(last) };
     }
-    if (timesPeriod === 'custom' && validEntryDate(timesStartDate) && validEntryDate(timesEndDate) && timesStartDate <= timesEndDate) return { startDate: timesStartDate, endDate: timesEndDate };
+    if (period === 'custom' && validEntryDate(timesStartDate) && validEntryDate(timesEndDate) && timesStartDate <= timesEndDate) return { startDate: timesStartDate, endDate: timesEndDate };
     throw new Error('Choose a valid custom date range.');
   }
+
+  function activityRequestRange() { return timesViewMode === 'list' ? timesRange() : (timesHistoryRange || timesRange('last-three-days')); }
 
   function applyTrackedTotals(data) {
     pageState = { ...pageState, todayTrackedMs: data?.todayTrackedMs ?? null, weekTrackedMs: data?.weekTrackedMs ?? null,
@@ -706,9 +717,11 @@
   }
 
   function reconcileTimelineQueuedOperations(pendingIds) {
+    let completed = false;
     for (const [id, tracked] of timelineQueuedOperationIds) {
       if (pendingIds.has(id)) continue;
       timelineQueuedOperationIds.delete(id);
+      completed = true;
       const entryId = typeof tracked === 'string' ? tracked : tracked.entryId;
       const generations = typeof tracked === 'string' ? null : tracked.generations;
       for (const generation of generations || []) {
@@ -721,6 +734,9 @@
         timelineOptimisticEditGenerations.delete(entryId);
       }
     }
+    if (completed && timesMode && timesViewMode !== 'list' && !timelineQueuedOperationIds.size) {
+      void refreshRecent(true).catch(setError);
+    }
   }
 
 
@@ -728,7 +744,7 @@
     const accepted = timelineAcceptedActive;
     const incoming = incomingState?.active ?? null;
     const incomingConfirmsAccepted = accepted && incoming
-      && taskUrlOf(incoming) === taskUrlOf(accepted)
+      && storedTaskIdentityOf(incoming) && storedTaskIdentityOf(incoming) === storedTaskIdentityOf(accepted)
       && new Date(incoming.startedAt).getTime() >= new Date(accepted.startedAt).getTime();
     if (incomingConfirmsAccepted) timelineAcceptedActive = null;
     return accepted && !incomingConfirmsAccepted
@@ -767,7 +783,16 @@
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
     reconcileTimelineQueuedOperations(pendingIds);
-    if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+    if (Array.isArray(data?.recent)) {
+      if (timesMode && timesViewMode !== 'list' && timesHistoryRange) {
+        // GET_PAGE_STATE caps recent records; missing older IDs are not deletions.
+        const byId = new Map(recent.map(entry => [`${entry.destinationId}:${entry._path}:${entry.id}`, entry]));
+        for (const entry of data.recent) {
+          if (!timelineOptimisticEdits.has(entry.id)) byId.set(`${entry.destinationId}:${entry._path}:${entry.id}`, entry);
+        }
+        applyMenuData([...byId.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt)), recentFresh);
+      } else applyMenuData(data.recent, recentFresh);
+    }
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
       recentFresh = true;
@@ -885,7 +910,6 @@
         const beforeRecent = visibleRecentKey();
         const data = await send({ type: 'GET_PAGE_STATE' });
         applyPageState(data);
-        if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
         else updatePanelClocks();
       } catch { schedulePendingRefresh(); }
@@ -983,7 +1007,7 @@
   }
 
   function recentRequest() {
-    if (timesMode) return { type: 'LOAD_TIMES', payload: timesRange() };
+    if (timesMode) return { type: 'LOAD_TIMES', payload: activityRequestRange() };
     const task = taskFromLocation();
     return { type: 'LOAD_RECENT', menuData: true, ...(popupMode && task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
   }
@@ -1160,6 +1184,7 @@
   function refreshRecent(force = false) {
     if (recentLoad && !force) return recentLoad;
     const loadId = ++recentLoadId, request = recentRequest();
+    if (timesMode) timesRequestedRange = JSON.stringify(request.payload);
     recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
     let load;
     load = send(request).then(async data => {
@@ -1174,10 +1199,17 @@
         }
         if (loadId === recentLoadId) timesHasTrackedTime = hasTrackedTime;
       }
-      if (loadId === recentLoadId) applyMenuData(data, true);
+      if (loadId === recentLoadId) {
+        applyMenuData(data, true);
+        if (timesMode && data?.configured) {
+          timesLoadedRange = JSON.stringify(request.payload);
+          if (timesViewMode !== 'list') timesHistoryRange = request.payload;
+        }
+      }
       return data;
     }).finally(() => {
       if (loadId === recentLoadId && recentLoad === load) {
+        if (timesMode) timesRequestedRange = null;
         recentLoad = null; loadingRecent = false; if (!suppressRecentRender) renderUi();
       }
     });
@@ -1672,20 +1704,59 @@
     }
   }
 
-  async function loadSelectedTimes() {
+  async function loadSelectedTimes(preserveTimelineView = false) {
     const loadId = ++timesLoadId;
-    recentLoaded = false; errorText = ''; renderUi();
+    recentLoaded = false; errorText = ''; if (!preserveTimelineView) timesTimelineView = null; renderUi();
     try { await refreshRecent(true); }
     catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
   }
 
-  function renderTimesPage() {
+  function ensureActivityRange({ start, end }) {
+    if (!timesMode || timesViewMode === 'list' || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return Promise.resolve();
+    if (timesHistoryLoad) return timesHistoryLoad.then(() => ensureActivityRange({ start, end }));
+    const loaded = timesHistoryRange || timesRange('last-three-days');
+    const requestedStart = localDateValue(new Date(start));
+    if (requestedStart >= loaded.startDate) return Promise.resolve();
+    const previousDay = new Date(`${loaded.startDate}T12:00:00`);
+    previousDay.setDate(previousDay.getDate() - 1);
+    const request = { startDate: requestedStart, endDate: localDateValue(previousDay) };
+    const loadId = timesLoadId;
+    let load;
+    load = send({ type: 'LOAD_TIMES', payload: request }).then(data => {
+      if (loadId !== timesLoadId || timesViewMode === 'list') return;
+      if (!data?.configured || data.partial || !Array.isArray(data.recent)) throw new Error('Could not load the earlier time records. Try navigating again.');
+      const byId = new Map();
+      for (const entry of [...recent, ...data.recent]) byId.set(`${entry.destinationId}:${entry._path}:${entry.id}`, entry);
+      recent = [...byId.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+      timesHistoryRange = { startDate: request.startDate, endDate: loaded.endDate };
+      timesLoadedRange = JSON.stringify(timesHistoryRange);
+      if (timelineInstance) {
+        const { now, historyStart } = activityTimelineBounds();
+        timelineWindow = { historyStart, now };
+        const { items, rows, byId: entriesById } = popupTimelineItems(historyStart, now);
+        timelineEntriesById = entriesById;
+        timelineInstance.update({ items, rows, now, historyStart });
+      } else renderUi();
+    }).catch(error => {
+      if (loadId === timesLoadId && timesViewMode !== 'list' && error?.name !== 'AbortError') setError(error);
+    }).finally(() => { if (timesHistoryLoad === load) timesHistoryLoad = null; });
+    timesHistoryLoad = load;
+    return load;
+  }
+
+  function renderTimesPage(preservedTimeline = null) {
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
+    const heading = el('div', undefined, 'times-heading');
+    heading.append(el('h1', 'Activity'), el('p', 'Browse and edit your tracked time.', 'muted'));
+    const openBulkDialog = () => { bulkOpen = true; bulk.showModal(); input.focus(); };
+    const openBulk = button('Add time', 'secondary times-add-button', openBulkDialog);
+    body.append(heading);
     if (!pageState.configured && recentLoaded) {
       body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
       page.append(body); return page;
     }
+    heading.append(openBulk);
     if (pageState.partial) {
       const failed = (pageState.readStatus ?? []).filter(item => item.status === 'error').length;
       const conflicts = pageState.readConflicts?.length || 0;
@@ -1696,24 +1767,73 @@
       ].filter(Boolean).join(' '), 'notice partial-read-warning');
       body.append(warning);
     }
-    const toolbar = el('section', undefined, 'times-toolbar');
-    const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
-    const periodLabel = el('label', 'Period'), period = el('select'); period.setAttribute('aria-label', 'Time period');
-    for (const [value, label] of [['last-three-days', 'Last 3 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']]) {
-      const option = el('option', label); option.value = value; option.selected = timesPeriod === value; period.append(option);
+    const toolbar = el('section', undefined, 'times-toolbar'); toolbar.hidden = timesViewMode !== 'list';
+    const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.hidden = timesViewMode !== 'list'; filterLabel.append(filter); toolbar.append(filterLabel);
+    const periods = [['last-three-days', 'Last 3 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']];
+    const periodLabel = el('div', undefined, 'times-period');
+    const periodOptions = el('div', undefined, 'times-period-options'); periodOptions.hidden = true;
+    const openPeriodMenu = () => {
+      if (!periodOptions.hidden) { closePeriodMenu(); return; }
+      periodOptions.hidden = false; periodTrigger.setAttribute('aria-expanded', 'true');
+      shadow.addEventListener('pointerdown', outsidePeriodMenu, true);
+      document.addEventListener('pointerdown', outsidePeriodShadow, true);
+      periodMenuCleanup = closePeriodMenu;
+    };
+    const periodTrigger = button(periods.find(([value]) => value === timesPeriod)?.[1] || 'Last 3 days', 'times-period-trigger', openPeriodMenu);
+    periodTrigger.setAttribute('aria-label', `Period: ${periodTrigger.textContent}`);
+    periodTrigger.setAttribute('aria-expanded', 'false');
+    periodOptions.setAttribute('role', 'group'); periodOptions.setAttribute('aria-label', 'Time periods');
+    function outsidePeriodMenu(event) {
+      if (!(event.composedPath?.() || [event.target]).includes(periodLabel)) closePeriodMenu();
     }
-    period.addEventListener('change', () => {
-      timesPeriod = period.value;
-      if (timesPeriod === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
-      else void loadSelectedTimes();
-    }); periodLabel.append(period); toolbar.append(periodLabel);
+    function outsidePeriodShadow(event) {
+      if (!(event.composedPath?.() || [event.target]).includes(root)) closePeriodMenu();
+    }
+    function closePeriodMenu() {
+      periodOptions.hidden = true; periodTrigger.setAttribute('aria-expanded', 'false');
+      shadow.removeEventListener('pointerdown', outsidePeriodMenu, true);
+      document.removeEventListener('pointerdown', outsidePeriodShadow, true);
+      if (periodMenuCleanup === closePeriodMenu) periodMenuCleanup = null;
+    }
+    const choices = periods.map(([value, label]) => {
+      const option = button(label, 'times-period-option', () => {
+        closePeriodMenu(); timesPeriod = value;
+        if (value === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
+        else void loadSelectedTimes();
+        globalThis.requestAnimationFrame?.(() => {
+          if (timesViewMode === 'list') shadow?.querySelector?.('.times-period-trigger')?.focus();
+        });
+      });
+      option.setAttribute('aria-current', String(timesPeriod === value)); periodOptions.append(option); return option;
+    });
+    periodTrigger.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); closePeriodMenu(); return; }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      if (periodOptions.hidden) openPeriodMenu();
+      choices[event.key === 'ArrowUp' ? choices.length - 1 : periods.findIndex(([value]) => value === timesPeriod)].focus();
+    });
+    periodOptions.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); closePeriodMenu(); periodTrigger.focus(); return; }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const index = choices.indexOf(event.target);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+      choices[next].focus();
+    });
+    periodLabel.addEventListener('focusout', event => {
+      if (!periodLabel.contains(event.relatedTarget)) closePeriodMenu();
+    });
+    periodLabel.append(el('span', 'Period', 'times-period-caption'), periodTrigger, periodOptions); toolbar.append(periodLabel);
     if (timesPeriod === 'custom') {
       const startLabel = el('label', 'From'), start = el('input'); start.type = 'date'; start.value = timesStartDate; start.addEventListener('input', () => { timesStartDate = start.value; }); startLabel.append(start);
       const endLabel = el('label', 'Through'), end = el('input'); end.type = 'date'; end.value = timesEndDate; end.addEventListener('input', () => { timesEndDate = end.value; }); endLabel.append(end);
       const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => loadSelectedTimes())); toolbar.append(custom);
     }
-    body.append(toolbar);
+    const controls = el('section', undefined, 'times-controls'); controls.classList.toggle('times-controls-list', timesViewMode === 'list'); controls.append(toolbar);
     const result = el('section', undefined, 'times-results activity-list');
+    result.hidden = timesViewMode !== 'list';
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
@@ -1724,8 +1844,8 @@
         empty = el('div', undefined, 'activity-empty');
         const firstUse = !recent.length && timesHasTrackedTime === false;
         empty.append(el('p', recent.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
-        if (recent.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
-        else if (!firstUse) empty.append(button('Add time', 'secondary', async () => { bulkOpen = true; bulk.open = true; input.focus(); }));
+        if (recent.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); refreshMountedTimeline(); filter.focus(); }));
+        else if (!firstUse) empty.append(button('Add time', 'secondary', openBulkDialog));
       }
       if (query && inlineDrafts.size) {
         const visible = new Set(matches.map(entryKey));
@@ -1733,10 +1853,23 @@
       }
       renderRecent(result, matches, empty);
     };
-    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered(); body.append(result);
-    const bulk = el('details', undefined, 'bulk-time');
-    bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
-    const summary = el('summary', 'Add time'); bulk.append(summary);
+    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered();
+    const modes = el('div', undefined, 'times-view-modes'); modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', 'Activity view');
+    for (const [mode, label] of [['timeline', 'Timeline'], ['calendar', 'Calendar'], ['list', 'List']]) {
+      const control = button(label, 'times-view-button', () => setActivityViewMode(mode));
+      control.setAttribute('data-view-mode', mode); control.setAttribute('aria-pressed', String(timesViewMode === mode)); modes.append(control);
+    }
+    controls.append(modes); body.append(controls);
+    const timeline = renderPopupTimeline(preservedTimeline); timeline.hidden = timesViewMode === 'list'; body.append(timeline, result);
+    const bulk = el('dialog', undefined, 'bulk-time-dialog');
+    bulk.setAttribute('aria-labelledby', 'bulk-time-title');
+    bulk.addEventListener('close', () => { if (bulk.isConnected) { bulkOpen = false; openBulk.focus(); } });
+    bulk.addEventListener('cancel', event => { if (bulkMutation) event.preventDefault(); });
+    const header = el('div', undefined, 'bulk-time-header');
+    const title = el('h2', 'Add time'); title.id = 'bulk-time-title';
+    const close = button('Close', 'secondary bulk-time-close', () => bulk.close());
+    close.disabled = bulkMutation;
+    header.append(title, close); bulk.append(header);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
     const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
     input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
@@ -1749,16 +1882,57 @@
       bulkDraft = input.value; bulkMutation = true; errorText = ''; renderUi();
       try {
         const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
-        bulkDraft = ''; bulkMutation = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
+        bulkDraft = ''; bulkMutation = false; bulkOpen = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
       } catch (error) { bulkMutation = false; setError(error); }
     }); add.disabled = bulkMutation;
-    bulk.append(help, input, add); body.append(bulk);
-    if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
+    const actions = el('div', undefined, 'bulk-time-actions');
+    const cancel = button('Cancel', 'secondary bulk-time-cancel', () => bulk.close()); cancel.disabled = bulkMutation;
+    actions.append(cancel, add);
+    bulk.append(help, input, actions); body.append(bulk);
+    if (errorText) (bulkOpen ? bulk : body).prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
     page.append(body); return page;
   }
 
   const POPUP_WINDOW_MS = 24 * 60 * 60 * 1000;
   const POPUP_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function setActivityViewMode(mode, fromTimeline = false) {
+    if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+    timesViewMode = mode;
+    for (const control of shadow?.querySelectorAll?.('.times-view-button') ?? []) {
+      control.setAttribute('aria-pressed', String(control.getAttribute('data-view-mode') === mode));
+    }
+    const timeline = shadow?.querySelector?.('.popup-timeline-section');
+    const list = shadow?.querySelector?.('.times-results');
+    const filter = shadow?.querySelector?.('.times-filter');
+    shadow?.querySelector?.('.times-controls')?.classList.toggle('times-controls-list', mode === 'list');
+    const toolbar = shadow?.querySelector?.('.times-toolbar');
+    if (timeline) timeline.hidden = mode === 'list';
+    if (list) list.hidden = mode !== 'list';
+    if (filter) filter.hidden = mode !== 'list';
+    if (toolbar) toolbar.hidden = mode !== 'list';
+    if (mode !== 'list' && !fromTimeline) {
+      timelineInstance?.setViewMode?.(mode);
+      if (mode === 'calendar' && timesTimelineView) timelineInstance?.update?.({ view: timesTimelineView });
+      if (mode === 'calendar') {
+        const view = timelineInstance?.getView?.();
+        if (view) void ensureActivityRange({ start: view.start, end: Math.min(view.end, timelineNow()) });
+      }
+    }
+    const requested = JSON.stringify(activityRequestRange());
+    if (timesRequestedRange !== requested && ((timesLoadedRange && timesLoadedRange !== requested)
+        || (timesRequestedRange && timesRequestedRange !== requested))) void loadSelectedTimes(true);
+  }
+
+  function activityTimelineBounds() {
+    const { startDate, endDate } = activityRequestRange();
+    const [year, month, day] = endDate.split('-').map(Number);
+    const periodEnd = new Date(year, month - 1, day + 1).getTime();
+    const now = Math.min(timelineNow(), periodEnd);
+    const starts = recent.map(entry => new Date(entry.startedAt).getTime()).filter(Number.isFinite);
+    const loadedStart = new Date(`${startDate}T00:00:00`).getTime();
+    return { now, historyStart: Math.min(now - POPUP_HISTORY_MS, loadedStart, ...starts) };
+  }
 
   function mergeTimelineCompletedEntries(completed, optimisticCompletions) {
     const byId = new Map();
@@ -1779,8 +1953,9 @@
       && Number.isFinite(new Date(entry.startedAt).getTime()) && Number.isFinite(new Date(entry.endedAt).getTime())
       && new Date(entry.startedAt).getTime() < now && new Date(entry.endedAt).getTime() > windowStart)
       .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
-    const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
-    if (pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
+    const entries = mergeTimelineCompletedEntries(completed, [...timelineOptimisticCompletions.values()]);
+    if (pageState.active && (!timesMode || timesViewMode !== 'list' || (timesRange().startDate <= localDateValue() && timesRange().endDate >= localDateValue()))
+        && new Date(pageState.active.startedAt).getTime() <= now) {
       entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
     }
     return entries.map(entry => {
@@ -1812,7 +1987,7 @@
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
         isPending: Boolean(entry.isPending),
-        isStartDisabled: !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
+        isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
         isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
@@ -1855,10 +2030,10 @@
 
   function refreshMountedTimeline() {
     if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
-    timelineWindow = { ...timelineWindow, now: timelineNow() };
+    timelineWindow = { ...timelineWindow, now: timesMode ? activityTimelineBounds().now : timelineNow() };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows, now: timelineWindow.now });
+    timelineInstance.update({ items, rows, now: timelineWindow.now, ...(timesMode ? { historyStart: timelineWindow.historyStart } : {}) });
     refreshCompactSurface();
     refreshTimelineQueueIndicator();
     return true;
@@ -1911,8 +2086,8 @@
         });
       }
       const acceptedActive = {
-        id: `timeline-local:${identity || taskUrlOf(task)}:${acceptanceId}`,
-        taskUrl: taskUrlOf(task), taskTitle: taskTitleOf(task) || '',
+        id: `timeline-local:${identity || trackableTaskIdentityOf(task)}:${acceptanceId}`,
+        taskUrl: trackableTaskIdentityOf(task), taskTitle: taskTitleOf(task) || '',
         startedAt, entryDate: localDateValue(new Date(startedAt)), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, _pending: true,
       };
       context.acceptedActive = acceptedActive;
@@ -2039,6 +2214,8 @@
   }
 
   async function queueCalendarEntry(entry, edits) {
+    timelineEditError = '';
+    updateTimelineEditError();
     const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId);
     const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
     const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
@@ -2172,7 +2349,7 @@
   }
 
   async function restartTimelineEntry(entry) {
-    if (!entry || !taskUrlOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!entry || !trackableTaskIdentityOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
     if (!confirmLongEntry()) return false;
     timelineStartInFlight = true;
     refreshMountedTimeline();
@@ -2180,7 +2357,7 @@
     const previousDescription = activeDescriptionValue();
     const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
     try {
-      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
@@ -2202,22 +2379,39 @@
     return true;
   }
 
-  function renderPopupTimeline() {
+  function updateTimelineEditError() {
+    const notice = shadow?.querySelector('.timeline-edit-error');
+    if (!notice) return;
+    notice.hidden = !timelineEditError;
+    notice.textContent = timelineEditError ? `Could not save Calendar edit: ${timelineEditError}` : '';
+  }
+
+  function renderPopupTimeline(preservedSection = null) {
+    if (preservedSection) return preservedSection;
     const section = el('section', undefined, 'popup-timeline-section');
     timelineQueueIndicator = el('div', undefined, 'timeline-queue-status muted');
     timelineQueueIndicator.setAttribute('role', 'status');
     timelineQueueIndicator.setAttribute('aria-live', 'polite');
     timelineQueueIndicator.hidden = true;
     section.append(timelineQueueIndicator);
+    if (timesMode) {
+      const notice = el('div', undefined, 'timeline-edit-error error');
+      notice.setAttribute('role', 'alert');
+      notice.hidden = true;
+      section.append(notice);
+    }
     const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
     if (!createTimeline) {
       section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
       return section;
     }
     if (!recentLoaded && !timelineAcceptedActive) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
-    const now = timelineNow(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
+    const { now, historyStart } = timesMode ? activityTimelineBounds() : { now: timelineNow(), historyStart: timelineNow() - POPUP_HISTORY_MS };
+    const defaultStart = now - (timesMode ? POPUP_WINDOW_MS / 2 : POPUP_WINDOW_MS);
     timelineWindow = { historyStart, now };
-    timelineView ||= { start: defaultStart, end: now, focusedAt: now };
+    const initialView = !(timesMode ? timesTimelineView : timelineView);
+    if (timesMode) timesTimelineView ||= { start: defaultStart, end: now, focusedAt: now - 1 };
+    else timelineView ||= { start: defaultStart, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     const timelineShell = el('div', undefined, 'timeline-shell');
@@ -2231,10 +2425,23 @@
         items,
         rows,
         now,
-        view: timelineView,
-        viewMode: timelineGraphicViewMode,
-        onViewModeChange: mode => { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; },
-        onViewChange: view => { timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
+        ...(timesMode ? { historyStart } : {}),
+        weeklyCalendar: timesMode,
+        view: timesMode ? timesTimelineView : timelineView,
+        viewMode: timesMode ? (timesViewMode === 'list' ? 'timeline' : timesViewMode) : timelineGraphicViewMode,
+        surface: timesMode ? 'activity' : undefined,
+        onViewModeChange: mode => {
+          if (timesMode) setActivityViewMode(mode, true);
+          else { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; }
+        },
+        onViewChange: view => {
+          if (timesMode) {
+            timesTimelineView = view;
+            if (timesViewMode === 'timeline') void ensureActivityRange(view);
+          } else timelineView = view;
+          globalThis.requestAnimationFrame?.(refreshTimelineOverlaps);
+        },
+        onRangeRequest: range => ensureActivityRange(range),
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
         onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
         onDelete: async item => {
@@ -2300,14 +2507,14 @@
               ? { startedAt: new Date(edit.startedAt).toISOString() }
               : { endedAt: new Date(edit.endedAt).toISOString() };
           try { await queueCalendarEntry(entry, edits); }
-          catch (error) { setError(error); throw error; }
+          catch (error) { timelineEditError = error.message || String(error); setError(error); throw error; }
         },
         });
-        timelineInstance.scrollToEnd();
+        if (!timesMode || (initialView && timesViewMode !== 'calendar')) timelineInstance.scrollToEnd();
       } catch (error) {
         timelineInstance = null;
         const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
-        timelineShell.replaceChildren(el('div', `Timeline cannot display invalid overlapping entries. Fix them in Activity. ${message}`, 'error'));
+        timelineShell.replaceChildren(el('div', `Timeline cannot display invalid overlapping entries. ${timesMode ? 'Switch to List to fix them.' : 'Fix them in Activity.'} ${message}`, 'error'));
         return;
       }
       refreshTimelineOverlaps();
@@ -2793,13 +3000,17 @@
 
   function renderUi() {
     if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
+    periodMenuCleanup?.();
     if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
         || descriptionDraft.taskUrl !== taskUrlOf(pageState.active))) descriptionDraft = null;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
     const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
+    const preservedActivityTimeline = timesMode && timesViewMode !== 'list' && pageState.configured && recentLoaded && timelineInstance && timelineWindow
+      ? shadow?.querySelector('.popup-timeline-section') : null;
+    preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
-    if (!preserveFullWidthTimeline) {
+    if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
@@ -3003,16 +3214,47 @@
  .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
       /* Activity redesign: compact, scan-first list rows. */
-      :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.times-surface) .times-body { padding:24px }
-      :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
+      :host(.times-surface) .times-page { width:100%; min-height:calc(100vh - 48px); background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .times-body { width:min(1280px,100%); margin:0 auto; padding:32px 28px 64px }
+      :host(.times-surface) .times-heading { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; margin:0 0 22px }
+      :host(.times-surface) .times-heading h1 { margin:0; font-size:25px; line-height:1.25; letter-spacing:-.03em }
+      :host(.times-surface) .times-heading p { grid-column:1; margin:4px 0 0; font-size:13px }
+      :host(.times-surface) .times-add-button { grid-column:2; grid-row:1 / 3; align-self:center }
+      :host(.times-surface) .times-controls { display:flex; flex-direction:row-reverse; align-items:end; justify-content:space-between; gap:16px; margin-bottom:16px; padding:18px 20px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .times-toolbar { display:block; width:220px; margin:0 }
+      :host(.times-surface) .times-toolbar[hidden] { display:none }
+      :host(.times-surface) .times-controls-list { display:block }
+      :host(.times-surface) .times-controls-list .times-toolbar { display:grid; width:auto; grid-template-columns:minmax(0,1fr) 220px; gap:16px; margin-bottom:18px }
+      :host(.times-surface) .times-period { grid-column:2 }
+      :host(.times-surface) .times-period { position:relative; min-width:0 }
+      :host(.times-surface) .times-period-caption { display:block; margin:10px 0 4px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; line-height:1.5 }
+      :host(.times-surface) .times-period-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:38px; padding:7px 10px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:600; text-align:left }
+      :host(.times-surface) .times-period-trigger::after { content:''; width:7px; height:7px; margin:-4px 2px 0 8px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(45deg) }
+      :host(.times-surface) .times-period-trigger:focus-visible,:host(.times-surface) .times-period-option:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px }
+      :host(.times-surface) .times-period-options { position:absolute; z-index:10; top:calc(100% + 4px); right:0; width:100%; max-height:min(320px,calc(100vh - 80px)); overflow-y:auto; padding:4px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) }
+      :host(.times-surface) .times-period-options[hidden] { display:none }
+      :host(.times-surface) .times-period-option { display:flex; align-items:center; width:100%; min-height:34px; padding:7px 10px; border:0; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:500; text-align:left }
+      :host(.times-surface) .times-period-option:hover,:host(.times-surface) .times-period-option:focus-visible { background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .times-period-option[aria-current="true"] { color:var(--fgColor-accent,var(--ck-accent)); font-weight:650 }
+      :host(.times-surface) .times-period-option[aria-current="true"]::before { content:'✓'; width:18px; flex:none }
+      :host(.times-surface) .times-period-option:not([aria-current="true"])::before { content:''; width:18px; flex:none }
+      :host(.times-surface) .times-filter[hidden] { display:none }
+      :host(.times-surface) .times-view-modes { display:flex; width:max-content; max-width:100%; gap:3px; padding:3px; border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .times-view-button { min-width:78px; padding:6px 12px; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px }
+      :host(.times-surface) .times-view-button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:0 1px 3px var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .popup-timeline-section { width:100%; margin:0 0 16px; padding:12px 16px 6px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .timeline-edit-error:not([hidden]) { position:sticky; top:8px; z-index:20; margin:0 0 8px; padding:10px 12px; border-radius:6px }
+      :host(.times-surface) .timeline-shell,:host(.times-surface) .task-timeline-host { width:100%; min-width:0 }
+      :host(.times-surface) .task-timeline-host { min-height:108px }
+      :host(.times-surface) .times-results { padding:10px 20px 22px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)) }
       :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
       :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:38px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .section-head { margin-bottom:14px }
       :host(.times-surface) .section-head strong { font-size:20px; font-weight:600 }
       :host(.times-surface) .entry { padding:0; margin:0 0 18px }
       :host(.times-surface) .entry-date-header { margin:0 0 8px }
-      :host(.times-surface) .activity-list { border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .activity-list { border-top:0 }
       :host(.times-surface) .entry-record { position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
       :host(.times-surface) .entry-record + .entry-record { margin-top:0 }
       :host(.times-surface) .entry-record:hover { background:linear-gradient(90deg,var(--bgColor-default,var(--ck-bg)) 0,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 45%,var(--bgColor-default,var(--ck-bg))) 100%) }
@@ -3039,10 +3281,15 @@
       :host(.times-surface) .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       :host(.times-surface) .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       :host(.times-surface) .entry-actions.dirty .entry-edit,:host(.times-surface) .entry-actions.dirty .entry-delete { display:none }
-      :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
+      :host(.times-surface) .bulk-time-dialog { width:min(640px,calc(100vw - 32px)); max-height:calc(100vh - 32px); padding:22px; overflow:auto; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
+      :host(.times-surface) .bulk-time-dialog::backdrop { background:rgba(27,31,36,.45) }
+      :host(.times-surface) .bulk-time-header { display:flex; align-items:center; justify-content:space-between; gap:12px }
+      :host(.times-surface) .bulk-time-header h2 { margin:0; font-size:19px }
+      :host(.times-surface) .bulk-time-dialog > p { margin:14px 0 12px; font-size:13px }
+      :host(.times-surface) .bulk-time-input { width:100%; min-height:180px; box-sizing:border-box; resize:vertical }
+      :host(.times-surface) .bulk-time-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px }
       @media(hover:none) { :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } :host(.times-surface) .entry-record { padding-right:0 } }
-      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } :host(.times-surface) .entry-record { padding-right:0 } :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } }
+      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:20px 12px 40px } :host(.times-surface) .times-controls { display:block; padding:14px } :host(.times-surface) .times-toolbar, :host(.times-surface) .times-controls-list .times-toolbar { display:grid; width:auto; grid-template-columns:1fr; gap:10px; margin-bottom:14px } :host(.times-surface) .times-period { grid-column:1 } :host(.times-surface) .popup-timeline-section { padding:8px } :host(.times-surface) .times-results { padding:8px 14px 18px } :host(.times-surface) .entry-record { padding-right:0 } :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } }
       @media(max-width:400px) { :host(.times-surface) .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
     if (popupMode || fullWidthPopupOpen) style.textContent += `
@@ -3100,7 +3347,13 @@
     }
     if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
-    if (timesMode) { shadow.append(style, renderTimesPage()); return; }
+    if (timesMode) {
+      shadow.append(style, renderTimesPage(preservedActivityTimeline));
+      if (preservedActivityTimeline) refreshMountedTimeline();
+      updateTimelineEditError();
+      if (bulkOpen) shadow.querySelector('.bulk-time-dialog')?.showModal();
+      return;
+    }
     if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);

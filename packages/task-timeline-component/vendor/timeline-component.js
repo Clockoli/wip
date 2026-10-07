@@ -127,6 +127,7 @@
         position: absolute;
         left: 0;
         top: 0;
+        transform: translateX(var(--clockoli-calendar-scroll-left, 0px));
         z-index: 8;
         background: #fbfcfe;
         border-right: 1px solid var(--tt-border);
@@ -151,6 +152,7 @@
       .calendar-time-label {
         position: absolute;
         left: 0;
+        transform: translateX(var(--clockoli-calendar-scroll-left, 0px));
         z-index: 5;
         display: flex;
         justify-content: flex-end;
@@ -336,6 +338,9 @@
          Start/End edit badges. */
       .calendar-task.editing .calendar-task-time { display: none; }
       .calendar-task.selected { outline: 3px solid #172033; outline-offset: 1px; z-index: 8; }
+      .calendar-task.selected.short { overflow: visible; }
+      .calendar-task.selected.short .calendar-resize-handle.start { top: -6px; height: 10px !important; }
+      .calendar-task.selected.short .calendar-resize-handle.end { bottom: -6px; height: 10px !important; }
       .calendar-task.focused:not(.selected) { outline: 2px solid #667085; outline-offset: 1px; }
       .calendar-task.pending { opacity: .72; }
       .calendar-task.running { animation: running-task-pulse 1.35s ease-in-out infinite; z-index: 7; }
@@ -1206,7 +1211,8 @@
     setCalendarDate(value) {
       const time = toMs(value);
       if (!Number.isFinite(time)) return this;
-      this.calendarStartDay = this._clampCalendarStart(this._floorDay(time));
+      const day = this._floorDay(time);
+      this.calendarStartDay = this._clampCalendarStart(this.options.calendarWeekStartMonday ? this._calendarWeekStart(day) : day);
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
@@ -1216,9 +1222,13 @@
     shiftCalendar(direction = 1) {
       if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
       const amount = Math.max(1, this.calendarDayCount) * (Number(direction) < 0 ? -1 : 1);
-      this.calendarStartDay = this._clampCalendarStart(this._addDaysLocal(this.calendarStartDay, amount));
+      const requestedStart = this._addDaysLocal(this.calendarStartDay, amount);
+      this.calendarStartDay = this._clampCalendarStart(requestedStart);
       this.calendarScrollInitialized = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
+      this.host.dispatchEvent(new CustomEvent('timeline:calendarnavigate', { detail: {
+        start: requestedStart, end: this._addDaysLocal(requestedStart, this.calendarDayCount),
+      } }));
       return this;
     }
 
@@ -1227,6 +1237,20 @@
       const start = this.calendarStartDay;
       const end = this._addDaysLocal(start, this.calendarDayCount);
       return { start, end, days: this.calendarDayCount };
+    }
+    extendCalendarEarlier() {
+      if (!this.options.calendarWeekStartMonday || this.viewMode !== 'calendar') return this;
+      const viewport = this.calendarViewport;
+      const oldLeft = viewport.scrollLeft;
+      const oldTop = viewport.scrollTop;
+      const oldDayWidth = this._calendarMetricsForRender().dayWidth;
+      this.calendarStartDay = this._addDaysLocal(this.calendarStartDay, -7);
+      this.calendarDayCount += 7;
+      this.calendarScrollInitialized = true;
+      this._renderCalendar();
+      viewport.scrollLeft = oldLeft + 7 * oldDayWidth;
+      viewport.scrollTop = oldTop;
+      return this;
     }
 
     _applyVisibleDays(days, anchorClientX = this._viewportWidthNow() / 2, anchorTime = null, { incremental = false, forceRender = false } = {}) {
@@ -1241,7 +1265,7 @@
         : anchorTime;
       this.visibleDays = next;
       if (this.viewMode === 'calendar') {
-        this.calendarDayCount = clamp(Math.ceil(this.visibleDays), 1, this.options.calendarMaxDays);
+        this.calendarDayCount = this.options.calendarWeekStartMonday ? this.calendarDayCount : clamp(Math.ceil(this.visibleDays), 1, this.options.calendarMaxDays);
         if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
         this.calendarStartDay = this._clampCalendarStart(this.calendarStartDay);
       }
@@ -2744,6 +2768,13 @@
         visibleStart = this._visibleStartTime();
         visibleEnd = this._visibleEndTime();
       }
+      if (this.options.calendarWeekStartMonday) {
+        this.calendarDayCount = 7;
+        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay(Math.max(visibleStart, visibleEnd - 1))));
+        this.calendarWindowInitialized = true;
+        this.calendarScrollInitialized = false;
+        return;
+      }
       const startDay = this._floorDay(visibleStart);
       const endProbe = Math.max(visibleStart, visibleEnd - 1);
       const endDay = this._floorDay(endProbe);
@@ -2761,8 +2792,12 @@
 
     _calendarDomainStartDay() { return this._floorDay(this.domainStart); }
     _calendarDomainEndDay() { return this._floorDay(Math.max(this.domainStart, this.domainEnd)); }
+    _calendarWeekStart(day) { return this._addDaysLocal(day, -((new Date(day).getDay() + 6) % 7)); }
 
     _clampCalendarStart(day) {
+      if (this.options.calendarWeekStartMonday) {
+        return clamp(day, this._calendarWeekStart(this._calendarDomainStartDay()), this._calendarWeekStart(this._calendarDomainEndDay()));
+      }
       const min = this._calendarDomainStartDay();
       let max = this._calendarDomainEndDay();
       for (let i = 1; i < this.calendarDayCount; i++) max = this._addDaysLocal(max, -1);
@@ -2911,11 +2946,16 @@
       }).format(new Date(dayStart));
     }
 
-    _formatCalendarRangeTitle() {
-      const start = this.calendarStartDay;
-      const end = this._addDaysLocal(start, this.calendarDayCount - 1);
+    _formatCalendarRangeTitle(start = this.calendarStartDay, count = this.calendarDayCount) {
+      const end = this._addDaysLocal(start, count - 1);
       const fmt = new Intl.DateTimeFormat(this.options.locale, { day: '2-digit', month: 'short', year: 'numeric' });
-      return this.calendarDayCount === 1 ? fmt.format(new Date(start)) : `${fmt.format(new Date(start))} – ${fmt.format(new Date(end))}`;
+      return count === 1 ? fmt.format(new Date(start)) : `${fmt.format(new Date(start))} – ${fmt.format(new Date(end))}`;
+    }
+    _visibleCalendarWeekStart(metrics) {
+      const viewport = this.calendarViewport;
+      const centerDay = Math.floor((viewport.scrollLeft + viewport.clientWidth / 2 - metrics.timeAxisWidth) / metrics.dayWidth);
+      const weekIndex = clamp(Math.floor(centerDay / 7), 0, this.calendarDayCount / 7 - 1);
+      return this._addDaysLocal(this.calendarStartDay, weekIndex * 7);
     }
 
     _calendarSegments() {
@@ -2990,7 +3030,9 @@
       this.calendarCanvas.innerHTML = '';
       this.calendarCanvas.style.width = `${metrics.width}px`;
       this.calendarCanvas.style.height = `${metrics.height}px`;
-      this.calendarTitle.textContent = this._formatCalendarRangeTitle();
+      this.calendarTitle.textContent = this.options.calendarWeekStartMonday
+        ? this._formatCalendarRangeTitle(this._visibleCalendarWeekStart(metrics), 7)
+        : this._formatCalendarRangeTitle();
 
       const stickyHeader = document.createElement('div');
       stickyHeader.className = 'calendar-sticky-header';
@@ -3076,7 +3118,7 @@
           const next = this._addDaysLocal(day, 1);
           earliestMinutes = Math.min(earliestMinutes, this._calendarMinutesOfDay(Math.max(task.start, day), day, next));
         }
-        const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, earliestMinutes - 45)));
+        const top = Math.max(0, metrics.verticalMap.toY(Math.max(0, earliestMinutes - 45)));
         this.calendarViewport.scrollTop = top;
         this.calendarScrollInitialized = true;
       }
@@ -3300,7 +3342,7 @@
         const el = document.createElement('div');
         const editing = Boolean(this.calendarEditState && this.calendarEditState.key === task._key);
         const editMode = editing ? this.calendarEditState.mode : '';
-        el.className = `calendar-task${this.selectedKey === task._key ? ' selected' : ''}${this.focusedKey === task._key ? ' focused' : ''}${this.pendingKeys.has(task._key) ? ' pending' : ''}${task.running ? ' running' : ''}${!item.startsTask ? ' segment-continuation' : ''}${editing ? ` editing ${editMode}` : ''}`;
+        el.className = `calendar-task${item.height < 24 ? ' short' : ''}${this.selectedKey === task._key ? ' selected' : ''}${this.focusedKey === task._key ? ' focused' : ''}${this.pendingKeys.has(task._key) ? ' pending' : ''}${task.running ? ' running' : ''}${!item.startsTask ? ' segment-continuation' : ''}${editing ? ` editing ${editMode}` : ''}`;
         el.dataset.taskKey = String(task._key);
         el.dataset.segmentStart = String(item.segmentStart);
         el.dataset.segmentEnd = String(item.segmentEnd);
@@ -3886,6 +3928,7 @@
         const [el, task] = taskFromEvent(e);
         if (!el || !task || (e.relatedTarget instanceof Node && el.contains(e.relatedTarget))) return;
         this.hoveredKey = task._key;
+        if (this.selectedKey != null && this.selectedKey !== task._key) return;
         this._showTaskDetails(task);
       });
       this.calendarCanvas.addEventListener('pointerout', e => {

@@ -90,6 +90,9 @@ class FakeNode {
     this.parentElement = null; this.isConnected = false; if (this.id) documentNodes.delete(this.id);
   }
   addEventListener(type, listener, options) { this[`on${type}`] = listener; this[`${type}Options`] = options; }
+  removeEventListener(type, listener) { if (this[`on${type}`] === listener) this[`on${type}`] = null; }
+  showModal() { this.open = true; }
+  close() { this.open = false; this.onclose?.(); }
   setPointerCapture(pointerId) { this.capturedPointer = pointerId; }
   releasePointerCapture(pointerId) { if (this.capturedPointer === pointerId) this.capturedPointer = null; }
   getBoundingClientRect() { return { left: 0, right: 300, width: 300, top: 0, bottom: 32, height: 32 }; }
@@ -1917,7 +1920,7 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
     documentElement: new FakeNode('html'), activeElement: null,
     createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: () => null, addEventListener() {},
+    querySelector: () => null, addEventListener() {}, removeEventListener() {},
   };
   const loads = [];
   const context = vm.createContext({
@@ -1932,8 +1935,8 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads.length, 1);
 
-  const period = createdNodes.findLast(node => node.tag === 'select' && node.getAttribute('aria-label') === 'Time period');
-  period.value = 'yesterday'; period.onchange({ isTrusted: true });
+  const yesterday = createdNodes.findLast(node => node.tag === 'button' && node.className === 'times-period-option' && node.textContent === 'Yesterday');
+  yesterday.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads.length, 2);
   loads[1].callback({ ok: true, data: { configured: true, recent: [] } });
@@ -1942,8 +1945,8 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
 
   assert.equal(createdNodes.some(node => node.textContent === 'Time load was superseded by a configuration change.'), false);
-  const selected = createdNodes.filter(node => node.tag === 'option' && node.selected).at(-1);
-  assert.equal(selected.value, 'yesterday');
+  const selected = createdNodes.findLast(node => node.tag === 'button' && node.className === 'times-period-trigger');
+  assert.equal(selected.textContent, 'Yesterday');
 });
 
 
@@ -2035,7 +2038,7 @@ test('tracking panel observes background sync completion without manual Sync', (
 });
 
 function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
-  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [];
+  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [], timelineUpdates = [];
   const documentListeners = new Map(), windowListeners = new Map(), runtimeListeners = [];
   const timeouts = new Map();
   let timeoutId = 0;
@@ -2049,11 +2052,12 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     }
     querySelectorAll(selector) { return this.walk().filter(node => node !== this && selector.split(',').some(value => node.matches?.(value.trim()))); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    removeEventListener(type) { delete this[`on${type}`]; }
     focus() { this.ownerDocument.activeElement = this; if (this.ownerDocument.panelShadow) this.ownerDocument.panelShadow.activeElement = this; }
     cloneNode() { const node = this.ownerDocument.createElement(this.tag); node.textContent = this.textContent; return node; }
     attachShadow() { const node = this.ownerDocument.createElement('shadow'); this.ownerDocument.panelShadow = node; return node; }
   }
-  const document = { activeElement: null, panelShadow: null, createElement(tag) { const node = new PanelNode(tag); node.ownerDocument = this; return node; }, createElementNS(_ns, tag) { return this.createElement(tag); }, createTextNode: text => ({ textContent: text }), querySelector: () => null, addEventListener: (type, listener) => documentListeners.set(type, listener) };
+  const document = { activeElement: null, panelShadow: null, createElement(tag) { const node = new PanelNode(tag); node.ownerDocument = this; return node; }, createElementNS(_ns, tag) { return this.createElement(tag); }, createTextNode: text => ({ textContent: text }), querySelector: () => null, addEventListener: (type, listener) => documentListeners.set(type, listener), removeEventListener: type => documentListeners.delete(type) };
   document.body = document.createElement('body');
   if (header) {
     const actions = document.createElement('div'), avatar = document.createElement('img');
@@ -2070,7 +2074,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
     ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
       timelineMounts.push(options);
-      return { update() {}, destroy() {} };
+      return { update(props) { timelineUpdates.push({ ...options, ...props }); }, destroy() {}, scrollToEnd() {}, setViewMode(mode) { options.onViewModeChange(mode); } };
     } : undefined },
   });
   vm.runInContext(recoverySource, context);
@@ -2078,6 +2082,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   vm.runInContext(header ? source : source.slice(0, end) + `
     globalThis.panel = { renderMenu, loadSelectedTimes, applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
+      panelHost() { return root; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
       mount(instance, view = null) { timelineInstance = instance; timelineWindow = { historyStart: 0, now: 1 }; if (view) timelineView = view; },
@@ -2095,7 +2100,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     };
   })();`, context);
   if (state && !header) context.panel.set(state, records, participants);
-  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timeouts, advance(ms) { now += ms; } };
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timelineUpdates, timeouts, advance(ms) { now += ms; } };
 }
 
 test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
@@ -3176,8 +3181,239 @@ function activityEntry(id, date, hour = '10', taskUrl = `https://example.com/${i
 function activityHarness(records = [], respond = null) {
   return dailyPanelHarness({ records, respond, now: new Date('2026-09-05T12:00:00').getTime(),
     pageUrl: 'chrome-extension://extension/src/times/times.html',
-    state: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
+    timelineEnabled: true, state: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
 }
+
+test('Activity opens the shared timeline by default, with its loaded records and a List fallback', () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-04')]);
+  h.mount(null, { start: new Date('2026-09-01T08:00:00').getTime(), end: new Date('2026-09-02T08:00:00').getTime() });
+  const root = h.renderActivity();
+  while (h.frames.length) h.frames.shift()();
+  assert.equal(h.timelineMounts.length, 1);
+  assert.ok(h.timelineMounts[0].view.start > new Date('2026-09-04T00:00:00').getTime(), 'Activity does not inherit the daily panel viewport');
+  assert.equal(h.timelineMounts[0].view.end - h.timelineMounts[0].view.start, 12 * 60 * 60 * 1000);
+  assert.deepEqual(Array.from(h.timelineMounts[0].items, item => item.id), ['entry:2', 'entry:1']);
+  assert.ok(root.querySelector('.times-controls').contains(root.querySelector('.times-toolbar')));
+  assert.ok(root.querySelector('.times-controls').contains(root.querySelector('.times-view-modes')));
+  assert.ok(root.querySelector('.task-timeline-host'));
+  assert.equal(root.querySelector('.times-results').hidden, true);
+  assert.equal(root.querySelector('.times-filter').hidden, true);
+  assert.equal(root.querySelector('.times-toolbar').hidden, true);
+  const modes = root.querySelector('.times-view-modes').children;
+  assert.deepEqual(Array.from(modes, node => node.textContent), ['Timeline', 'Calendar', 'List']);
+  modes[2].onclick({ isTrusted: true });
+  assert.equal(root.querySelector('.times-results').hidden, false);
+  assert.equal(root.querySelector('.times-filter').hidden, false);
+  assert.equal(root.querySelector('.times-toolbar').hidden, false);
+  assert.equal(root.querySelector('.popup-timeline-section').hidden, true);
+});
+
+test('Activity Period only loads List data and does not hide the running timer from Timeline', async () => {
+  const requests = [];
+  const active = { id: 'running', taskUrl: 'https://example.com/task', taskTitle: 'Running', startedAt: '2026-09-05T10:00:00Z', entryDate: '2026-09-05' };
+  const h = activityHarness([], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') requests.push(message.payload);
+    callback({ ok: true, data: { configured: true, recent: [], active, pendingWrites: [], remoteWriteConfirmed: true } });
+  });
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  h.set({ configured: true, active, pendingWrites: [] }, []);
+  const root = h.renderActivity(), modes = root.querySelector('.times-view-modes').children;
+  modes[2].onclick({ isTrusted: true });
+  root.querySelector('.times-period-trigger').onclick({ isTrusted: true });
+  root.querySelector('.times-period-options').children[2].onclick({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.at(-1).startDate, '2026-09-04');
+  modes[0].onclick({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(root.querySelector('.times-toolbar').hidden, true);
+  assert.equal(requests.at(-1).startDate, '2026-09-03');
+  assert.equal(requests.at(-1).endDate, '2026-09-05');
+  assert.equal(h.timelineItems(0, now).some(item => item.isRunning), true);
+  modes[2].onclick({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(root.querySelector('.times-toolbar').hidden, false);
+  assert.equal(root.querySelector('.times-period-trigger').textContent, 'Yesterday');
+  assert.equal(requests.at(-1).startDate, '2026-09-04');
+});
+
+test('Activity Period opens a compact anchored menu and selects a range without a native select popup', async () => {
+  const requests = [];
+  const h = activityHarness([], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') requests.push(message.payload);
+    callback({ ok: true, data: { configured: true, recent: [], active: null, pendingWrites: [] } });
+  });
+  const root = h.renderActivity();
+  root.querySelector('.times-view-modes').children[2].onclick({ isTrusted: true });
+  const picker = root.querySelector('.times-period');
+  const trigger = picker.querySelector('.times-period-trigger');
+  const options = picker.querySelector('.times-period-options');
+  assert.equal(picker.querySelector('select'), null);
+  assert.equal(options.hidden, true);
+  trigger.onclick({ isTrusted: true });
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  assert.equal(options.hidden, false);
+  h.documentListeners.get('pointerdown')({ composedPath: () => [h.panelHost()] });
+  assert.equal(options.hidden, false, 'a click within the closed extension shadow must not dismiss the menu');
+  assert.equal(options.children.length, 8);
+  trigger.onkeydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(options.hidden, true, 'Escape closes the menu from its trigger');
+  trigger.onclick({ isTrusted: true });
+  options.children[2].onclick({ isTrusted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.some(request => request.startDate === '2026-09-04'), true);
+  assert.equal(root.querySelector('.times-period-trigger').textContent.includes('Yesterday'), true);
+});
+
+test('Activity lazily loads older Timeline/Calendar windows without replacing the recent records or refetching a covered range', async () => {
+  const requests = [];
+  const old = activityEntry('3', '2026-08-25');
+  const h = activityHarness([activityEntry('1', '2026-09-05')], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') {
+      requests.push(message.payload);
+      callback({ ok: true, data: { configured: true, recent: message.payload.startDate <= '2026-08-25' ? [old] : [], remoteWriteConfirmed: true } });
+    } else callback({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
+  });
+  h.renderActivity(); while (h.frames.length) h.frames.shift()();
+  const onRangeRequest = h.timelineMounts[0].onRangeRequest;
+  assert.equal(typeof onRangeRequest, 'function');
+  await onRangeRequest({ start: new Date('2026-08-25T00:00:00').getTime(), end: new Date('2026-08-27T00:00:00').getTime() });
+  assert.equal(requests[0].startDate, '2026-08-25');
+  assert.equal(requests[0].endDate, '2026-09-02');
+  assert.deepEqual(Array.from(h.timelineItems(0, Date.parse('2026-09-05T12:00:00Z')), item => item.id), ['entry:3', 'entry:1']);
+  assert.ok(h.timelineUpdates.at(-1).historyStart <= new Date('2026-08-25T00:00:00').getTime());
+  await onRangeRequest({ start: new Date('2026-08-26T00:00:00').getTime(), end: new Date('2026-08-27T00:00:00').getTime() });
+  assert.equal(requests.length, 1, 'covered days are not fetched again');
+});
+
+test('editing a loaded older Calendar entry keeps all loaded records through state refresh and pending polling', async () => {
+  const current = activityEntry('1', '2026-09-05');
+  const older = activityEntry('3', '2026-08-25');
+  const saved = { ...older, _sha: 'saved', startedAt: '2026-08-25T10:10:00.000Z', endedAt: '2026-08-25T10:40:00.000Z' };
+  let settled = false;
+  const h = activityHarness([current], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true,
+      recent: message.payload.endDate >= '2026-09-05' ? [current, saved] : [older], remoteWriteConfirmed: true } });
+    else if (message.type === 'QUEUE_ENTRY_EDIT') callback({ ok: true, data: { operationId: 'older-edit' } });
+    else callback({ ok: true, data: { configured: true, active: null, recent: [current], pendingCount: settled ? 0 : 1,
+      pendingWrites: settled ? [] : [{ id: 'older-edit', operation: 'editEntry', status: 'pending' }] } });
+  });
+  const root = h.renderActivity(); while (h.frames.length) h.frames.shift()();
+  root.querySelector('.times-view-modes').children[1].onclick({ isTrusted: true });
+  await h.timelineMounts[0].onRangeRequest({ start: Date.parse('2026-08-25T00:00:00Z'), end: Date.parse('2026-08-27T00:00:00Z') });
+  const ids = () => Array.from(h.timelineItems(0, Date.parse('2026-09-05T12:00:00Z')), item => item.id);
+  assert.deepEqual(ids(), ['entry:3', 'entry:1']);
+  await h.timelineMounts[0].onEditCommit({ id: 'entry:3', kind: 'move',
+    startedAt: Date.parse('2026-08-25T10:10:00Z'), endedAt: Date.parse('2026-08-25T10:40:00Z') });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(ids(), ['entry:3', 'entry:1'], 'the limited state snapshot must not discard the older week');
+  assert.equal(h.recentEntry('3').startedAt, '2026-08-25T10:10:00.000Z');
+  const poll = [...h.timeouts.values()].find(timer => timer.delay === 500);
+  assert.ok(poll, 'pending edits schedule a state poll');
+  await poll.callback();
+  assert.deepEqual(ids(), ['entry:3', 'entry:1'], 'a pending poll must not discard the older week either');
+  settled = true;
+  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(ids(), ['entry:3', 'entry:1']);
+  assert.equal(h.recentEntry('3')._sha, 'saved', 'settlement refreshes the full loaded range for subsequent edits');
+});
+
+test('Activity does not merge a stale or partial older read after List changes its range', async () => {
+  const pending = [];
+  const current = activityEntry('1', '2026-09-05'), old = activityEntry('3', '2026-08-25');
+  const h = activityHarness([current], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') pending.push({ payload: message.payload, callback });
+    else callback({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
+  });
+  const root = h.renderActivity(); while (h.frames.length) h.frames.shift()();
+  const request = () => h.timelineMounts[0].onRangeRequest({
+    start: new Date('2026-08-25T00:00:00').getTime(), end: new Date('2026-08-27T00:00:00').getTime(),
+  });
+  const partial = request();
+  pending.shift().callback({ ok: true, data: { configured: true, partial: true, recent: [old] } });
+  await partial;
+  assert.equal(h.recentEntry('3'), undefined, 'a partial read must not mark missing days complete');
+  const stale = request();
+  root.querySelector('.times-view-modes').children[2].onclick({ isTrusted: true });
+  root.querySelector('.times-period-trigger').onclick({ isTrusted: true });
+  root.querySelector('.times-period-options').children[2].onclick({ isTrusted: true });
+  const list = pending.pop();
+  assert.equal(list.payload.startDate, '2026-09-04');
+  list.callback({ ok: true, data: { configured: true, recent: [current], remoteWriteConfirmed: true } });
+  pending.shift().callback({ ok: true, data: { configured: true, recent: [old], remoteWriteConfirmed: true } });
+  await stale;
+  assert.equal(h.recentEntry('3'), undefined, 'a late Calendar read cannot overwrite List data');
+});
+
+test('rejected expansion of an older Calendar entry retains the loaded newer week and mounted editor', async () => {
+  const older = activityEntry('3', '2026-08-25');
+  const current = activityEntry('2', '2026-09-05');
+  let rejectEdit = true;
+  const h = activityHarness([current], (message, callback) => {
+    if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [older], partial: false } });
+    else if (message.type === 'QUEUE_ENTRY_EDIT') callback(rejectEdit
+      ? { ok: false, error: { message: 'Edit rejected' } }
+      : { ok: true, data: { operationId: 'accepted-edit' } });
+    else callback({ ok: true, data: { configured: true, recent: [current], pendingWrites: [] } });
+  });
+  const root = h.renderActivity();
+  while (h.frames.length) h.frames.shift()();
+  root.querySelector('.times-view-modes').children[1].onclick({ isTrusted: true });
+  await h.timelineMounts[0].onRangeRequest({ start: Date.parse('2026-08-25T00:00:00Z'), end: Date.parse('2026-08-27T00:00:00Z') });
+  const section = root.querySelector('.popup-timeline-section');
+  await assert.rejects(h.timelineMounts[0].onEditCommit({ id: 'entry:3', kind: 'resize-right',
+    startedAt: new Date(older.startedAt).getTime(), endedAt: Date.parse('2026-08-25T10:45:00Z') }), /Edit rejected/);
+  while (h.frames.length) h.frames.shift()();
+  assert.equal(h.timelineMounts.length, 1, 'error feedback must not remount and truncate Calendar canvas');
+  assert.equal(root.querySelector('.popup-timeline-section'), section);
+  assert.ok(h.recentEntry('2'), 'the newer record remains in Activity state');
+  assert.ok(h.recentEntry('3'), 'the older rejected record remains in Activity state');
+  assert.match(section.querySelector('.timeline-edit-error').textContent, /Edit rejected/);
+  assert.equal(section.querySelector('.timeline-edit-error').hidden, false);
+  rejectEdit = false;
+  await h.timelineMounts[0].onEditCommit({ id: 'entry:3', kind: 'resize-right',
+    startedAt: new Date(older.startedAt).getTime(), endedAt: Date.parse('2026-08-25T10:50:00Z') });
+  assert.equal(section.querySelector('.timeline-edit-error').hidden, true, 'a new accepted edit clears stale failure feedback');
+});
+
+test('Activity opens Add time as a dismissible dialog without discarding its draft', () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05')]);
+  const root = h.renderActivity(), dialog = root.querySelector('.bulk-time-dialog');
+  const opener = root.querySelector('.times-add-button');
+  assert.equal(dialog.tag, 'dialog');
+  assert.equal(Boolean(dialog.open), false);
+  opener.onclick({ isTrusted: true });
+  assert.equal(dialog.open, true);
+  assert.equal(h.document.activeElement, dialog.querySelector('.bulk-time-input'));
+  const input = dialog.querySelector('.bulk-time-input');
+  input.value = '2026-08-23 https://example.com/task Draft 1'; input.oninput({});
+  dialog.querySelector('.bulk-time-cancel').onclick({ isTrusted: true });
+  assert.equal(dialog.open, false);
+  opener.onclick({ isTrusted: true });
+  assert.equal(dialog.querySelector('.bulk-time-input').value, input.value);
+});
+
+test('Activity search and Calendar/List switches update the mounted timeline without losing the selected view', () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-04')]);
+  const root = h.renderActivity(); while (h.frames.length) h.frames.shift()();
+  const modes = root.querySelector('.times-view-modes').children;
+  modes[1].onclick({ isTrusted: true });
+  assert.equal(modes[1].getAttribute('aria-pressed'), 'true');
+  assert.ok(h.timelineUpdates[0].view, 'Calendar receives the selected timeline window');
+  assert.ok(h.timelineMounts[0].view.focusedAt < h.timelineMounts[0].view.end, 'Calendar focuses within the selected period');
+  modes[2].onclick({ isTrusted: true });
+  assert.equal(root.querySelector('.times-filter').hidden, false);
+  const filter = root.querySelector('.times-filter').querySelector('input');
+  filter.value = 'Task 1'; filter.oninput();
+  assert.equal(root.querySelectorAll('.entry-record').length, 1);
+  modes[0].onclick({ isTrusted: true });
+  assert.equal(root.querySelector('.times-filter').hidden, true);
+  assert.equal(root.querySelector('.popup-timeline-section').hidden, false);
+  assert.equal(h.timelineMounts.length, 1, 'switching views keeps the editor mounted');
+  assert.deepEqual(Array.from(h.timelineMounts[0].items, item => item.id), ['entry:2', 'entry:1']);
+  assert.deepEqual(Array.from(h.timelineUpdates.at(-1).items, item => item.id), ['entry:2', 'entry:1']);
+  assert.equal(modes[0].getAttribute('aria-pressed'), 'true');
+});
 
 test('Activity groups nonconsecutive tasks by local record date with day totals and per-record identity', () => {
   const entries = [activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-05', '09'),
@@ -3199,6 +3435,7 @@ test('Activity displays and searches imported identities without creating a task
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const h = activityHarness([activityEntry('1', '2026-09-05', '08', identity)]);
   const root = h.renderActivity();
+  root.querySelector('.times-view-modes').children[2].onclick({ isTrusted: true });
   const row = root.querySelector('.entry-record');
   assert.equal(row.querySelector('.task-url').textContent, identity);
   assert.equal(row.querySelector('.task-title').tag, 'span');
@@ -3236,14 +3473,22 @@ test('Activity edits imported time and metadata without submitting a non-URL as 
   }
 });
 
-test('Imported identities cannot be restarted from the timeline', async () => {
+test('Activity restarts imported identities without inventing a GitHub URL', async () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const entry = activityEntry('1', '2026-09-05', '08', identity);
-  // activityEntry times are UTC, so `now` must be a UTC instant too; a local
-  // noon at UTC+4 or further east is not after the entry's start, so it is dropped.
+  const h = activityHarness([entry]);
   const now = Date.parse('2026-09-05T12:00:00Z');
-  const h = dailyPanelHarness({ records: [entry], now,
-    state: { configured: true, active: null, pendingWrites: [] } });
+  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, false);
+  assert.equal(await h.restartTimelineEntry(entry), true);
+  assert.equal(h.messages.find(message => message.type === 'SWITCH_TASK').taskUrl, identity);
+  assert.equal(h.timelineItems(0, now).some(item => item.isRunning && item.title === entry.taskTitle), true);
+});
+
+test('GitHub content timeline still rejects imported identities', async () => {
+  const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
+  const entry = activityEntry('1', '2026-09-05', '08', identity);
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const h = dailyPanelHarness({ records: [entry], now, state: { configured: true, active: null, pendingWrites: [] } });
   assert.equal(h.timelineItems(0, now)[0].isStartDisabled, true);
   assert.equal(await h.restartTimelineEntry(entry), false);
   assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
@@ -3287,7 +3532,7 @@ test('Activity distinguishes first use from an empty period using history and of
     assert.equal(empty.querySelectorAll('button').length, hasHistory ? 1 : 0);
     if (hasHistory) {
       await empty.querySelector('button').onclick({ isTrusted: true });
-      assert.equal(root.querySelector('.bulk-time').open, true);
+      assert.equal(root.querySelector('.bulk-time-dialog').open, true);
       assert.equal(h.document.activeElement, root.querySelector('.bulk-time-input'));
     }
   }
@@ -3295,6 +3540,7 @@ test('Activity distinguishes first use from an empty period using history and of
 
 test('Activity no-match action clears the filter and restores records', async () => {
   const h = activityHarness([activityEntry('1', '2026-09-05')]), root = h.renderActivity();
+  root.querySelector('.times-view-modes').children[2].onclick({ isTrusted: true });
   const filter = root.querySelector('.times-filter').querySelector('input');
   filter.value = 'absent'; filter.oninput({});
   const empty = root.querySelector('.activity-empty');

@@ -1233,16 +1233,44 @@ export class TrackerService {
 
   async loadRecent(limit = 50) { return (await this.loadMenuData(limit)).recent; }
 
+  async missingQueuedEntries(requests) {
+    const state = await this.store.getState();
+    const missing = requests.filter(request => !(state.recentCache ?? []).some(entry =>
+      entry.id === request.original?.id && entry._path === request.path));
+    const files = new Map(await Promise.all([...new Set(missing.map(request => request.path))]
+      .map(async path => [path, await this.readMonthly(path)])));
+    const found = new Map();
+    for (const request of missing) {
+      const file = files.get(request.path);
+      const position = locateEntry(file.entries, request.index, request.original);
+      if (position < 0) throw new TrackerConflictError('This time entry changed after you opened it. Reload before saving.');
+      found.set(`${request.path}\u0000${request.original.id}`, file.entries[position]);
+    }
+    return found;
+  }
+
+  queuedEntry(state, request, missing) {
+    const cached = (state.recentCache ?? []).find(entry => entry.id === request.original?.id && entry._path === request.path);
+    if (cached) return cached;
+    const remote = missing.get(`${request.path}\u0000${request.original?.id}`);
+    return remote && overlayPendingEntries([remote], state.pendingWrites ?? [])
+      .find(entry => entry.id === remote.id && entry._path === request.path);
+  }
+
   async queueEntryEdit({ path, originalSha, index, original, edits }) {
     const queuedAt = this.clock();
+    const missing = await this.missingQueuedEntries([{ path, originalSha, index, original }]);
     return this.mutateState(state => {
-      const cached = (state.recentCache ?? []).find(entry => entry.id === original?.id && entry._path === path);
+      const cached = this.queuedEntry(state, { path, original }, missing);
       if (!cached) throw new TrackerConflictError('This time entry is no longer available locally. Reload before editing.');
       const updated = applyEntryEdits(cached, edits, editClock(this.clock, cached));
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editEntry'
         && operation.request?.path === path && operation.request?.original?.id === original.id);
-      const request = existing?.request ?? { path, originalSha, index, original: stripInternal(cached), edits: {} };
+      const request = existing?.request ?? {
+        path, originalSha: cached._sha ?? originalSha, index: cached._index ?? index,
+        original: stripInternal(cached), edits: {},
+      };
       request.edits = { ...request.edits, ...edits };
       const operation = existing ?? {
         operation: 'editEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
@@ -1261,13 +1289,14 @@ export class TrackerService {
 
   async queueEntryDelete({ path, originalSha, index, original }) {
     const queuedAt = this.clock();
+    const missing = await this.missingQueuedEntries([{ path, originalSha, index, original }]);
     return this.mutateState(state => {
-      const cached = (state.recentCache ?? []).find(entry => entry.id === original?.id && entry._path === path);
+      const cached = this.queuedEntry(state, { path, original }, missing);
       if (!cached) throw new TrackerConflictError('This time entry is no longer available locally. Reload before deleting.');
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const operation = {
         operation: 'deleteEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
-        stage: 'deleteEntry', request: { path, originalSha, index, original: stripInternal(cached) },
+        stage: 'deleteEntry', request: { path, originalSha: cached._sha ?? originalSha, index: cached._index ?? index, original: stripInternal(cached) },
         queuedAt: queuedAt.toISOString(), lastError: '',
       };
       pendingWrites.push(operation);
@@ -1282,12 +1311,15 @@ export class TrackerService {
   async queueEntriesEdit({ entries }) {
     const queuedAt = this.clock();
     if (!Array.isArray(entries) || entries.length < 1 || entries.length > 50) throw new Error('One to fifty linked time entries are required');
+    const missing = await this.missingQueuedEntries(entries);
     return this.mutateState(state => {
-      const cachedByIdentity = new Map((state.recentCache ?? []).map(entry => [`${entry._path}\u0000${entry.id}`, entry]));
+      const cachedByIdentity = new Map(entries.map(request => [
+        `${request.path}\u0000${request.original?.id}`, this.queuedEntry(state, request, missing),
+      ]));
       const requestEntries = entries.map(request => {
         const cached = cachedByIdentity.get(`${request?.path}\u0000${request?.original?.id}`);
         if (!cached) throw new TrackerConflictError('A linked time entry is no longer available locally. Reload before editing.');
-        return { ...request, original: stripInternal(cached) };
+        return { ...request, originalSha: cached._sha ?? request.originalSha, index: cached._index ?? request.index, original: stripInternal(cached) };
       });
       const identities = new Set(requestEntries.map(request => `${request.path}\u0000${request.original.id}`));
       if (identities.size !== requestEntries.length) throw new Error('Linked time entries must be distinct');

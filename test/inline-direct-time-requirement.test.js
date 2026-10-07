@@ -10,12 +10,14 @@ const contentSender = { url: 'https://github.com/acme/app/issues/7', tab: { id: 
 const extensionSender = { url: `${origin}src/popup/popup.html` };
 
 test('recent rows keep direct Start/Stop editing without wheel or step controls', () => {
+  const directTimeEditor = source.slice(source.indexOf('  function timePicker('), source.indexOf('  function timestampAtOriginalOffset('))
+    + source.slice(source.indexOf('  function inlineTimeEditor('), source.indexOf('  function beginMetadataEdit('));
   assert.match(source, /function inlineTimeEditor\(/);
   assert.match(source, /inline-time-value/);
   assert.match(source, /startPicker = timePicker\('Start'[\s\S]*compact: true/);
   assert.match(source, /stopPicker = timePicker\('Stop'[\s\S]*compact: true/);
-  assert.doesNotMatch(source, /addEventListener\('wheel'|WHEEL_THRESHOLD|wheelRemainder|time-step/);
-  assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown/);
+  assert.doesNotMatch(directTimeEditor, /addEventListener\('wheel'|WHEEL_THRESHOLD|wheelRemainder|time-step/);
+  assert.doesNotMatch(directTimeEditor, /ArrowUp|ArrowDown|PageUp|PageDown/);
 });
 
 test('Activity begins with a compact range and reveals direct time editing on demand', () => {

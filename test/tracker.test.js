@@ -268,6 +268,101 @@ test('queued completed-entry edit updates local cache immediately and saves late
   assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].endedAt, '2026-08-18T10:00:00.000Z');
 })
 
+test('an older Calendar entry outside Recent can be queued and synced without replacing newer cached work', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-09-28T15:34:34.000Z', '2026-09-28T15:43:34.000Z');
+  const newer = entry('2026-10-05T10:00:00.000Z', '2026-10-05T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'september-sha');
+  store.value.recentCache = [{ ...newer, _path: 'times/2026-10/alice.jsonl', _sha: 'october-sha', _index: 0 }];
+  ensureTaskIndexFixture(github);
+  const tracker = service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') });
+
+  const accepted = await tracker.queueEntryEdit({
+    path, originalSha: 'september-sha', index: 0, original,
+    edits: { endedAt: '2026-09-28T15:53:34.000Z' },
+  });
+  assert.ok(accepted.operationId);
+  assert.equal(store.value.recentCache.some(item => item.id === newer.id), true);
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-09' })[0].endedAt, '2026-09-28T15:53:34.000Z');
+});
+
+test('an older pending edit remains supersedable after service-worker restart and cache eviction', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-09-28T15:34:34.000Z', '2026-09-28T15:43:34.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'september-sha');
+  ensureTaskIndexFixture(github);
+  const first = service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') });
+  const request = { path, originalSha: 'september-sha', index: 0, original };
+  const accepted = await first.queueEntryEdit({ ...request, edits: { endedAt: '2026-09-28T15:53:34.000Z' } });
+  store.value.recentCache = [];
+  const restarted = service({ github, store, clock: () => new Date('2026-10-07T12:00:01.000Z') });
+  const superseded = await restarted.queueEntryEdit({ ...request, edits: { endedAt: '2026-09-28T16:03:34.000Z' } });
+  assert.equal(superseded.operationId, accepted.operationId);
+  assert.equal(store.value.pendingWrites.length, 1);
+  await restarted.syncPending();
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-09' })[0].endedAt, '2026-09-28T16:03:34.000Z');
+  assert.equal(store.value.pendingWrites.length, 0);
+});
+
+test('uncached edits rebase from the verified monthly record and reject an absent or foreign entry', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-09-28T15:34:34.000Z', '2026-09-28T15:43:34.000Z');
+  const changed = { ...original, description: 'Updated elsewhere', updatedAt: '2026-10-07T10:00:00.000Z' };
+  seedText(github, path, serializeMonthlyRecords([changed]), 'newer-sha');
+  ensureTaskIndexFixture(github);
+  const tracker = service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') });
+  const request = { path, originalSha: 'old-sha', index: 5, original: { ...original, description: 'Untrusted old text' }, edits: { endedAt: '2026-09-28T15:53:34.000Z' } };
+  await assert.rejects(tracker.queueEntryEdit({ ...request, original: { ...original, id: deterministicRecordId('2026-09-29T00:00:00.000Z') } }), /changed after you opened it/);
+  await assert.rejects(tracker.queueEntryEdit({ ...request, path: 'times/2026-09/bob.jsonl' }), /path|user|login/i);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+
+  await tracker.queueEntryEdit(request);
+  assert.equal(store.value.pendingWrites[0].request.originalSha, 'newer-sha');
+  assert.equal(store.value.pendingWrites[0].request.index, 0);
+  assert.equal(store.value.pendingWrites[0].request.original.description, 'Updated elsewhere');
+  await tracker.syncPending();
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-09' });
+  assert.equal(saved.endedAt, request.edits.endedAt);
+  assert.equal(saved.description, 'Updated elsewhere');
+});
+
+test('an uncached older entry can be deleted without losing newer cached entries', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-09-28T15:34:34.000Z', '2026-09-28T15:43:34.000Z');
+  const newer = entry('2026-10-05T10:00:00.000Z', '2026-10-05T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'september-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...newer, _path: 'times/2026-10/alice.jsonl', _sha: 'october-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') });
+  await tracker.queueEntryDelete({ path, originalSha: 'september-sha', index: 0, original });
+  assert.equal(store.value.recentCache[0].id, newer.id);
+  await tracker.syncPending();
+  assert.equal(github.files.has(path), false);
+  assert.equal(store.value.pendingWrites.length, 0);
+});
+
+test('linked boundary edits can queue two older entries missing from Recent', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-09/alice.jsonl';
+  const first = entry('2026-09-28T15:34:34.000Z', '2026-09-28T15:43:34.000Z');
+  const second = entry('2026-09-28T15:43:34.000Z', '2026-09-28T16:20:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'september-sha');
+  ensureTaskIndexFixture(github);
+  const tracker = service({ github, store, clock: () => new Date('2026-10-07T12:00:00.000Z') });
+  await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'september-sha', index: 0, original: first, edits: { endedAt: '2026-09-28T15:53:34.000Z' } },
+    { path, originalSha: 'september-sha', index: 1, original: second, edits: { startedAt: '2026-09-28T15:53:34.000Z' } },
+  ] });
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-09' });
+  assert.equal(saved[0].endedAt, '2026-09-28T15:53:34.000Z');
+  assert.equal(saved[1].startedAt, '2026-09-28T15:53:34.000Z');
+});
+
 test('queued completed-entry deletion disappears locally immediately and syncs later', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');

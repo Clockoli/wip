@@ -34,6 +34,7 @@ async function mount(page, overrides = {}) {
       items,
       rows: overrides.rows || [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }],
       now,
+      weeklyCalendar: overrides.weeklyCalendar,
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
       onStart(item) {
         window.__lastStartedTitle = item.title;
@@ -105,6 +106,180 @@ test('switches Timeline and Calendar without losing running state', async ({ pag
   expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '7px', shadow: 'none' });
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
   expect(await page.evaluate(() => window.__timeline.getViewMode())).toBe('timeline');
+});
+
+test('Calendar navigation requests an older range and opens it after the timeline domain expands', async ({ page }) => {
+  const now = await mount(page);
+  await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    const timeline = window.__timeline.__timeline;
+    timeline.setCalendarDate(timeline.domainStart);
+    window.__timeline.update({ onRangeRequest: async range => {
+      window.__requestedRange = range;
+      window.__timeline.update({ historyStart: range.start });
+    } });
+  });
+  await page.locator('#timeline .calendar-prev').click();
+  await expect.poll(() => page.evaluate(() => window.__requestedRange?.start)).toBeLessThan(now - 7 * 24 * HOUR);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getCalendarRange().start))
+    .toBe(await page.evaluate(() => window.__requestedRange.start));
+});
+
+test('Activity Calendar starts on a Monday-to-Sunday week and only horizontal scrolling loads the previous week', async ({ page }) => {
+  const now = await mount(page, { weeklyCalendar: true });
+  await page.evaluate(() => {
+    const adapter = window.__timeline;
+    adapter.setViewMode('calendar');
+    const timeline = adapter.__timeline;
+    adapter.update({ onRangeRequest: async range => {
+      (window.__calendarRanges ||= []).push(range);
+      adapter.update({ historyStart: range.start });
+    } });
+    timeline.calendarViewport.scrollTop = 0;
+  });
+  const week = await page.evaluate(() => window.__timeline.__timeline.getCalendarRange());
+  expect(week.days).toBe(7);
+  expect(new Date(week.start).getDay()).toBe(1);
+  expect(week.end - week.start).toBe(7 * 24 * HOUR);
+  await page.locator('#timeline .calendar-viewport').hover();
+  await page.mouse.wheel(0, -120);
+  expect(await page.evaluate(() => window.__timeline.__timeline.getCalendarRange().start)).toBe(week.start);
+  expect(await page.evaluate(() => window.__calendarRanges?.length || 0)).toBe(0);
+  await page.evaluate(() => { window.__timeline.__timeline.calendarViewport.scrollLeft = 0; });
+  await page.mouse.wheel(-220, 0);
+  await expect.poll(() => page.evaluate(() => window.__calendarRanges?.length)).toBe(1);
+  expect(await page.evaluate(() => window.__calendarRanges[0].start)).toBe(week.start - 7 * 24 * HOUR);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getCalendarRange().start))
+    .toBe(week.start - 7 * 24 * HOUR);
+  expect(await page.evaluate(() => window.__timeline.__timeline.calendarDayCount)).toBe(14);
+  expect(await page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft)).toBeGreaterThan(0);
+  expect(now).toBeGreaterThan(week.start);
+});
+
+test('Calendar scroll moves smoothly through retained entries and extends dates at the left edge', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  await page.evaluate(() => {
+    const adapter = window.__timeline;
+    adapter.setViewMode('calendar');
+    adapter.update({ onRangeRequest: async range => {
+      (window.__calendarRanges ||= []).push(range);
+      window.__items = [...window.__items, {
+        id: `older:${range.start}`, url: 'https://example.com/older', title: 'Older entry',
+        startedAt: range.start + 10 * 3_600_000, endedAt: range.start + 11 * 3_600_000,
+        rowId: 'one', isEditable: true,
+      }];
+      adapter.update({ historyStart: range.start, items: window.__items });
+    } });
+  });
+  const viewport = page.locator('#timeline .calendar-viewport');
+  await viewport.hover();
+  await page.evaluate(() => { window.__timeline.__timeline.calendarViewport.scrollLeft = 0; });
+  await page.mouse.wheel(-220, 0);
+  await expect.poll(() => page.evaluate(() => window.__calendarRanges?.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return timeline.calendarViewport.scrollLeft < timeline._calendarMetrics.dayWidth * 7;
+  })).toBeTruthy();
+  const older = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return {
+      days: timeline.calendarDayCount,
+      width: timeline._calendarMetrics.dayWidth,
+      left: timeline.calendarViewport.scrollLeft,
+      names: [...timeline.calendarCanvas.querySelectorAll('.calendar-task')].map(item => item.textContent),
+    };
+  });
+  expect(older.days).toBe(14);
+  expect(older.left).toBeGreaterThan(older.width * 5);
+  expect(older.left).toBeLessThan(older.width * 7);
+  expect(older.names.some(name => name.includes('Older entry'))).toBeTruthy();
+  expect(older.names.some(name => name.includes('Task A'))).toBeTruthy();
+  await page.mouse.wheel(-120, 0);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft))
+    .toBeLessThan(older.left - 80);
+  const scrolled = await page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft);
+  expect(scrolled).toBeGreaterThan(older.left - 160);
+  await page.mouse.wheel(120, 0);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft))
+    .toBeGreaterThan(scrolled + 80);
+  expect(await page.evaluate(() => window.__calendarRanges.length)).toBe(1);
+  await page.mouse.wheel(-2000, 0);
+  await expect.poll(() => page.evaluate(() => window.__calendarRanges.length)).toBe(2);
+  const extended = await page.evaluate(() => ({
+    days: window.__timeline.__timeline.calendarDayCount,
+    count: window.__timeline.__timeline.calendarCanvas.querySelectorAll('.calendar-task').length,
+    earlier: window.__calendarRanges[1].start < window.__calendarRanges[0].start,
+  }));
+  expect(extended.days).toBe(21);
+  expect(extended.earlier).toBeTruthy();
+  expect(extended.count).toBeGreaterThan(older.names.length);
+  const titleAfterRefresh = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline._renderCalendar();
+    return {
+      title: timeline.calendarTitle.textContent,
+      visibleWeek: timeline._formatCalendarRangeTitle(timeline._visibleCalendarWeekStart(timeline._calendarMetrics), 7),
+    };
+  });
+  expect(titleAfterRefresh.title).toBe(titleAfterRefresh.visibleWeek);
+});
+
+test('Calendar touch uses native horizontal scrolling and extends dates at the edge', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    window.__touchRanges = [];
+    window.__timeline.update({ onRangeRequest: async range => { window.__touchRanges.push(range); } });
+    window.__timeline.__timeline.calendarViewport.scrollLeft = 120;
+  });
+  const box = await page.locator('#timeline .calendar-viewport').boundingBox();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+  const x = box.x + Math.min(200, box.width / 2);
+  const y = box.y + Math.min(200, box.height / 2);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+  for (let step = 1; step <= 8; step++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + step * 24, y }] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.calendarDayCount)).toBe(14);
+  expect(await page.evaluate(() => window.__touchRanges.length)).toBe(1);
+  expect(await page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft)).toBeGreaterThan(0);
+});
+
+test('Timeline scrolling past its left edge loads another window without jumping the visible date', async ({ page }) => {
+  const now = await mount(page);
+  await page.evaluate(() => {
+    const adapter = window.__timeline;
+    adapter.update({ historyStart: Date.now() - 7 * 24 * 3_600_000, onRangeRequest: async range => {
+      (window.__requestedRanges ||= []).push(range);
+      window.__visibleAtRequest = adapter.__timeline._visibleStartTime();
+      adapter.update({ historyStart: range.start });
+    } });
+    const timeline = adapter.__timeline;
+    timeline._setScrollLeft(0);
+    window.__visibleBefore = timeline._visibleStartTime();
+  });
+  await page.locator('#timeline .viewport').hover();
+  await page.mouse.wheel(0, -500);
+  await expect.poll(() => page.evaluate(() => window.__requestedRanges?.length)).toBe(1);
+  const state = await page.evaluate(() => ({
+    requestedStart: window.__requestedRanges[0].start,
+    visibleBefore: window.__visibleBefore,
+    visibleAtRequest: window.__visibleAtRequest,
+    visibleAfter: window.__timeline.__timeline._visibleStartTime(),
+    left: window.__timeline.__timeline._scrollLeftNow(),
+  }));
+  expect(state.requestedStart).toBeLessThan(now - 7 * 24 * HOUR);
+  expect(Math.abs(state.visibleAfter - state.visibleAtRequest)).toBeLessThanOrEqual(3 * HOUR);
+  expect(state.left).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline._setScrollLeft(0);
+  });
+  await page.mouse.wheel(0, -500);
+  await expect.poll(() => page.evaluate(() => window.__requestedRanges?.length)).toBe(2);
+  expect(await page.evaluate(() => window.__requestedRanges[1].start)).toBeLessThan(state.requestedStart);
 });
 
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {
@@ -289,6 +464,44 @@ test('Calendar resize bars stay visible on selection after the pointer leaves', 
   await page.mouse.move(0, 0);
   await expect(block).toHaveClass(/selected/);
   await expect.poll(opacities).toEqual([1, 1]);
+});
+
+test('a short Calendar entry keeps its details and supports moving and resizing', async ({ page }) => {
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  const at = (hours, minutes) => base.getTime() + (hours * 60 + minutes) * 60_000;
+  await mount(page, { weeklyCalendar: true, items: [
+    { id: 'entry:before', url: 'https://example.com/a', title: 'Before', startedAt: at(10, 46), endedAt: at(15, 11), rowId: 'one', isEditable: true },
+    { id: 'entry:short', url: 'https://example.com/b', title: 'Short', startedAt: at(15, 34), endedAt: at(15, 43), rowId: 'one', isEditable: true },
+    { id: 'entry:after', url: 'https://example.com/c', title: 'After', startedAt: at(16, 30), endedAt: at(17, 0), rowId: 'one', isEditable: true },
+  ] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short"]');
+  await short.scrollIntoViewIfNeeded();
+  await short.click();
+  const root = page.locator('#timeline');
+  await page.locator('#timeline .calendar-task[data-task-key="entry:before"]').hover();
+  await expect.poll(() => root.evaluate(element => element.shadowRoot.querySelector('.details-info')?.textContent))
+    .toContain('Short');
+  await expect.poll(() => short.locator('.calendar-resize-handle.start').evaluate(handle => handle.getBoundingClientRect().height))
+    .toBeGreaterThanOrEqual(10);
+  await short.hover();
+  const rect = await short.boundingBox();
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2 + 20, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toEqual([['edit', 'entry:short', 'move']]);
+  for (const [edge, delta, kind] of [['start', -10, 'resize-left'], ['end', 10, 'resize-right']]) {
+    const grip = short.locator(`.calendar-resize-handle.${edge}`);
+    const box = await grip.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + delta, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit')))
+      .toContainEqual(['edit', 'entry:short', kind]);
+  }
 });
 
 test('Timeline shows darker end grips without top or bottom bands', async ({ page }) => {
@@ -1161,7 +1374,8 @@ test('a newly started running task is visible without extending past supplied no
   });
   expect(state.taskEnd).toBe(state.now);
   expect(state.domainEnd).toBe(state.now);
-  expect(state.visibleEnd).toBe(state.now);
+  expect(state.visibleEnd).toBeGreaterThan(state.now);
+  expect(state.visibleEnd - state.now).toBeLessThanOrEqual(86_400_000);
   expect(state.calendarTasks).toBe(1);
 });
 
