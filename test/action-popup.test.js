@@ -74,6 +74,21 @@ test('toolbar preserves delivery and HTTP injection order and falls back on eith
   }
 });
 
+test('activating another tab dismisses panels in inactive tabs even without page visibility events', async () => {
+  assert.match(worker, /chrome\.tabs\.onActivated\.addListener\(/);
+  const calls = [];
+  const { default: vm } = await import('node:vm');
+  const context = vm.createContext({ chrome: { tabs: {
+    query: async () => [{ id: 11, active: false }, { id: 12, active: true }, { id: 13, active: false }],
+    sendMessage: async (id, message) => { calls.push({ id, message }); if (id === 13) throw new Error('No receiver'); },
+  } } });
+  const helper = worker.match(/async function dismissInactivePanels\([^]*?\n\}/)?.[0];
+  assert.ok(helper);
+  vm.runInContext(helper, context);
+  await context.dismissInactivePanels({ tabId: 12, windowId: 4 });
+  assert.deepEqual(calls.map(({ id, message }) => [id, message.type]), [[11, 'DISMISS_FULL_WIDTH_POPUP'], [13, 'DISMISS_FULL_WIDTH_POPUP']]);
+});
+
 test('action panel opens from local state and lets handled Escape stay inside the editor', () => {
   const start = content.indexOf('  async function toggleFullWidthPopup()');
   const end = content.indexOf('\n  function renderUi()', start);
