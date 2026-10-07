@@ -477,7 +477,6 @@ test('a short Calendar entry keeps its details and supports moving and resizing'
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const short = page.locator('#timeline .calendar-task[data-task-key="entry:short"]');
-  await short.scrollIntoViewIfNeeded();
   await short.click();
   const root = page.locator('#timeline');
   await page.locator('#timeline .calendar-task[data-task-key="entry:before"]').hover();
