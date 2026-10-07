@@ -64,7 +64,8 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
   const kind = assertMessageAllowed('START', sender, extensionOrigin);
   const requested = normalizeTaskUrl(payloadTaskUrl);
   if (kind === 'content') {
-    const pageTaskUrl = normalizeTaskUrl(sender.url || sender.tab?.url || '');
+    // GitHub changes the tab URL in-place; sender.url can still be the original document URL.
+    const pageTaskUrl = normalizeTaskUrl(sender.tab?.url || sender.url || '');
     if (pageTaskUrl !== requested) throw new Error('Requested task URL must match the current page');
   }
   return requested;

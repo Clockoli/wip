@@ -636,10 +636,13 @@ test('saving feedback clears on rejection and follows the entry into Calendar', 
 
 test('pending entries show saving feedback, permit edits and still block deletion', async ({ page }) => {
   await mount(page);
-  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:b"]').click());
   const block = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await block.click();
+  await expect(block).toBeFocused();
+  await expect(block).toHaveClass(/selected/);
   await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
   await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
   await page.keyboard.press('Delete');
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
   await page.evaluate(() => {
@@ -647,6 +650,17 @@ test('pending entries show saving feedback, permit edits and still block deletio
     window.__timeline.update({ items: window.__items, now: Date.now() });
   });
   await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+});
+
+test('focused task keeps keyboard focus when timeline items render again', async ({ page }) => {
+  await mount(page);
+  const block = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await block.click();
+  await expect(block).toBeFocused();
+  await page.evaluate(() => window.__timeline.update({ items: window.__items }));
+  await expect(block).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
 });
 
 test('details descriptions expose a green check and save when it is clicked', async ({ page }) => {

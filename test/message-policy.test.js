@@ -113,6 +113,20 @@ test('content task switches remain bound to the current page URL', () => {
   assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
 });
 
+test('page-bound Start uses the current tab URL after GitHub SPA navigation', () => {
+  const sender = { url: issue.url, tab: { id: 1, url: 'https://github.com/acme/frontend/issues/124?notification_referrer_id=1' } };
+  const current = 'https://github.com/acme/frontend/issues/124';
+  assert.equal(taskUrlForStart(current, sender, origin), current);
+  assert.deepEqual(issueForStart({ ...issue, number: 124, url: current }, sender, origin).url, current);
+  assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/125', sender, origin), /current page/i);
+});
+
+test('page Start does not fall back to the original document when the tab has left the task', () => {
+  const sender = { url: issue.url, tab: { id: 1, url: 'https://github.com/acme/frontend' } };
+  assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);
+});
+
 test('an imported identity cannot be started or switched from an extension page', () => {
   assert.throws(() => taskUrlForStart('acme/project/imported-task', extension, origin), /task URL/i);
   assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), /task URL/i);
