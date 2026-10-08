@@ -13,7 +13,7 @@
     "test:coverage": "c8 --all --include='src/**/*.js' --exclude='src/content/task-timeline-component.js' --reporter=text --reporter=json-summary node --test test/*.test.js",
     "test:clockify:functional": "playwright test test/clockify-migration.functional.spec.js --workers=1",
     "test:options:functional": "playwright test test/options-access.functional.spec.js --workers=1",
-    "test:timeline": "npm run test:all --workspace task-timeline-component-clockoli && npm run build:timeline && git diff --exit-code -- src/content/task-timeline-component.js",
+    "test:timeline": "node scripts/verify-timeline-build.js && npm run test:all --workspace task-timeline-component-clockoli",
     "build:timeline": "npm run build --workspace task-timeline-component-clockoli",
     "check": "node scripts/validate-extension.js && node scripts/validate-release-inventory.js && node --check src/background/service-worker.js && node --check src/content/task-timeline-component.js && node --check src/content/github.js && node --check src/options/options.js && node --check src/reports/reports.js && node --check src/tasks/tasks.js",
     "package": "python3 scripts/build-release.py"

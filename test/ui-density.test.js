@@ -30,7 +30,7 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
 test('Activity defaults to Last 3 days and puts filter before period on one row', () => {
   assert.match(content, /let timesPeriod = 'last-three-days'/);
   assert.match(content, /timesPeriod === 'last-three-days'[\s\S]*move\(-2\)/);
-  const page = renderer('renderTimesPage()', 'renderMenu()');
+  const page = renderer('renderTimesPage(preservedTimeline = null)', 'renderMenu()');
   assert.match(page, /\['last-three-days', 'Last 3 days'\]/);
   assert.ok(page.indexOf("filterLabel.className = 'times-filter'") < page.indexOf('periodLabel.append(period)'), 'filter must be created before period');
   assert.match(content, /\.times-toolbar\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/s);

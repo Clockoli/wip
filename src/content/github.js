@@ -34,6 +34,8 @@
   let fullWidthPopupOpen = false;
   let timelineWindowTimer = null;
   let timelineView = null;
+  let activityTimelineView = null;
+  let activityViewMode = 'timeline';
   let timelineViewMode = 'timeline';
   let timelineGraphicViewMode = 'timeline';
   let timelineInstance = null;
@@ -69,6 +71,12 @@
   let recentLoad = null;
   let recentLoadId = 0;
   let timesLoadId = 0;
+  let activityCalendarLoadId = 0;
+  let activityCalendarStatusText = '';
+  let calendarPeriodFocus = null;
+  let activityCalendarOpened = false;
+  let suppressCalendarNavigate = false;
+  const calendarOnlyKeys = new Set();
   let activeInlineKey = null;
   let timesPeriod = 'last-three-days';
   let timesStartDate = '';
@@ -132,6 +140,7 @@
       && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
       && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
   }
+  function trackableTaskIdentityOf(value) { return timesMode || popupMode ? storedTaskIdentityOf(value) : taskUrlOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
@@ -180,7 +189,7 @@
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
   function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
-  function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+  function sameTask(left, right) { const a = storedTaskIdentityOf(left), b = storedTaskIdentityOf(right); return Boolean(a && b && a === b); }
   function activeDescriptionValue(active = pageState.active) {
     if (!active) return '';
     const id = active.id || active.startedAt;
@@ -662,6 +671,68 @@
     throw new Error('Choose a valid custom date range.');
   }
 
+  function calendarWindowForPeriod({ startDate, endDate }) {
+    const start = new Date(`${startDate}T12:00:00`), end = new Date(`${endDate}T12:00:00`);
+    start.setHours(0, 0, 0, 0);
+    end.setDate(end.getDate() + 1);
+    end.setHours(0, 0, 0, 0);
+    return { start: start.getTime(), end: end.getTime() };
+  }
+
+  function focusActivityCalendarPeriod(range = calendarPeriodFocus) {
+    if (!timesMode || activityViewMode !== 'calendar' || !timelineInstance?.setCalendarRange) return;
+    if (!range && !activityCalendarOpened) range = timesRange();
+    if (!range) return;
+    suppressCalendarNavigate = true;
+    try { timelineInstance.setCalendarRange(calendarWindowForPeriod(range)); }
+    finally { suppressCalendarNavigate = false; }
+    calendarPeriodFocus = null;
+    activityCalendarOpened = true;
+  }
+
+  function activityRecordDate(entry) {
+    return entry.entryDate || localDateValue(new Date(entry.startedAt));
+  }
+
+  function activityRecordKey(entry) {
+    return `${entry.destinationId || ''}\n${entry._path}\n${entry.id}`;
+  }
+
+  function mergeActivityRecords(incoming, range, partial = false) {
+    const inRange = entry => activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate;
+    const records = new Map(recent.filter(entry => partial || !inRange(entry)).map(entry => [activityRecordKey(entry), entry]));
+    for (const entry of incoming) records.set(activityRecordKey(entry), entry);
+    return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+  }
+
+  async function loadActivityCalendarWeek(range) {
+    if (!timesMode || !range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
+    const loadId = ++activityCalendarLoadId;
+    const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
+    const setStatus = text => {
+      activityCalendarStatusText = text;
+      const status = shadow?.querySelector('.times-calendar-status');
+      if (status) status.textContent = text;
+    };
+    setStatus('Loading week…');
+    try {
+      const data = await send({ type: 'LOAD_TIMES', payload });
+      if (loadId !== activityCalendarLoadId) return;
+      if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
+      recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
+      const listRange = timesRange();
+      for (const entry of data.recent) {
+        const date = activityRecordDate(entry);
+        if (date < listRange.startDate || date > listRange.endDate) calendarOnlyKeys.add(activityRecordKey(entry));
+      }
+      refreshMountedTimeline();
+      setStatus(data.partial ? 'Some records could not be loaded.' : '');
+      if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
+    } catch (error) {
+      if (loadId === activityCalendarLoadId) { setStatus('Could not load this week.'); setError(error); }
+    }
+  }
+
   function applyTrackedTotals(data) {
     pageState = { ...pageState, todayTrackedMs: data?.todayTrackedMs ?? null, weekTrackedMs: data?.weekTrackedMs ?? null,
       remoteWriteConfirmed: data?.remoteWriteConfirmed === true, summaryError: data?.summaryError ?? null };
@@ -737,7 +808,16 @@
   }
 
   function applyMenuData(data, fresh = true) {
-    recent = Array.isArray(data) ? data : data?.recent ?? [];
+    const incoming = Array.isArray(data) ? data : data?.recent ?? [];
+    recent = timesMode && recentLoaded ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial)) : incoming;
+    if (timesMode && recentLoaded) {
+      const range = timesRange();
+      for (const entry of recent) {
+        const date = activityRecordDate(entry), key = activityRecordKey(entry);
+        if (date < range.startDate || date > range.endDate) calendarOnlyKeys.add(key);
+        else calendarOnlyKeys.delete(key);
+      }
+    }
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
     if (!Array.isArray(data)) {
       pageState = reconcileTimelineAcceptedActive({
@@ -1157,7 +1237,7 @@
     return next;
   }
 
-  function refreshRecent(force = false) {
+  function refreshRecent(force = false, { calendarFocus = null } = {}) {
     if (recentLoad && !force) return recentLoad;
     const loadId = ++recentLoadId, request = recentRequest();
     recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
@@ -1174,7 +1254,13 @@
         }
         if (loadId === recentLoadId) timesHasTrackedTime = hasTrackedTime;
       }
-      if (loadId === recentLoadId) applyMenuData(data, true);
+      if (loadId === recentLoadId) {
+        applyMenuData(data, true);
+        if (timesMode && activityViewMode === 'calendar' && timelineInstance?.getCalendarRange) {
+          if (calendarFocus) focusActivityCalendarPeriod(calendarFocus);
+          await loadActivityCalendarWeek(timelineInstance.getCalendarRange());
+        }
+      }
       return data;
     }).finally(() => {
       if (loadId === recentLoadId && recentLoad === load) {
@@ -1675,11 +1761,11 @@
   async function loadSelectedTimes() {
     const loadId = ++timesLoadId;
     recentLoaded = false; errorText = ''; renderUi();
-    try { await refreshRecent(true); }
+    try { await refreshRecent(true, { calendarFocus: activityViewMode === 'calendar' ? calendarPeriodFocus : null }); }
     catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
   }
 
-  function renderTimesPage() {
+  function renderTimesPage(preservedTimeline = null) {
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
     if (!pageState.configured && recentLoaded) {
@@ -1704,27 +1790,29 @@
     }
     period.addEventListener('change', () => {
       timesPeriod = period.value;
+      calendarPeriodFocus = timesPeriod === 'custom' ? null : timesRange();
       if (timesPeriod === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
       else void loadSelectedTimes();
     }); periodLabel.append(period); toolbar.append(periodLabel);
     if (timesPeriod === 'custom') {
       const startLabel = el('label', 'From'), start = el('input'); start.type = 'date'; start.value = timesStartDate; start.addEventListener('input', () => { timesStartDate = start.value; }); startLabel.append(start);
       const endLabel = el('label', 'Through'), end = el('input'); end.type = 'date'; end.value = timesEndDate; end.addEventListener('input', () => { timesEndDate = end.value; }); endLabel.append(end);
-      const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => loadSelectedTimes())); toolbar.append(custom);
+      const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => { calendarPeriodFocus = timesRange(); return loadSelectedTimes(); })); toolbar.append(custom);
     }
     body.append(toolbar);
     const result = el('section', undefined, 'times-results activity-list');
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
-      const entries = recordsWithDrafts();
+      const draftKeys = new Set(drafts.map(activityRecordKey));
+      const entries = recordsWithDrafts().filter(entry => !calendarOnlyKeys.has(activityRecordKey(entry)) || draftKeys.has(activityRecordKey(entry)));
       const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
       let empty = null;
       if (!matches.length) {
         empty = el('div', undefined, 'activity-empty');
-        const firstUse = !recent.length && timesHasTrackedTime === false;
-        empty.append(el('p', recent.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
-        if (recent.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
+        const firstUse = !entries.length && timesHasTrackedTime === false;
+        empty.append(el('p', entries.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
+        if (entries.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
         else if (!firstUse) empty.append(button('Add time', 'secondary', async () => { bulkOpen = true; bulk.open = true; input.focus(); }));
       }
       if (query && inlineDrafts.size) {
@@ -1733,7 +1821,30 @@
       }
       renderRecent(result, matches, empty);
     };
-    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered(); body.append(result);
+    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered();
+    const views = el('div', undefined, 'times-view-modes');
+    views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
+    for (const mode of ['timeline', 'calendar', 'list']) {
+      const control = button(mode[0].toUpperCase() + mode.slice(1), 'times-view-button', () => {
+        activityViewMode = mode;
+        for (const choice of views.children) choice.setAttribute('aria-pressed', String(choice === control));
+        timeline.hidden = mode === 'list'; result.hidden = mode !== 'list';
+        calendarStatus.hidden = mode !== 'calendar';
+        filterLabel.hidden = mode !== 'list'; toolbar.classList.toggle('times-visual', mode !== 'list');
+        if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
+        if (mode === 'calendar') focusActivityCalendarPeriod();
+        if (mode === 'calendar') return loadActivityCalendarWeek(timelineInstance?.getCalendarRange?.());
+      });
+      control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
+    }
+    body.append(views);
+    const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
+    calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
+    calendarStatus.hidden = activityViewMode !== 'calendar'; body.append(calendarStatus);
+    const timeline = renderPopupTimeline(preservedTimeline);
+    timeline.hidden = activityViewMode === 'list'; result.hidden = activityViewMode !== 'list';
+    filterLabel.hidden = activityViewMode !== 'list'; toolbar.classList.toggle('times-visual', activityViewMode !== 'list');
+    body.append(timeline, result);
     const bulk = el('details', undefined, 'bulk-time');
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
     const summary = el('summary', 'Add time'); bulk.append(summary);
@@ -1812,7 +1923,7 @@
         isRunning: Boolean(entry._active),
         isEditable: !entry._active,
         isPending: Boolean(entry.isPending),
-        isStartDisabled: !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
+        isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
         isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
@@ -1853,9 +1964,19 @@
     return Number.isFinite(activeStart) ? Math.max(Date.now(), activeStart) : Date.now();
   }
 
+  function activityHistoryStart(fallback) {
+    return recent.reduce((start, entry) => {
+      const timestamp = new Date(entry.startedAt).getTime();
+      return Number.isFinite(timestamp) ? Math.min(start, timestamp) : start;
+    }, fallback);
+  }
+
   function refreshMountedTimeline() {
     if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
-    timelineWindow = { ...timelineWindow, now: timelineNow() };
+    timelineWindow = { ...timelineWindow, now: timelineNow(),
+      historyStart: timesMode
+        ? activityHistoryStart(timelineWindow.historyStart)
+        : timelineWindow.historyStart };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
     timelineInstance.update({ items, rows, now: timelineWindow.now });
@@ -1911,8 +2032,8 @@
         });
       }
       const acceptedActive = {
-        id: `timeline-local:${identity || taskUrlOf(task)}:${acceptanceId}`,
-        taskUrl: taskUrlOf(task), taskTitle: taskTitleOf(task) || '',
+        id: `timeline-local:${identity || trackableTaskIdentityOf(task)}:${acceptanceId}`,
+        taskUrl: trackableTaskIdentityOf(task), taskTitle: taskTitleOf(task) || '',
         startedAt, entryDate: localDateValue(new Date(startedAt)), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, _pending: true,
       };
       context.acceptedActive = acceptedActive;
@@ -2172,7 +2293,7 @@
   }
 
   async function restartTimelineEntry(entry) {
-    if (!entry || !taskUrlOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!entry || !trackableTaskIdentityOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
     if (!confirmLongEntry()) return false;
     timelineStartInFlight = true;
     refreshMountedTimeline();
@@ -2180,7 +2301,7 @@
     const previousDescription = activeDescriptionValue();
     const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
     try {
-      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
@@ -2202,7 +2323,8 @@
     return true;
   }
 
-  function renderPopupTimeline() {
+  function renderPopupTimeline(preservedSection = null) {
+    if (preservedSection) return preservedSection;
     const section = el('section', undefined, 'popup-timeline-section');
     timelineQueueIndicator = el('div', undefined, 'timeline-queue-status muted');
     timelineQueueIndicator.setAttribute('role', 'status');
@@ -2215,9 +2337,12 @@
       return section;
     }
     if (!recentLoaded && !timelineAcceptedActive) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
-    const now = timelineNow(), defaultStart = now - POPUP_WINDOW_MS, historyStart = now - POPUP_HISTORY_MS;
+    const now = timelineNow(), historyStart = timesMode
+      ? activityHistoryStart(now - POPUP_HISTORY_MS) : now - POPUP_HISTORY_MS;
+    const defaultStart = now - POPUP_WINDOW_MS;
     timelineWindow = { historyStart, now };
-    timelineView ||= { start: defaultStart, end: now, focusedAt: now };
+    if (timesMode) activityTimelineView ||= { start: defaultStart, end: now, focusedAt: now };
+    else timelineView ||= { start: defaultStart, end: now, focusedAt: now };
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     const timelineShell = el('div', undefined, 'timeline-shell');
@@ -2231,10 +2356,19 @@
         items,
         rows,
         now,
-        view: timelineView,
-        viewMode: timelineGraphicViewMode,
-        onViewModeChange: mode => { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; },
-        onViewChange: view => { timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
+        view: timesMode ? activityTimelineView : timelineView,
+        viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
+        weeklyCalendar: timesMode,
+        onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
+        onViewModeChange: mode => {
+          if (timesMode) {
+            activityViewMode = mode;
+            for (const control of shadow?.querySelectorAll('.times-view-button') ?? []) {
+              control.setAttribute('aria-pressed', String(control.textContent.toLowerCase() === mode));
+            }
+          } else { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; }
+        },
+        onViewChange: view => { if (timesMode) activityTimelineView = view; else timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
         onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
         onDelete: async item => {
@@ -2304,6 +2438,10 @@
         },
         });
         timelineInstance.scrollToEnd();
+        if (timesMode && activityViewMode === 'calendar') {
+          focusActivityCalendarPeriod();
+          void loadActivityCalendarWeek(timelineInstance.getCalendarRange());
+        }
       } catch (error) {
         timelineInstance = null;
         const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
@@ -2544,7 +2682,7 @@
       const duration = el('span', formatDuration(Math.max(0, new Date(entry.endedAt) - new Date(entry.startedAt)) / 1000), 'inline-duration');
       const resume = button('▶ Continue', 'secondary', async () => { try { await restartTimelineEntry(entry); } catch {} });
       resume.setAttribute('data-panel-action', `continue:${entry.id}`);
-      resume.disabled = !taskUrlOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      resume.disabled = !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
       row.append(identity, range, duration);
       if (entry._pending || timelineOptimisticEdits.has(entry.id)) {
         const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; row.append(pending);
@@ -2798,8 +2936,11 @@
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
     const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
+    const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
+      ? shadow?.querySelector('.popup-timeline-section') : null;
+    preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
-    if (!preserveFullWidthTimeline) {
+    if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
@@ -3005,7 +3146,13 @@
       /* Activity redesign: compact, scan-first list rows. */
       :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       :host(.times-surface) .times-body { padding:24px }
+      :host(.times-surface) .times-view-modes { display:flex; gap:6px; margin-bottom:16px }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) }
+      :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
+      :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
       :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
+      :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr }
+      :host(.times-surface) .times-filter[hidden] { display:none }
       :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
       :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:38px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .section-head { margin-bottom:14px }
@@ -3100,7 +3247,7 @@
     }
     if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
-    if (timesMode) { shadow.append(style, renderTimesPage()); return; }
+    if (timesMode) { shadow.append(style, renderTimesPage(preservedActivityTimeline)); if (preservedActivityTimeline) refreshMountedTimeline(); return; }
     if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);

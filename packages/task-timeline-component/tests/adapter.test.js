@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../src/clockoli-adapter.js', import.meta.ur
 const vendor = readFileSync(new URL('../vendor/timeline-component.js', import.meta.url), 'utf8');
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'e30398ac46b219f65f5b541efc7c9072532b9d682c29f3ac730c77f10a60270c');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'afeb30a58a456dbd59f2d0a020eb362389b8c3b65397b2d6c389ac71c90d5ac8');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);

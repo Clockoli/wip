@@ -126,6 +126,7 @@
       .calendar-corner {
         position: absolute;
         left: 0;
+        transform: translateX(var(--clockoli-calendar-scroll-left, 0px));
         top: 0;
         z-index: 8;
         background: #fbfcfe;
@@ -151,6 +152,7 @@
       .calendar-time-label {
         position: absolute;
         left: 0;
+        transform: translateX(var(--clockoli-calendar-scroll-left, 0px));
         z-index: 5;
         display: flex;
         justify-content: flex-end;
@@ -895,7 +897,7 @@
       this.options.viewMode = this.options.viewMode === 'calendar' ? 'calendar' : 'timeline';
       this.options.calendarHourHeight = clamp(Number(this.options.calendarHourHeight) || 60, 30, 160);
       this.options.calendarTimeAxisWidth = clamp(Number(this.options.calendarTimeAxisWidth) || 62, 44, 100);
-      this.options.calendarDayMinWidth = clamp(Number(this.options.calendarDayMinWidth) || 180, 110, 420);
+      this.options.calendarDayMinWidth = clamp(Number(this.options.calendarDayMinWidth) || 180, 96, 420);
       this.options.calendarProjectMinWidth = clamp(Number(this.options.calendarProjectMinWidth) || 96, 60, 240);
       this.options.calendarMinTaskHeight = clamp(Number(this.options.calendarMinTaskHeight) || 18, 10, 60);
       this.options.calendarMaxDays = clamp(Math.floor(Number(this.options.calendarMaxDays) || 7), 1, 14);
@@ -909,7 +911,8 @@
         onUndo: options.onUndo || null,
         onRedo: options.onRedo || null,
         onError: options.onError || null,
-        onViewModeChange: options.onViewModeChange || null
+        onViewModeChange: options.onViewModeChange || null,
+        onCalendarRangeChange: options.onCalendarRangeChange || null
       };
       this.canChange = typeof options.canChange === 'function'
         ? options.canChange
@@ -958,6 +961,7 @@
       this.viewMode = this.options.viewMode;
       this.calendarStartDay = null;
       this.calendarDayCount = 1;
+      this.calendarExactRange = false;
       this.calendarWindowInitialized = false;
       this.calendarScrollInitialized = false;
       this.calendarEditState = null;
@@ -1206,19 +1210,47 @@
     setCalendarDate(value) {
       const time = toMs(value);
       if (!Number.isFinite(time)) return this;
-      this.calendarStartDay = this._clampCalendarStart(this._floorDay(time));
+      const previousStart = this.calendarStartDay;
+      const previousCount = this.calendarDayCount;
+      if (this.options.calendarWeekStartMonday) { this.calendarExactRange = false; this.calendarDayCount = 7; }
+      const day = this._floorDay(time);
+      this.calendarStartDay = this._clampCalendarStart(this.options.calendarWeekStartMonday ? this._calendarWeekStart(day) : day);
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
+      if (previousStart !== this.calendarStartDay || previousCount !== this.calendarDayCount) this.callbacks.onCalendarRangeChange?.(this.getCalendarRange());
+      return this;
+    }
+
+    setCalendarRange({ start, end } = {}) {
+      const startTime = toMs(start), endTime = toMs(end);
+      if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) throw new Error('Choose valid Calendar dates.');
+      const startDay = this._floorDay(startTime), endDay = this._floorDay(endTime);
+      let count = 0, cursor = startDay;
+      while (cursor < endDay && count < 366) { cursor = this._addDaysLocal(cursor, 1); count++; }
+      if (!count || cursor !== endDay) throw new Error('Calendar periods must contain 1 to 366 days.');
+      const changed = this.calendarStartDay !== startDay || this.calendarDayCount !== count;
+      this.calendarExactRange = true;
+      this.calendarDayCount = count;
+      this.calendarStartDay = startDay;
+      this.calendarWindowInitialized = true;
+      this.calendarScrollInitialized = false;
+      if (this.viewMode === 'calendar') {
+        this._renderCalendar();
+        this.calendarViewport.scrollLeft = 0;
+      }
+      if (changed) this.callbacks.onCalendarRangeChange?.(this.getCalendarRange());
       return this;
     }
 
     shiftCalendar(direction = 1) {
       if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const previousStart = this.calendarStartDay;
       const amount = Math.max(1, this.calendarDayCount) * (Number(direction) < 0 ? -1 : 1);
       this.calendarStartDay = this._clampCalendarStart(this._addDaysLocal(this.calendarStartDay, amount));
       this.calendarScrollInitialized = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
+      if (previousStart !== this.calendarStartDay) this.callbacks.onCalendarRangeChange?.(this.getCalendarRange());
       return this;
     }
 
@@ -1241,7 +1273,7 @@
         : anchorTime;
       this.visibleDays = next;
       if (this.viewMode === 'calendar') {
-        this.calendarDayCount = clamp(Math.ceil(this.visibleDays), 1, this.options.calendarMaxDays);
+        if (!this.options.calendarWeekStartMonday) this.calendarDayCount = clamp(Math.ceil(this.visibleDays), 1, this.options.calendarMaxDays);
         if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
         this.calendarStartDay = this._clampCalendarStart(this.calendarStartDay);
       }
@@ -2744,6 +2776,13 @@
         visibleStart = this._visibleStartTime();
         visibleEnd = this._visibleEndTime();
       }
+      if (this.options.calendarWeekStartMonday) {
+        this.calendarDayCount = 7;
+        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay(Math.max(visibleStart, visibleEnd - 1))));
+        this.calendarWindowInitialized = true;
+        this.calendarScrollInitialized = false;
+        return;
+      }
       const startDay = this._floorDay(visibleStart);
       const endProbe = Math.max(visibleStart, visibleEnd - 1);
       const endDay = this._floorDay(endProbe);
@@ -2761,8 +2800,13 @@
 
     _calendarDomainStartDay() { return this._floorDay(this.domainStart); }
     _calendarDomainEndDay() { return this._floorDay(Math.max(this.domainStart, this.domainEnd)); }
+    _calendarWeekStart(day) { return this._addDaysLocal(day, -((new Date(day).getDay() + 6) % 7)); }
 
     _clampCalendarStart(day) {
+      if (this.calendarExactRange) return day;
+      if (this.options.calendarWeekStartMonday) {
+        return Math.min(day, this._calendarWeekStart(this._calendarDomainEndDay()));
+      }
       const min = this._calendarDomainStartDay();
       let max = this._calendarDomainEndDay();
       for (let i = 1; i < this.calendarDayCount; i++) max = this._addDaysLocal(max, -1);

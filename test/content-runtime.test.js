@@ -2035,7 +2035,7 @@ test('tracking panel observes background sync completion without manual Sync', (
 });
 
 function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
-  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [];
+  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [], timelineModes = [], timelineUpdates = [], timelineDates = [], timelineRanges = [];
   const documentListeners = new Map(), windowListeners = new Map(), runtimeListeners = [];
   const timeouts = new Map();
   let timeoutId = 0;
@@ -2070,7 +2070,13 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
     ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
       timelineMounts.push(options);
-      return { update() {}, destroy() {} };
+      let selectedDate = now, selectedRange = null;
+      return { update(value) { timelineUpdates.push(value); }, destroy() {}, scrollToEnd() {}, setViewMode(mode) { timelineModes.push(mode); }, setCalendarDate(value) { selectedDate = value; selectedRange = null; timelineDates.push(value); }, setCalendarRange(range) { selectedRange = range; timelineRanges.push(range); }, getCalendarRange() {
+        if (selectedRange) return { ...selectedRange, days: Math.round((selectedRange.end - selectedRange.start) / 86_400_000) };
+        const day = new Date(selectedDate); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (day.getDay() + 6) % 7);
+        const start = day.getTime(); day.setDate(day.getDate() + 7);
+        return { start, end: day.getTime(), days: 7 };
+      } };
     } : undefined },
   });
   vm.runInContext(recoverySource, context);
@@ -2095,7 +2101,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     };
   })();`, context);
   if (state && !header) context.panel.set(state, records, participants);
-  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timeouts, advance(ms) { now += ms; } };
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timelineModes, timelineUpdates, timelineDates, timelineRanges, timeouts, advance(ms) { now += ms; } };
 }
 
 test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
@@ -2336,6 +2342,222 @@ test('Activity records show site favicons beside task identity', () => {
   const favicon = activity.querySelector('.entry-record-favicon');
   assert.match(favicon.src, /^chrome-extension:\/\/clockoli\/_favicon\//);
   assert.equal(favicon.parentElement.className, 'entry-record-task-identity');
+});
+
+test('Activity mounts the popup timeline and calendar over its loaded records without remounting on view changes', () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('older-activity', '2026-09-03', '08');
+  const harness = dailyPanelHarness({
+    state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html', timelineEnabled: true,
+  });
+  const activity = harness.renderActivity();
+  assert.ok(activity.querySelector('.popup-timeline-section'));
+  assert.equal(activity.querySelector('.times-filter').hidden, true);
+  harness.frames.splice(0).forEach(frame => frame());
+  assert.equal(harness.timelineMounts.length, 1);
+  assert.equal(harness.timelineMounts[0].viewMode, 'timeline');
+  assert.equal(harness.timelineMounts[0].weeklyCalendar, true);
+  assert.ok(harness.timelineMounts[0].items.some(item => item.id === `entry:${entry.id}`));
+  const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
+  calendar.onclick({ isTrusted: true });
+  assert.deepEqual(harness.timelineModes, ['calendar']);
+  assert.equal(harness.timelineMounts.length, 1, 'Calendar uses the mounted popup widget');
+  assert.equal(activity.querySelector('.times-results').hidden, true);
+  const section = activity.querySelector('.popup-timeline-section');
+  const refreshed = harness.renderActivity();
+  assert.equal(refreshed.querySelector('.popup-timeline-section'), section, 'state refresh preserves the widget and its navigation');
+  const list = refreshed.walk().find(node => node.tag === 'button' && node.textContent === 'List');
+  list.onclick({ isTrusted: true });
+  assert.equal(refreshed.querySelector('.times-results').hidden, false);
+  assert.equal(refreshed.querySelector('.times-filter').hidden, false);
+  assert.equal(harness.timelineMounts.length, 1);
+});
+
+test('opening Activity Calendar uses the already-selected Last 3 days, not its initial week', async () => {
+  const now = new Date(2026, 9, 8, 12).getTime();
+  const tuesday = activityEntry('tuesday', '2026-10-06', '08');
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES'
+      ? { ...state, recent: message.payload.startDate === '2026-10-06' ? [tuesday] : [] }
+      : state }); },
+  });
+  const activity = h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  const calendar = activity.querySelector('.times-view-modes').walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
+  await calendar.onclick({ isTrusted: true });
+  assert.ok(activity.querySelector('.times-toolbar').querySelector('select').walk()
+    .some(node => node.tag === 'option' && node.value === 'last-three-days' && node.selected));
+  const range = h.timelineRanges.at(-1);
+  assert.equal(new Date(range?.start).getDate(), 6, 'first Calendar open starts Tuesday rather than Monday');
+  assert.equal(new Date(range?.end).getDate(), 9, 'October 8 remains the inclusive last day');
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
+    && message.payload.startDate === '2026-10-06' && message.payload.endDate === '2026-10-08'));
+  assert.ok(h.timelineUpdates.some(update => update.items?.some(item => item.id === `entry:${tuesday.id}`)), 'the selected days reach the rendered widget');
+  const rangeCount = h.timelineRanges.length;
+  await activity.querySelector('.times-view-modes').walk().find(node => node.tag === 'button' && node.textContent === 'List').onclick({ isTrusted: true });
+  await calendar.onclick({ isTrusted: true });
+  assert.equal(h.timelineRanges.length, rangeCount, 'reopening Calendar keeps its mounted navigation instead of resetting to the Period');
+});
+
+test('Activity Calendar loads last-week records without changing the List period or remounting', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const lastWeek = activityEntry('last-week-activity', '2026-08-26', '08');
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      callback({ ok: true, data: message.type === 'LOAD_TIMES'
+        ? { ...state, recent: message.payload.startDate === '2026-08-24' ? [lastWeek] : [] }
+        : state });
+    },
+  });
+  const activity = harness.renderActivity();
+  harness.frames.splice(0).forEach(frame => frame());
+  const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
+  await calendar.onclick({ isTrusted: true });
+  assert.ok(harness.messages.some(message => message.type === 'LOAD_TIMES'
+    && message.payload.startDate === '2026-09-03' && message.payload.endDate === '2026-09-05'), 'opening Calendar loads the selected Last 3 days');
+  const monday = new Date(2026, 7, 24).getTime(), followingMonday = new Date(2026, 7, 31).getTime();
+  await harness.timelineMounts[0].onCalendarNavigate({ start: monday, end: followingMonday });
+  assert.ok(harness.messages.some(message => message.type === 'LOAD_TIMES'
+    && message.payload.startDate === '2026-08-24' && message.payload.endDate === '2026-08-30'), 'navigation loads the previous week');
+  assert.ok(harness.timelineUpdates.some(update => update.items?.some(item => item.id === `entry:${lastWeek.id}`)), 'loaded entry reaches the mounted calendar');
+  assert.equal(harness.timelineMounts.length, 1);
+  const list = activity.walk().find(node => node.tag === 'button' && node.textContent === 'List');
+  await list.onclick({ isTrusted: true });
+  assert.equal(activity.querySelector('.times-results').walk().some(node => node.textContent === lastWeek.taskTitle), false, 'last-week records do not leak into Last 3 days List');
+});
+
+test('opening Activity Calendar before its first widget frame still applies the selected days', async () => {
+  const now = new Date(2026, 9, 8, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [] } : state }); },
+  });
+  const activity = h.renderActivity();
+  await activity.querySelector('.times-view-modes').walk()
+    .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  h.frames.splice(0).forEach(frame => frame());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 6);
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
+    && message.payload.startDate === '2026-10-06' && message.payload.endDate === '2026-10-08'));
+});
+
+test('choosing Last week positions Calendar on the previous Monday–Sunday, before or after opening it', async () => {
+  for (const order of ['period-first', 'calendar-first']) {
+    const now = new Date(2026, 8, 5, 12).getTime();
+    const current = activityEntry('current', '2026-09-03', '08');
+    const previous = activityEntry('previous', '2026-08-26', '08');
+    const state = { configured: true, active: null, pendingWrites: [] };
+    const h = dailyPanelHarness({ state, records: [current], now, timelineEnabled: true,
+      pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+      respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES'
+        ? { ...state, recent: message.payload.startDate === '2026-08-24' ? [previous] : [current] }
+        : state }); },
+    });
+    const activity = h.renderActivity();
+    h.frames.splice(0).forEach(frame => frame());
+    const openCalendar = async () => activity.querySelector('.times-view-modes').walk()
+      .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+    if (order === 'calendar-first') await openCalendar();
+    const period = activity.querySelector('.times-toolbar').querySelector('select');
+    period.value = 'last-week'; period.onchange({});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (order === 'period-first') await openCalendar();
+    const selected = h.timelineRanges.at(-1);
+    assert.equal(new Date(selected.start).getDate(), 24, `${order}: Calendar shows 24–30 August, not this week`);
+    assert.equal(new Date(selected.end).getDate(), 31);
+    assert.equal(h.timelineMounts.length, 1, `${order}: the widget stays mounted`);
+  }
+});
+
+test('Activity Period opens the full month and applied custom dates in Calendar', async () => {
+  const now = new Date(2026, 9, 8, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [] } : state }); },
+  });
+  const activity = h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  const select = value => { const period = activity.querySelector('.times-toolbar').querySelector('select'); period.value = value; period.onchange({}); };
+  const openCalendar = async () => activity.querySelector('.times-view-modes').walk()
+    .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+
+  select('this-month');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await openCalendar();
+  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 1, 'October starts on October 1, not its final week');
+  assert.equal(new Date(h.timelineRanges.at(-1)?.end).getDate(), 9, 'current month ends after today');
+
+  select('last-month');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getMonth(), 8, 'last month starts on September 1');
+  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 1);
+  assert.equal(new Date(h.timelineRanges.at(-1)?.end).getDate(), 1, 'last month ends at October 1 exclusively');
+
+  select('custom');
+  const dates = activity.querySelector('.times-custom').walk().filter(node => node.tag === 'input');
+  dates[0].value = '2026-09-28'; dates[0].oninput({});
+  dates[1].value = '2026-10-06'; dates[1].oninput({});
+  await activity.querySelector('.times-custom').walk().find(node => node.tag === 'button' && node.textContent === 'Apply').onclick({ isTrusted: true });
+  const custom = h.timelineRanges.at(-1);
+  assert.equal(new Date(custom.start).getDate(), 28);
+  assert.equal(new Date(custom.end).getDate(), 7, 'custom end is inclusive in the label and exclusive in the read');
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-09-28' && message.payload.endDate === '2026-10-06'));
+  assert.equal(h.timelineMounts.length, 1);
+});
+
+test('Activity Calendar ignores an older week response after navigating again', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const loads = [];
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'LOAD_TIMES') loads.push({ message, callback });
+      else callback({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
+    },
+  });
+  const activity = harness.renderActivity();
+  harness.frames.splice(0).forEach(frame => frame());
+  const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
+  const first = calendar.onclick({ isTrusted: true });
+  assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Loading week…');
+  const older = activityEntry('older-response', '2026-08-26', '08');
+  const newest = activityEntry('newest-response', '2026-08-19', '08');
+  const second = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
+  const third = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 17).getTime(), end: new Date(2026, 7, 24).getTime() });
+  assert.equal(loads.length, 3);
+  loads[2].callback({ ok: true, data: { configured: true, recent: [newest] } }); await third;
+  loads[1].callback({ ok: true, data: { configured: true, recent: [older] } }); await second;
+  loads[0].callback({ ok: false, error: { message: 'Superseded read' } }); await first;
+  assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${newest.id}`));
+  assert.equal(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${older.id}`), false);
+  assert.equal(harness.timelineMounts.length, 1);
+});
+
+test('Activity Calendar leaves the mounted week intact and reports a failed historical read', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const entry = activityEntry('current-week', '2026-09-03', '08');
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-08-24') callback({ ok: false, error: { message: 'Week unavailable' } });
+      else callback({ ok: true, data: { configured: true, recent: [entry] } });
+    },
+  });
+  const activity = harness.renderActivity();
+  harness.frames.splice(0).forEach(frame => frame());
+  await activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  await harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
+  assert.equal(harness.timelineMounts.length, 1);
+  assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${entry.id}`));
+  assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Could not load this week.');
 });
 
 test('List shows favicons and editable descriptions below task titles', async () => {

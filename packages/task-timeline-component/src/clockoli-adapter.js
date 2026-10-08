@@ -377,6 +377,9 @@
       rowPaddingBottom: 20,
       locale: global.navigator?.language || 'en-GB',
       viewMode: initialProps.viewMode === 'calendar' ? 'calendar' : 'timeline',
+      calendarWeekStartMonday: initialProps.weeklyCalendar === true,
+      onCalendarRangeChange: range => props.onCalendarNavigate?.(range),
+      ...(initialProps.weeklyCalendar === true ? { calendarDayMinWidth: 96 } : {}),
       magneticSnap: true,
       magnetStepsMinutes: [1 / 60],
       magnetScaleThresholdDays: [7],
@@ -691,6 +694,12 @@
     timeline.shadow.addEventListener('dblclick', permissionEvent, true);
     timeline.shadow.addEventListener('keydown', permissionEvent, true);
     timeline.viewport.addEventListener('scroll', () => { styleTasks(); notifyView(); }, { passive: true });
+    if (props.weeklyCalendar) {
+      const viewport = timeline.calendarViewport;
+      const positionTimeRail = () => timeline.calendarCanvas.style.setProperty('--clockoli-calendar-scroll-left', `${viewport.scrollLeft}px`);
+      viewport.addEventListener('scroll', positionTimeRail, { passive: true });
+      positionTimeRail();
+    }
     host.addEventListener('timelinezoom', notifyView);
     host.addEventListener('timeline:viewmodechange', () => props.onViewModeChange?.(timeline.getViewMode()));
     styleObserver = new MutationObserver(styleTasks);
@@ -774,9 +783,22 @@
         } else timeline.scrollToEnd();
         notifyView();
       },
-      setViewMode(mode) { timeline.setViewMode(mode); styleTasks(); },
+      setViewMode(mode) {
+        const firstCalendar = props.weeklyCalendar && mode === 'calendar' && !timeline.calendarWindowInitialized;
+        timeline.setViewMode(mode);
+        if (firstCalendar) {
+          const viewport = timeline.calendarViewport;
+          const metrics = timeline._calendarMetricsForRender();
+          const today = timeline._floorDay(Number(props.now));
+          const dayIndex = Math.round((today - timeline.calendarStartDay) / DAY_MS);
+          viewport.scrollLeft = Math.max(0, metrics.timeAxisWidth + (dayIndex + 0.5) * metrics.dayWidth - viewport.clientWidth / 2);
+          timeline.calendarCanvas.style.setProperty('--clockoli-calendar-scroll-left', `${viewport.scrollLeft}px`);
+        }
+        styleTasks();
+      },
       getViewMode() { return timeline.getViewMode(); },
       setCalendarDate(value) { timeline.setCalendarDate(value); },
+      setCalendarRange(range) { timeline.setCalendarRange(range); },
       shiftCalendar(direction) { timeline.shiftCalendar(direction); },
       getCalendarRange() { return timeline.getCalendarRange(); },
       __timeline: timeline,

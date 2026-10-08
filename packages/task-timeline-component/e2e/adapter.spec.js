@@ -35,6 +35,8 @@ async function mount(page, overrides = {}) {
       rows: overrides.rows || [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }],
       now,
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
+      weeklyCalendar: overrides.weeklyCalendar,
+      onCalendarNavigate: overrides.trackCalendarNavigation ? range => window.__calls.push(['navigate', range.start, range.end]) : undefined,
       onStart(item) {
         window.__lastStartedTitle = item.title;
         window.__calls.push(['start', item.id]);
@@ -105,6 +107,114 @@ test('switches Timeline and Calendar without losing running state', async ({ pag
   expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '7px', shadow: 'none' });
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
   expect(await page.evaluate(() => window.__timeline.getViewMode())).toBe('timeline');
+});
+
+test('Activity Calendar defaults to a Monday–Sunday week while the popup retains its compact range', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, {
+    weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - HOUR, endedAt: now, rowId: 'one', isEditable: true }],
+  });
+  await page.evaluate(() => {
+    document.querySelector('#timeline').style.width = '770px';
+    window.__timeline.setViewMode('calendar');
+  });
+  const week = await page.evaluate(() => {
+    const range = window.__timeline.getCalendarRange();
+    const root = document.querySelector('#timeline').shadowRoot;
+    return { ...range, headers: root.querySelectorAll('.calendar-day-header').length };
+  });
+  expect(week.days).toBe(7);
+  expect(new Date(week.start).getDay()).toBe(1);
+  expect(new Date(week.end).getDay()).toBe(1);
+  expect(week.headers).toBe(7);
+  expect(await page.evaluate(() => {
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    return viewport.scrollWidth <= viewport.clientWidth;
+  })).toBe(true);
+  await page.evaluate(() => window.__timeline.shiftCalendar(-1));
+  const previous = await page.evaluate(() => window.__timeline.getCalendarRange());
+  expect(new Date(previous.start).getDay()).toBe(1);
+  expect(previous.start).toBeLessThan(week.start);
+
+  await mount(page);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  expect((await page.evaluate(() => window.__timeline.getCalendarRange())).days).toBeLessThan(7);
+});
+
+test('narrow weekly Calendar starts at today with a pinned hour rail', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  const layout = await page.evaluate(() => {
+    document.querySelector('#timeline').style.width = '358px';
+    window.__timeline.setViewMode('calendar');
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    const today = root.querySelector('.calendar-day-header.today');
+    const rail = root.querySelector('.calendar-time-label');
+    return { left: viewport.getBoundingClientRect().left, right: viewport.getBoundingClientRect().right,
+      todayLeft: today.getBoundingClientRect().left, todayRight: today.getBoundingClientRect().right,
+      railLeft: rail.getBoundingClientRect().left, scrollLeft: viewport.scrollLeft };
+  });
+  expect(layout.scrollLeft).toBeGreaterThan(0);
+  expect(layout.todayLeft).toBeGreaterThanOrEqual(layout.left);
+  expect(layout.todayRight).toBeLessThanOrEqual(layout.right);
+  expect(layout.railLeft).toBeGreaterThanOrEqual(layout.left);
+});
+
+test('weekly Calendar navigates before the loaded timeline domain', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  const windows = await page.evaluate(() => {
+    const instance = window.__timeline;
+    instance.setViewMode('calendar');
+    const current = instance.getCalendarRange().start;
+    instance.shiftCalendar(-1);
+    const previous = instance.getCalendarRange().start;
+    instance.shiftCalendar(-1);
+    return { current, previous, earlier: instance.getCalendarRange().start };
+  });
+  const previousWeek = date => { const value = new Date(date); value.setDate(value.getDate() - 7); return value.getTime(); };
+  expect(windows.previous).toBe(previousWeek(windows.current));
+  expect(windows.earlier).toBe(previousWeek(windows.previous));
+});
+
+test('Activity Calendar displays exact selected month and custom ranges, then returns to weekly navigation', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  const ranges = await page.evaluate(() => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    const selected = (year, month, day) => new Date(year, month, day).getTime();
+    calendar.setCalendarRange({ start: selected(2026, 9, 1), end: selected(2026, 9, 9) });
+    const thisMonth = calendar.getCalendarRange();
+    calendar.setCalendarRange({ start: selected(2026, 8, 1), end: selected(2026, 9, 1) });
+    const lastMonth = calendar.getCalendarRange();
+    calendar.setCalendarRange({ start: selected(2026, 8, 28), end: selected(2026, 9, 7) });
+    const custom = calendar.getCalendarRange();
+    const headers = document.querySelector('#timeline').shadowRoot.querySelectorAll('.calendar-day-header').length;
+    calendar.setCalendarDate(selected(2026, 9, 8));
+    return { thisMonth, lastMonth, custom, headers, reset: calendar.getCalendarRange() };
+  });
+  expect(ranges.thisMonth).toEqual({ start: new Date(2026, 9, 1).getTime(), end: new Date(2026, 9, 9).getTime(), days: 8 });
+  expect(ranges.lastMonth).toEqual({ start: new Date(2026, 8, 1).getTime(), end: new Date(2026, 9, 1).getTime(), days: 30 });
+  expect(ranges.custom).toEqual({ start: new Date(2026, 8, 28).getTime(), end: new Date(2026, 9, 7).getTime(), days: 9 });
+  expect(ranges.headers).toBe(9);
+  expect(ranges.reset.days).toBe(7);
+  expect(new Date(ranges.reset.start).getDay()).toBe(1);
+});
+
+test('Today after a one-day period refetches the expanded week even when its first day is unchanged', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true, trackCalendarNavigation: true });
+  const result = await page.evaluate(() => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    const monday = new Date(2026, 9, 5).getTime(), tuesday = new Date(2026, 9, 6).getTime();
+    calendar.setCalendarRange({ start: monday, end: tuesday });
+    calendar.setCalendarDate(monday);
+    return { days: calendar.getCalendarRange().days, calls: window.__calls.filter(call => call[0] === 'navigate') };
+  });
+  expect(result.days).toBe(7);
+  expect(result.calls).toHaveLength(2);
+  expect(result.calls[1][2]).toBe(new Date(2026, 9, 12).getTime());
 });
 
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {

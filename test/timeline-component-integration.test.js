@@ -13,7 +13,7 @@ test('TaskTimeline source and adapter live inside Clockoli', () => {
   assert.equal(clockoliPackage.engines.node, '>=20.19.0');
   assert.deepEqual(clockoliPackage.workspaces, ['packages/*']);
   assert.equal(clockoliPackage.scripts['test:clockoli'], 'node --test test/*.test.js');
-  assert.equal(clockoliPackage.scripts['test:timeline'], 'npm run test:all --workspace task-timeline-component-clockoli && npm run build:timeline && git diff --exit-code -- src/content/task-timeline-component.js');
+  assert.equal(clockoliPackage.scripts['test:timeline'], 'node scripts/verify-timeline-build.js && npm run test:all --workspace task-timeline-component-clockoli');
   assert.doesNotMatch(clockoliPackage.scripts.test, /run-elastic-timeline-suite|\.\.\/timeline/);
   assert.equal(timelinePackage.scripts['test:all'], 'npm test && npm run test:e2e && npm run test:package');
   for (const relative of [
@@ -38,7 +38,7 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
   ]);
   assert.ok(!manifest.web_accessible_resources[0].resources.includes('src/content/elastic-timeline-editor.css'));
   assert.match(content, /globalThis\.ClockoliTaskTimeline\?\.createTimeline/);
-  assert.match(content, /items,\s*rows,\s*now,\s*view: timelineView,\s*viewMode: timelineGraphicViewMode/);
+  assert.match(content, /items,\s*rows,\s*now,\s*view: timesMode \? activityTimelineView : timelineView,\s*viewMode: timesMode \? .* : timelineGraphicViewMode/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.TaskTimeline = TaskTimeline/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.ClockoliTaskTimeline = Object\.freeze/);
   assert.doesNotMatch(read('src/content/task-timeline-component.js'), /\bexport\s*\{/);
@@ -97,7 +97,7 @@ test('timeline task switching is optimistic and keeps the queued completion visi
   assert.match(content, /function mergeTimelineCompletedEntries\(completed, optimisticCompletions\)/);
   assert.match(content, /mergeTimelineCompletedEntries\(completed, timelineOptimisticCompletions\.values\(\)\)/);
   assert.match(content, /timelineStartInFlight/);
-  assert.match(content, /isStartDisabled: !taskUrlOf\(entry\) \|\| timelineStartInFlight \|\|/);
+  assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\) \|\| timelineStartInFlight \|\|/);
   assert.match(content, /timelineStartInFlight = true;\s*refreshMountedTimeline\(\);/);
   assert.match(content, /timelineStartInFlight = false;\s*refreshMountedTimeline\(\);/);
   assert.match(content, /timelineInstance\.scrollToEnd\(\)/);
@@ -109,6 +109,14 @@ test('timeline task switching is optimistic and keeps the queued completion visi
   assert.match(content, /onEditDebug: detail => recordTimelineGestureDiagnostic\(detail\)/);
   assert.match(content, /function recordTimelineGestureDiagnostic\(event\)/);
   assert.match(content, /Timeline \$\{phase\}/);
+});
+
+test('Activity can restart an imported task identity without inventing a URL', () => {
+  const content = read('src/content/github.js');
+  assert.match(content, /function trackableTaskIdentityOf\(value\)/);
+  assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\)/);
+  assert.match(content, /taskUrl: trackableTaskIdentityOf\(entry\)/);
+  assert.match(content, /resume\.disabled = !trackableTaskIdentityOf\(entry\)/);
 });
 
 test('timeline switch adopts the worker timestamp without overriding later manual scroll', () => {
@@ -188,6 +196,7 @@ test('optimistic start helper updates the mounted timeline and scrolls before an
       scrollToEnd() { scrolls += 1; },
     };
     const taskUrlOf = value => value.taskUrl;
+    const trackableTaskIdentityOf = taskUrlOf;
     const taskTitleOf = value => value.taskTitle;
     const popupTimelineItems = () => ({ items: pageState.active ? [pageState.active] : [], rows: [], byId: new Map() });
     const beginTimelineQueueAcceptance = () => 'local:1';
@@ -228,9 +237,9 @@ test('accepted start invalidates older recent loads before rendering and can mou
 
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
-  assert.match(content, /isStartDisabled: !taskUrlOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
+  assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
   assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
-  assert.match(content, /if \(!entry \|\| !taskUrlOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
+  assert.match(content, /if \(!entry \|\| !trackableTaskIdentityOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
   const panelStopEnd = content.indexOf('\n        stop.disabled', panelStopStart);
@@ -310,6 +319,7 @@ test('optimistic start acceptance rolls back internal state if rendering throws'
     const timelineOptimisticCompletions = new Map();
     const timelineInstance = { update() { throw new Error('render failed'); }, scrollToEnd() {} };
     const taskUrlOf = value => value.taskUrl;
+    const trackableTaskIdentityOf = taskUrlOf;
     const taskTitleOf = value => value.taskTitle || '';
     const popupTimelineItems = () => ({ items: [], rows: [], byId: new Map() });
     const beginTimelineQueueAcceptance = () => 'local:1';
@@ -395,7 +405,7 @@ test('routine full-width UI updates never destroy the mounted timeline', () => {
   const content = read('src/content/github.js');
 
   assert.match(content, /const preserveFullWidthTimeline = Boolean\(fullWidthPopupOpen && pageState\.configured && timelineInstance && timelineWindow\)/);
-  assert.match(content, /if \(!preserveFullWidthTimeline\) \{\s*timelineInstance\?\.destroy\(\)/);
+  assert.match(content, /if \(!preserveFullWidthTimeline && !preservedActivityTimeline\) \{\s*timelineInstance\?\.destroy\(\)/);
   assert.match(content, /if \(fullWidthPopupOpen\) \{\s*if \(preserveFullWidthTimeline\) refreshMountedTimeline\(\);\s*else renderFullWidthPopup\(style\);/);
   assert.doesNotMatch(content, /if \(fullWidthPopupOpen\) renderFullWidthPopup\(style\)/);
 });
