@@ -188,7 +188,23 @@
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
-  function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
+  function projectPaneIssueUrl(value) {
+    try {
+      const url = new URL(value);
+      if (typeof value !== 'string' || value.length > 2048 || url.protocol !== 'https:'
+          || url.hostname !== 'github.com' || url.username || url.password
+          || !/^\/orgs\/[^/]+\/projects\/[1-9]\d*\/views\/[1-9]\d*\/?$/.test(url.pathname)
+          || url.searchParams.getAll('pane').length !== 1 || url.searchParams.get('pane') !== 'issue'
+          || url.searchParams.getAll('issue').length !== 1) return null;
+      const parts = url.searchParams.get('issue').split('|');
+      if (parts.length !== 3 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(parts[0])
+          || parts[0].includes('--') || !/^[A-Za-z0-9_.-]{1,100}$/.test(parts[1])
+          || parts[1] === '.' || parts[1] === '..' || !/^[1-9]\d*$/.test(parts[2])
+          || !Number.isSafeInteger(Number(parts[2]))) return null;
+      return `https://github.com/${parts[0]}/${parts[1]}/issues/${Number(parts[2])}`;
+    } catch { return null; }
+  }
+  function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(projectPaneIssueUrl(location.href) || location.href, titleFromPage()); }
   function sameTask(left, right) { const a = storedTaskIdentityOf(left), b = storedTaskIdentityOf(right); return Boolean(a && b && a === b); }
   function activeDescriptionValue(active = pageState.active) {
     if (!active) return '';
@@ -534,7 +550,7 @@
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    popupTask = taskFromUrl(tab?.url, tab?.title || '');
+    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, tab?.title || '');
     return popupTask;
   }
 
@@ -3283,7 +3299,7 @@
   }
 
   function navigationCheck() {
-    const route = `https://github.com${location.pathname}`;
+    const route = projectPaneIssueUrl(location.href) || `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
       lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0;

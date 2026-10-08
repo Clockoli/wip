@@ -2104,6 +2104,19 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timelineModes, timelineUpdates, timelineDates, timelineRanges, timeouts, advance(ms) { now += ms; } };
 }
 
+test('tracking from a Projects issue pane sends the direct issue URL and recognizes its running timer', async () => {
+  const pane = 'https://github.com/orgs/manticoresoftware/projects/3/views/16?pane=issue&itemId=239268027&issue=manticoresoftware%7Cclockoli-issues%7C6';
+  const issue = 'https://github.com/manticoresoftware/clockoli-issues/issues/6';
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, pageUrl: pane });
+  const start = harness.renderMenu({ compact: false }).walk().find(node => node.textContent === 'Start tracking this task');
+  await start.onclick({ isTrusted: true });
+  assert.equal(harness.messages.find(message => message.type === 'START')?.taskUrl, issue);
+  harness.set({ ...state, active: { id: 'running', taskUrl: issue, startedAt: new Date().toISOString() } }, []);
+  assert.ok(harness.renderMenu({ compact: false }).walk().some(node => node.textContent === 'Stop and save'));
+  assert.ok(!harness.renderMenu({ compact: false }).walk().some(node => node.textContent === 'Save and switch to this task'));
+});
+
 test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
   const now = new Date(2026, 8, 5, 14).getTime();
   const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/7', startedAt: new Date(now - 60_000).toISOString(), entryDate: '2026-09-05', description: 'Saved description' };
