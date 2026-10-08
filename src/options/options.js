@@ -2,7 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 import { taskPeriodRange } from '../domain/tasks.js';
-import { normalizeTaskUrl } from '../domain/values.js';
+import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
 import { getAddon } from '../addons/registry.js';
 
 
@@ -1543,7 +1543,12 @@ function renderMergeDestinationOptions() {
 }
 function mergeTasksVisible(side) {
   const query = $(`merge-${side}-filter`).value.trim().toLowerCase();
-  return mergeTasks.filter(task => !query || `${task.title || ''} ${task.taskUrl}`.toLowerCase().includes(query));
+  return mergeTasks.filter(task => (side === 'source' || isMergeTarget(task))
+    && (!query || `${task.title || ''} ${task.taskUrl}`.toLowerCase().includes(query)));
+}
+function isMergeTarget(task) {
+  try { return normalizeTaskUrl(task.taskUrl) === task.taskUrl; }
+  catch { return false; }
 }
 function filterMergePeople() {
   const query = $('merge-people-filter').value.trim().toLowerCase();
@@ -1617,18 +1622,19 @@ function renderMergeTasks(tasks) {
   const destinationId = $('merge-task-destination').value;
   const destinationTasks = tasks.filter(task => task.taskUrl && destinationId && task.destinationIds?.includes(destinationId));
   mergeTasks = destinationTasks.filter(task => {
-    try { return Boolean(normalizeTaskUrl(task.taskUrl)); }
+    try { return normalizeStoredTaskIdentity(task.taskUrl) === task.taskUrl; }
     catch { return false; }
   }).sort((left, right) => Number(right.totalSeconds || 0) - Number(left.totalSeconds || 0) || left.taskUrl.localeCompare(right.taskUrl));
   const unavailable = destinationTasks.length - mergeTasks.length;
   for (const side of ['source', 'target']) {
-    if (!mergeTasks.some(task => task.taskUrl === mergeSelection[side])) mergeSelection[side] = '';
+    if (!mergeTasksVisible(side).some(task => task.taskUrl === mergeSelection[side])) mergeSelection[side] = '';
     renderMergeTaskList(side);
   }
   renderMergeQueue();
   return unavailable;
 }
 function selectMergeTask(side, taskUrl) {
+  if (!mergeTasksVisible(side).some(task => task.taskUrl === taskUrl)) return;
   mergeSelection[side] = taskUrl; renderMergeTaskList(side);
   const other = side === 'source' ? 'target' : 'source';
   if (!mergeSelection[other] || mergeSelection[other] === taskUrl) return;
@@ -1657,9 +1663,11 @@ async function refreshMergeTasks() {
       renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
     }
     const unavailable = renderMergeTasks(result.tasks || []);
+    const imported = mergeTasks.filter(task => !isMergeTarget(task)).length;
     $('merge-tasks-feedback').textContent = unavailable
-      ? `${unavailable} unresolved ${unavailable === 1 ? 'identity is' : 'identities are'} not available for URL-only task merge.`
-      : mergeTasks.length ? '' : 'No tasks match the selected people and period.';
+      ? `${unavailable} invalid task ${unavailable === 1 ? 'identity was' : 'identities were'} excluded.`
+      : imported ? 'Imported task identities can be replaced with a tracked URL; replacement tasks must have a URL.'
+        : mergeTasks.length ? '' : 'No tasks match the selected people and period.';
   } catch (error) { renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message; }
 }
 

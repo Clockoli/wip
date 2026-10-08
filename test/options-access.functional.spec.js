@@ -22,7 +22,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
     GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
     GET_ADDON_SETTINGS: {},
-    LOAD_TASKS: { tasks: [], currentUsers: {}, availableUsers: [] },
+    LOAD_TASKS: {
+      tasks: [
+        { taskUrl: 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1', title: 'clockoli-issues — #6 Polish the Clockoli GitHub project page for Launch 1', destinationIds: ['github:20'] },
+        { taskUrl: 'https://github.com/acme/app/issues/6', title: 'Tracked issue', destinationIds: ['github:20'] },
+      ], currentUsers: { 'github:20': 'octocat' }, availableUsers: ['octocat'],
+    },
     LOAD_REPOSITORY_COLLABORATORS: {
       users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: false,
       pendingUsers: [], pendingHasMore: false,
@@ -119,5 +124,26 @@ test('repository avatar menu closes on outside click without requesting access r
     await expect(avatar).toHaveAttribute('aria-expanded', 'false');
     await expect(row).not.toHaveAttribute('open', '');
     await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Merge tasks offers an imported identity only on the source side in Chromium', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page } = fixture;
+    const errors = [];
+    page.on('pageerror', error => errors.push(`page: ${error.message}`));
+    fixture.worker.on('console', message => { if (message.type() === 'error') errors.push(`worker: ${message.text()}`); });
+    await expect(page.locator('#merge-tasks')).toBeVisible();
+    await page.locator('#merge-task-destination').selectOption('github:20');
+    await expect(page.locator('#merge-source-list .merge-task-row')).toHaveCount(2);
+    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(1);
+    await page.locator('#merge-source-filter').fill('6-Polish-the-Clockoli');
+    await page.locator('#merge-source-list .merge-task-row').click();
+    await page.locator('#merge-target-list .merge-task-row').click();
+    await expect(page.locator('#merge-queue-list .merge-queue-row')).toHaveCount(1);
+    await expect(page.locator('#merge-tasks-submit')).toBeEnabled();
+    await expectReadOnlyRequests(fixture.worker);
+    expect(errors).toEqual([]);
   } finally { await closeOptions(fixture); }
 });

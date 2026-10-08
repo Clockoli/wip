@@ -227,6 +227,24 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.equal(github.atomicWrites.length, 1);
 });
 
+test('task merge replaces an imported identity with a URL and rejects an imported replacement', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const source = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
+  const target = 'https://github.com/Clockoli/clockoli-issues/issues/6';
+  const path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', { taskUrl: source, taskTitle: 'Imported task' });
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00Z') });
+  await assert.rejects(tracker.mergeTasks({ pairs: [{ sourceTaskUrl: target, targetTaskUrl: source }], startDate: '2026-08-18', endDate: '2026-08-18' }), /Invalid task URL/);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.deepEqual(await tracker.mergeTasks({ pairs: [{ sourceTaskUrl: source, targetTaskUrl: target, targetTaskTitle: 'Polish project page' }], startDate: '2026-08-18', endDate: '2026-08-18' }),
+    { mergedEntries: 1, mergedActive: false });
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.taskUrl, target);
+  assert.deepEqual(saved.metadata.clockoli.task_identity_history, [{ url: source, title: 'Imported task' }]);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('start writes one readable active text file with its durable issue title', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.start(issue, 'Ranking regression', 'Investigating');

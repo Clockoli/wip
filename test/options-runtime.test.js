@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
 import { taskPeriodRange } from '../src/domain/tasks.js';
-import { normalizeTaskUrl } from '../src/domain/values.js';
+import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/values.js';
 
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
@@ -52,7 +52,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
     window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
-    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeTaskUrl,
+    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeStoredTaskIdentity, normalizeTaskUrl,
     ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
 
     ClockoliRecovery: { actionFor: () => null },
@@ -615,9 +615,10 @@ test('blurred B is checked after an in-flight A inspection without applying stal
   assert.equal(page.nodes.get('repository-confirmation-title').textContent, 'Connect acme/second?');
 });
 
-test('Merge tasks omits unresolved identities from both pickers and explains the URL-only limitation', async () => {
+test('Merge tasks offers imported identities as sources but only URLs as replacement targets', async () => {
+  const imported = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
   const page = harness({ reply: request => request.type === 'LOAD_TASKS' ? { tasks: [
-    { taskUrl: 'acme/project/unresolved-task', destinationIds: ['github:1'] },
+    { taskUrl: imported, title: 'clockoli-issues — #6 Polish the Clockoli GitHub project page for Launch 1', destinationIds: ['github:1'] },
     { taskUrl: 'https://example.test/task', destinationIds: ['github:1'] },
   ], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
   page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
@@ -628,10 +629,13 @@ test('Merge tasks omits unresolved identities from both pickers and explains the
   assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
   await page.context.refreshMergeTasks();
   assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').length, 1);
-  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /unresolved.*(URL|merge)/i);
-  for (const side of ['source', 'target']) {
-    assert.deepEqual(page.nodes.get(`merge-${side}-list`).children.map(row => row.children[1]?.textContent), ['https://example.test/task']);
-  }
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /replacement.*URL/i);
+  assert.deepEqual(page.nodes.get('merge-source-list').children.map(row => row.children[1]?.textContent),
+    ['https://example.test/task', imported]);
+  assert.deepEqual(page.nodes.get('merge-target-list').children.map(row => row.children[1]?.textContent), ['https://example.test/task']);
+  page.context.selectMergeTask('source', imported);
+  page.context.selectMergeTask('target', 'https://example.test/task');
+  assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
 });
 
 test('Merge tasks queues selected left-to-right pairs and sends them together', async () => {

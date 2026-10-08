@@ -1462,7 +1462,7 @@ export class TrackerService {
     if (!Array.isArray(pairs) || !pairs.length || pairs.length > 100) throw new Error('Choose one to one hundred task merges');
     const replacements = new Map();
     for (const pair of pairs) {
-      const sourceUrl = this.validateTaskUrl(pair?.sourceTaskUrl), targetUrl = this.validateTaskUrl(pair?.targetTaskUrl);
+      const sourceUrl = normalizeStoredTaskIdentity(pair?.sourceTaskUrl), targetUrl = this.validateTaskUrl(pair?.targetTaskUrl);
       if (sourceUrl === targetUrl) throw new Error('Choose two different tasks to merge');
       if (replacements.has(sourceUrl)) throw new Error('Each task can be replaced only once');
       replacements.set(sourceUrl, { taskUrl: targetUrl, taskTitle: String(pair?.targetTaskTitle || '').trim().slice(0, 300) });
