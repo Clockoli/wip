@@ -12,7 +12,7 @@ function renderer(name, nextName) {
 }
 
 test('Activity renders compact scan-first rows with contextual controls', () => {
-  assert.match(content, /:host\(\.times-surface\) \.times-results \{[^}]*border:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.activity-list \{ border-top:1px solid var\(--borderColor-muted/);
   assert.match(content, /\.entry-record \{ position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var\(--borderColor-muted/);
   assert.match(content, /\.entry-record \+ \.entry-record \{ margin-top:0/);
   assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:0;[^}]*opacity:0/);
@@ -27,16 +27,14 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
   assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*width:100vw[^}]*max-width:none/s);
 });
 
-test('Activity defaults to Last 3 days and confines search and period to List', () => {
+test('Activity defaults to Last 3 days and puts filter before period on one row', () => {
   assert.match(content, /let timesPeriod = 'last-three-days'/);
-  assert.match(content, /period === 'last-three-days'[\s\S]*move\(-2\)/);
-  assert.match(content, /timesViewMode === 'list' \? timesRange\(\) : \(timesHistoryRange \|\| timesRange\('last-three-days'\)\)/);
+  assert.match(content, /timesPeriod === 'last-three-days'[\s\S]*move\(-2\)/);
   const page = renderer('renderTimesPage(preservedTimeline = null)', 'renderMenu()');
   assert.match(page, /\['last-three-days', 'Last 3 days'\]/);
-  assert.ok(page.indexOf("filterLabel.className = 'times-filter'") < page.indexOf("periodLabel.append(el('span', 'Period'"), 'filter must be created before period');
-  assert.match(page, /toolbar\.hidden = timesViewMode !== 'list'/);
-  assert.match(content, /\.times-toolbar\[hidden\] \{ display:none \}/);
-  assert.match(content, /\.times-controls-list \.times-toolbar \{[^}]*grid-template-columns:minmax\(0,1fr\) 220px/s);
+  assert.ok(page.indexOf("filterLabel.className = 'times-filter'") < page.indexOf('periodLabel.append(period)'), 'filter must be created before period');
+  assert.match(content, /\.times-toolbar\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/s);
+  assert.match(content, /\.times-filter\s*\{[^}]*grid-column:auto/s);
 });
 
 test('GitHub header has no separate navigation dropdown', () => {

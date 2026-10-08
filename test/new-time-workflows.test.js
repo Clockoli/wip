@@ -47,8 +47,8 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
   assert.match(worker, /async function loadTimes[\s\S]*const controller = new AbortController\(\)[\s\S]*loadDestinationRecords\(destinations, async \(destination, signal\) => \{[\s\S]*signal\.throwIfAborted\(\)[\s\S]*includeStorageMetadata: true, signal[\s\S]*\}, \{ signal: controller\.signal \}\)/);
   assert.match(worker, /async function loadTimes\(message, sender\)[\s\S]*sender\?\.documentId \?\? sender\?\.tab\?\.id[\s\S]*:times:\$\{requestOwner\}/);
   assert.match(worker, /message\.type === 'LOAD_TIMES'\) return loadTimes\(message, sender\)/);
-  assert.match(content, /function refreshRecent\(force = false\)[\s\S]*loadId === recentLoadId/);
-  assert.match(content, /loadSelectedTimes[\s\S]*refreshRecent\(true\)/);
+  assert.match(content, /function refreshRecent\(force = false[^)]*\)[\s\S]*loadId === recentLoadId/);
+  assert.match(content, /loadSelectedTimes[\s\S]*refreshRecent\(true, \{ calendarFocus:/);
 });
 
 test('status filtering and status-shaped task DTOs are removed while URL/title filtering remains', () => {
