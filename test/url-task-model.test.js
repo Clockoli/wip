@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf } from '../src/domain/values.js';
+import { normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, parseGitHubTaskUrl, taskUrlOf } from '../src/domain/values.js';
 import { parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
 
@@ -21,6 +21,29 @@ test('task identity is an arbitrary canonical HTTP(S) URL with optional GitHub m
   }
   assert.equal(taskUrlOf({ taskUrl: 'acme/project/imported-task' }), 'acme/project/imported-task');
   assert.throws(() => buildActiveTimer({ user: 'alice', id: ID, taskUrl: 'acme/project/imported-task', startedAt: '2026-08-22T08:00:00Z', timezone: 'UTC' }), /task URL/i);
+});
+
+test('GitHub Projects issue pane shares the direct issue identity, not its view URL', () => {
+  const pane = 'https://github.com/orgs/manticoresoftware/projects/3/views/16?pane=issue&itemId=239268027&issue=manticoresoftware%7Cclockoli-issues%7C6';
+  const issue = 'https://github.com/manticoresoftware/clockoli-issues/issues/6';
+  assert.equal(parseGitHubProjectPaneIssueUrl(pane), issue);
+  assert.equal(parseGitHubProjectPaneIssueUrl(pane.replace('itemId=239268027', 'itemId=235211163')), issue);
+  assert.equal(normalizeTaskUrl(pane), pane, 'previously tracked project URLs stay readable');
+  const stored = buildActiveTimer({ user: 'alice', id: ID, taskUrl: pane, startedAt: '2026-08-22T08:00:00Z', timezone: 'UTC' });
+  assert.equal(parseActiveRecord(serializeActiveRecord(stored), { user: 'alice' }).taskUrl, pane);
+});
+
+test('only a well-formed GitHub Projects issue pane is rewritten', () => {
+  const base = 'https://github.com/orgs/acme/projects/3/views/16';
+  for (const url of [
+    `${base}?pane=issue`, `${base}?pane=issue&issue=acme%7Crepo%7C0`,
+    `${base}?pane=issue&issue=acme%7Crepo%7C1%7Cextra`,
+    `${base}?pane=issue&issue=acme--bad%7Crepo%7C1`,
+    `${base}?pane=issue&issue=acme%7C..%7C1`,
+    `${base}?pane=issue&issue=acme%7Crepo%7C1&issue=acme%7Crepo%7C2`,
+    `${base}?pane=other&issue=acme%7Crepo%7C1`,
+    'https://example.com/orgs/acme/projects/3/views/16?pane=issue&issue=acme%7Crepo%7C1',
+  ]) assert.equal(parseGitHubProjectPaneIssueUrl(url), null);
 });
 
 test('new timers and monthly records persist canonical work-item identity and title', () => {

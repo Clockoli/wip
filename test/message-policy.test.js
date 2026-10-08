@@ -122,6 +122,15 @@ test('page-bound Start uses the current tab URL after GitHub SPA navigation', ()
   assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/125', sender, origin), /current page/i);
 });
 
+test('Projects issue pane Start is bound to its selected canonical issue after SPA navigation', () => {
+  const pane = 'https://github.com/orgs/acme/projects/3/views/16?pane=issue&itemId=239268027&issue=acme%7Crepo%7C6';
+  const sender = { url: 'https://github.com/orgs/acme/projects/3/views/16', tab: { id: 1, url: pane } };
+  assert.equal(taskUrlForStart('https://github.com/acme/repo/issues/6', sender, origin), 'https://github.com/acme/repo/issues/6');
+  assert.throws(() => taskUrlForStart('https://github.com/acme/repo/issues/7', sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/repo/pull/6', sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart(pane.replace('issue=acme%7Crepo%7C6', 'issue=other%7Crepo%7C6'), sender, origin), /current page/i);
+});
+
 test('page Start does not fall back to the original document when the tab has left the task', () => {
   const sender = { url: issue.url, tab: { id: 1, url: 'https://github.com/acme/frontend' } };
   assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);

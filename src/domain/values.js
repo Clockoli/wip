@@ -18,6 +18,22 @@ export function normalizeTaskUrl(value) {
   return parsed.href;
 }
 
+// Page-context identity only: do not rewrite stored project URLs when reading old records.
+export function parseGitHubProjectPaneIssueUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch { return null; }
+  if (typeof value !== 'string' || value.length > TASK_URL_MAX || parsed.protocol !== 'https:'
+      || parsed.hostname !== 'github.com' || parsed.username || parsed.password
+      || !/^\/orgs\/[^/]+\/projects\/[1-9]\d*\/views\/[1-9]\d*\/?$/.test(parsed.pathname)
+      || parsed.searchParams.getAll('pane').length !== 1 || parsed.searchParams.get('pane') !== 'issue'
+      || parsed.searchParams.getAll('issue').length !== 1) return null;
+  const parts = parsed.searchParams.get('issue').split('|');
+  if (parts.length !== 3 || !OWNER_RE.test(parts[0]) || parts[0].includes('--')
+      || !REPO_RE.test(parts[1]) || parts[1] === '.' || parts[1] === '..'
+      || !/^[1-9]\d*$/.test(parts[2]) || !Number.isSafeInteger(Number(parts[2]))) return null;
+  return normalizeIssue({ owner: parts[0], repo: parts[1], number: Number(parts[2]) }).url;
+}
+
 // Stored Clockify work may have a deterministic identity without a navigable URL.
 // Browser-created tasks still go through normalizeTaskUrl before reaching storage.
 export function normalizeStoredTaskIdentity(value) {
