@@ -775,6 +775,53 @@ test('queued linked-entry edits update local cache together and persist in one a
   assert.equal(saved[1].startedAt, '2026-08-18T09:01:00.000Z');
 });
 
+test('queued completed edits cannot extend into a running timer, including after restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const running = active('2026-08-18T10:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([completed]), 'monthly-sha');
+  store.value.recentCache = [{ ...completed, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  store.value.activeCache = { ...running, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original: completed,
+    edits: { endedAt: '2026-08-18T10:30:00.000Z' } };
+  await assert.rejects(() => tracker.queueEntryEdit(request), /overlap.*running timer/i);
+  await assert.rejects(() => service({ github, store }).queueEntriesEdit({ entries: [request] }), /overlap.*running timer/i);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.recentCache[0].endedAt, completed.endedAt);
+  await tracker.queueEntriesEdit({ entries: [{ ...request, edits: { endedAt: running.startedAt } }] });
+  assert.equal(store.value.recentCache[0].endedAt, running.startedAt);
+});
+
+test('direct completed edit rejects an overlap with remote active without writing', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const running = active('2026-08-18T10:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([completed]), 'monthly-sha');
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  const tracker = service({ github, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original: completed,
+    edits: { endedAt: '2026-08-18T10:30:00.000Z' } };
+  await assert.rejects(() => tracker.editEntry(request), /overlap.*running timer/i);
+  await assert.rejects(() => tracker.editEntries({ entries: [request] }), /overlap.*running timer/i);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.get(path).sha, 'monthly-sha');
+});
+
+test('an existing overlap does not block a description-only correction', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T10:30:00.000Z');
+  const running = active('2026-08-18T10:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([completed]), 'monthly-sha');
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  store.value.recentCache = [{ ...completed, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  store.value.activeCache = { ...running, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original: completed, edits: { description: 'Updated' } };
+  await tracker.queueEntryEdit(request);
+  assert.equal((await tracker.editEntry(request)).description, 'Updated');
+});
+
 test('running timer start can be adjusted with SHA protection and preserves an active record', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const original = active('2026-08-18T08:00:00.000Z');
