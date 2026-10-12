@@ -980,19 +980,18 @@ for (const colorScheme of ['light', 'dark']) {
     await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     await assertPanelBackgrounds(['.calendar-time-label', '.calendar-row-name']);
     const editBadge = page.locator('#timeline .calendar-edit-clock').first();
-    expect(await editBadge.evaluate(element => {
-      const style = getComputedStyle(element);
-      return { color: style.color, background: style.backgroundColor };
-    })).toEqual({ color: panel, background: colorScheme === 'dark' ? 'rgb(230, 237, 243)' : 'rgb(31, 35, 40)' });
+    const text = colorScheme === 'dark' ? 'rgb(230, 237, 243)' : 'rgb(31, 35, 40)';
+    await expect(editBadge).toHaveCSS('color', panel);
+    await expect(editBadge).toHaveCSS('background-color', text);
     const tile = page.locator('#timeline .calendar-task[data-task-key="entry:monogram"]:not(.segment-continuation) .clockoli-calendar-favicon');
     await expect(tile).toHaveText('E');
     await expect(tile).toHaveAttribute('aria-hidden', 'true');
-    expect(await tile.evaluate(element => {
-      const style = getComputedStyle(element);
-      return { tag: element.tagName, width: style.width, height: style.height, radius: style.borderRadius, color: style.color, background: style.backgroundColor };
-    })).toEqual({ tag: 'SPAN', width: '16px', height: '16px', radius: '3px',
-      color: colorScheme === 'dark' ? 'rgb(230, 237, 243)' : 'rgb(31, 35, 40)',
-      background: colorScheme === 'dark' ? 'rgb(13, 17, 23)' : 'rgb(255, 255, 255)' });
+    await expect(tile).toHaveJSProperty('tagName', 'SPAN');
+    await expect(tile).toHaveCSS('width', '16px');
+    await expect(tile).toHaveCSS('height', '16px');
+    await expect(tile).toHaveCSS('border-radius', '3px');
+    await expect(tile).toHaveCSS('color', text);
+    await expect(tile).toHaveCSS('background-color', panel);
     await expect(page.locator('#timeline .calendar-task[data-task-key="entry:unavailable"] .clockoli-calendar-favicon')).toHaveCount(0);
     await expect(page.locator('#timeline .calendar-task[data-task-key="entry:imported"] .clockoli-calendar-favicon')).toHaveCount(0);
     expect(requests.some(url => url.includes('/_favicon/'))).toBe(false);
