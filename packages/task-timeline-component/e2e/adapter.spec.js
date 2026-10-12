@@ -953,8 +953,37 @@ for (const colorScheme of ['light', 'dark']) {
       const host = document.querySelector('#timeline');
       host.style.setProperty('--fgColor-default', colorScheme === 'dark' ? '#e6edf3' : '#1f2328');
       host.style.setProperty('--bgColor-default', colorScheme === 'dark' ? '#0d1117' : '#ffffff');
+      host.style.setProperty('--fgColor-muted', colorScheme === 'dark' ? '#9198a1' : '#59636e');
+      host.style.setProperty('--bgColor-muted', colorScheme === 'dark' ? '#151b23' : '#f6f8fa');
+      host.style.setProperty('--borderColor-muted', colorScheme === 'dark' ? '#3d444db3' : '#d1d9e0b3');
+      host.style.setProperty('--bgColor-accent-muted', colorScheme === 'dark' ? '#388bfd1a' : '#ddf4ff');
+      host.style.setProperty('--fgColor-accent', colorScheme === 'dark' ? '#4493f8' : '#0969da');
     }, colorScheme);
+    const panel = colorScheme === 'dark' ? 'rgb(13, 17, 23)' : 'rgb(255, 255, 255)';
+    const assertPanelBackgrounds = async selectors => {
+      for (const selector of selectors) {
+        const cells = page.locator(`#timeline ${selector}`);
+        expect(await cells.count(), selector).toBeGreaterThan(0);
+        const backgrounds = await cells.evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor));
+        expect(backgrounds.every(background => background === panel), selector).toBe(true);
+      }
+    };
+    await assertPanelBackgrounds(['.content', '.ruler-row', '.task-row', '.ruler-cell:not(.empty)']);
+    if (colorScheme === 'dark') {
+      for (const selector of ['.day-band', '.ruler-cell']) {
+        const cells = page.locator(`#timeline ${selector}`);
+        expect(await cells.count(), selector).toBeGreaterThan(0);
+        const colors = await cells.evaluateAll(elements => elements.map(element => getComputedStyle(element).color));
+        expect(colors.every(color => color !== 'rgb(52, 64, 84)'), selector).toBe(true);
+      }
+    }
     await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    await assertPanelBackgrounds(['.calendar-time-label', '.calendar-row-name']);
+    const editBadge = page.locator('#timeline .calendar-edit-clock').first();
+    expect(await editBadge.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { color: style.color, background: style.backgroundColor };
+    })).toEqual({ color: panel, background: colorScheme === 'dark' ? 'rgb(230, 237, 243)' : 'rgb(31, 35, 40)' });
     const tile = page.locator('#timeline .calendar-task[data-task-key="entry:monogram"]:not(.segment-continuation) .clockoli-calendar-favicon');
     await expect(tile).toHaveText('E');
     await expect(tile).toHaveAttribute('aria-hidden', 'true');

@@ -112,7 +112,7 @@ jobs:
   collect:
     needs: [package, firefox-sign, safari]
     if: >-
-      ${{ always() && needs.package.result == 'success' && needs.safari.result == 'success' &&
+      ${{ !cancelled() && needs.package.result == 'success' && needs.safari.result == 'success' &&
           (needs.firefox-sign.result == 'success' || needs.firefox-sign.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
@@ -129,7 +129,7 @@ jobs:
 
   release:
     needs: collect
-    if: ${{ always() && needs.collect.result == 'success' }}
+    if: ${{ !cancelled() && needs.collect.result == 'success' }}
     permissions:
       contents: write
     uses: Muvon/ci-workflow/.github/workflows/release.yml@master

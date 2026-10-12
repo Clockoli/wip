@@ -34,20 +34,45 @@
       --tt-muted: var(--fgColor-muted, var(--ck-fg-muted, #59636e));
       --tt-border: var(--borderColor-default, var(--ck-border, #d1d9e0));
       --tt-grid: var(--borderColor-muted, var(--ck-border-muted, #d1d9e0b3));
-      --tt-grid-major: var(--control-borderColor-emphasis, #818b98);
+      --tt-grid-major: var(--control-borderColor-emphasis, var(--ck-border, #818b98));
       --tt-empty: var(--bgColor-muted, var(--ck-bg-muted, #f6f8fa));
       --tt-shadow: none;
       --tt-radius: 0;
+      --tt-inverse-bg: var(--fgColor-default, var(--ck-fg, #172033));
+      --tt-inverse-fg: var(--bgColor-default, var(--ck-bg, #fff));
       color-scheme: light dark;
       font: var(--text-body-shorthand-medium, 400 14px/1.5 "Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
     }
     .shell { border: 0; border-radius: 0; box-shadow: none; background: var(--tt-panel); }
     .meta { min-height: 42px; padding-inline: 12px; background: var(--tt-panel); color: var(--tt-muted); }
-    .viewport, .calendar-view, .calendar-viewport, .calendar-canvas,
-    .calendar-hour-label, .calendar-project-header, .details { background: var(--tt-panel); }
+    .viewport, .content, .ruler-row, .task-row, .ruler-cell:not(.empty),
+    .calendar-view, .calendar-viewport, .calendar-canvas,
+    .calendar-time-label, .calendar-row-name, .calendar-nav button, .history-button,
+    .details { background: var(--tt-panel); }
     .viewport { border-block: 1px solid var(--tt-border); }
     .day-row, .calendar-toolbar, .calendar-sticky-header, .calendar-corner,
     .calendar-day-header { background: var(--bgColor-muted, var(--ck-bg-muted, #f6f8fa)); color: var(--tt-text); }
+    .day-band, .ruler-cell { color: var(--tt-text); }
+    .ruler-cell.empty, .calendar-row-name { color: var(--tt-muted); }
+    .calendar-day-header.today {
+      background: var(--bgColor-accent-muted, var(--ck-bg-accent, #eef3ff));
+      color: var(--fgColor-accent, var(--ck-accent, #2449a8));
+    }
+    .calendar-sticky-header { box-shadow: var(--shadow-floating-small, var(--ck-shadow, 0 2px 7px rgba(16,24,40,.06))); }
+    .calendar-row-line { background: var(--tt-grid); }
+    .calendar-row-name { border-right-color: var(--tt-grid); }
+    .edit-guide { background: color-mix(in srgb, var(--tt-inverse-bg) 68%, transparent); }
+    .edit-guide.active { background: var(--tt-inverse-bg); }
+    .edit-guide-label, .edit-clock, .calendar-edit-clock { background: var(--tt-inverse-bg); color: var(--tt-inverse-fg); }
+    .edit-clock, .calendar-edit-clock { box-shadow: var(--shadow-floating-small, var(--ck-shadow, 0 2px 7px rgba(23,32,51,.28))); }
+    .edit-guide.magnet, .calendar-magnet-guide { background: var(--fgColor-accent, var(--ck-accent, #315ecf)); }
+    .edit-guide.magnet { box-shadow: 0 0 0 1px var(--bgColor-accent-muted, var(--ck-bg-accent, rgba(49,94,207,.14))); }
+    .calendar-magnet-guide { box-shadow: 0 0 0 1px var(--bgColor-accent-muted, var(--ck-bg-accent, rgba(49,94,207,.12))); }
+    .edit-guide.magnet.snapped, .calendar-magnet-guide.snapped { background: var(--fgColor-accent, var(--ck-accent, #1f49b6)); }
+    .calendar-now-line, .calendar-now-dot, .timeline-now-line, .timeline-now-line::before { background: var(--fgColor-danger, var(--ck-danger, #d92d20)); }
+    .details a { color: var(--fgColor-accent, var(--ck-accent, #315ecf)); }
+    .details-pointer { background: var(--fgColor-accent, var(--ck-accent, #0969da)); }
+    .details-pointer::after { border-right-color: var(--fgColor-accent, var(--ck-accent, #0969da)); border-bottom-color: var(--fgColor-accent, var(--ck-accent, #0969da)); }
     .task {
       --clockoli-task-background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel));
       --clockoli-task-accent: color-mix(in srgb, var(--clockoli-task-background) 78%, black);
@@ -60,6 +85,17 @@
       box-shadow: none;
     }
     .task:hover:not(.editing), .task.hovered:not(.editing), .task.editing { box-shadow: none; }
+    .viewport.zooming .task { box-shadow: none; }
+    @keyframes running-task-pulse {
+      0%, 100% {
+        filter: brightness(1);
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--tt-panel) 62%, transparent), 0 6px 14px color-mix(in srgb, var(--fgColor-accent, var(--ck-accent, #193d96)) 24%, transparent);
+      }
+      50% {
+        filter: brightness(1.13);
+        box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--tt-panel) 82%, transparent), 0 8px 22px color-mix(in srgb, var(--fgColor-accent, var(--ck-accent, #193d96)) 42%, transparent);
+      }
+    }
     .task:hover, .task.hovered:not(.selected), .task.editing { z-index: 10; }
     .task.selected { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
     .task.focused:not(.selected) { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
@@ -97,7 +133,7 @@
     .resize-handle.left::after { left: 0; border-radius: 4px 0 0 4px; }
     .resize-handle.right::after { right: 0; border-radius: 0 4px 4px 0; }
     .calendar-task .calendar-resize-handle { left: 0; right: 0; }
-    .calendar-task .calendar-resize-handle::after {
+    .calendar-resize-handle::after {
       left: 0; width: 100%; height: 6px;
       transform: none;
       background-color: color-mix(in srgb, var(--clockoli-task-color) 70%, var(--tt-panel));
@@ -130,7 +166,8 @@
     .calendar-task.selected .calendar-resize-handle::after,
     .calendar-task.focused .calendar-resize-handle::after { opacity: 1; transform: none; }
     .connector-dot { background: var(--tt-text); box-shadow: 0 0 0 1px var(--tt-panel); }
-    .row-label { color: var(--tt-muted); background: color-mix(in srgb, var(--tt-panel) 88%, transparent); }
+    .row-label { color: var(--tt-muted); background: color-mix(in srgb, var(--tt-panel) 88%, transparent); border-color: var(--tt-grid); }
+    .calendar-connector-dot { background: var(--tt-text); box-shadow: 0 0 0 1.5px var(--tt-panel), 0 1px 3px color-mix(in srgb, var(--tt-text) 26%, transparent); }
     .calendar-task {
       border: 1px solid color-mix(in srgb, var(--clockoli-task-color, #64748b) 44%, transparent) !important;
       border-left: 3px solid var(--clockoli-task-color, #64748b) !important;
@@ -139,7 +176,7 @@
       color: var(--tt-text) !important;
       box-shadow: none !important;
     }
-    .calendar-task.selected, .calendar-task.focused { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
+    .calendar-task.selected, .calendar-task.focused:not(.selected) { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
     .clockoli-calendar-description { margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; text-overflow:ellipsis; white-space:nowrap; }
