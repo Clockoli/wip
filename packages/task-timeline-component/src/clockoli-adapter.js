@@ -34,7 +34,7 @@
       --tt-muted: var(--fgColor-muted, var(--ck-fg-muted, #59636e));
       --tt-border: var(--borderColor-default, var(--ck-border, #d1d9e0));
       --tt-grid: var(--borderColor-muted, var(--ck-border-muted, #d1d9e0b3));
-      --tt-grid-major: var(--control-borderColor-emphasis, var(--ck-border, #818b98));
+      --tt-grid-major: var(--control-borderColor-emphasis, #818b98);
       --tt-empty: var(--bgColor-muted, var(--ck-bg-muted, #f6f8fa));
       --tt-shadow: none;
       --tt-radius: 0;
