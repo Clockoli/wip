@@ -49,7 +49,7 @@ Normal setup has two guided steps: sign in with GitHub, then check a time reposi
 
 ### Step 1: activate the device
 
-1. Select **Sign in with GitHub**. Clockoli copies the one-time code before opening GitHub so you can paste it.
+1. Select **Sign in with GitHub**. Clockoli tries to copy the one-time code, reveals it character by character over about two seconds, then keeps it visible for another four seconds before opening GitHub. If copying is blocked, GitHub still opens; return to Settings and select **Copy**, or copy the visible code manually, before entering it on GitHub.
 2. On GitHub, verify that you reached **github.com** for the Clockoli authorization you initiated in Settings.
 3. Paste the one-time code and approve the request.
 4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.
