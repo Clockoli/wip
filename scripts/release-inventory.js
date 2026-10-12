@@ -79,7 +79,7 @@ export async function releaseInventory(root, manifest = null) {
 }
 
 export async function validateReleaseInventory(root, inventory = null, generatedManifest = null) {
-  inventory ||= await releaseInventory(root);
+  if (inventory === null) inventory = await releaseInventory(root, generatedManifest === null ? null : JSON.parse(generatedManifest));
   let bytes = 0;
   for (const file of inventory) {
     const absolute = path.join(root, file);

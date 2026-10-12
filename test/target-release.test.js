@@ -48,3 +48,35 @@ test('target packages preserve Chrome bytes and generate constrained Firefox and
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('unpacked Firefox contains exactly the generated manifest inventory', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'clockoli-unpacked-test-'));
+  try {
+    const unpacked = path.join(directory, 'extension');
+    execFileSync('python3', ['scripts/build-release.py', '--target', 'firefox', '--unpacked', unpacked], { cwd: root });
+    const { releaseInventory, validateReleaseInventory } = await import('../scripts/release-inventory.js');
+    const bytes = await readFile(path.join(unpacked, 'manifest.json'));
+    const manifest = JSON.parse(bytes);
+    const files = await releaseInventory(unpacked, manifest);
+    assert.ok(files.includes(manifest.background.scripts[0]));
+    assert.equal((await validateReleaseInventory(unpacked, null, bytes)).files, files.length);
+    const malicious = Buffer.from(JSON.stringify({ ...manifest, description: `ghp_${'x'.repeat(30)}` }));
+    await assert.rejects(validateReleaseInventory(unpacked, files, malicious), /GitHub token detected in release entry manifest.json/);
+    const repeated = spawnSync('python3', ['scripts/build-release.py', '--target', 'firefox', '--unpacked', unpacked], { cwd: root });
+    assert.notEqual(repeated.status, 0, 'unpacked output must not merge with an existing directory');
+    const inRepository = spawnSync('python3', ['scripts/build-release.py', path.join(root, 'scripts/forbidden-output.zip')], { cwd: root, encoding: 'utf8' });
+    assert.notEqual(inRepository.status, 0);
+    assert.match(inRepository.stderr, /Build output must be outside the repository/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Firefox signing rejects incomplete credentials before building or contacting AMO', () => {
+  const environment = { ...process.env, AMO_JWT_ISSUER: 'test-issuer' };
+  delete environment.AMO_JWT_SECRET;
+  const result = spawnSync(process.execPath, ['scripts/firefox.js', 'sign', '/tmp/clockoli-signing-test'], { cwd: root, env: environment, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Missing required environment variable: AMO_JWT_SECRET/);
+  assert.equal(result.stdout, '');
+});

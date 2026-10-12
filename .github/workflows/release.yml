@@ -129,6 +129,7 @@ jobs:
 
   release:
     needs: collect
+    if: ${{ always() && needs.collect.result == 'success' }}
     permissions:
       contents: write
     uses: Muvon/ci-workflow/.github/workflows/release.yml@master

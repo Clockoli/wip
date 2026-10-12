@@ -32,7 +32,7 @@ try {
     execFileSync('git', ['archive', '--format=zip', `--output=${sourceArchive}`, 'HEAD'], { cwd: root });
     const result = await webExt.cmd.sign({ sourceDir, artifactsDir: temporary, channel: 'unlisted',
       apiKey: process.env.AMO_JWT_ISSUER, apiSecret: process.env.AMO_JWT_SECRET, uploadSourceCode: sourceArchive,
-    }, { shouldExitProgram: false });
+    });
     if (result.downloadedFiles.length !== 1) throw new Error('AMO signing did not produce a signed extension');
     const files = (await readdir(temporary)).filter(file => file.endsWith('.xpi'));
     if (files.length !== 1) throw new Error('AMO signing must produce exactly one signed XPI');
