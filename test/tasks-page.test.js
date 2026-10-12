@@ -223,8 +223,8 @@ test('tasks mounts the shared running status directly below the tabs', () => {
   assert.match(js, /mountRunningStatus\(\$\('running-status'\), \{ send[, }]/);
 });
 
-async function tasksHarness({ configured = true, tasks = [], active = null, pendingWrites = [], respond, runningStatus = false } = {}) {
-  const messages = [], intervals = new Map(), timeouts = new Map();
+async function tasksHarness({ configured = true, tasks = [], active = null, pendingWrites = [], respond, runningStatus = false, permissions = ['favicon'] } = {}) {
+  const resources = [], messages = [], intervals = new Map(), timeouts = new Map();
   let now = Date.parse('2026-09-05T10:00:00Z'), timerId = 0;
   class Node {
     constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.className = ''; this.value = ''; this.hidden = false; this.scrollTop = 0; this.scrollLeft = 0; }
@@ -257,7 +257,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
     ClockoliRecovery: { actionFor: () => null },
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; }, clearInterval: id => intervals.delete(id),
     setTimeout: callback => { timeouts.set(++timerId, callback); return timerId; }, clearTimeout: id => timeouts.delete(id),
-    chrome: { runtime: { getURL: path => `chrome-extension://clockoli${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { getManifest: () => ({ permissions }), getURL: path => { resources.push(path); return `chrome-extension://clockoli${path}`; }, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       Promise.resolve().then(() => respond?.(message) ?? (message.type === 'LOAD_TASKS' || message.type === 'GET_PAGE_STATE'
         ? { configured, tasks: structuredClone(tasks), active, pendingWrites } : { taskUrl: message.taskUrl, startedAt: new Date(now).toISOString() }))
@@ -271,7 +271,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   vm.runInContext(js.replace(/^import .*;\n/gm, ''), context);
   const settle = async () => { for (let step = 0; step < 12; step++) await Promise.resolve(); };
   await settle();
-  return { nodes, document, messages, settle, timeouts, load: () => context.load(),
+  return { nodes, document, messages, resources, settle, timeouts, load: () => context.load(),
     rows: () => nodes['task-list'].children, order: () => nodes['task-list'].children.map(row => row.dataset.taskUrl),
     advance: async seconds => { now += seconds * 1000; for (const callback of [...intervals.values()]) callback(); await settle(); },
   };
@@ -287,11 +287,27 @@ test('Top tasks keeps GitHub issue icons, uses favicons for other sites, and col
   assert.equal(github.querySelector('.task-main').children[0].tag, 'svg');
   const favicon = external.querySelector('.task-main').children[0];
   assert.equal(favicon.tag, 'img');
-  assert.match(favicon.src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  assert.equal(favicon.src, 'chrome-extension://clockoli/_favicon/?pageUrl=https%3A%2F%2Fexample.org%2Ftasks%2F2&size=32');
   for (const row of [github, external]) {
     assert.match(row.style, /^--task-color:#[0-9a-f]{6}$/i);
     assert.match(row.querySelector('.task-title').style, /^color:#[0-9a-f]{6}$/i);
   }
+});
+
+test('Top tasks uses monograms without favicon permission and preserves GitHub and imported icons', async () => {
+  const imported = { taskUrl: 'owner/repo/slug', title: 'Imported task', totalSeconds: 20 };
+  const external = { ...taskB, taskUrl: 'https://www.example.org/tasks/2' };
+  const page = await tasksHarness({ tasks: [taskA, external, imported], permissions: [] });
+  const [github, site, unresolved] = page.rows();
+  assert.equal(github.querySelector('.task-main').children[0].tag, 'svg');
+  const icon = site.querySelector('.task-main').children[0];
+  assert.equal(icon.tag, 'span');
+  assert.equal(icon.textContent, 'E');
+  assert.equal(icon['aria-hidden'], 'true');
+  assert.equal(icon.src, undefined);
+  assert.equal(unresolved.querySelector('.task-main').children[0].tag, 'img');
+  assert.equal(unresolved.querySelector('.task-main').children[0].hidden, true);
+  assert.equal(page.resources.includes('/_favicon/'), false);
 });
 
 test('Top tasks hides repository provenance while timer actions keep the task URL as identity', async () => {

@@ -35,6 +35,7 @@ function manifestEntries(manifest) {
   const entries = [
     ...Object.values(manifest.icons || {}),
     manifest.background?.service_worker,
+    ...(manifest.background?.scripts || []),
     manifest.action?.default_popup,
     ...Object.values(manifest.action?.default_icon || {}),
     manifest.options_page,
@@ -54,8 +55,8 @@ function assertRuntimePath(file) {
   }
 }
 
-export async function releaseInventory(root) {
-  const manifest = JSON.parse(await readFile(path.join(root, MANIFEST), 'utf8'));
+export async function releaseInventory(root, manifest = null) {
+  if (manifest === null) manifest = JSON.parse(await readFile(path.join(root, MANIFEST), 'utf8'));
   const pending = [...manifestEntries(manifest)];
   const files = new Set([MANIFEST]);
   while (pending.length) {
@@ -77,12 +78,12 @@ export async function releaseInventory(root) {
   return inventory;
 }
 
-export async function validateReleaseInventory(root, inventory = null) {
+export async function validateReleaseInventory(root, inventory = null, generatedManifest = null) {
   inventory ||= await releaseInventory(root);
   let bytes = 0;
   for (const file of inventory) {
     const absolute = path.join(root, file);
-    const content = await readFile(absolute);
+    const content = file === MANIFEST && generatedManifest !== null ? generatedManifest : await readFile(absolute);
     bytes += content.byteLength;
     const text = content.toString('utf8');
     for (const { label, pattern } of SECRET_PATTERNS) {

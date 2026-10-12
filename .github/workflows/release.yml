@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      firefox-signing: ${{ steps.signing.outputs.enabled }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,14 +38,97 @@ jobs:
             exit 1
           fi
       - run: python3 scripts/build-release.py "$RUNNER_TEMP/Clockoli-$TAG.zip"
+      - run: python3 scripts/build-release.py --target firefox "$RUNNER_TEMP/Clockoli-$TAG-firefox.xpi"
+      - run: npm run lint:firefox
+      - run: git archive --format=zip --output="$RUNNER_TEMP/Clockoli-$TAG-source.zip" "$TAG"
+      - name: Detect Firefox signing configuration
+        id: signing
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -n "$AMO_JWT_ISSUER" ] || [ -n "$AMO_JWT_SECRET" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-browser-packages
+          path: ${{ runner.temp }}/Clockoli-*
+          if-no-files-found: error
+
+  firefox-sign:
+    needs: package
+    if: needs.package.outputs.firefox-signing == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run sign:firefox -- "$RUNNER_TEMP/signed"
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-firefox-signed
+          path: ${{ runner.temp }}/signed/*.xpi
+          if-no-files-found: error
+
+  safari:
+    needs: package
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - name: Build Safari app and configured distribution packages
+        run: python3 scripts/build-safari.py --build-number "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP/safari"
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_CERTIFICATES_P12_BASE64: ${{ secrets.APPLE_CERTIFICATES_P12_BASE64 }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-safari
+          path: ${{ runner.temp }}/safari/Clockoli-*
+          if-no-files-found: error
+
+  collect:
+    needs: [package, firefox-sign, safari]
+    if: >-
+      ${{ always() && needs.package.result == 'success' && needs.safari.result == 'success' &&
+          (needs.firefox-sign.result == 'success' || needs.firefox-sign.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
       - uses: actions/upload-artifact@v4
         with:
           name: release-zip
-          path: ${{ runner.temp }}/Clockoli-${{ env.TAG }}.zip
+          path: ${{ runner.temp }}/release/*
           if-no-files-found: error
 
   release:
-    needs: package
+    needs: collect
     permissions:
       contents: write
     uses: Muvon/ci-workflow/.github/workflows/release.yml@master

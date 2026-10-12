@@ -938,6 +938,38 @@ test('Calendar task cards show their site favicons', async ({ page }) => {
   await expect(image).toHaveAttribute('src', favicon);
 });
 
+for (const colorScheme of ['light', 'dark']) {
+  test(`Calendar task cards show monograms without favicon permission in ${colorScheme} mode`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    const now = Date.now();
+    const requests = [];
+    page.on('request', request => requests.push(request.url()));
+    await mount(page, { items: [
+      { id: 'entry:monogram', url: 'https://www.example.com/icon', title: 'Letter task', faviconUrl: null, startedAt: now - HOUR, endedAt: now - 30 * 60_000, rowId: 'one', isEditable: true },
+      { id: 'entry:unavailable', url: 'https://example.com/unavailable', title: 'Unavailable resource', faviconUrl: '', startedAt: now - 2 * HOUR, endedAt: now - HOUR, rowId: 'one', isEditable: true },
+      { id: 'entry:imported', url: null, title: 'owner/repo/slug', faviconUrl: '', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+    ] });
+    await page.evaluate(colorScheme => {
+      const host = document.querySelector('#timeline');
+      host.style.setProperty('--fgColor-default', colorScheme === 'dark' ? '#e6edf3' : '#1f2328');
+      host.style.setProperty('--bgColor-default', colorScheme === 'dark' ? '#0d1117' : '#ffffff');
+    }, colorScheme);
+    await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const tile = page.locator('#timeline .calendar-task[data-task-key="entry:monogram"]:not(.segment-continuation) .clockoli-calendar-favicon');
+    await expect(tile).toHaveText('E');
+    await expect(tile).toHaveAttribute('aria-hidden', 'true');
+    expect(await tile.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { tag: element.tagName, width: style.width, height: style.height, radius: style.borderRadius, color: style.color, background: style.backgroundColor };
+    })).toEqual({ tag: 'SPAN', width: '16px', height: '16px', radius: '3px',
+      color: colorScheme === 'dark' ? 'rgb(230, 237, 243)' : 'rgb(31, 35, 40)',
+      background: colorScheme === 'dark' ? 'rgb(13, 17, 23)' : 'rgb(255, 255, 255)' });
+    await expect(page.locator('#timeline .calendar-task[data-task-key="entry:unavailable"] .clockoli-calendar-favicon')).toHaveCount(0);
+    await expect(page.locator('#timeline .calendar-task[data-task-key="entry:imported"] .clockoli-calendar-favicon')).toHaveCount(0);
+    expect(requests.some(url => url.includes('/_favicon/'))).toBe(false);
+  });
+}
+
 test('Calendar task cards show description only when the card has room', async ({ page }) => {
   const now = Date.now();
   await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [

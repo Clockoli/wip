@@ -2,9 +2,77 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import vm from 'node:vm';
 
 const source = readFileSync(new URL('../src/clockoli-adapter.js', import.meta.url), 'utf8');
 const vendor = readFileSync(new URL('../vendor/timeline-component.js', import.meta.url), 'utf8');
+
+function calendarFaviconHarness(item) {
+  class Node {
+    constructor(tag) {
+      this.tag = tag; this.children = []; this.attributes = new Map(); this.listeners = new Map(); this.className = '';
+      this.style = { setProperty() {} };
+      this.classList = { contains: name => this.className.split(' ').includes(name), add: name => { this.className += ` ${name}`; }, toggle() {} };
+    }
+    querySelector(selector) {
+      return this.children.find(child => child.classList.contains(selector.slice(1)))
+        ?? this.children.map(child => child.querySelector(selector)).find(Boolean) ?? null;
+    }
+    prepend(node) { this.children.unshift(node); }
+    setAttribute(name, value) { this.attributes.set(name, value); }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    removeAttribute(name) { this.attributes.delete(name); }
+    addEventListener(name, callback) { this.listeners.set(name, callback); }
+  }
+  const card = new Node('div'); card.className = 'calendar-task'; card.dataset = { taskKey: item.id };
+  const name = new Node('div'); name.className = 'calendar-task-name'; card.children.push(name);
+  const start = source.indexOf('    function styleTasks() {');
+  const end = source.indexOf('    function renderActions()', start);
+  assert.ok(start >= 0 && end > start);
+  const decorate = vm.runInNewContext(`${source.slice(start, end)}; styleTasks`, {
+    destroyed: false, savingKeys: new Set(), sourceItem: () => item, resolveColor: () => '#e76f51', URL,
+    timeline: { shadow: { querySelectorAll: () => [card] } }, document: { createElement: tag => new Node(tag) },
+  });
+  return { decorate, name };
+}
+
+test('Calendar renders a projected monogram without producing a favicon URL', () => {
+  const harness = calendarFaviconHarness({ id: 'monogram', url: 'https://www.example.com/work', faviconUrl: null });
+  harness.decorate();
+  const icon = harness.name.children[0];
+  assert.ok(icon, 'the Calendar task needs a monogram');
+  assert.equal(icon.tag, 'span');
+  assert.equal(icon.textContent, 'E');
+  assert.equal(icon.getAttribute('aria-hidden'), 'true');
+  assert.equal(icon.src, undefined);
+  harness.decorate();
+  assert.equal(harness.name.children.length, 1);
+});
+
+test('Calendar preserves supported favicon images, including a failed image', () => {
+  const faviconUrl = 'chrome-extension://clockoli/_favicon/?pageUrl=https%3A%2F%2Fexample.com%2Fwork&size=32';
+  const harness = calendarFaviconHarness({ id: 'image', url: 'https://example.com/work', faviconUrl });
+  harness.decorate();
+  const icon = harness.name.children[0];
+  assert.equal(icon.tag, 'img');
+  assert.equal(icon.src, faviconUrl);
+  assert.equal(icon.alt, '');
+  icon.listeners.get('error')();
+  harness.decorate();
+  assert.equal(icon.hidden, true);
+  assert.equal(harness.name.children.length, 1);
+});
+
+test('Calendar keeps unavailable resources and imported identities without favicons', () => {
+  for (const item of [
+    { id: 'unavailable', url: 'https://example.com/work', faviconUrl: '' },
+    { id: 'imported', url: null, faviconUrl: '' },
+  ]) {
+    const harness = calendarFaviconHarness(item);
+    harness.decorate();
+    assert.equal(harness.name.children.length, 0);
+  }
+});
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
   assert.equal(createHash('sha256').update(vendor).digest('hex'), 'afeb30a58a456dbd59f2d0a020eb362389b8c3b65397b2d6c389ac71c90d5ac8');

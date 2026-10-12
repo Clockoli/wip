@@ -166,6 +166,11 @@
     image.referrerPolicy = 'no-referrer';
     try {
       const faviconUrl = siteFaviconUrl(value);
+      if (faviconUrl === null) {
+        const monogram = el('span', new URL(taskUrlOf(value)).hostname.replace(/^www\./, '').charAt(0).toUpperCase(), `${image.className} site-monogram`);
+        monogram.setAttribute('aria-hidden', 'true');
+        return monogram;
+      }
       if (faviconUrl) image.src = faviconUrl;
       else image.hidden = true;
     }
@@ -175,9 +180,11 @@
   }
 
   function siteFaviconUrl(value) {
-    const base = extensionResourceUrl('/_favicon/');
     const pageUrl = taskUrlOf(value);
-    if (!base || !pageUrl) return '';
+    if (!pageUrl) return '';
+    if (!chrome.runtime.getManifest().permissions.includes('favicon')) return null;
+    const base = extensionResourceUrl('/_favicon/');
+    if (!base) return '';
     try {
       const favicon = new URL(base);
       favicon.searchParams.set('pageUrl', pageUrl);
@@ -3246,6 +3253,7 @@
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
+      .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
       .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
       .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
       .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }

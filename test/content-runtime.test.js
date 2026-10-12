@@ -232,7 +232,7 @@ test('Clockoli commit cross-references render with seconds and merge adjacent re
       constructor(callback) { this.callback = callback; observer = this; }
       observe(root, options) { this.root = root; this.options = options; }
     },
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
@@ -404,7 +404,7 @@ test('participant tracked totals render during idle time and refresh after lazy 
       observe(root, options) { this.root = root; this.options = options; }
     },
     requestIdleCallback(callback) { idleCallbacks.push(callback); return idleCallbacks.length; },
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (participantFailure === 'channel_closed' && message.type === 'LOAD_TASK_PARTICIPANTS') {
         this.lastError = { message: 'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received' };
         callback();
@@ -561,7 +561,7 @@ test('stale participant responses cannot cross SPA routes and active time stays 
     location, document, URL,
     MutationObserver: class { constructor(callback) { this.callback = callback; } observe() {} },
     requestIdleCallback(callback) { idleCallbacks.push(callback); return idleCallbacks.length; },
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'LOAD_TASK_PARTICIPANTS') {
         participantCallbacks.set(message.taskUrl, callback); return;
       }
@@ -631,7 +631,7 @@ test('task result rendering clamps maximum untitled URLs and titles without losi
   };
   const context = vm.createContext({
     location, document, URL,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
@@ -680,7 +680,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
     chrome: {
       runtime: {
         lastError: null,
-        getURL: path => `chrome-extension://clockoli/${path}`,
+        getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`,
         sendMessage(message, callback) {
           messages.push(structuredClone(message));
           callback({ ok: true, data: message.type === 'GET_PAGE_STATE'
@@ -768,7 +768,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   let pageRequests = 0, stopAccepted = false, pageRequestsWhenStopAccepted = 0;
   const context = vm.createContext({
     location, document,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
@@ -848,7 +848,7 @@ test('a delayed Stop response cannot unlock recent entries after GitHub SPA navi
   let pageRequests = 0, stopCallback, stopRequested = false;
   const context = vm.createContext({
     location, document,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         pageRequests += 1;
@@ -905,7 +905,7 @@ test('header control mounts when GitHub renders the authenticated header after t
   };
   const context = vm.createContext({
     location, document,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       callback({ ok: true, data: { configured: true, active: null, pendingCount: 0 } });
     } } },
@@ -953,7 +953,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   const pending = { id: 'pending-1', status: 'conflict', stage: 'createEntry' };
   const context = vm.createContext({
     location, document,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: resolved ? 0 : 1, pendingWrites: resolved ? [] : [pending] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
@@ -992,7 +992,7 @@ test('missing-active conflicts explicitly warn before discarding an unsaved comp
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
@@ -1033,7 +1033,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   };
   const context = vm.createContext({
     location, document,
-    chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
     } } },
@@ -1077,7 +1077,7 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
     querySelector: selector => selector === '.AppHeader-actions' ? actions : selector.includes('issue-title') ? issueTitleNode : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
@@ -1126,7 +1126,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') {
         if (message.refresh) remoteStateReplies.push(callback);
@@ -1201,7 +1201,7 @@ test('each recent record keeps task identity inside its highlighted time row', a
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
       else callback({ ok: true, data: {} });
@@ -1259,7 +1259,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
@@ -1345,7 +1345,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
@@ -1430,7 +1430,7 @@ test('typing in the main-panel description cannot reach GitHub keyboard shortcut
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
   const active = { issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: '2026-08-18T08:00:00.000Z', description: '' };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
     callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active, pendingCount: 0, pendingWrites: [] } : [] });
   } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
@@ -1470,7 +1470,7 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: {
@@ -1613,7 +1613,7 @@ test('successful Delete responses accept exact empty output and reject malformed
       querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
     };
     const context = vm.createContext({
-      location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
         if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
         else if (message.type === 'LOAD_RECENT') {
           loadCalls += 1;
@@ -1663,7 +1663,7 @@ test('main panel shows today total and opens Reports before Settings', async () 
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
   const recentEntry = { user: 'alice', entryDate: date, durationSeconds: 5400, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: `${date}T08:00:00+00:00`, endedAt: `${date}T09:30:00+00:00`, description: '', _path: `times/${date.slice(0, 7)}/alice.jsonl`, _sha: 'x', _index: 0 };
   const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
     messages.push(structuredClone(message));
     if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: { ...recentEntry, endedAt: undefined, startedAt: `${date}T08:00:00+00:00` }, pendingCount: 0, pendingWrites: [] } });
     else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todayTrackedMs: 5400000, weekTrackedMs: 7200000, reportDate: date,
@@ -1711,7 +1711,7 @@ test('single GitHub header icon opens the shared panel and its Top tasks action'
     querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} });
     } } },
@@ -1739,7 +1739,7 @@ test('split main segment resolves a generic GitHub URL to an issue URL at activa
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
   const { actions } = makeHeader();
   const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
     messages.push(structuredClone(message));
     if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
     else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [], todaySeconds: 0, reportDate: '2026-08-20', active: null, pendingCount: 0, pendingWrites: [] } });
@@ -1759,7 +1759,7 @@ test('split main segment resolves an issue URL to another generic GitHub URL at 
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
   const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) { messages.push(structuredClone(message)); callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} }); } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
+  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) { messages.push(structuredClone(message)); callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active: null, pendingCount: 0, pendingWrites: [] } : {} }); } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
@@ -1781,7 +1781,7 @@ test('header mounting falls back to a complete legacy header when the modern con
     addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
     } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
@@ -1806,7 +1806,7 @@ test('GitHub tracking menu exposes a safe Retry action for transient operation f
   };
   let loadCalls = 0;
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') { loadCalls += 1; callback({ ok: true, data: [] }); }
@@ -1843,7 +1843,7 @@ test('Times bulk import preserves its draft and remains single-flight across rer
   };
   let bulkCallback = null, bulkCalls = 0;
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [] } });
       else if (message.type === 'BULK_ADD_TIMES') { bulkCalls += 1; bulkCallback = callback; }
       else callback({ ok: true, data: {} });
@@ -1891,7 +1891,7 @@ test('Activity surfaces repository read failures and conflict omissions', async 
     querySelector: () => null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'LOAD_TIMES') callback({ ok: true, data: {
         configured: true, recent: [], partial: true,
         readStatus: [{ status: 'error' }], conflicts: [{ code: 'record_id_conflict' }],
@@ -1922,7 +1922,7 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
   };
   const loads = [];
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'LOAD_TIMES') loads.push({ message: structuredClone(message), callback });
       else callback({ ok: true, data: {} });
     } } },
@@ -1970,7 +1970,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     querySelector: () => null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: entries } });
       else if (message.type === 'QUEUE_ENTRIES_EDIT') callback({ ok: true, data: [] });
@@ -2035,7 +2035,7 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });
 
-function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
+function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeManifest = { permissions: ['favicon'] }, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
   const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [], timelineModes = [], timelineUpdates = [], timelineDates = [], timelineRanges = [];
   const documentListeners = new Map(), windowListeners = new Map(), runtimeListeners = [];
   const timeouts = new Map();
@@ -2068,7 +2068,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     addEventListener: (type, listener) => windowListeners.set(type, listener),
     requestAnimationFrame: callback => frames.push(callback), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
     setTimeout: (callback, delay) => { const id = ++timeoutId; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
-    confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
+    confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getManifest: () => runtimeManifest, getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
     ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
       timelineMounts.push(options);
       let selectedDate = now, selectedRange = null;
@@ -2620,6 +2620,51 @@ test('Timeline details stops projecting a reverted draft over later authoritativ
   harness.set(state, [refreshed]);
   assert.equal(JSON.stringify(harness.timelineItems(0, now).map(item => [item.description, item.savedDescription])), JSON.stringify([['Remote update', 'Remote update']]));
 });
+
+for (const permissions of [[], ['favicon']]) {
+  test(`task favicon surfaces use ${permissions.length ? 'images' : 'monograms'} from the running manifest`, () => {
+    const now = Date.parse('2026-09-05T12:00:00Z');
+    const entry = activityEntry('site-icon', '2026-09-05', '08', 'https://www.example.com/work');
+    const active = { ...entry, id: 'active-icon', endedAt: null };
+    const resources = [];
+    const options = {
+      state: { configured: true, active, pendingWrites: [] }, records: [entry], now,
+      runtimeManifest: { permissions },
+      runtimeGetURL: path => { resources.push(path); return `chrome-extension://clockoli/${String(path).replace(/^\//, '')}`; },
+    };
+    const harness = dailyPanelHarness(options);
+    const menu = harness.renderMenu({ compact: true });
+    const activity = dailyPanelHarness({ ...options, pageUrl: 'chrome-extension://clockoli/src/times/times.html' }).renderActivity();
+    for (const icon of [menu.querySelector('.strip-favicon'), menu.querySelector('.today-favicon'), activity.querySelector('.entry-record-favicon')]) {
+      assert.ok(icon);
+      if (permissions.length) {
+        assert.equal(icon.tag, 'img');
+        assert.equal(icon.src, 'chrome-extension://clockoli/_favicon/?pageUrl=https%3A%2F%2Fwww.example.com%2Fwork&size=32');
+      } else {
+        assert.equal(icon.tag, 'span');
+        assert.equal(icon.textContent, 'E');
+        assert.equal(icon.getAttribute('aria-hidden'), 'true');
+        assert.equal(icon.src, undefined);
+      }
+    }
+    const items = harness.timelineItems(0, now);
+    assert.ok(items.length);
+    assert.ok(items.every(item => item.faviconUrl === (permissions.length
+      ? 'chrome-extension://clockoli/_favicon/?pageUrl=https%3A%2F%2Fwww.example.com%2Fwork&size=32' : null)));
+    assert.equal(resources.includes('/_favicon/'), Boolean(permissions.length));
+  });
+
+  test(`imported task favicons stay hidden with permissions ${JSON.stringify(permissions)}`, () => {
+    const now = Date.parse('2026-09-05T12:00:00Z');
+    const entry = activityEntry('imported-icon', '2026-09-05', '08', 'owner/repo/slug');
+    const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+      pageUrl: 'chrome-extension://clockoli/src/times/times.html', runtimeManifest: { permissions } });
+    const icon = harness.renderActivity().querySelector('.entry-record-favicon');
+    assert.equal(icon.tag, 'img');
+    assert.equal(icon.hidden, true);
+    assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  });
+}
 
 test('Timeline favicon projection survives an unavailable extension resource URL', () => {
   const now = new Date('2026-09-05T12:00:00Z').getTime();

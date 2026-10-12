@@ -4520,6 +4520,7 @@
     }
     .calendar-task.selected, .calendar-task.focused { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
+    .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
     .clockoli-calendar-description { margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; text-overflow:ellipsis; white-space:nowrap; }
     .history-controls { display: none; }
     .clockoli-timeline-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -4907,11 +4908,18 @@
             element.style.removeProperty('--clockoli-end-edge-shift');
           }
         }
-        if (element.classList.contains('calendar-task') && item?.faviconUrl && !element.querySelector('.clockoli-calendar-favicon')) {
-          const image = document.createElement('img');
-          image.className = 'clockoli-calendar-favicon'; image.alt = ''; image.src = item.faviconUrl;
-          image.addEventListener('error', () => { image.hidden = true; }, { once: true });
-          element.querySelector('.calendar-task-name')?.prepend(image);
+        if (element.classList.contains('calendar-task') && (item?.faviconUrl || item?.faviconUrl === null) && !element.querySelector('.clockoli-calendar-favicon')) {
+          const icon = document.createElement(item.faviconUrl === null ? 'span' : 'img');
+          icon.className = 'clockoli-calendar-favicon';
+          if (item.faviconUrl === null) {
+            icon.classList.add('clockoli-calendar-monogram');
+            icon.textContent = new URL(item.url).hostname.replace(/^www\./, '').charAt(0).toUpperCase();
+            icon.setAttribute('aria-hidden', 'true');
+          } else {
+            icon.alt = ''; icon.src = item.faviconUrl;
+            icon.addEventListener('error', () => { icon.hidden = true; }, { once: true });
+          }
+          element.querySelector('.calendar-task-name')?.prepend(icon);
         }
         if (element.classList.contains('calendar-task')) {
           const text = String(item?.description || '').trim();
