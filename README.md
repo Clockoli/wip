@@ -1,6 +1,6 @@
 # Clockoli
 
-**Own your time data without handing it to another SaaS.** Clockoli is a Chrome/Chromium time tracker that writes readable records directly to private GitHub time repositories you control, with no application server or separate time-tracking database.
+**Own your time data without handing it to another SaaS.** Clockoli is a browser time tracker that writes readable records directly to private GitHub time repositories you control, with no application server or separate time-tracking database.
 
 Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
 
@@ -33,6 +33,16 @@ Your **GitHub account** authenticates you; a **source repository** may own a tra
 
 On GitHub, you can also open the tracker from the stopwatch beside your avatar. Its smaller dialog says **Start tracking this task**; the arrow next to it opens **Top tasks**, **Activity**, and **Reports**.
 
+## Install from a file
+
+Download the files for your browser from a trusted GitHub release. Each browser uses the same extension source, with a generated manifest; store submissions remain manual.
+
+- **Chrome/Chromium:** extract `Clockoli-X.Y.Z.zip` into a permanent folder. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select that folder. The repository root remains the Chrome development extension.
+- **Firefox 140+:** open `about:addons`, choose the gear menu → **Install Add-on From File**, and select `Clockoli-X.Y.Z-firefox-signed.xpi`, or the signed listed XPI downloaded from AMO. The unsigned `Clockoli-X.Y.Z-firefox.xpi` is for store submission and temporary testing: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select it (or its extracted `manifest.json`). Temporary installs last until Firefox restarts.
+- **Safari 18+ on macOS:** extract `Clockoli-X.Y.Z-safari-unsigned.zip`, move `Clockoli.app` to Applications, and open it. In Safari Settings → Advanced, enable features for web developers; in the **Develop** menu enable **Allow Unsigned Extensions**, then enable Clockoli in Settings → Extensions. The option may need enabling again after Safari restarts. When available, `Clockoli-X.Y.Z-safari.zip` contains the signed, notarized app and does not need Allow Unsigned Extensions. The `.pkg` is the Mac App Store upload artifact.
+
+For downloaded unsigned apps, macOS may require **Open Anyway** in System Settings → Privacy & Security. File installations do not include an automatic updater. Before replacing an installation or changing browser, sync pending writes, stop the timer, and export settings; credentials and local state do not transfer between browser profiles.
+
 ## What you can do
 
 - Track any HTTP(S) task URL from the toolbar, or use the stopwatch built into GitHub.
@@ -59,7 +69,7 @@ See [Features](docs/features.md) for complete behavior and [Data, privacy, and s
 
 ## Current limitations
 
-- Chrome/Chromium 102 or newer; no Firefox package.
+- Firefox requires 140+ for built-in data consent; Safari requires 18+ on macOS. Chrome retains its existing manifest baseline.
 - Unpacked installations have no automatic updates.
 - Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
 - Manual time entry is available through the Activity bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.

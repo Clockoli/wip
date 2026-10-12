@@ -1,25 +1,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { parseArgs } from 'node:util';
+import { targetManifest, TARGETS } from './target-manifest.js';
 
 const root = process.cwd();
 const fail = message => { throw new Error(message); };
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const exists = file => fs.existsSync(path.join(root, file));
-const manifest = JSON.parse(read('manifest.json'));
+const sourceManifest = JSON.parse(read('manifest.json'));
+const { values } = parseArgs({ options: { target: { type: 'string' } } });
 const packageJson = JSON.parse(read('package.json'));
 
+for (const target of values.target ? [values.target] : TARGETS) {
+const manifest = targetManifest(sourceManifest, target);
 if (manifest.version !== packageJson.version) fail('Manifest and package versions must match');
 
 if (manifest.manifest_version !== 3) fail('Manifest V3 is required');
-if (Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
+if (target === 'chrome' && Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
 if (manifest.background?.type !== 'module') fail('Background worker must be an ES module');
 if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*', 'https://github.com/login/*', 'https://api.frankfurter.dev/*'])) fail('Host permissions must be limited to the GitHub API, OAuth login, and Frankfurter exchange-rate endpoints');
-for (const permission of manifest.permissions || []) if (!['alarms', 'activeTab', 'favicon', 'scripting'].includes(permission)) fail(`Unexpected permission: ${permission}`);
+const permissions = target === 'chrome' ? ['alarms', 'activeTab', 'favicon', 'scripting'] : ['alarms', 'activeTab', 'scripting'];
+for (const permission of manifest.permissions || []) if (!permissions.includes(permission)) fail(`Unexpected permission: ${permission}`);
 if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 
+if (JSON.stringify(manifest.optional_host_permissions) !== JSON.stringify(['https://app.clockify.me/*'])) fail('Optional hosts must be limited to Clockify');
 const actionPopup = manifest.action?.default_popup;
-const referenced = [manifest.background.service_worker, actionPopup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'].filter(Boolean);
+const referenced = [manifest.background.service_worker, ...(manifest.background.scripts || []), actionPopup, manifest.options_page, 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'].filter(Boolean);
 for (const script of manifest.content_scripts || []) referenced.push(...script.js);
 for (const file of referenced) if (!exists(file)) fail(`Manifest references missing file: ${file}`);
 
@@ -32,6 +39,9 @@ for (const file of htmlFiles) {
     return tag.replace(/https:\/\/[^'"]+/i, '#external-link');
   });
   if (/https?:\/\//i.test(withoutSafeLinks)) fail(`Remote resource is forbidden: ${file}`);
+}
+
+console.log(`Validated ${target} Manifest V3: ${referenced.length} manifest files.`);
 }
 
 const generatedBundles = new Set(['src/content/task-timeline-component.js']);
@@ -59,4 +69,4 @@ for (const file of jsFiles) {
 const content = read('src/content/github.js');
 if (/Authorization|Bearer|\btoken\b/i.test(content)) fail('Content script must not contain credential handling');
 
-console.log(`Validated Manifest V3 extension: ${referenced.length} manifest files, ${jsFiles.length} JavaScript files.`);
+console.log(`Validated extension source: ${jsFiles.length} JavaScript files.`);

@@ -1,6 +1,6 @@
 # Contributing to Clockoli
 
-Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The extension has no runtime package dependencies. The framework-neutral timeline component, its build tooling, and its complete test harness live in this repository as an npm workspace. Node.js is used for tests and validation, and Python is used only to build deterministic release archives.
+Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The extension has no runtime package dependencies. The framework-neutral timeline component, its build tooling, and its complete test harness live in this repository as an npm workspace. Node.js is used for tests and validation, and Python builds release archives and orchestrates the macOS Safari build.
 
 ## Prerequisites
 
@@ -151,39 +151,65 @@ Update documentation in the same change when behavior, setup, privacy, storage, 
 
 Use the Clockoli name only. Do not introduce legacy product names or unsupported compatibility promises.
 
-## Build a release archive
+## Build release packages
 
-Version values in `package.json` and `manifest.json` must match. If examples expose the producer version, update the applicable documentation examples too.
+Version values in `package.json` and `manifest.json` must match. `manifest.json` remains the Chrome development manifest. `scripts/target-manifest.js` derives Firefox and Safari manifests without changing it; validation and inventory traversal use those generated manifests. Chrome archive bytes retain the original packaging format.
 
-Run all checks, then build the deterministic archive outside the repository:
+Run all checks, then build outside the repository:
 
 ```bash
+npm ci
+npm run build:timeline
 npm test
 npm run check
+npm run lint:firefox
 python3 scripts/build-release.py /tmp/Clockoli-<version>.zip
+python3 scripts/build-release.py --target firefox /tmp/Clockoli-<version>-firefox.xpi
+python3 scripts/build-release.py --target safari /tmp/Clockoli-<version>-safari-extension.zip
 ```
 
-The packaging script:
+`--target chrome` is optional. `--unpacked OUTPUT_DIRECTORY` writes a new directory for temporary browser loading or native Safari conversion. The packager validates the target, derives a sorted runtime-only inventory, scans for secrets, fixes ZIP timestamps and permissions, and verifies all bytes after writing. Tests, docs, scripts and source maps stay out of browser packages. The separate source archive contains the tagged repository for review.
 
-- derives the inventory from manifest and local runtime references;
-- excludes tests, docs, scripts, source maps, logs, and temporary files;
-- scans runtime files for common secret patterns;
-- writes stable timestamps and permissions;
-- reads the archive back and verifies every entry;
-- prints the path, file count, byte size, and SHA-256 digest.
+Firefox uses module background scripts instead of a service worker. Its floor is 140 because built-in data consent is required; MAIN-world content scripts and optional host permissions alone require 128. Firefox and Safari omit Chrome's `favicon` permission and virtual `_favicon/*` resource. See [browser compatibility and verification](docs/browser-releases.md) for source links and limitations.
 
-Before publishing, inspect the archive inventory and load the unpacked release contents in a clean browser profile. Do not publish an archive built from an uncommitted or unverified tree.
+### Signed Firefox files
+
+With `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` in the environment:
+
+```bash
+npm run sign:firefox -- /tmp/clockoli-signed
+```
+
+The script builds the Firefox extension, submits to AMO's **unlisted** channel with a `git archive HEAD` source archive, and requires a signed XPI result. Run from the verified release tag with no local changes. Listed AMO submissions remain manual. Version numbers are unique across listed and unlisted channels: after listing the add-on, remove both signing secrets and distribute the AMO-signed listed XPI instead.
+
+### Safari apps
+
+On macOS with Xcode and its command-line tools selected, install the existing Playwright Chromium runtime for icon rasterization:
+
+```bash
+npx playwright install chromium
+python3 scripts/build-safari.py --build-number 1 /tmp/clockoli-safari
+```
+
+The converter creates a macOS-only Swift application with copied extension resources, app name Clockoli, and bundle ID `com.clockoli.Clockoli`. The script derives a full 16–1024px app icon set from tracked `src/assets/clockoli.svg`; it does not use `store-assets/`. Release builds include both arm64 and x86_64. Manifest version becomes the marketing version, and `--build-number` sets both app and extension build versions.
+
+Without Apple signing variables, this creates `Clockoli-X.Y.Z-safari-unsigned.zip`, ad-hoc signed for **Allow Unsigned Extensions**. Set all six Apple variables listed in [publishing.md](publishing.md#9-mac-app-store-and-direct-safari-distribution) to also archive with automatic signing, export Developer ID, notarize and staple `Clockoli-X.Y.Z-safari.zip`, and export `Clockoli-X.Y.Z-safari.pkg` for Transporter. Partial configuration fails. Signing material and the temporary keychain are cleaned up; nothing is uploaded to App Store Connect by the script. Notarization submits the Developer ID app to Apple.
+
+Only the extension ZIP/XPI files are byte-reproducible. Native builds, signing and notarization introduce toolchain and signing data; app ZIP entry order, timestamps, modes and symlinks are preserved and verified.
 
 ### Release from a tag
 
-Releases are tagged `X.Y.Z` with no `v` prefix. Pushing a tag runs `.github/workflows/release.yml`, which:
+Tags are `X.Y.Z` with no `v` prefix. Before tagging, update the version and matching `CHANGELOG.md` section, run checks and browser verification, and merge to `main`.
 
-- runs `npm test` and `npm run check`;
-- fails unless the tag equals the `manifest.json` version;
-- builds `Clockoli-X.Y.Z.zip` with `scripts/build-release.py`;
-- creates the GitHub release through the shared `Muvon/ci-workflow` release workflow, using the `## [X.Y.Z]` section of `CHANGELOG.md` as the release notes, and attaches the archive.
+`.github/workflows/release.yml`:
 
-Before tagging, bump the version, add its `CHANGELOG.md` section, and merge to `main`. Then upload the attached archive to the Chrome Web Store by hand. The workflow does not publish to the store.
+- checks that tag and manifest version match, runs tests, validation and Firefox lint on Ubuntu;
+- builds Chrome ZIP, Firefox XPI and `Clockoli-X.Y.Z-source.zip` (`git archive` of the tag);
+- signs Firefox only when AMO signing secrets are configured; partial credentials fail;
+- builds Safari on macOS with `github.run_number` as the build number, always producing the unsigned app and adding signed artifacts when all Apple secrets exist;
+- collects all files into the existing `release-zip` Actions artifact, then passes that artifact to `Muvon/ci-workflow` for the GitHub release and changelog notes.
+
+Store uploads are manual. Before publishing, inspect archive inventories and exercise the packaged extension in each browser, including background restart, message rejection, Settings, GitHub and arbitrary-task tracking, optional Clockify access, and favicon behavior. Inspect the page and background consoles. Successful packaging or lint does not prove browser or store acceptance.
 
 ## Pull requests
 

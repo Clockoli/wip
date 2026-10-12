@@ -67,6 +67,13 @@ function taskIcon(task) {
     image.className = 'task-icon task-favicon'; image.alt = ''; image.width = 16; image.height = 16; image.referrerPolicy = 'no-referrer';
     if (!/^https?:\/\//.test(taskUrlOf(task))) { image.hidden = true; return image; }
     try {
+      if (!chrome.runtime.getManifest().permissions.includes('favicon')) {
+        const monogram = document.createElement('span');
+        monogram.className = 'task-icon task-favicon task-monogram';
+        monogram.textContent = new URL(taskUrlOf(task)).hostname.replace(/^www\./, '').charAt(0).toUpperCase();
+        monogram.setAttribute('aria-hidden', 'true');
+        return monogram;
+      }
       const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
       favicon.searchParams.set('pageUrl', taskUrlOf(task)); favicon.searchParams.set('size', '32'); image.setAttribute('src', favicon.href);
     } catch { image.hidden = true; }
@@ -224,7 +231,7 @@ function rebuildList(tasks) {
     row.setAttribute('style', `--task-color:${taskColor(task)}`);
     row.addEventListener('pointerleave', reconcileList);
     const main = document.createElement('div'); main.className = 'task-main';
-    const taskIdentityIcon = taskIcon(task); taskIdentityIcon.setAttribute('style', `color:${taskColor(task)}`); main.append(taskIdentityIcon);
+    const taskIdentityIcon = taskIcon(task); taskIdentityIcon.setAttribute('style', `color:${taskIdentityIcon.classList.contains('task-monogram') ? 'var(--fgColor-default)' : taskColor(task)}`); main.append(taskIdentityIcon);
     const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
     const navigable = /^https?:\/\//.test(task.taskUrl);
     const url = document.createElement(!task.title && navigable ? 'a' : 'div'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;
