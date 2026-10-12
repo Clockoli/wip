@@ -115,7 +115,7 @@ git diff --check
 
 `npm test` runs both Clockoli's Node suite and the complete internal timeline suite, including Chromium E2E and package-consumer smoke coverage. `npm run check` runs extension validation and release-inventory validation. Do not replace either command with a narrower check. When a coverage report is required, run `npm run test:coverage`; it reports the extension source under `src/` and excludes the generated timeline bundle.
 
-Run `npm run test:options:functional` for the Settings repository-disclosure and access-menu Chromium checks. These load a temporary extension with synthetic repository responses and perform no GitHub access mutations. CI runs them under Xvfb.
+Run `npm run test:options:functional` for the Settings repository-disclosure, access-menu, and device-code handoff Chromium checks. These load a temporary extension with synthetic responses and perform no GitHub access mutations. CI runs them under Xvfb.
 
 ## Browser verification
 

@@ -144,22 +144,29 @@ test('Activity Calendar defaults to a Monday–Sunday week while the popup retai
 });
 
 test('narrow weekly Calendar starts at today with a pinned hour rail', async ({ page }) => {
-  await mount(page, { weeklyCalendar: true });
-  const layout = await page.evaluate(() => {
-    document.querySelector('#timeline').style.width = '358px';
-    window.__timeline.setViewMode('calendar');
-    const root = document.querySelector('#timeline').shadowRoot;
-    const viewport = root.querySelector('.calendar-viewport');
-    const today = root.querySelector('.calendar-day-header.today');
-    const rail = root.querySelector('.calendar-time-label');
-    return { left: viewport.getBoundingClientRect().left, right: viewport.getBoundingClientRect().right,
-      todayLeft: today.getBoundingClientRect().left, todayRight: today.getBoundingClientRect().right,
-      railLeft: rail.getBoundingClientRect().left, scrollLeft: viewport.scrollLeft };
-  });
-  expect(layout.scrollLeft).toBeGreaterThan(0);
-  expect(layout.todayLeft).toBeGreaterThanOrEqual(layout.left);
-  expect(layout.todayRight).toBeLessThanOrEqual(layout.right);
-  expect(layout.railLeft).toBeGreaterThanOrEqual(layout.left);
+  for (const [day, date, expectedScroll] of [
+    ['Monday', new Date(2026, 9, 12, 12), 0],
+    ['Wednesday', new Date(2026, 9, 14, 12), 'positive'],
+  ]) {
+    await page.clock.setFixedTime(date);
+    await mount(page, { weeklyCalendar: true });
+    const layout = await page.evaluate(() => {
+      document.querySelector('#timeline').style.width = '358px';
+      window.__timeline.setViewMode('calendar');
+      const root = document.querySelector('#timeline').shadowRoot;
+      const viewport = root.querySelector('.calendar-viewport');
+      const today = root.querySelector('.calendar-day-header.today');
+      const rail = root.querySelector('.calendar-time-label');
+      return { left: viewport.getBoundingClientRect().left, right: viewport.getBoundingClientRect().right,
+        todayLeft: today.getBoundingClientRect().left, todayRight: today.getBoundingClientRect().right,
+        railLeft: rail.getBoundingClientRect().left, scrollLeft: viewport.scrollLeft };
+    });
+    if (expectedScroll === 0) expect(layout.scrollLeft, day).toBe(0);
+    else expect(layout.scrollLeft, day).toBeGreaterThan(0);
+    expect(layout.todayLeft, day).toBeGreaterThanOrEqual(layout.left);
+    expect(layout.todayRight, day).toBeLessThanOrEqual(layout.right);
+    expect(layout.railLeft, day).toBeGreaterThanOrEqual(layout.left);
+  }
 });
 
 test('weekly Calendar navigates before the loaded timeline domain', async ({ page }) => {

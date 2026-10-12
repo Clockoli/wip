@@ -753,6 +753,23 @@ function renderDeviceAttempt(attempt) {
   schedulePoll(attempt);
 }
 
+async function revealDeviceCode(attempt) {
+  const code = $('device-code');
+  code.value = '';
+  $('copy-code').disabled = true;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    code.value = attempt.userCode;
+  } else {
+    for (let i = 1; i <= attempt.userCode.length; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000 / attempt.userCode.length));
+      if (state.deviceAttempt?.attemptId !== attempt.attemptId) return false;
+      code.value = attempt.userCode.slice(0, i);
+    }
+  }
+  $('copy-code').disabled = false;
+  return state.deviceAttempt?.attemptId === attempt.attemptId;
+}
+
 function schedulePoll(attempt) {
   clearTimeout(pollTimer);
   const delay = Math.max(0, Number(attempt.nextPollAt || Date.now()) - Date.now());
@@ -1743,22 +1760,36 @@ async function refreshState() {
 
 $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
+  $('device-code').classList.remove('code-reveal');
   try {
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
     state.deviceAttempt = attempt;
     renderDeviceAttempt(attempt);
+    $('device-panel').scrollIntoView({ block: 'center' });
+    $('device-code').classList.add('code-reveal');
+    let copied = false;
     try {
       await navigator.clipboard.writeText(attempt.userCode);
+      copied = true;
     } catch {
-      $('device-code').focus();
-      $('device-code').select();
-      message('The code is ready, but Clockoli could not copy it automatically. Copy it here before opening GitHub.', 'error');
-      return;
+      // Clipboard access is optional; a denied copy must not block the GitHub tab.
     }
+    if (!await revealDeviceCode(attempt)) return;
+    $('device-handoff-status').textContent = copied
+      ? 'Code copied. GitHub will open in four seconds.'
+      : 'Copy the code here before entering it on GitHub. GitHub will open in four seconds.';
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
     githubHandoff = true;
     await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-    message('Device code copied. Paste it on GitHub, authorize Clockoli, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
-  } catch (error) { message(error.message, 'error'); }
+    $('device-handoff-status').textContent = copied
+      ? 'Paste the copied code on GitHub.'
+      : 'Copy the code above and paste it on GitHub.';
+    message('Authorize Clockoli on GitHub, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
+  } catch (error) {
+    if (!$('device-panel').hidden) $('device-handoff-status').textContent = 'Could not open GitHub automatically. Select Open GitHub again.';
+    message(error.message, 'error');
+  }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
 

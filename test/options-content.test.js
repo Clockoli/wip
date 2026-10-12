@@ -52,12 +52,24 @@ test('Device activation copies the code before opening GitHub and offers an imme
   assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/i);
   assert.match(source, /copies the one-time code before opening GitHub so you can paste it/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
+  assert.match(source, /id="device-handoff-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
   assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
   assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
   assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
   const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
   assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
+});
+
+test('Device activation reveals code characters for two seconds, then holds for four seconds before GitHub', () => {
+  assert.match(styles, /#device-code\.code-reveal\{animation:device-code-reveal 2s/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{#device-code\.code-reveal\{animation:none\}\}/);
+  const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
+  assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\([\s\S]*classList\.add\('code-reveal'\)/);
+  assert.match(start, /await revealDeviceCode\(attempt\)/);
+  assert.match(script, /2000 \/ attempt\.userCode\.length/);
+  assert.match(start, /await new Promise\(resolve => setTimeout\(resolve, 4000\)\);[\s\S]*OPEN_DEVICE_FLOW_PAGE/);
+  assert.match(start, /state\.deviceAttempt\?\.attemptId !== attempt\.attemptId/);
 });
 
 test('expected post-activation repository setup is neutral rather than an error', async () => {
