@@ -186,6 +186,10 @@ The panel updates both rows immediately and saves them as one atomic operation. 
 
 The represented intervals still intersect after correction. Endpoint-touching records are allowed, but time shared by two intervals is highlighted. Adjust the boundaries in the unified inline draft.
 
+### Timeline says a completed entry overlaps the running timer
+
+This can happen even when both records track the same task: they are separate time intervals. Compare the completed entry's **End** with the running timer's **Start**. An edit that would extend a completed entry past the running timer's Start is rejected before it is queued or saved; adjust the completed End to touch or precede the running Start. Existing overlaps are not silently shortened or deleted: review the affected times in Activity and correct the intended boundary.
+
 ### Inline edit or Delete reports a stale or changed record
 
 The monthly file changed after the panel loaded. Reload recent entries, review the latest record, and repeat the intended action. Clockoli refuses to retarget an edit or delete by array position alone.

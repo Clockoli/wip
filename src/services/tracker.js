@@ -62,6 +62,11 @@ function githubActorRelationships(github, actor) {
 
 function sameTimer(a, b) { return Boolean(a?.id && b?.id) && a.id === b.id; }
 function timerStartedAt(value) { return new Date(value?.startedAt).getTime(); }
+function assertNoActiveOverlap(entries, active) {
+  if (active && entries.some(entry => entry.id !== active.id && new Date(entry.endedAt).getTime() > timerStartedAt(active))) {
+    throw new Error('This edit would overlap the running timer. Set the entry End no later than the timer Start.');
+  }
+}
 function isNewerTimer(candidate, current) { return timerStartedAt(candidate) > timerStartedAt(current); }
 function sameCompletion(entry, operation) { return Boolean(entry?.id && operation?.entry?.id) && entry.id === operation.entry.id; }
 
@@ -1239,6 +1244,7 @@ export class TrackerService {
       const cached = (state.recentCache ?? []).find(entry => entry.id === original?.id && entry._path === path);
       if (!cached) throw new TrackerConflictError('This time entry is no longer available locally. Reload before editing.');
       const updated = applyEntryEdits(cached, edits, editClock(this.clock, cached));
+      if (updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt) assertNoActiveOverlap([updated], state.activeCache);
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editEntry'
         && operation.request?.path === path && operation.request?.original?.id === original.id);
@@ -1295,6 +1301,10 @@ export class TrackerService {
         const cached = cachedByIdentity.get(`${request.path}\u0000${request.original.id}`);
         return [`${request.path}\u0000${request.original.id}`, applyEntryEdits(cached, request.edits, editClock(this.clock, cached))];
       }));
+      assertNoActiveOverlap(requestEntries.flatMap(request => {
+        const key = `${request.path}\u0000${request.original.id}`, cached = cachedByIdentity.get(key), updated = updatedByIdentity.get(key);
+        return updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt ? [updated] : [];
+      }), state.activeCache);
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = pendingWrites.at(-1)?.operation === 'editEntries' ? pendingWrites.at(-1) : null;
       const request = existing?.request ?? { entries: [] };
@@ -1352,6 +1362,10 @@ export class TrackerService {
     if (position < 0) throw new TrackerConflictError('This time entry changed after you opened it. Reload before saving.');
     const normalized = { ...edits, ...((edits.taskUrl || edits.issue) ? { taskUrl: this.validateTaskUrl(edits.taskUrl ?? edits.issue) } : {}) };
     const updated = applyEntryEdits(source.entries[position], normalized, editClock(this.clock, source.entries[position]));
+    const timeChanged = updated.startedAt !== source.entries[position].startedAt || updated.endedAt !== source.entries[position].endedAt;
+    const active = timeChanged ? await this.readRemoteActive() : null;
+    if (timeChanged) assertNoActiveOverlap([updated], active);
+    const guards = timeChanged ? [{ path: activeRecordPath(this.user), sha: active?._sha ?? null }] : [];
     updated.entryDate = startDate(updated);
     const destinationPath = monthlyRecordsPath(this.user, updated.entryDate);
     try {
@@ -1359,7 +1373,7 @@ export class TrackerService {
         const entries = source.entries.with(position, updated);
         const { blobShas } = await this.updateCompletedRecords([
           { path: source.path, sha: source.sha, text: serializeMonthlyRecords(entries) },
-        ], `time: edit ${this.user} ${source.month}`, { remove: [source.entries[position]], add: [updated] });
+        ], `time: edit ${this.user} ${source.month}`, { remove: [source.entries[position]], add: [updated], guards });
         const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: blobShas[path] });
         if (updateCache) {
           const state = await this.store.getState();
@@ -1374,7 +1388,7 @@ export class TrackerService {
         { path: destination.path, sha: destination.sha, text: serializeMonthlyRecords(destinationEntries) },
       ];
       const result = await this.updateCompletedRecords(changes, `time: move edited entry ${this.user}`, {
-        remove: [source.entries[position]], add: [updated],
+        remove: [source.entries[position]], add: [updated], guards,
       });
       const savedSource = parseMonthlyRecords(serializeMonthlyRecords(sourceEntries), { user: this.user, month: source.month, path: source.path, sha: result.blobShas[source.path] ?? null });
       const savedDestination = parseMonthlyRecords(serializeMonthlyRecords(destinationEntries), { user: this.user, month: destination.month, path: destination.path, sha: result.blobShas[destination.path] });
@@ -1427,6 +1441,11 @@ export class TrackerService {
       entry.entryDate = startDate(entry);
       return entry;
     });
+    const changedTimes = updated.filter((entry, index) => entry.startedAt !== requests[index].originalEntry.startedAt
+      || entry.endedAt !== requests[index].originalEntry.endedAt);
+    const active = changedTimes.length ? await this.readRemoteActive() : null;
+    assertNoActiveOverlap(changedTimes, active);
+    const guards = changedTimes.length ? [{ path: activeRecordPath(this.user), sha: active?._sha ?? null }] : [];
     const targetPaths = updated.map(entry => monthlyRecordsPath(this.user, entry.entryDate));
     for (const targetPath of targetPaths) if (!files.has(targetPath)) files.set(targetPath, await this.readMonthly(targetPath));
     for (const request of requests) {
@@ -1441,7 +1460,7 @@ export class TrackerService {
     try {
       const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
       const { blobShas } = await this.updateCompletedRecords(changes, `time: edit linked entries ${this.user}`, {
-        remove: requests.map(request => request.originalEntry), add: updated,
+        remove: requests.map(request => request.originalEntry), add: updated, guards,
       });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null,
