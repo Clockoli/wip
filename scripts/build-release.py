@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 def inventory(target):
     result = subprocess.run(
         ['node', 'scripts/validate-release-inventory.js', '--target', target, '--json'], cwd=ROOT,
-        check=True, capture_output=True, text=True,
+        check=True, stdout=subprocess.PIPE, text=True,
     )
     return json.loads(result.stdout)
 
@@ -47,9 +47,9 @@ def main():
     if output == ROOT or ROOT in output.parents:
         parser.error('Build output must be outside the repository')
     subprocess.run(['node', 'scripts/validate-extension.js', '--target', args.target],
-                   cwd=ROOT, check=True, capture_output=True)
+                   cwd=ROOT, check=True, stdout=subprocess.PIPE)
     manifest = subprocess.run(['node', 'scripts/target-manifest.js', args.target],
-                              cwd=ROOT, check=True, capture_output=True).stdout
+                              cwd=ROOT, check=True, stdout=subprocess.PIPE).stdout
     contents = {name: manifest if name == 'manifest.json' else (ROOT / name).read_bytes()
                 for name in inventory(args.target)}
     if args.unpacked:

@@ -138,11 +138,17 @@ def build(output, build_number, environment):
             info['CFBundleVersion'] = build_number
             with source.open('wb') as stream:
                 plistlib.dump(info, stream)
+        project = json.loads(run(['plutil', '-convert', 'json', '-o', '-', projects[0] / 'project.pbxproj'],
+                                 capture_output=True, text=True).stdout)
+        applications = [item for item in project['objects'].values()
+                        if item.get('productType') == 'com.apple.product-type.application']
+        if len(applications) != 1:
+            raise ValueError('Converter must produce exactly one application target')
+        scheme = applications[0]['name']
         listing = json.loads(run(['xcodebuild', '-list', '-json', '-project', projects[0]], capture_output=True, text=True).stdout)
-        schemes = listing['project']['schemes']
-        if len(schemes) != 1:
-            raise ValueError('Converter must produce exactly one application scheme')
-        base = ['xcodebuild', '-project', projects[0], '-scheme', schemes[0], '-configuration', 'Release',
+        if scheme not in listing['project']['schemes']:
+            raise ValueError(f'Converter did not generate the application scheme: {scheme}')
+        base = ['xcodebuild', '-project', projects[0], '-scheme', scheme, '-configuration', 'Release',
                 '-destination', 'generic/platform=macOS', f'MARKETING_VERSION={version}',
                 f'CURRENT_PROJECT_VERSION={build_number}', 'ARCHS=arm64 x86_64', 'ONLY_ACTIVE_ARCH=NO']
         derived = directory / 'unsigned'
