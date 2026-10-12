@@ -60,7 +60,7 @@ function themeFailures(css) {
       if (property === 'background') properties.push('background-color');
       if (property === 'outline') properties.push('outline-color');
       if (property.startsWith('border')) properties.push(`${property}-color`, 'border', 'border-color');
-      const baseClass = selector.match(/^(\.[\w-]+)(?:[.:][\w:().-]+)?$/)?.[1];
+      const baseClass = selector.match(/^(\.[\w-]+)(?:\.[\w-]+|:(?!:)[\w-]+(?:\([^)]*\))?)*$/)?.[1];
       const candidates = overrides.filter(rule => rule.selector === selector
         || (rule.selector === baseClass && properties.some(key => /!important\b/.test(rule.declarations.get(key)))));
       const themed = candidates.some(rule => {
