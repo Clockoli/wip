@@ -3,7 +3,6 @@ import { mkdtemp, mkdir, readdir, readFile, rm, copyFile } from 'node:fs/promise
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import webExt from 'web-ext';
 
 const root = path.resolve(import.meta.dirname, '..');
 const [command, output] = process.argv.slice(2);
@@ -30,10 +29,12 @@ try {
     await mkdir(artifactsDir, { recursive: true });
     const sourceArchive = path.join(temporary, 'source.zip');
     execFileSync('git', ['archive', '--format=zip', `--output=${sourceArchive}`, 'HEAD'], { cwd: root });
-    const result = await webExt.cmd.sign({ sourceDir, artifactsDir: temporary, channel: 'unlisted',
-      apiKey: process.env.AMO_JWT_ISSUER, apiSecret: process.env.AMO_JWT_SECRET, uploadSourceCode: sourceArchive,
-    });
-    if (result.downloadedFiles.length !== 1) throw new Error('AMO signing did not produce a signed extension');
+    execFileSync(process.execPath, [path.join(root, 'node_modules/web-ext/bin/web-ext.js'), 'sign',
+      '--source-dir', sourceDir, '--artifacts-dir', temporary, '--channel', 'unlisted',
+      '--upload-source-code', sourceArchive,
+    ], { cwd: root, stdio: 'inherit', env: { ...process.env,
+      WEB_EXT_API_KEY: process.env.AMO_JWT_ISSUER, WEB_EXT_API_SECRET: process.env.AMO_JWT_SECRET,
+    } });
     const files = (await readdir(temporary)).filter(file => file.endsWith('.xpi'));
     if (files.length !== 1) throw new Error('AMO signing must produce exactly one signed XPI');
     const { version } = JSON.parse(await readFile(path.join(sourceDir, 'manifest.json'), 'utf8'));

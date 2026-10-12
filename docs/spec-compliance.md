@@ -6,7 +6,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 | Decision | Implementation |
 |---|---|
-| Browser | Chrome/Chromium Manifest V3; Chrome 102+ |
+| Browser | Manifest V3 from shared source: Chrome/Chromium development manifest (existing 102 baseline), Firefox 140+, Safari 18+ on macOS; see [browser release contracts](browser-releases.md) for compatibility and verification limits |
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
 | Work actors | Human and agent identities use the same work-record schema |
 | Descriptions | Optional, maximum 2,000 characters |
@@ -72,7 +72,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 ## Acceptance coverage
 
-Automated tests cover strict v1 JSON/JSONL parsing, stable Start-to-Stop identity, unsupported-schema rejection, unknown-field preservation, actor/producer separation, metric validation, local-date/month partitioning, arbitrary HTTP(S) work items, lossless destination migration, explicit repository actions, organization permissions, ordered routing, one global timer, destination-pinned queues, cross-destination restart recovery, bounded and abortable multi-destination reads, conflict-safe deduplication and provenance, durable local mutations, MV3 restarts, concurrent Stops, stale-title races, pending projections, SHA conflicts, ID-safe edits/deletes after reordering, atomic linked and cross-month edits, bulk import, personal-branch discovery, report caching, sender trust boundaries, Tasks/Activity/Reports views, partial export guards, billing, credentials-free settings exports, and release-package validation.
+Automated tests cover strict v1 JSON/JSONL parsing, stable Start-to-Stop identity, unsupported-schema rejection, unknown-field preservation, actor/producer separation, metric validation, local-date/month partitioning, arbitrary HTTP(S) work items, lossless destination migration, explicit repository actions, organization permissions, ordered routing, one global timer, destination-pinned queues, cross-destination restart recovery, bounded and abortable multi-destination reads, conflict-safe deduplication and provenance, durable local mutations, MV3 restarts, concurrent Stops, stale-title races, pending projections, SHA conflicts, ID-safe edits/deletes after reordering, atomic linked and cross-month edits, bulk import, personal-branch discovery, report caching, sender trust boundaries, Tasks/Activity/Reports views, partial export guards, billing, credentials-free settings exports, and release-package validation. Packaging tests cover generated target manifests, deterministic Chrome/Firefox/Safari extension archives, runtime inventories, partial signing-configuration rejection, and Safari app ZIP modes and symlinks. Native browser, signing and store acceptance require separate verification.
 
 The complete normative persistent format is [Data Format v1](data-format-v1.md).
 
