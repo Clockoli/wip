@@ -960,21 +960,24 @@ for (const colorScheme of ['light', 'dark']) {
       host.style.setProperty('--fgColor-accent', colorScheme === 'dark' ? '#4493f8' : '#0969da');
     }, colorScheme);
     const panel = colorScheme === 'dark' ? 'rgb(13, 17, 23)' : 'rgb(255, 255, 255)';
+    // Resize observers can replace cells between Playwright's query and the style read; detached cells report empty styles.
+    const computedStyles = (selector, property) => page.locator(`#timeline ${selector}`)
+      .evaluateAll((elements, property) => elements.map(element => getComputedStyle(element)[property]), property);
     const assertPanelBackgrounds = async selectors => {
       for (const selector of selectors) {
-        const cells = page.locator(`#timeline ${selector}`);
-        expect(await cells.count(), selector).toBeGreaterThan(0);
-        const backgrounds = await cells.evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor));
-        expect(backgrounds.every(background => background === panel), selector).toBe(true);
+        await expect.poll(async () => {
+          const backgrounds = await computedStyles(selector, 'backgroundColor');
+          return backgrounds.length > 0 && backgrounds.every(background => background === panel);
+        }, { message: selector }).toBe(true);
       }
     };
     await assertPanelBackgrounds(['.content', '.ruler-row', '.task-row', '.ruler-cell:not(.empty)']);
     if (colorScheme === 'dark') {
       for (const selector of ['.day-band', '.ruler-cell']) {
-        const cells = page.locator(`#timeline ${selector}`);
-        expect(await cells.count(), selector).toBeGreaterThan(0);
-        const colors = await cells.evaluateAll(elements => elements.map(element => getComputedStyle(element).color));
-        expect(colors.every(color => color !== 'rgb(52, 64, 84)'), selector).toBe(true);
+        await expect.poll(async () => {
+          const colors = await computedStyles(selector, 'color');
+          return colors.length > 0 && colors.every(color => color && color !== 'rgb(52, 64, 84)');
+        }, { message: selector }).toBe(true);
       }
     }
     await page.evaluate(() => window.__timeline.setViewMode('calendar'));
