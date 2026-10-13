@@ -1104,6 +1104,18 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
   assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(\) => revealTimeEditor\(\)\)/);
 });
 
+test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
+  const start = source.indexOf('  async function loadSelectedTimes() {');
+  const end = source.indexOf('\n  function renderTimesPage(', start);
+  assert.ok(start >= 0 && end > start);
+  const loader = source.slice(start, end);
+  const cache = loader.indexOf("send({ type: 'GET_PAGE_STATE', refresh: false })");
+  const remote = loader.indexOf('await refreshRecent(true');
+  assert.ok(cache >= 0 && remote > cache, 'local Activity records must render before any remote request');
+  assert.match(loader, /recent = cached\.recent\.filter/);
+  assert.match(loader, /recentLoaded = true; recentFresh = false;\s*renderUi\(\)/);
+});
+
 test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
