@@ -848,6 +848,7 @@ export class TrackerService {
   async syncPending() {
     const queue = await this.compactPendingQueue();
     for (const operation of [...queue]) {
+      if (!queue.some(item => item.id === operation.id)) continue;
       if (operation.stage === 'awaitSourceCompletion') break;
       const attemptStartedAt = Date.now();
       this.currentQueueDiagnostic = event => {
