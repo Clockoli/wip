@@ -315,7 +315,7 @@ async function load() {
 
 $('refresh-tasks').addEventListener('click', async () => {
   const button = $('refresh-tasks'); button.disabled = true; setError();
-  try { await send({ type: 'SYNC' }); await load(); }
+  try { await load(); }
   catch (error) { setError(error); }
   finally { button.disabled = hasRunnablePending(); }
 });
