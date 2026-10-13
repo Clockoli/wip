@@ -2366,3 +2366,60 @@ test('menu refresh applies both sides of an accepted linked boundary edit in one
   const restarted = service({ github, store, clock: () => new Date('2026-08-18T12:00:00Z') });
   assert.equal((await restarted.getCachedSummary()).todayTrackedMs, 10_800_000);
 });
+
+test('reopening immediately after an IndexedDB-queued Timeline edit retains the local interval', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const saved = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([saved]), 'original-sha');
+  const tracker = service({ github, store });
+  const [cached] = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = [cached];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [cached], computedAt: Date.now() };
+  await tracker.queueEntryEdit({
+    path, originalSha: 'original-sha', index: 0,
+    original: { id: cached.id }, edits: {
+      startedAt: '2026-08-18T07:45:00.000Z', endedAt: '2026-08-18T08:15:00.000Z',
+    },
+  });
+  const expected = store.value.recentCache[0];
+  const disconnected = service({ github, store });
+  github.getText = async () => { throw new Error('GitHub is unavailable'); };
+  const reloaded = await disconnected.loadMenuData();
+  assert.equal(reloaded.recent.find(item => item.id === cached.id)?.startedAt, expected.startedAt);
+  assert.equal(reloaded.recent.find(item => item.id === cached.id)?.endedAt, expected.endedAt);
+  assert.equal(store.value.pendingWrites.length, 1, 'the saved local edit must remain queued');
+});
+
+test('an older in-flight GitHub recent load must not overwrite a newer committed local edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  const tracker = service({ github, store });
+  const [cached] = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = [cached];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [cached], computedAt: Date.now() };
+  let reached, release;
+  const started = new Promise(resolve => { reached = resolve; });
+  const allowResponse = new Promise(resolve => { release = resolve; });
+  const originalRead = github.getText.bind(github);
+  github.getText = async requested => {
+    const result = await originalRead(requested).catch(error => error);
+    if (requested === path) { reached(); await allowResponse; }
+    if (result instanceof Error) throw result;
+    return result;
+  };
+  const refreshing = tracker.loadMenuData();
+  await started;
+  const updated = { ...cached, startedAt: '2026-08-18T07:40:00.000Z',
+    endedAt: '2026-08-18T08:10:00.000Z', _sha: 'new-commit-sha' };
+  // The queued edit has completed on GitHub while an older read is still in flight.
+  store.value.recentCache = [updated];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [updated], computedAt: Date.now() };
+  release();
+  const result = await refreshing;
+  assert.equal(result.recent[0]?.startedAt, updated.startedAt);
+  assert.equal(store.value.recentCache[0]?.startedAt, updated.startedAt);
+  assert.equal(store.value.recentCache[0]?._sha, 'new-commit-sha');
+});
