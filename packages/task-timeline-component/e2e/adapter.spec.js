@@ -224,6 +224,22 @@ test('Today after a one-day period refetches the expanded week even when its fir
   expect(result.calls[1][2]).toBe(new Date(2026, 9, 12).getTime());
 });
 
+test('reconciliation keeps the viewport anchored even when virtual segments are temporarily empty', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport;
+    timeline._setScrollLeft(Math.max(0, timeline.totalWidth - viewport.clientWidth) / 2);
+    const before = timeline.xToTime(timeline._scrollLeftNow() + viewport.clientWidth / 2);
+    timeline.segments = [];
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+    const after = timeline.xToTime(timeline._scrollLeftNow() + viewport.clientWidth / 2);
+    return { before, after, scroll: timeline._scrollLeftNow() };
+  });
+  expect(Math.abs(result.after - result.before)).toBeLessThan(2 * 60_000);
+  expect(result.scroll).toBeGreaterThan(0);
+});
+
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {
   const now = await mount(page);
   await page.evaluate(() => {
