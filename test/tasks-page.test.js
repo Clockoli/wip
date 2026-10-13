@@ -136,12 +136,13 @@ test('GitHub header icon opens the browser action panel without a dropdown', () 
 });
 
 
-test('Top tasks exposes the same sync and refresh action as the tracking panel', () => {
-  assert.match(html, /id="refresh-tasks"[^>]*aria-label="Sync and refresh"/);
+test('Top tasks exposes a read-only refresh action without manual GitHub sync', () => {
+  assert.match(html, /id="refresh-tasks"[^>]*aria-label="Refresh"/);
   const panelSyncPath = content.match(/const SYNC_PATH = '([^']+)'/)?.[1];
   assert.ok(panelSyncPath);
   assert.match(html, new RegExp(`<path d="${panelSyncPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  assert.match(js, /refresh-tasks'\)\.addEventListener[\s\S]*type: 'SYNC'[\s\S]*await load\(\)/);
+  assert.match(js, /refresh-tasks'\)\.addEventListener[\s\S]*await load\(\)/);
+  assert.doesNotMatch(js, /type: 'SYNC'/);
 });
 
 
@@ -152,16 +153,13 @@ test('background timer sync never blocks actions or animates a passive refresh i
     'timer acceptance must not wait behind the remote synchronization executor');
   assert.match(worker, /acceptsLocally = \[[\s\S]*QUEUE_ENTRY_EDIT[\s\S]*QUEUE_ENTRY_DELETE[\s\S]*QUEUE_ENTRIES_EDIT[\s\S]*QUEUE_ACTIVE_START_EDIT[\s\S]*\]\.includes/,
     'queued timeline edits must be durably accepted without waiting behind remote synchronization');
-  assert.match(worker, /scheduleSyncAlarm\('sync-pending-now'/,
-    'accepted mutations schedule a durable one-shot alarm that wakes the MV3 worker');
-  assert.match(worker, /function requestPendingSync\(\) \{\s*void scheduleSyncAlarm\('sync-pending-now', \{ when: Date\.now\(\) \+ 250 \}\);\s*\}/,
-    'accepted mutations wait for the debounce alarm so superseding queue edits can coalesce');
+  assert.match(worker, /scheduleSyncAlarm\('sync-pending', \{ periodInMinutes: 1 \}\)/);
+  assert.doesNotMatch(worker, /sync-pending-now|when: Date\.now\(\) \+ 250/);
   assert.doesNotMatch(worker, /function requestPendingSync\(\) \{[^}]*syncPendingNow\(\)/);
   assert.doesNotMatch(js, /button\.disabled = Boolean\(state\.busyUrl \|\| state\.pendingWrites\.length\)/);
   assert.match(worker, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
   assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
-  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\)[\s\S]*sync-pending-now/,
-    'MV3 retry alarms must continue for safely rebased entry edits and stop only for a missing record or an unsafe conflict');
+  assert.doesNotMatch(worker, /sync-pending-now/);
   assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
   assert.match(js, /const busy = state\.loading \|\| hasRunnablePending\(\)/);
   assert.match(js, /hadPending[\s\S]*!hasRunnablePending\(\)[\s\S]*await load\(\)/,
