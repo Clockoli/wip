@@ -1072,7 +1072,7 @@
     // -----------------------------------------------------------------------
 
     setTasks(taskData, { domainStart = null, domainEnd = null, preserveScroll = false, preserveHistory = false } = {}) {
-      const oldCenter = preserveScroll && this.segments.length
+      const oldCenter = preserveScroll && this.domainEnd > this.domainStart && this.viewport
         ? this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2)
         : null;
 
