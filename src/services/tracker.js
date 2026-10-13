@@ -873,6 +873,52 @@ export class TrackerService {
         if (operationType === 'editEntry') assertQueuedEntryIntervals([operation.request]);
         if (operationType === 'editEntries') assertQueuedEntryIntervals(operation.request?.entries);
         if (operation.operation === 'editEntry') {
+          // Batch only consecutive independent edits. Stop/switch operations
+          // stay as FIFO barriers so each completion retains its issue-linked
+          // "time: ... tracked ..." commit.
+          const startIndex = queue.findIndex(item => item.id === operation.id);
+          const batch = [];
+          const targets = new Set();
+          for (const candidate of queue.slice(startIndex)) {
+            if (candidate.operation !== 'editEntry' || candidate.status === 'conflict'
+                || !candidate.request?.original?.id || !candidate.request.path) break;
+            const key = candidate.request.path + '\\u0000' + candidate.request.original.id;
+            if (targets.has(key) || batch.length === 50) break;
+            targets.add(key);
+            batch.push(candidate);
+          }
+          if (batch.length > 1) {
+            try {
+              const saved = await this.editEntries({ entries: batch.map(item => item.request) }, { updateCache: false });
+              const batchIds = new Set(batch.map(item => item.id));
+              const savedById = new Map(saved.map(item => [item.id, item]));
+              await this.mutateState(latest => {
+                const pendingWrites = structuredClone(latest.pendingWrites ?? []);
+                for (const item of batch) {
+                  const index = pendingWrites.findIndex(op => op.id === item.id);
+                  if (index !== -1) retargetLaterEntryEdits(pendingWrites, index, saved);
+                }
+                const remaining = pendingWrites.filter(item => !batchIds.has(item.id));
+                return {
+                  pendingWrites: remaining,
+                  recentCache: (latest.recentCache ?? []).map(entry => {
+                    const persisted = savedById.get(entry.id);
+                    return persisted && !remaining.some(item => item.operation === 'editEntry'
+                      && item.request?.original?.id === entry.id) ? persisted : entry;
+                  }),
+                };
+              });
+              for (const item of batch) {
+                const index = queue.findIndex(candidate => candidate.id === item.id);
+                if (index !== -1) queue.splice(index, 1);
+              }
+              continue;
+            } catch (error) {
+              if (!(error instanceof TrackerConflictError)) throw error;
+              // Preserve existing per-entry rebasing and conflict reporting.
+              // Do not drop a queued operation when a batch cannot be committed.
+            }
+          }
           let saved;
           try { saved = await this.editEntry(operation.request, { updateCache: false }); }
           catch (error) {
