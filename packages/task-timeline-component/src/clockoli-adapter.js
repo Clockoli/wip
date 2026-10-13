@@ -737,10 +737,13 @@
       const previousWidth = timeline._viewportWidthNow();
       const previousMaxScroll = Math.max(0, timeline.totalWidth - previousWidth);
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
+      const rememberedCenter = Number(props.view?.focusedAt);
       const anchorTime = previousMode === 'timeline'
-        ? timeline.segments.length
+        ? previousScroll > 1 && timeline.segments.length
           ? timeline.xToTime(previousScroll + previousWidth / 2)
-          : (props.view?.focusedAt ?? null)
+          : Number.isFinite(rememberedCenter) && rememberedCenter > 0
+            ? rememberedCenter
+            : (timeline.segments.length ? timeline.xToTime(previousScroll + previousWidth / 2) : null)
         : null;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
@@ -756,7 +759,7 @@
       hydrateExternalState();
       if (applyExternalView && nextProps.view) applyView(nextProps.view);
       else if (wasRightPinned) timeline.scrollToEnd();
-      else if (anchorTime != null && Number.isFinite(anchorTime) && previousScroll > 1) {
+      else if (anchorTime != null && Number.isFinite(anchorTime)) {
         // setTasks rebuilds the scrollable geometry and Chrome can clamp the
         // viewport to zero during that DOM replacement. Restore the time
         // the user was actually viewing, not the clamped pixel scroll value.
