@@ -39,6 +39,102 @@ function sourceBetween(start, end) {
   return worker.slice(first, last);
 }
 
+test('last accepted local edit determines the 15-second durable sync deadline', async () => {
+  const now = Date.now();
+  const context = vm.createContext({ Date });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function requestPendingSync('), context);
+  const snapshot = {
+    destinationStates: { entries: {
+      'github:1': { pendingWrites: [
+        { operation: 'editEntry', queuedAt: new Date(now - 80_000).toISOString(), lastLocalEditAt: new Date(now - 3_000).toISOString() },
+      ] },
+      'github:2': { pendingWrites: [{ operation: 'completeTimer', queuedAt: new Date(now - 8_000).toISOString() }] },
+    } },
+  };
+  assert.equal(context.pendingSyncQuietUntil(snapshot), now + 12_000);
+  snapshot.destinationStates.entries['github:1'].pendingWrites[0].lastLocalEditAt = new Date(now + 5_000).toISOString();
+  assert.equal(context.pendingSyncQuietUntil(snapshot), now + 20_000,
+    'editing an existing queued record resets the inactivity clock');
+  snapshot.destinationStates.entries['github:1'].pendingWrites = [];
+  snapshot.destinationStates.entries['github:2'].pendingWrites = [];
+  assert.equal(context.pendingSyncQuietUntil(snapshot), null);
+});
+
+test('a fresh local edit re-arms 15-second wakeup, without needing a minute tick', async () => {
+  let now = Date.now();
+  class FakeDate extends Date { static now() { return now; } }
+  const pending = [{ operation: 'editEntry', queuedAt: new Date(now).toISOString() }];
+  const timers = [], alarms = [], commits = [];
+  const store = {
+    getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+    getTrackingSnapshot: async () => ({
+      destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(pending) } } },
+    }),
+  };
+  const context = vm.createContext({
+    Date: FakeDate, store,
+    chrome: { alarms: { create: async (...args) => { alarms.push(args); } } },
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, cancelled: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: timer => { timer.cancelled = true; },
+    withCurrentRepositoryRecovery: async (_message, callback) => callback(),
+    executor: { run: callback => callback() },
+    syncPendingAll: async () => { commits.push(now); pending.length = 0; },
+    pullRemoteNow: async () => {},
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  context.requestPendingSync();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(timers.at(-1).delay, 15_000);
+  assert.equal(alarms.at(-1)[0], 'sync-pending-idle-fallback');
+  assert.equal(alarms.at(-1)[1].when >= now + 30_000, true);
+
+  now += 10_000;
+  pending[0].lastLocalEditAt = new Date(now).toISOString();
+  context.requestPendingSync();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(timers.at(-2).cancelled, true);
+  assert.equal(timers.at(-1).delay, 15_000);
+  now += 14_999;
+  assert.deepEqual(commits, []);
+  now += 1;
+  timers.at(-1).callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(commits, [now]);
+});
+
+test('an early alarm cannot sync before 15 seconds of inactivity after service-worker restart', async () => {
+  let now = Date.now();
+  class FakeDate extends Date { static now() { return now; } }
+  const recent = [{ operation: 'editEntry', queuedAt: new Date(now - 5_000).toISOString() }];
+  const commits = [], timers = [], alarms = [];
+  const context = vm.createContext({
+    Date: FakeDate,
+    store: {
+      getPendingDestinationIds: async () => recent.length ? ['github:1'] : [],
+      getTrackingSnapshot: async () => ({
+        destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(recent) } } },
+      }),
+    },
+    chrome: { alarms: { create: async (...args) => { alarms.push(args); } } },
+    setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
+    clearTimeout: () => {},
+    executor: { run: fn => fn() },
+    withCurrentRepositoryRecovery: async (_message, fn) => fn(),
+    syncPendingAll: async () => { commits.push(now); recent.length = 0; },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  await context.syncPendingNow();
+  assert.deepEqual(commits, []);
+  assert.equal(timers.at(-1).delay, 10_000);
+  now += 10_000;
+  await context.syncPendingNow();
+  assert.deepEqual(commits, [now]);
+});
+
 test('startup handles an alarm rejection while Chrome replaces the service worker', async () => {
   const calls = [];
   const context = vm.createContext({
