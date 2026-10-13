@@ -229,6 +229,7 @@
     let styleObserver = null;
     let detailsObserver = null;
     let actionClock = null;
+    let suppressViewportScroll = true;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -705,7 +706,10 @@
     timeline.shadow.addEventListener('pointerdown', permissionEvent, true);
     timeline.shadow.addEventListener('dblclick', permissionEvent, true);
     timeline.shadow.addEventListener('keydown', permissionEvent, true);
-    timeline.viewport.addEventListener('scroll', () => { styleTasks(); notifyView(); }, { passive: true });
+    timeline.viewport.addEventListener('scroll', () => {
+      styleTasks();
+      if (!suppressViewportScroll) notifyView();
+    }, { passive: true });
     if (props.weeklyCalendar) {
       const viewport = timeline.calendarViewport;
       const positionTimeRail = () => timeline.calendarCanvas.style.setProperty('--clockoli-calendar-scroll-left', `${viewport.scrollLeft}px`);
@@ -722,8 +726,10 @@
     hydrateExternalState();
     applyView(initialProps.view);
     styleTasks();
+    requestAnimationFrame(() => { suppressViewportScroll = false; });
 
     function reconcile(nextProps, { applyExternalView = false } = {}) {
+      suppressViewportScroll = true;
       const previousSelection = timeline.selectedKey;
       const previousFocus = timeline.focusedKey;
       const previousMode = timeline.getViewMode();
@@ -754,6 +760,7 @@
         timeline._setScrollLeft(timeline.timeToX(anchorTime) - previousWidth / 2);
       }
       styleTasks();
+      requestAnimationFrame(() => { suppressViewportScroll = false; });
     }
 
     return {
