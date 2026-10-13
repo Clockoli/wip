@@ -1430,6 +1430,7 @@ export class TrackerService {
         operation: 'editEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
         stage: 'editEntry', request, queuedAt: queuedAt.toISOString(), lastError: '',
       };
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (existing) Object.assign(existing, operation); else pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).map(entry => entry.id === original.id && entry._path === path
         ? { ...updated, _path: entry._path, _sha: entry._sha, _index: entry._index, _pending: true } : entry);
@@ -1494,6 +1495,7 @@ export class TrackerService {
         operation: 'editEntries', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
         stage: 'editEntries', request, queuedAt: queuedAt.toISOString(), lastError: '',
       };
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (!existing) pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).map(entry => {
         const updated = updatedByIdentity.get(`${entry._path}\u0000${entry.id}`);
@@ -1522,6 +1524,7 @@ export class TrackerService {
       };
       operation.startedAt = updated.startedAt;
       operation.description = updated.description;
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (!existing) pendingWrites.push(operation);
       return { pendingWrites, activeCache: { ...updated, _path: active._path, _sha: active._sha, _pending: true } };
     }).then(state => ({
