@@ -1206,11 +1206,12 @@ export class TrackerService {
       months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
     }
     const initial = await this.store.getState();
-    // A queued edit is already durable. Opening the UI must not wait for GitHub
-    // or let a delayed remote response supersede that accepted local data.
-    if (initial.pendingWrites?.length) return this.cachedMenuData(limit, now);
+    // Keep the local projection available if the GitHub read fails, while
+    // retaining remote reads for complete summary totals and queue rebasing.
     let missingReachability = null;
-    let files = await Promise.all(months.map(async month => {
+    let files;
+    try {
+      files = await Promise.all(months.map(async month => {
       const path = monthlyRecordsPath(this.user, `${month}-01`);
       try {
         const file = await this.github.getText(path);
@@ -1221,7 +1222,11 @@ export class TrackerService {
         await missingReachability;
         return { path, month, sha: null, entries: [] };
       }
-    }));
+      }));
+    } catch (error) {
+      if (initial.pendingWrites?.length || initial.recentCache?.length) return this.cachedMenuData(limit, now);
+      throw error;
+    }
     files = await this.backfillIssueTitles(files, knownTitles);
     const remoteEntries = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
     const initialState = await this.store.getState();
