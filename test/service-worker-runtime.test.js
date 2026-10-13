@@ -213,7 +213,9 @@ test('passive GitHub pulls run independently and never send UI messages or trigg
     }),
   });
   const source = sourceBetween('let pendingPull = null;', 'function scheduleSyncAlarm(');
-  assert.doesNotMatch(source, /renderUi\\(|chrome\\.tabs\\.sendMessage\\(|chrome\\.runtime\\.sendMessage\\(/);
+  for (const call of ['renderUi(', 'chrome.tabs.sendMessage(', 'chrome.runtime.sendMessage(']) {
+    assert.equal(source.includes(call), false, `background pull must not call ${call}`);
+  }
   vm.runInContext(source, context);
   await context.pullRemoteNow();
   assert.deepEqual(calls, [
