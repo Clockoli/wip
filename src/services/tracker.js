@@ -1172,6 +1172,22 @@ export class TrackerService {
     }
   }
 
+  async cachedMenuData(limit = 50, now = this.clock()) {
+    const state = await this.store.getState();
+    const recent = (state.recentCache ?? []).slice(0, limit);
+    const summary = summaryProjection(state, now);
+    return {
+      configured: true,
+      recent,
+      summaries: [],
+      reportDate: localReportDate(now),
+      active: state.activeCache,
+      pendingWrites: state.pendingWrites ?? [],
+      pendingCount: state.pendingWrites?.length ?? 0,
+      ...summary,
+    };
+  }
+
   async loadMenuData(limit = 50, { knownTitles = new Map() } = {}) {
     const now = this.clock(), dateFor = offset => localReportDate(now, offset);
     const today = dateFor(0), mondayOffset = (now.getDay() + 6) % 7;
@@ -1189,6 +1205,10 @@ export class TrackerService {
     for (let cursor = new Date(`${earliest.slice(0, 7)}-01T12:00:00`), end = new Date(`${today.slice(0, 7)}-01T12:00:00`); cursor <= end; cursor.setMonth(cursor.getMonth() + 1)) {
       months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
     }
+    const initial = await this.store.getState();
+    // A queued edit is already durable. Opening the UI must not wait for GitHub
+    // or let a delayed remote response supersede that accepted local data.
+    if (initial.pendingWrites?.length) return this.cachedMenuData(limit, now);
     let missingReachability = null;
     let files = await Promise.all(months.map(async month => {
       const path = monthlyRecordsPath(this.user, `${month}-01`);
@@ -1205,6 +1225,12 @@ export class TrackerService {
     files = await this.backfillIssueTitles(files, knownTitles);
     const remoteEntries = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
     const initialState = await this.store.getState();
+    // The remote request was started against an older local generation. Do not
+    // overwrite local edits that were accepted or completed while it ran.
+    if (JSON.stringify([initial.activeCache, initial.recentCache, initial.pendingWrites, initial.summaryCache])
+        !== JSON.stringify([initialState.activeCache, initialState.recentCache, initialState.pendingWrites, initialState.summaryCache])) {
+      return this.cachedMenuData(limit, now);
+    }
     await this.backfillActiveIssueTitle(initialState.activeCache, knownTitles);
     const summaryCache = {
       reportDate: today,
