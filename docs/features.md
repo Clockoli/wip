@@ -230,7 +230,7 @@ Start, Stop, and task switches are accepted durably in extension-local state, th
 4. It removes only the matching active file.
 5. It preserves a newer timer written by another browser or device.
 
-Pending writes are retried at startup and approximately once per minute. **Sync now** triggers an immediate attempt.
+Queued writes are pushed automatically on a one-minute alarm, with no manual Sync action and no immediate network write when a local edit is accepted. Ordinary consecutive completed-record edits are combined into one atomic Git commit per eligible batch. Each completed timer receives its own `time: <user> tracked <duration> on <owner>/<repo>#<number>` commit for GitHub issue/PR history linking. Ordering barriers such as Starts, Stops and cross-repository switches remain distinct for conflict-safe reconciliation.
 
 Independently, a silent background pull checks connected personal branches at startup and about once per minute. Remote active and recent time records are cached locally without opening the panel, showing loading indicators, or rerendering an active editor. Local work waiting to sync is never replaced by an incoming snapshot. An unchanged branch or a failed pull leaves the visible UI alone; the next normal state read observes the newest successfully cached data. Larger history views and other participants' records are still loaded on demand.
 
