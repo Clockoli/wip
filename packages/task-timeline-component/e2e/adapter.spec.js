@@ -679,8 +679,8 @@ test('late rejected edit preserves newer edits without a saving overlay', async 
   await mount(page, { deferEdit: true });
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await block.click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   const newestStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('older save failed')));
@@ -695,12 +695,12 @@ test('rejected edits restore the prior interval without leaving a false undo ent
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await block.click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(false));
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
   expect(await page.evaluate(() => window.__timeline.__timeline.canUndo())).toBe(false);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().reject(new Error('save failed')));
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
@@ -711,8 +711,8 @@ test('consecutive rejected edits restore the last accepted interval', async ({ p
   await mount(page, { deferEdit: true });
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
   await page.evaluate(() => window.__editSettlers[1].resolve(false));
@@ -727,8 +727,8 @@ test('undo after a late rejected edit does not resurrect the failed interval', a
   ] });
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   await page.evaluate(() => window.__editSettlers[1].resolve(true));
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
@@ -748,7 +748,7 @@ test('rejected undo restores the accepted interval and preserves undo history', 
   });
   const original = (await timeline()).start;
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(true));
   await expect.poll(() => timeline()).toMatchObject({ undo: true, redo: false });
@@ -775,7 +775,7 @@ test('rejected redo restores the undone interval and preserves redo history', as
   });
   const original = (await timeline()).start;
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(true));
   await expect.poll(() => timeline()).toMatchObject({ undo: true });
