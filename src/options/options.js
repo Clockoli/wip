@@ -1762,6 +1762,8 @@ $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
   $('device-code').classList.remove('code-reveal');
   try {
+    // Safari and Firefox grant host permissions only after the user approves them; Chrome resolves this at once.
+    if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
     state.deviceAttempt = attempt;
     renderDeviceAttempt(attempt);

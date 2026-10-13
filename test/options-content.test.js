@@ -72,6 +72,15 @@ test('Device activation reveals code characters for two seconds, then holds for 
   assert.match(start, /state\.deviceAttempt\?\.attemptId !== attempt\.attemptId/);
 });
 
+test('Sign in requests the manifest host permissions in its click gesture before starting device flow', () => {
+  const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
+  const request = start.indexOf('await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })');
+  assert.ok(request > 0, 'Safari and Firefox grant host permissions only after the user approves them');
+  assert.equal(start.indexOf('await '), request, 'the request must be the first await so it keeps the click gesture');
+  assert.ok(request < start.indexOf("type: 'START_DEVICE_FLOW'"));
+  assert.match(start, /host_permissions \}\)\) throw new Error\('GitHub access was not granted\.'\)/);
+});
+
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
   assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
