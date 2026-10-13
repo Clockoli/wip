@@ -83,6 +83,7 @@ test('a fresh local edit re-arms 15-second wakeup, without needing a minute tick
     withCurrentRepositoryRecovery: async (_message, callback) => callback(),
     executor: { run: callback => callback() },
     syncPendingAll: async () => { commits.push(now); pending.length = 0; },
+    trackerForDestination: async () => ({}),
     pullRemoteNow: async () => {},
   });
   vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
@@ -125,6 +126,7 @@ test('an early alarm cannot sync before 15 seconds of inactivity after service-w
     executor: { run: fn => fn() },
     withCurrentRepositoryRecovery: async (_message, fn) => fn(),
     syncPendingAll: async () => { commits.push(now); recent.length = 0; },
+    trackerForDestination: async () => ({}),
   });
   vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
   await context.syncPendingNow();
