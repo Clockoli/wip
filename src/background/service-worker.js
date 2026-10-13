@@ -1138,7 +1138,7 @@ async function handle(message, sender) {
     case 'START': {
       const taskUrl = taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
       const destinationId = await resolveStartDestinationId(store, taskUrl);
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.start(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
       if (result._pending) requestPendingSync();
       return { ...result, destinationId };
@@ -1150,13 +1150,13 @@ async function handle(message, sender) {
       const targetDestinationId = await resolveStartDestinationId(store, taskUrl);
       const sourceDestinationId = await activeDestinationId(store);
       if (!sourceDestinationId || sourceDestinationId === targetDestinationId) {
-        const tracker = await trackerForDestination(targetDestinationId);
+        const tracker = await trackerForDestination(targetDestinationId, { localOnly: true });
         const result = await tracker.switchTask(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
         if (result.pending) requestPendingSync();
         return { ...result, destinationId: targetDestinationId };
       }
-      const sourceTracker = await trackerForDestination(sourceDestinationId);
-      const targetTracker = await trackerForDestination(targetDestinationId);
+      const sourceTracker = await trackerForDestination(sourceDestinationId, { localOnly: true });
+      const targetTracker = await trackerForDestination(targetDestinationId, { localOnly: true });
       const sourceState = await sourceTracker.getState();
       const current = sourceState.active;
       if (!current) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
@@ -1184,14 +1184,14 @@ async function handle(message, sender) {
     }
     case 'STOP': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.stop(message.description || '', { background: true });
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
     }
     case 'DISCARD_ACTIVE': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.discardActive({ background: true });
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
@@ -1212,7 +1212,7 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntryEdit(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntryEdit(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
@@ -1220,7 +1220,7 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntryDelete(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntryDelete(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
@@ -1228,13 +1228,13 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntriesEdit(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntriesEdit(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
     case 'QUEUE_ACTIVE_START_EDIT': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const result = await (await trackerForDestination(destinationId)).queueActiveStartEdit(message.payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueActiveStartEdit(message.payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
