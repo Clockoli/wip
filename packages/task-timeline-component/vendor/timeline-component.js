@@ -863,6 +863,7 @@
         overscanScreens: 1.5,
         magneticSnap: true,
         magnetStepsMinutes: [1, 5, 15],
+        calendarMagnetStepMinutes: null,
         magnetScaleThresholdDays: [1, 3],
         magnetZonePx: 20,
         magnetSnapPx: 8,
@@ -3258,10 +3259,11 @@
     }
 
     _calendarMagnetStepMs(rawTime, state) {
-      // Calendar editing uses the same 1/5/15-minute precision selected by
-      // the current period. We no longer promote the step merely because the
-      // marks are visually close: round-time magnetic hit-testing is gone, so
-      // a 1px-per-minute calendar can still edit reliably at one-minute steps.
+      // Clients may keep Calendar's finer precision when Timeline uses a
+      // larger editing grid. Without an override, preserve the existing
+      // scale-aware Calendar behavior.
+      const override = Number(this.options.calendarMagnetStepMinutes);
+      if (Number.isFinite(override) && override > 0) return override * 60 * SECOND;
       return Math.max(60 * SECOND, this._magnetStepMs());
     }
 
