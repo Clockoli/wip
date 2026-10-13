@@ -226,7 +226,8 @@ test('Today after a one-day period refetches the expanded week even when its fir
 
 test('reconciliation keeps the viewport anchored even when virtual segments are temporarily empty', async ({ page }) => {
   await mount(page);
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
     const timeline = window.__timeline.__timeline;
     const viewport = timeline.viewport;
     timeline._setScrollLeft(Math.max(0, timeline.totalWidth - viewport.clientWidth) / 2);
