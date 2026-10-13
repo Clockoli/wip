@@ -435,6 +435,21 @@ export class TrackerService {
     };
   }
 
+  async projectActivityRecords(remoteRecords, { startDate: from, endDate: through } = {}) {
+    // The unsynced IndexedDB state remains authoritative for Activity reloads.
+    // Apply the complete pending queue before filtering: edits can move records
+    // across the requested day boundary.
+    const state = await this.store.getState();
+    const records = overlayPendingEntries(remoteRecords, state.pendingWrites ?? []);
+    return {
+      records: records.filter(entry => (!from || entry.entryDate >= from)
+        && (!through || entry.entryDate <= through)),
+      recovery: recoveryProjection({
+        active: state.activeCache, recent: records, pendingWrites: state.pendingWrites ?? [],
+      }),
+    };
+  }
+
   async getRecoveryState() { return recoveryProjection(await this.getState()); }
 
   async getCachedSummary() {
