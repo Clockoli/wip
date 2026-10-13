@@ -232,6 +232,8 @@ Start, Stop, and task switches are accepted durably in extension-local state, th
 
 Pending writes are retried at startup and approximately once per minute. **Sync now** triggers an immediate attempt.
 
+Independently, a silent background pull checks connected personal branches at startup and about once per minute. Remote active and recent time records are cached locally without opening the panel, showing loading indicators, or rerendering an active editor. Local work waiting to sync is never replaced by an incoming snapshot. An unchanged branch or a failed pull leaves the visible UI alone; the next normal state read observes the newest successfully cached data. Larger history views and other participants' records are still loaded on demand.
+
 If GitHub is temporarily unreachable, the panel can show that the completion is saved locally and waiting to sync. Do not clear local configuration while work is pending.
 
 ## Conflict handling
