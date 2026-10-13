@@ -1340,6 +1340,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+let pendingPull = null;
+function pullRemoteNow() {
+  if (pendingPull) return pendingPull;
+  // No UI messages, spinners or mutation executor: this only updates the
+  // extension-local cache after a complete, conflict-safe GitHub snapshot.
+  pendingPull = (async () => {
+    const snapshot = await configuredSnapshot({ localOnly: true });
+    if (!snapshot.auth) return;
+    for (const destinationId of Object.keys(snapshot.registry?.destinations ?? {})) {
+      try {
+        const tracker = await trackerForDestination(destinationId, { localOnly: true });
+        await tracker.pullRemoteSilently();
+      } catch { /* Passive refresh must never interrupt tracking or surface an error. */ }
+    }
+  })().finally(() => { pendingPull = null; });
+  return pendingPull;
+}
 function scheduleSyncAlarm(name, options) {
   return Promise.resolve(chrome.alarms.create(name, options))
     .catch(error => { if (error?.message !== 'No SW') console.warn('Could not schedule pending sync alarm.'); });
@@ -1387,6 +1404,7 @@ function scheduleSync() {
   void scheduleSyncAlarm('clockify-migration-resume', { periodInMinutes: 1 });
   void store.migrateLegacyPatAuth().catch(() => {});
   void syncPendingNow().catch(() => {});
+  void pullRemoteNow().catch(() => {});
   void resumeClockifyMigration().catch(() => {});
   return alarm;
 }
@@ -1437,7 +1455,10 @@ chrome.tabs.onActivated.addListener(info => {
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
+  if (alarm.name === 'sync-pending') {
+    void syncPendingNow().catch(() => {}).finally(() => pullRemoteNow().catch(() => {}));
+  }
+  if (alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
   if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 
