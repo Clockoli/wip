@@ -336,6 +336,49 @@ test('cancelled Stop restores the running timer', async ({ page }) => {
   expect(await page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
 });
 
+test('Timeline drags and arrow edits snap to five minutes at every zoom level', async ({ page }) => {
+  await mount(page);
+  const grid = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const midnight = new Date(2026, 9, 13, 0, 0, 0).getTime();
+    const minute = 60_000;
+    const samples = () => [7, 8, 12, 13].map(value =>
+      (timeline._magnetizeTime(midnight + value * minute, midnight, midnight + 60 * minute, null) - midnight) / minute);
+    const normal = { step: timeline._magnetStepMs(), snapped: samples() };
+    timeline.setVisibleDays(1 / 24);
+    const zoomedIn = { step: timeline._magnetStepMs(), snapped: samples() };
+    timeline.setVisibleDays(7);
+    const zoomedOut = { step: timeline._magnetStepMs(), snapped: samples() };
+    return { normal, zoomedIn, zoomedOut };
+  });
+  for (const view of Object.values(grid)) {
+    expect(view.step).toBe(5 * 60_000);
+    expect(view.snapped).toEqual([5, 10, 10, 15]);
+  }
+
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.click();
+  await page.keyboard.press('ArrowLeft');
+  const afterFirst = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.keyboard.press('ArrowLeft');
+  const afterSecond = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  expect(afterFirst - afterSecond).toBe(5 * 60_000);
+
+  await page.keyboard.press('Alt+ArrowLeft');
+  const afterStartResize = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  expect(afterSecond - afterStartResize).toBe(5 * 60_000);
+});
+
+test('Calendar keeps one-minute edit precision when Timeline changes to five minutes', async ({ page }) => {
+  await mount(page);
+  const steps = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    window.__timeline.setViewMode('calendar');
+    return { calendar: timeline._calendarMagnetStepMs(Date.now()), timeline: timeline._magnetStepMs() };
+  });
+  expect(steps).toEqual({ calendar: 60_000, timeline: 5 * 60_000 });
+});
+
 test('keyboard edit keeps the Clockoli instance ID and pending deletion stays blocked', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
