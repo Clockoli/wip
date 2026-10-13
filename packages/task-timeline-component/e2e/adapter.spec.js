@@ -598,6 +598,27 @@ test('Calendar edges show full-width colored grips with paired grip marks', asyn
   expect(grips.map(grip => grip.radius)).toEqual(['6px 6px 0px 0px', '0px 0px 6px 6px']);
 });
 
+test('background updates cannot cancel a Timeline resize while pointer is held', async ({ page }) => {
+  await mount(page);
+  const start = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const task = timeline._findTask('entry:a');
+    timeline._beginTaskEdit({ button: 0, pointerId: 451, clientX: 250, clientY: 100, stopPropagation() {} }, task, 'resize-right');
+    timeline._onWindowPointerMove({ pointerId: 451, clientX: 268, clientY: 100, preventDefault() {} });
+    return { state: timeline.editState, end: task.end };
+  });
+  expect(start.state).toBeTruthy();
+  await page.evaluate(() => window.__timeline.update({ items: window.__items, now: Date.now() }));
+  const inProgress = await page.evaluate(() => ({
+    state: Boolean(window.__timeline.__timeline.editState),
+    end: window.__timeline.__timeline._findTask('entry:a').end,
+  }));
+  expect(inProgress.state).toBe(true);
+  expect(inProgress.end).toBe(start.end);
+  await page.evaluate(() => window.__timeline.__timeline._onWindowPointerUp({ pointerId: 451 }));
+  await expect.poll(() => page.evaluate(() => Boolean(window.__timeline.__timeline.editState))).toBe(false);
+});
+
 test('pending edits remain editable without saving indicators', async ({ page }) => {
   await mount(page, { persistPending: true });
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
