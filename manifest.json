@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clockoli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Track time on any task URL and store records in private GitHub repositories you control.",
   "permissions": ["alarms", "activeTab", "favicon", "scripting"],
   "host_permissions": ["https://api.github.com/*", "https://github.com/login/*", "https://api.frankfurter.dev/*"],
