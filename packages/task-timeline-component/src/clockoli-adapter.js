@@ -411,7 +411,8 @@
       onCalendarRangeChange: range => props.onCalendarNavigate?.(range),
       ...(initialProps.weeklyCalendar === true ? { calendarDayMinWidth: 96 } : {}),
       magneticSnap: true,
-      magnetStepsMinutes: [1 / 60],
+      magnetStepsMinutes: [5],
+      calendarMagnetStepMinutes: 1,
       magnetScaleThresholdDays: [7],
       canChange: canRun,
       onStart(task, event) {
