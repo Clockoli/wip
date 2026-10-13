@@ -1238,6 +1238,74 @@ export class TrackerService {
 
   async loadRecent(limit = 50) { return (await this.loadMenuData(limit)).recent; }
 
+  // This is deliberately separate from loadMenuData(): the one-minute background
+  // pull must never set UI loading state or perform remote writes.
+  async pullRemoteSilently({ signal, maxBytes = 8 * 1024 * 1024 } = {}) {
+    const initial = await this.store.getState();
+    // A pending local mutation is authoritative. Recheck GitHub after it is
+    // committed or explicitly resolved, rather than overwriting its projection.
+    if (initial.pendingWrites?.length) return false;
+
+    const now = this.clock(), today = localReportDate(now);
+    const mondayOffset = (now.getDay() + 6) % 7;
+    const lastWeekStart = localReportDate(now, -mondayOffset - 7);
+    const thisWeekStart = localReportDate(now, -mondayOffset);
+    const earliest = [lastWeekStart, `${today.slice(0, 7)}-01`, localReportDate(now, 1 - this.recentDays)].sort()[0];
+    const days = new Set(Array.from({ length: this.recentDays }, (_, offset) => localReportDate(now, -offset)));
+    const activePath = activeRecordPath(this.user);
+    const repoKey = this.github.repositoryKey;
+    const previous = initial.summaryCache?.silentPull;
+    const etag = previous?.key === repoKey && previous.day === today ? previous.etag : '';
+    const snapshot = await this.github.listTextFilesSnapshot('times/', { etag, signal, includeActive: activePath });
+    if (snapshot.notModified) return false;
+
+    const available = new Map((snapshot.files ?? []).map(file => [file.path, file]));
+    const monthlyPaths = monthsInRange(earliest, today).map(month => monthlyRecordsPath(this.user, `${month}-01`));
+    const needed = [...monthlyPaths, activePath].map(path => available.get(path)).filter(Boolean);
+    if (needed.some(file => !Number.isSafeInteger(file.size) || file.size > maxBytes)
+        || needed.reduce((sum, file) => sum + file.size, 0) > maxBytes) return false;
+
+    // Immutable Git blobs keep every file in this read pinned to one branch
+    // snapshot, even if another browser pushes in the middle of the pull.
+    const fetched = await Promise.all(needed.map(file => this.github.getBlobText(file.path, file.sha, { signal })));
+    if (fetched.reduce((sum, file) => sum + new TextEncoder().encode(file.text).byteLength, 0) > maxBytes) return false;
+    const contents = new Map(fetched.map(file => [file.path, file]));
+    const remoteEntries = monthlyPaths.flatMap(path => {
+      const file = contents.get(path);
+      if (!file) return [];
+      return parseMonthlyRecords(file.text, { user: this.user, month: monthFromPath(path, this.user), path, sha: file.sha });
+    });
+    const activeFile = contents.get(activePath);
+    const remoteActive = activeFile
+      ? parseActiveRecord(activeFile.text, { user: this.user, path: activePath, sha: activeFile.sha })
+      : null;
+    if (remoteActive) validateActiveTimer(remoteActive);
+
+    // An IndexedDB transaction serializes this comparison with local accepts
+    // and queue completions. If anything changed during network I/O, defer
+    // the pull rather than applying an older snapshot over newer local work.
+    const trackingKey = state => JSON.stringify([
+      state.activeCache, state.recentCache, state.summaryCache, state.pendingWrites,
+    ]);
+    const expected = trackingKey(initial);
+    let applied = false;
+    await this.mutateState(state => {
+      if (state.pendingWrites?.length || trackingKey(state) !== expected) return null;
+      applied = true;
+      return {
+        activeCache: remoteActive,
+        recentCache: remoteEntries.filter(entry => days.has(startDate(entry))).sort(newestFirst).slice(0, 50),
+        summaryCache: {
+          reportDate: today,
+          weekEntries: remoteEntries.filter(entry => startDate(entry) >= thisWeekStart),
+          computedAt: now.getTime(),
+          silentPull: { key: repoKey, day: today, etag: snapshot.etag || '' },
+        },
+      };
+    });
+    return applied;
+  }
+
   async queueEntryEdit({ path, originalSha, index, original, edits }) {
     const queuedAt = this.clock();
     return this.mutateState(state => {
