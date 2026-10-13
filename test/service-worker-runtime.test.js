@@ -142,6 +142,7 @@ test('startup handles an alarm rejection while Chrome replaces the service worke
     store: { migrateLegacyPatAuth: async () => {} },
     syncPendingNow: async () => {},
     pullRemoteNow: async () => {},
+    requestPendingSync: () => {},
     resumeClockifyMigration: async () => {},
   });
   vm.runInContext(sourceBetween('function scheduleSyncAlarm(', 'function hasRunnablePending(')
