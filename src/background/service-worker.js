@@ -1196,7 +1196,6 @@ async function handle(message, sender) {
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
     }
-    case 'SYNC': return syncPendingAll({ store, trackerForDestination });
     case 'LOAD_RECENT': return loadRecentAcrossDestinations(message, sender, extensionOrigin);
     case 'EDIT_ENTRIES': {
       const destinationId = await requireConfiguredDestinationId(store,
@@ -1383,27 +1382,22 @@ function syncPendingNow() {
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     if (!(await store.getPendingDestinationIds()).length) return;
     await syncPendingAll({ store, trackerForDestination });
-    if (await shouldContinuePendingSync()) {
-      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
-    }
+
   })).catch(async error => {
-    if (await shouldContinuePendingSync().catch(() => false)) {
-      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
-    }
+
     throw error;
   }).finally(() => { pendingSync = null; });
   return pendingSync;
 }
 
 function requestPendingSync() {
-  void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 250 });
+  // Changes are already durable in IndexedDB; GitHub writes run on the minute alarm.
 }
 
 function scheduleSync() {
   const alarm = scheduleSyncAlarm('sync-pending', { periodInMinutes: 1 });
   void scheduleSyncAlarm('clockify-migration-resume', { periodInMinutes: 1 });
   void store.migrateLegacyPatAuth().catch(() => {});
-  void syncPendingNow().catch(() => {});
   void pullRemoteNow().catch(() => {});
   void resumeClockifyMigration().catch(() => {});
   return alarm;
@@ -1458,7 +1452,6 @@ chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'sync-pending') {
     void syncPendingNow().catch(() => {}).finally(() => pullRemoteNow().catch(() => {}));
   }
-  if (alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
   if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 
