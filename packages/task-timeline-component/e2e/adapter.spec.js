@@ -369,6 +369,39 @@ test('Timeline drags and arrow edits snap to five minutes at every zoom level', 
   expect(afterSecond - afterStartResize).toBe(5 * 60_000);
 });
 
+test('dragging a Timeline start edge advances on the five-minute grid', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.setVisibleDays(1 / 24);
+    const task = timeline._findTask('entry:a');
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const clientY = viewport.top + 30;
+    const clientX = viewport.left + timeline.timeToX(task.start) - timeline._scrollLeftNow();
+    const pointerId = 451;
+    timeline._beginTaskEdit({ button: 0, pointerId, clientX, clientY, stopPropagation() {} }, task, 'resize-left');
+    const state = timeline.editState;
+    const dragEarlier = minutes => {
+      const contentX = timeline._timeToXFromSnapshot(
+        state.pointerTime - minutes * 60_000, state.snapshot, state.snapshotWidth);
+      const x = viewport.left + contentX - timeline._scrollLeftNow();
+      timeline._onWindowPointerMove({ pointerId, clientX: x, clientY, preventDefault() {} });
+      return timeline._findTask('entry:a').start;
+    };
+    const first = dragEarlier(8);
+    const second = dragEarlier(13);
+    const wasDragging = state.didMutate;
+    timeline._onWindowPointerUp({ pointerId });
+    return { first, second, wasDragging, completed: !timeline.editState };
+  });
+  expect(result.wasDragging).toBe(true);
+  expect(result.completed).toBe(true);
+  expect(new Date(result.first).getMinutes() % 5).toBe(0);
+  expect(new Date(result.first).getSeconds()).toBe(0);
+  expect(new Date(result.second).getMinutes() % 5).toBe(0);
+  expect(result.first - result.second).toBe(5 * 60_000);
+});
+
 test('Calendar keeps one-minute edit precision when Timeline changes to five minutes', async ({ page }) => {
   await mount(page);
   const steps = await page.evaluate(() => {
