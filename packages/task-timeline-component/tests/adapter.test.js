@@ -106,6 +106,13 @@ test('pending timeline and calendar entries never display background saving feed
   assert.match(source, /!pending && !item\?\.isDeleteDisabled/);
 });
 
+test('Clockoli graphic Timeline edits use a five-minute grid while Calendar keeps its one-minute precision', () => {
+  assert.match(source, /magnetStepsMinutes: \[5\]/);
+  assert.match(source, /calendarMagnetStepMinutes: 1/);
+  assert.match(vendor, /_calendarMagnetStepMs\(rawTime, state\)[\s\S]*?this\.options\.calendarMagnetStepMinutes/);
+  assert.doesNotMatch(source, /magnetStepsMinutes: \[1 \/ 60\]/);
+});
+
 test('adapter keeps atomic Clockoli switching and action permissions', () => {
   assert.match(source, /event\?\.source === 'replaced'/);
   assert.match(source, /return true;/);
