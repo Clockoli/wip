@@ -97,6 +97,15 @@ test('adapter maps durable Clockoli state and preserves the old block styling co
   assert.match(source, /background: color-mix\(in srgb, var\(--clockoli-task-color/);
 });
 
+test('pending timeline and calendar entries never display background saving feedback', () => {
+  assert.match(source, /\.task\.pending, \.calendar-task\.pending \{ opacity: 1; \}/);
+  assert.match(source, /\.task\.pending::after \{ display: none; \}/);
+  assert.doesNotMatch(source, /clockoli-entry-saving|clockoli-compact-saving|clockoli-saving/);
+  assert.doesNotMatch(source, /Saving…|aria-busy/);
+  assert.match(source, /timeline\.pendingKeys = new Set/);
+  assert.match(source, /!pending && !item\?\.isDeleteDisabled/);
+});
+
 test('adapter keeps atomic Clockoli switching and action permissions', () => {
   assert.match(source, /event\?\.source === 'replaced'/);
   assert.match(source, /return true;/);
