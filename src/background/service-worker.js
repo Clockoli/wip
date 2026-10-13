@@ -1341,6 +1341,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 let pendingSync = null;
 let pendingPull = null;
+let pendingSyncWakeTimer = null;
+let pendingSyncWakeRevision = 0;
+const PENDING_SYNC_IDLE_MS = 15_000;
+const PENDING_SYNC_ALARM_FLOOR_MS = 30_000;
+
+function pendingSyncQuietUntil(snapshot) {
+  let latest = null;
+  for (const state of Object.values(snapshot?.destinationStates?.entries ?? {})) {
+    for (const operation of state?.pendingWrites ?? []) {
+      const timestamp = Date.parse(operation.lastLocalEditAt || operation.queuedAt);
+      if (Number.isFinite(timestamp)) latest = Math.max(latest ?? timestamp, timestamp);
+    }
+  }
+  return latest === null ? null : latest + PENDING_SYNC_IDLE_MS;
+}
+
+function armPendingSyncWake(when) {
+  const revision = ++pendingSyncWakeRevision;
+  if (pendingSyncWakeTimer !== null) clearTimeout(pendingSyncWakeTimer);
+  const delay = Math.max(0, when - Date.now());
+  // The 15-second timer covers the usual active MV3 service-worker lifetime.
+  // chrome.alarms survives worker termination, but installed Chrome extensions
+  // clamp its earliest firing to 30 seconds. The persisted deadline is checked
+  // again before any GitHub write.
+  pendingSyncWakeTimer = setTimeout(() => {
+    if (revision !== pendingSyncWakeRevision) return;
+    pendingSyncWakeTimer = null;
+    void syncPendingNow().catch(() => {});
+  }, delay);
+  pendingSyncWakeTimer?.unref?.();
+  void scheduleSyncAlarm('sync-pending-idle-fallback', {
+    when: Date.now() + Math.max(PENDING_SYNC_ALARM_FLOOR_MS, delay),
+  });
+}
+
+async function schedulePendingSyncFromStore() {
+  const revision = ++pendingSyncWakeRevision;
+  const snapshot = await store.getTrackingSnapshot();
+  if (revision !== pendingSyncWakeRevision) return;
+  const deadline = pendingSyncQuietUntil(snapshot);
+  if (deadline === null) {
+    if (pendingSyncWakeTimer !== null) clearTimeout(pendingSyncWakeTimer);
+    pendingSyncWakeTimer = null;
+    return;
+  }
+  armPendingSyncWake(deadline);
+}
 function pullRemoteNow() {
   if (pendingPull) return pendingPull;
   // No UI messages, spinners or mutation executor: this only updates the
@@ -1382,23 +1429,28 @@ function syncPendingNow() {
   if (pendingSync) return pendingSync;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     if (!(await store.getPendingDestinationIds()).length) return;
+    const deadline = pendingSyncQuietUntil(await store.getTrackingSnapshot());
+    if (deadline !== null && Date.now() < deadline) {
+      // A newer local acceptance moved the deadline. This check also protects
+      // against early alarms after the service worker has been restarted.
+      requestPendingSync();
+      return;
+    }
     await syncPendingAll({ store, trackerForDestination });
-
-  })).catch(async error => {
-
-    throw error;
-  }).finally(() => { pendingSync = null; });
+  })).finally(() => { pendingSync = null; });
   return pendingSync;
 }
 
 function requestPendingSync() {
-  // Changes are already durable in IndexedDB; GitHub writes run on the minute alarm.
+  // Every local mutation was committed to IndexedDB before this is called.
+  // Older asynchronous scheduling requests must not re-arm a stale deadline.
+  void schedulePendingSyncFromStore().catch(() => {});
 }
 
 function scheduleSync() {
   const alarm = scheduleSyncAlarm('sync-pending', { periodInMinutes: 1 });
   void scheduleSyncAlarm('clockify-migration-resume', { periodInMinutes: 1 });
-  void store.migrateLegacyPatAuth().catch(() => {});
+  void store.migrateLegacyPatAuth().then(() => requestPendingSync()).catch(() => {});
   void pullRemoteNow().catch(() => {});
   void resumeClockifyMigration().catch(() => {});
   return alarm;
@@ -1453,6 +1505,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'sync-pending') {
     void syncPendingNow().catch(() => {}).finally(() => pullRemoteNow().catch(() => {}));
   }
+  if (alarm.name === 'sync-pending-idle-fallback') void syncPendingNow().catch(() => {});
   if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 
