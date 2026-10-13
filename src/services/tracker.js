@@ -1243,11 +1243,20 @@ export class TrackerService {
       computedAt: now.getTime(),
     };
     // Apply the queue inside the storage transaction so a concurrent acceptance cannot be overwritten.
-    await this.mutateState(state => ({
-      recentCache: overlayPendingEntries(remoteEntries, state.pendingWrites ?? [])
-        .filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit),
-      summaryCache,
-    }));
+    let staleResponse = false;
+    await this.mutateState(state => {
+      if (JSON.stringify([state.activeCache, state.recentCache, state.pendingWrites, state.summaryCache])
+          !== JSON.stringify([initialState.activeCache, initialState.recentCache, initialState.pendingWrites, initialState.summaryCache])) {
+        staleResponse = true;
+        return null;
+      }
+      return {
+        recentCache: overlayPendingEntries(remoteEntries, state.pendingWrites ?? [])
+          .filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit),
+        summaryCache,
+      };
+    });
+    if (staleResponse) return this.cachedMenuData(limit, now);
     const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [], activeCache = state.activeCache;
     const allEntries = overlayPendingEntries([...remoteEntries, ...(state.recentCache ?? [])], pendingWrites);
     const recent = state.recentCache ?? [];
