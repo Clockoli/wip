@@ -67,6 +67,64 @@ test('Activity returns the current safe pending/conflict projection after record
   assert.equal(context.reportLoads.size, 0);
 });
 
+test('Activity history search and weekly reads keep independent background loads', async () => {
+  const calls = [];
+  const context = vm.createContext({ AbortController, Map,
+    store: { ensureDataVersion: async () => {} }, reportLoads: new Map(), githubForConfig: () => ({}),
+    loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
+    selectReadDestinations: () => [{ id: destinationId }], destinationUser: async () => 'alice',
+    loadDestinationRecords: async (destinations, read, { signal }) => ({
+      records: await read(destinations[0], signal), partial: false, conflicts: [], readStatus: [],
+    }),
+    trackerForDestination: async () => ({ getRecoveryState: async () => ({ pendingWrites: [], remoteWriteConfirmed: true }) }),
+    emitReportProgress: () => {}, safePendingProjection: () => ({}),
+    ReportService: class {
+      async loadUserRange(range, user, options) {
+        return new Promise(resolve => calls.push({ range, user, signal: options.signal, resolve }));
+      }
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
+  const search = context.loadTimes({ search: true, payload: { startDate: '0001-01-01', endDate: '9999-12-31' } }, sender);
+  const week = context.loadTimes({ payload: { startDate: '2026-10-05', endDate: '2026-10-11' } }, sender);
+  for (let i = 0; i < 10 && calls.length < 2; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(call => call.range.startDate).sort(), ['0001-01-01', '0001-01-01']);
+  assert.equal(calls.every(call => !call.signal.aborted), true);
+  assert.equal(context.reportLoads.size, 2);
+  for (const call of calls) call.resolve([]);
+  await Promise.all([search, week]);
+  assert.equal(context.reportLoads.size, 0);
+});
+
+test('weekly Activity reads include Saturday and Sunday intervals overlapping Monday across a month boundary', async () => {
+  const monday = new Date('2026-06-01T00:00:00').getTime();
+  const records = [
+    { id: 'saturday-long', entryDate: '2026-05-30', startedAt: new Date(monday - 25 * 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() },
+    { id: 'overnight', entryDate: '2026-05-31', startedAt: new Date(monday - 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() },
+    { id: 'sunday-only', entryDate: '2026-05-31', startedAt: new Date(monday - 7_200_000).toISOString(), endedAt: new Date(monday - 3_600_000).toISOString() },
+    { id: 'monday', entryDate: '2026-06-01', startedAt: new Date(monday + 7_200_000).toISOString(), endedAt: new Date(monday + 10_800_000).toISOString() },
+  ];
+  let readRange;
+  const context = vm.createContext({ AbortController, Map,
+    store: { ensureDataVersion: async () => {} }, reportLoads: new Map(), githubForConfig: () => ({}),
+    loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
+    selectReadDestinations: () => [{ id: destinationId }], destinationUser: async () => 'alice', loadDestinationRecords,
+    trackerForDestination: async () => ({ getRecoveryState: async () => ({ pendingWrites: [], remoteWriteConfirmed: true }) }),
+    emitReportProgress: () => {}, safePendingProjection: () => ({}),
+    ReportService: class { async loadUserRange(range) {
+      readRange = range;
+      return records.filter(record => record.entryDate >= range.startDate && record.entryDate <= range.endDate);
+    } },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
+  const result = plain(await context.loadTimes({ payload: { startDate: '2026-06-01', endDate: '2026-06-07' } }, sender));
+  assert.equal(readRange.startDate, '0001-01-01');
+  assert.deepEqual(result.recent.map(record => record.id).sort(), ['monday', 'overnight', 'saturday-long']);
+});
+
 test('page state exposes full totals while retaining safe active and pending projections', async () => {
   const active = { id: 'running', taskUrl: 'https://example.org/task', startedAt: '2026-09-05T08:00:00Z', entryDate: '2026-09-05', timezone: 'Asia/Bangkok', private: 'not projected' };
   const tracker = {

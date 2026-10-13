@@ -37,7 +37,7 @@ import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from './message-policy.js';
+import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -413,13 +413,21 @@ async function loadTaskParticipants(message, sender, extensionOrigin) {
 }
 
 async function loadTimes(message, sender) {
+  const requestedRange = message.payload || {};
+  const start = typeof requestedRange.startDate === 'string' ? new Date(`${requestedRange.startDate}T00:00:00Z`) : null;
+  const end = typeof requestedRange.endDate === 'string' ? new Date(`${requestedRange.endDate}T00:00:00Z`) : null;
+  const weekly = start && end && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())
+    && start.getUTCDay() === 1 && end.getTime() - start.getTime() === 6 * 86_400_000;
+  // Monthly files are partitioned by start date, with no index on end date. A long record may begin before Sunday.
+  const readRange = weekly ? { ...requestedRange, startDate: '0001-01-01' } : requestedRange;
+  const weekStart = weekly ? new Date(`${requestedRange.startDate}T00:00:00`).getTime() : null;
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5); loadCoordinator.assertCurrent(loadEpoch);
   const snapshot = await configuredSnapshot({ localOnly: true }); loadCoordinator.assertCurrent(loadEpoch);
   const { auth } = snapshot, destinations = selectReadDestinations(snapshot, message.payload || {});
   if (!auth || !destinations.length) return { configured: false, recent: [] };
   const requestOwner = sender?.documentId ?? sender?.tab?.id ?? sender?.url ?? 'extension';
-  const loadKey = `all:times:${requestOwner}`, previous = reportLoads.get(loadKey);
+  const loadKey = `all:times:${requestOwner}${message.search === true ? ':search' : ''}`, previous = reportLoads.get(loadKey);
   if (previous) {
     previous.controller.abort();
     await previous.promise.catch(() => {});
@@ -437,12 +445,13 @@ async function loadTimes(message, sender) {
         github: githubForConfig(destination), cache: store,
         onProgress: progress => emitReportProgress(message.payload?.requestId, { ...progress, destinationId: destination.id }),
       });
-      const recent = await reports.loadUserRange(message.payload || {}, user, { includeStorageMetadata: true, signal }, {
-        maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
+      const recent = await reports.loadUserRange(readRange, user, { includeStorageMetadata: true, signal }, {
+        maxFiles: weekly ? 240 : 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
       });
       const tracker = await trackerForDestination(destination.id, { localOnly: true });
       recoveries.set(destination.id, await tracker.getRecoveryState());
-      return recent;
+      return weekly ? recent.filter(entry => entry.entryDate >= requestedRange.startDate
+        || new Date(entry.endedAt).getTime() > weekStart) : recent;
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
     const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || []).map(operation => safePendingProjection(operation, destinationId)));
@@ -912,7 +921,30 @@ async function handle(message, sender) {
     broadcastLocalPreferencesChanged(preferences.revision);
     return { preferences };
   }
+  if (message.type === 'SET_INTERFACE_WIDTH') {
+    if (sender?.url !== chrome.runtime.getURL('src/options/options.html')
+        || Object.keys(message).sort().join(',') !== 'type,width'
+        || !['contained', 'full'].includes(message.width)) throw new Error('Invalid interface width request');
+    await store.setInterfaceWidth(message.width);
+    const preferences = await store.getLocalPreferences();
+    broadcastLocalPreferencesChanged(preferences.revision);
+    return { preferences };
+  }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
+  if (message.type === 'GET_ACTIVITY_VIEW_MODE' || message.type === 'SET_ACTIVITY_VIEW_MODE') {
+    const extensionPage = ['src/times/times.html', 'src/popup/popup.html']
+      .some(path => sender?.url === chrome.runtime.getURL(path));
+    const pagePanel = Boolean(sender?.tab && sender?.url
+      && ['http:', 'https:'].includes(new URL(sender.url).protocol));
+    if (!extensionPage && !pagePanel) throw new Error('Activity view requires a Clockoli Activity surface');
+    if (message.type === 'GET_ACTIVITY_VIEW_MODE') {
+      if (Object.keys(message).sort().join(',') !== 'type') throw new Error('Invalid Activity view request');
+      return { mode: await store.getActivityViewMode() };
+    }
+    if (Object.keys(message).sort().join(',') !== 'mode,type'
+        || !['timeline', 'calendar', 'list'].includes(message.mode)) throw new Error('Invalid Activity view request');
+    return { mode: await store.setActivityViewMode(message.mode) };
+  }
   if (message.type === 'GET_ADDON_SETTINGS') return store.getAddonSettings();
   if (message.type === 'SET_ADDON_ENABLED') {
     if (!message.payload || typeof message.payload !== 'object' || Array.isArray(message.payload)
@@ -1118,11 +1150,20 @@ async function handle(message, sender) {
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
+  if (message.type === 'SEARCH_ACTIVITY') {
+    if (message.payload !== undefined) throw new Error('Activity search does not accept a range');
+    return loadTimes({ payload: { startDate: '0001-01-01', endDate: '9999-12-31' }, search: true }, sender);
+  }
+  if (message.type === 'LOAD_WEEK') {
+    const payload = weekRangeForSender(message.payload, sender, extensionOrigin);
+    const { configured, recent, partial } = await loadTimes({ payload }, sender);
+    return { configured, recent, partial };
+  }
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const pageState = message.type === 'GET_PAGE_STATE';
     const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState });
     if (!state.configured) return pageState
-      ? { configured: false, active: null, pendingCount: 0, recent: [] }
+      ? { configured: false, active: null, pendingCount: 0, recent: [], interfaceWidth: (await store.getLocalPreferences()).interfaceWidth }
       : state;
     if (!pageState) return state;
     const preferences = await store.getLocalPreferences();
@@ -1131,6 +1172,7 @@ async function handle(message, sender) {
       projects: preferences.projects,
       otherProjectName: preferences.otherProjectName,
       showQueueDiagnostics: preferences.showQueueDiagnostics,
+      interfaceWidth: preferences.interfaceWidth,
       pendingCount: state.pendingWrites.length,
     };
   }
@@ -1425,6 +1467,7 @@ async function dismissInactivePanels({ windowId }) {
     .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'DISMISS_FULL_WIDTH_POPUP' })));
 }
 
+void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();

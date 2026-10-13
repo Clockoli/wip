@@ -20,6 +20,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: xvfb-run -a npm run test:options:functional
+      - run: xvfb-run -a npm run test:activity:functional
       - run: npm run check
       - run: python3 scripts/build-release.py --target firefox "$RUNNER_TEMP/Clockoli-firefox.xpi"
       - run: npm run lint:firefox

@@ -2,7 +2,6 @@ import { formatClockDuration } from '../domain/reporting.js';
 import { normalizeTaskUrl, localDateParts, entryDateValue } from '../domain/values.js';
 
 const SECOND_MS = 1_000;
-const MINUTE_SECONDS = 60;
 const HOUR_MS = 3_600_000;
 const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
@@ -41,7 +40,7 @@ export function mountRunningStatus(container, { send, onChange }) {
     today.textContent = `Today ${totalText}`;
     if (state.active) {
       const seconds = Math.max(0, Math.floor((Date.now() - new Date(state.active.startedAt).getTime()) / SECOND_MS));
-      elapsed.textContent = `${formatClockDuration(Math.floor(seconds / MINUTE_SECONDS) * MINUTE_SECONDS)} ${seconds % MINUTE_SECONDS}s`;
+      elapsed.textContent = formatClockDuration(Math.floor(seconds / 60) * 60);
     }
   }
 

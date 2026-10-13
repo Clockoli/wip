@@ -244,7 +244,8 @@
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
-    style.textContent = CLOCKOLI_STYLE;
+    style.textContent = CLOCKOLI_STYLE + (initialProps.weeklyCalendar
+      ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '');
 
     function sourceItem(instanceId) {
       return originalItems.get(String(instanceId)) || null;
@@ -396,13 +397,14 @@
     const initialMapping = mapItems(initialProps.items, now);
     const tasks = initialMapping.mapped;
     originalItems = initialMapping.sources;
-    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, now - 7 * DAY_MS, ...tasks.map(task => task.start));
-    const domainEnd = Math.max(now, domainStart + 1_000, ...tasks.map(task => task.end));
+    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, Number(initialProps.domainStart ?? now - 7 * DAY_MS), ...tasks.map(task => task.start));
+    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now, domainStart + 1_000, ...tasks.map(task => task.end));
     const timeline = new global.TaskTimeline(host, {
       tasks,
       rows: normalizedRows(initialProps.rows),
       domainStart,
       domainEnd,
+      totalRange: initialProps.totalRange ?? initialProps.view,
       visibleDays: Math.max(1 / 24, Math.min(7, ((initialProps.view?.end ?? now) - (initialProps.view?.start ?? now - DAY_MS)) / DAY_MS)),
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
@@ -693,11 +695,10 @@
     }
 
     function formatClockDuration(milliseconds) {
-      const total = Math.max(0, Math.floor(milliseconds / 1_000));
-      const hours = Math.floor(total / 3_600);
-      const minutes = Math.floor((total % 3_600) / 60);
-      const seconds = total % 60;
-      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      const totalMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
     }
 
     function updateActionClock() {
@@ -765,9 +766,12 @@
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
-      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.now) - 7 * DAY_MS, ...mapped.map(task => task.start));
-      const nextDomainEnd = Math.max(Number(nextProps.now), nextDomainStart + 1_000, ...mapped.map(task => task.end));
+      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
+      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
       timeline.currentTime = Number(nextProps.now);
+      if (applyExternalView && nextProps.view) {
+        timeline.options.totalRange = nextProps.totalRange ?? nextProps.view;
+      }
       timeline.setRows(normalizedRows(nextProps.rows), { render: false });
       timeline.setTasks(mapped, { domainStart: nextDomainStart, domainEnd: nextDomainEnd, preserveScroll: true, preserveHistory: true });
       originalItems = mapping.sources;

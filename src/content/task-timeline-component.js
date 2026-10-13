@@ -149,6 +149,7 @@
         text-align: center;
         padding: 0 6px;
       }
+      .calendar-day-tracked { color: var(--tt-muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
       .calendar-day-header.today { background: #eef3ff; color: #2449a8; }
       .calendar-time-label {
         position: absolute;
@@ -390,6 +391,7 @@
         font-weight: 800;
         color: var(--tt-text);
       }
+      .tracked[hidden] { display: none; }
       .viewport {
         position: relative;
         width: 100%;
@@ -522,7 +524,7 @@
         border-left: 1px solid var(--tt-grid-major);
         display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         padding: 0 8px;
         font-size: 12px;
         font-weight: 750;
@@ -531,6 +533,7 @@
         text-overflow: ellipsis;
         color: #344054;
       }
+      .day-tracked { font-size: 11px; font-weight: 650; color: var(--tt-muted); margin-left: 8px; }
       .ruler-cell {
         position: absolute;
         top: 0;
@@ -764,7 +767,7 @@
     <section class="shell">
       <div class="meta">
         <div class="domain-start"></div>
-        <div class="tracked">Tracked: 0s</div>
+        <div class="tracked">Tracked: 0m</div>
         <div class="domain-end"></div>
       </div>
       <div class="viewport" tabindex="0" aria-label="Interactive task timeline">
@@ -1075,6 +1078,12 @@
       const oldCenter = preserveScroll && this.segments.length
         ? this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2)
         : null;
+      const previousCalendarStarts = this.viewMode === 'calendar'
+        ? this._calendarSegments().map(segment => `${segment.dayStart}:${segment.segmentStart}`).join('|') : '';
+      const atAutomaticCalendarPosition = !this.calendarManualScroll && (
+        Math.abs(this.calendarViewport.scrollTop - this.calendarAutoScrollTop) < 1
+        || this.calendarAutoFocusPending && this.calendarViewport.scrollTop === 0
+      );
 
       this._clearRunningTimer();
       this.runningKey = null;
@@ -1113,6 +1122,13 @@
 
       this.baseDomainEnd = this.domainEnd;
       if (!preserveHistory) this.clearHistory();
+      if (this.viewMode === 'calendar' && this.calendarAutoFocusPending) {
+        const nextCalendarStarts = this._calendarSegments().map(segment => `${segment.dayStart}:${segment.segmentStart}`).join('|');
+        if (nextCalendarStarts && nextCalendarStarts !== previousCalendarStarts) {
+          if (atAutomaticCalendarPosition) this.calendarScrollInitialized = false;
+          if (this._calendarSegments().length >= 3 || !atAutomaticCalendarPosition) this.calendarAutoFocusPending = false;
+        }
+      }
       this._renderAll();
 
       if (oldCenter != null) {
@@ -1218,6 +1234,8 @@
       this.calendarStartDay = this._clampCalendarStart(this.options.calendarWeekStartMonday ? this._calendarWeekStart(day) : day);
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
+      this.calendarAutoFocusPending = true;
+      this.calendarManualScroll = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
       if (previousStart !== this.calendarStartDay || previousCount !== this.calendarDayCount) this.callbacks.onCalendarRangeChange?.(this.getCalendarRange());
       return this;
@@ -1236,6 +1254,8 @@
       this.calendarStartDay = startDay;
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
+      this.calendarAutoFocusPending = true;
+      this.calendarManualScroll = false;
       if (this.viewMode === 'calendar') {
         this._renderCalendar();
         this.calendarViewport.scrollLeft = 0;
@@ -1250,6 +1270,8 @@
       const amount = Math.max(1, this.calendarDayCount) * (Number(direction) < 0 ? -1 : 1);
       this.calendarStartDay = this._clampCalendarStart(this._addDaysLocal(this.calendarStartDay, amount));
       this.calendarScrollInitialized = false;
+      this.calendarAutoFocusPending = true;
+      this.calendarManualScroll = false;
       if (this.viewMode === 'calendar') this._renderCalendar();
       if (previousStart !== this.calendarStartDay) this.callbacks.onCalendarRangeChange?.(this.getCalendarRange());
       return this;
@@ -2267,31 +2289,19 @@
       const d = new Date(time);
       return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     }
-    _formatClockSecond(time) {
-      const d = new Date(time);
-      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-    }
     _formatDate(time) {
       return new Intl.DateTimeFormat(this.options.locale, {
         weekday: 'short', day: '2-digit', month: 'short'
       }).format(new Date(time));
     }
-    _formatDateTime(time, withSeconds = true) {
+    _formatDateTime(time) {
       const d = new Date(time);
       const date = `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
-      const clock = withSeconds
-        ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
-        : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-      return `${date} ${clock}`;
+      return `${date} ${this._formatClockMinute(time)}`;
     }
     _formatDuration(ms) {
-      const totalSeconds = Math.max(0, Math.round(ms / SECOND));
-      if (totalSeconds < 60) return `${totalSeconds}s`;
-      const minutes = Math.floor(totalSeconds / 60);
-      if (minutes < 60) {
-        const s = totalSeconds % 60;
-        return s ? `${minutes}m ${s}s` : `${minutes}m`;
-      }
+      const minutes = Math.max(0, Math.floor(ms / (60 * SECOND)));
+      if (minutes < 60) return `${minutes}m`;
       const h = Math.floor(minutes / 60);
       const m = minutes % 60;
       return m ? `${h}h ${m}m` : `${h}h`;
@@ -2475,9 +2485,34 @@
         el.dataset.end = String(next);
         el.style.left = `${this.timeToX(t)}px`;
         el.style.width = `${Math.max(0, this.timeToX(next) - this.timeToX(t))}px`;
-        el.textContent = this._formatDate(t);
+        const date = document.createElement('span');
+        date.textContent = this._formatDate(t);
+        const tracked = document.createElement('span');
+        tracked.className = 'day-tracked';
+        el.append(date, tracked);
         this.dayRow.appendChild(el);
         t = next;
+      }
+      this._updateDayTrackedLabels();
+    }
+
+    _updateDayTrackedLabels() {
+      for (const band of this.dayRow.querySelectorAll('.day-band')) {
+        const start = Number(band.dataset.start);
+        const end = Number(band.dataset.end);
+        const label = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(start, end))}`;
+        band.querySelector('.day-tracked').textContent = label;
+        band.title = `${this._formatDate(start)} · ${label}`;
+      }
+      if (this.viewMode === 'calendar') this._updateCalendarDayTotals();
+      this._updatePeriodTotal();
+    }
+
+    _updateCalendarDayTotals() {
+      for (const header of this.calendarCanvas.querySelectorAll('.calendar-day-header')) {
+        const start = Number(header.dataset.start);
+        const end = this._addDaysLocal(start, 1);
+        header.querySelector('.calendar-day-tracked').textContent = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(start, end))}`;
       }
     }
 
@@ -2630,7 +2665,7 @@
         dot.dataset.toKey = String(b._key);
         dot.style.left = `${(a.x1 + b.x0) / 2}px`;
         dot.style.top = `${(this._taskCenterY(a) + this._taskCenterY(b)) / 2}px`;
-        dot.title = `${a.name} → ${b.name}: +1 second`;
+        dot.title = `${a.name} → ${b.name}: connected`;
         this.taskRow.appendChild(dot);
       }
 
@@ -2682,7 +2717,7 @@
       if (width >= 118 || task.running) {
         const time = document.createElement('span');
         time.className = 'task-time';
-        time.textContent = `${this._formatClockSecond(task.start)}–${this._formatClockSecond(task.end)} · ${this._formatDuration(task.end - task.start)}`;
+        time.textContent = `${this._formatClockMinute(task.start)}–${this._formatClockMinute(task.end)} · ${this._formatDuration(task.end - task.start)}`;
         main.appendChild(time);
       }
       el.appendChild(main);
@@ -2703,11 +2738,11 @@
 
       const startClock = document.createElement('span');
       startClock.className = 'edit-clock start';
-      startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockSecond(task.start)}`;
+      startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockMinute(task.start)}`;
       el.appendChild(startClock);
       const endClock = document.createElement('span');
       endClock.className = 'edit-clock end';
-      endClock.innerHTML = `<span class="kind">End</span>${this._formatClockSecond(task.end)}`;
+      endClock.innerHTML = `<span class="kind">End</span>${this._formatClockMinute(task.end)}`;
       el.appendChild(endClock);
       const durationClock = document.createElement('span');
       durationClock.className = 'edit-clock duration';
@@ -2718,6 +2753,7 @@
     }
 
     _renderRowLabels() {
+      if (this.rowValues.length <= 1) return;
       for (let i = 0; i < this.rowValues.length; i++) {
         const row = this._rowInfo(this.rowValues[i]);
         const label = document.createElement('div');
@@ -2932,8 +2968,8 @@
     _calendarMetricsForRender() {
       if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
       const timeAxisWidth = this.options.calendarTimeAxisWidth;
-      const dateHeaderHeight = 30;
-      const projectHeaderHeight = 24;
+      const dateHeaderHeight = 44;
+      const projectHeaderHeight = this.rowValues.length > 1 ? 24 : 0;
       const headerHeight = dateHeaderHeight + projectHeaderHeight;
       const hourHeight = this.options.calendarHourHeight;
       const viewportWidth = Math.max(320, this.calendarViewport.clientWidth || this._viewportWidthNow());
@@ -3057,7 +3093,13 @@
         header.style.left = `${metrics.timeAxisWidth + i * metrics.dayWidth}px`;
         header.style.width = `${metrics.dayWidth}px`;
         header.style.height = `${metrics.dateHeaderHeight}px`;
-        header.textContent = this._formatCalendarHeader(day);
+        header.dataset.start = String(day);
+        const dateLabel = document.createElement('span');
+        dateLabel.textContent = this._formatCalendarHeader(day);
+        header.appendChild(dateLabel);
+        const tracked = document.createElement('span');
+        tracked.className = 'calendar-day-tracked';
+        header.appendChild(tracked);
         stickyHeader.appendChild(header);
 
         const dayLine = document.createElement('div');
@@ -3073,7 +3115,7 @@
           rowLine.style.top = `${metrics.headerHeight}px`;
           this.calendarCanvas.appendChild(rowLine);
         }
-        for (let r = 0; r < metrics.rowCount; r++) {
+        for (let r = 0; r < metrics.rowCount && metrics.projectHeaderHeight; r++) {
           const row = this._rowInfo(this.rowValues[r]);
           const label = document.createElement('div');
           label.className = 'calendar-row-name';
@@ -3087,6 +3129,7 @@
         }
         day = this._addDaysLocal(day, 1);
       }
+      this._updateCalendarDayTotals();
 
       for (let hour = 0; hour <= 24; hour++) {
         const y = metrics.headerHeight + metrics.verticalMap.toY(hour * 60);
@@ -3111,18 +3154,20 @@
       this._renderCalendarTasks(metrics);
       this._renderCalendarNowLine(metrics);
       if (!this.calendarScrollInitialized) {
-        const rangeStart = this.calendarStartDay;
-        const rangeEnd = this._calendarEndDay();
-        let earliestMinutes = 8 * 60;
-        for (const task of this.tasks) {
-          if (task.end <= rangeStart) continue;
-          if (task.start >= rangeEnd) break;
-          const day = this._floorDay(Math.max(task.start, rangeStart));
-          const next = this._addDaysLocal(day, 1);
-          earliestMinutes = Math.min(earliestMinutes, this._calendarMinutesOfDay(Math.max(task.start, day), day, next));
+        const starts = this._calendarSegments().map(segment =>
+          this._calendarMinutesOfDay(segment.segmentStart, segment.dayStart, segment.dayEnd)
+        ).sort((a, b) => a - b);
+        let blockStart = 0, bestStart = 0, bestCount = 1;
+        for (let i = 1; i <= starts.length; i++) {
+          if (i < starts.length && starts[i] - starts[i - 1] <= 360) continue;
+          if (i - blockStart > bestCount) { bestStart = blockStart; bestCount = i - blockStart; }
+          blockStart = i;
         }
-        const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, earliestMinutes - 45)));
+        const startMinutes = starts.length ? starts[bestStart] : 8 * 60;
+        const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, startMinutes - 90)));
         this.calendarViewport.scrollTop = top;
+        this.calendarAutoScrollTop = this.calendarViewport.scrollTop;
+        if (!starts.length) this.calendarAutoFocusPending = true;
         this.calendarScrollInitialized = true;
       }
       this._updateTimelineMeta();
@@ -3183,7 +3228,7 @@
         dot.dataset.toKey = String(toTask._key);
         dot.style.left = `${laneLeft + metrics.laneWidth / 2}px`;
         dot.style.top = `${y}px`;
-        dot.title = `${fromTask.name} → ${toTask.name}: +1 second`;
+        dot.title = `${fromTask.name} → ${toTask.name}: connected`;
         this.calendarCanvas.appendChild(dot);
       };
 
@@ -3366,7 +3411,7 @@
         if (item.height >= 28) {
           const time = document.createElement('div');
           time.className = 'calendar-task-time';
-          time.textContent = `${this._formatClockSecond(item.segmentStart)}–${this._formatClockSecond(item.segmentEnd)}`;
+          time.textContent = `${this._formatClockMinute(item.segmentStart)}–${this._formatClockMinute(item.segmentEnd)}`;
           el.appendChild(time);
         }
 
@@ -3408,11 +3453,11 @@
         if (activeEditSegment) {
           const startClock = document.createElement('div');
           startClock.className = 'calendar-edit-clock start';
-          startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockSecond(task.start)}`;
+          startClock.innerHTML = `<span class="kind">Start</span>${this._formatClockMinute(task.start)}`;
           el.appendChild(startClock);
           const endClock = document.createElement('div');
           endClock.className = 'calendar-edit-clock end';
-          endClock.innerHTML = `<span class="kind">End</span>${this._formatClockSecond(task.end)}`;
+          endClock.innerHTML = `<span class="kind">End</span>${this._formatClockMinute(task.end)}`;
           el.appendChild(endClock);
         }
         this.calendarCanvas.appendChild(el);
@@ -3472,9 +3517,9 @@
         ? `<a class="details-title" href="${this._escapeAttr(task.url)}" target="_blank" rel="noopener noreferrer">${this._escapeHtml(task.name)}</a>`
         : `<strong class="details-title">${this._escapeHtml(task.name)}</strong>`;
       this.detailsInfo.innerHTML = `
-        <span class="details-primary">${title}<span class="details-project">${this._escapeHtml(row.name)}</span></span>
-        <span class="details-value"><span class="details-label">Start</span><strong>${this._formatDateTime(task.start)}</strong></span>
-        <span class="details-value"><span class="details-label">End</span><strong>${this._formatDateTime(task.end)}</strong></span>
+        <span class="details-primary">${title}${this.rowValues.length > 1 ? `<span class="details-project">${this._escapeHtml(row.name)}</span>` : ''}</span>
+        <span class="details-value"><span class="details-label">Start</span><strong>${this._formatClockMinute(task.start)}</strong></span>
+        <span class="details-value"><span class="details-label">End</span><strong>${this._formatClockMinute(task.end)}</strong></span>
         <span class="details-value"><span class="details-label">Duration</span><strong>${this._formatDuration(task.end - task.start)}</strong></span>
       `;
       this._renderDetailsPointer(task);
@@ -3565,6 +3610,16 @@
       return total;
     }
 
+    _updatePeriodTotal() {
+      const range = this.options.totalRange;
+      const calendar = this.viewMode === 'calendar' && this.calendarWindowInitialized;
+      const start = calendar ? this.calendarStartDay : (range?.start ?? this.domainStart);
+      const end = calendar ? this._calendarEndDay() : (range?.end ?? this.domainEnd);
+      this.trackedLabel.hidden = !(end >= this._addDaysLocal(start, 7));
+      if (this.trackedLabel.hidden) return;
+      this.trackedLabel.textContent = `Total: ${this._formatTrackedDuration(this._trackedDurationInRange(start, Math.min(end, Date.now())))}`;
+    }
+
     _updateRightMetaOnly() {
       this.domainEndLabel.textContent = this._formatDateTime(this.domainEnd);
       this.domainEndLabel.title = `Timeline maximum: ${this._formatDateTime(this.domainEnd)}`;
@@ -3572,26 +3627,26 @@
 
     _updateTimelineMeta() {
       if (this.viewMode === 'calendar') {
+        this.trackedLabel.hidden = true;
         if (!(this.domainEnd > this.domainStart)) {
           this.domainStartLabel.textContent = '';
           this.domainEndLabel.textContent = '';
-          this.trackedLabel.textContent = 'Tracked: 0s';
           return;
         }
         if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
         const start = Math.max(this.domainStart, this.calendarStartDay);
         const end = Math.min(this.domainEnd, this._calendarEndDay());
-        this.domainStartLabel.textContent = this._formatDateTime(start);
-        this.domainStartLabel.title = `Calendar start: ${this._formatDateTime(start)}`;
-        this.domainEndLabel.textContent = this._formatDateTime(end);
-        this.domainEndLabel.title = `Calendar end: ${this._formatDateTime(end)}`;
-        this.trackedLabel.textContent = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(start, Math.max(start, end)))}`;
+        this.domainStartLabel.textContent = this._formatDateTime(start, false);
+        this.domainStartLabel.title = `Calendar start: ${this._formatDateTime(start, false)}`;
+        this.domainEndLabel.textContent = this._formatDateTime(end, false);
+        this.domainEndLabel.title = `Calendar end: ${this._formatDateTime(end, false)}`;
+        this._updatePeriodTotal();
         return;
       }
       if (!this.segments.length) {
         this.domainStartLabel.textContent = '';
         this.domainEndLabel.textContent = '';
-        this.trackedLabel.textContent = 'Tracked: 0s';
+        this._updatePeriodTotal();
         return;
       }
       const start = this._visibleStartTime();
@@ -3599,7 +3654,7 @@
       this.domainStartLabel.textContent = this._formatDateTime(start);
       this.domainStartLabel.title = `Visible start: ${this._formatDateTime(start)}`;
       this._updateRightMetaOnly();
-      this.trackedLabel.textContent = `Tracked: ${this._formatTrackedDuration(this._trackedDurationInRange(Math.min(start, end), Math.max(start, end)))}`;
+      this._updatePeriodTotal();
     }
 
     // -----------------------------------------------------------------------
@@ -3850,6 +3905,9 @@
       const nextTask = taskIndex >= 0 ? this.tasks[taskIndex + 1] : null;
       const boundedEnd = nextTask ? Math.min(Number(targetEnd), nextTask.start) : Number(targetEnd);
       const newEnd = Math.max(task.start, boundedEnd);
+      const todayStart = this._floorDay(newEnd);
+      const nextDay = this._addDaysLocal(todayStart, 1);
+      const previousTrackedMinute = Math.floor(this._trackedDurationInRange(todayStart, nextDay) / 60_000);
       this.currentTime = Number(targetEnd);
       if (newEnd <= task.end) {
         this._renderTimelineNowLine();
@@ -3890,13 +3948,16 @@
         el.style.top = `${this._taskTop(task)}px`;
         el.classList.toggle('short', width < 46);
         const time = el.querySelector('.task-time');
-        if (time) time.textContent = `${this._formatClockSecond(task.start)}–${this._formatClockSecond(task.end)} · ${this._formatDuration(task.end - task.start)}`;
+        if (time) time.textContent = `${this._formatClockMinute(task.start)}–${this._formatClockMinute(task.end)} · ${this._formatDuration(task.end - task.start)}`;
       }
       this._updateRightMetaOnly();
+      if (this._floorDay(newEnd) !== this._floorDay(task.start)
+          && !this.dayRow.querySelector(`.day-band[data-start="${this._floorDay(newEnd)}"]`)) this._renderDays();
+      else if (Math.floor(this._trackedDurationInRange(todayStart, nextDay) / 60_000) !== previousTrackedMinute) this._updateDayTrackedLabels();
       this._updateRightmostRulerCell();
       this._renderTimelineNowLine();
       if (this.viewMode === 'calendar') {
-        if (this._calendarDayIndexForTime(task.end) < 0) {
+        if (!this.calendarExactRange && this._calendarDayIndexForTime(task.end) < 0) {
           this.calendarStartDay = this._clampCalendarStart(this._floorDay(task.end));
           this.calendarWindowInitialized = true;
           this._renderCalendar();
@@ -3913,7 +3974,7 @@
     _tickRunningTask() {
       if (!this._runningTask() || this.interactionPausedRunning) return;
       this._updateRunningTaskIncremental(Date.now());
-      // No renderAll(), no scroll changes, no Tracked recalculation here.
+      // Keep the running task and its daily total current without a full render.
     }
 
     // -----------------------------------------------------------------------
@@ -3990,6 +4051,7 @@
       });
 
       this.calendarViewport.addEventListener('keydown', e => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) this.calendarManualScroll = true;
         const modifier = e.ctrlKey || e.metaKey;
         if (modifier && !e.altKey && String(e.key).toLowerCase() === 'z') {
           e.preventDefault();
@@ -4017,6 +4079,7 @@
       });
 
       this.calendarViewport.addEventListener('wheel', e => {
+        if (!(e.ctrlKey || e.metaKey)) this.calendarManualScroll = true;
         if (!(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
         let delta = e.deltaY;
@@ -4031,6 +4094,7 @@
         this.setVisibleDays(target);
         this._renderCalendar();
       }, { passive: false });
+      this.calendarViewport.addEventListener('touchstart', () => { this.calendarManualScroll = true; }, { passive: true });
     }
 
     _beginCalendarTaskEdit(e, task, mode, segmentEl = null) {
@@ -4623,7 +4687,8 @@
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
-    style.textContent = CLOCKOLI_STYLE;
+    style.textContent = CLOCKOLI_STYLE + (initialProps.weeklyCalendar
+      ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '');
 
     function sourceItem(instanceId) {
       return originalItems.get(String(instanceId)) || null;
@@ -4775,13 +4840,14 @@
     const initialMapping = mapItems(initialProps.items, now);
     const tasks = initialMapping.mapped;
     originalItems = initialMapping.sources;
-    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, now - 7 * DAY_MS, ...tasks.map(task => task.start));
-    const domainEnd = Math.max(now, domainStart + 1_000, ...tasks.map(task => task.end));
+    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, Number(initialProps.domainStart ?? now - 7 * DAY_MS), ...tasks.map(task => task.start));
+    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now, domainStart + 1_000, ...tasks.map(task => task.end));
     const timeline = new global.TaskTimeline(host, {
       tasks,
       rows: normalizedRows(initialProps.rows),
       domainStart,
       domainEnd,
+      totalRange: initialProps.totalRange ?? initialProps.view,
       visibleDays: Math.max(1 / 24, Math.min(7, ((initialProps.view?.end ?? now) - (initialProps.view?.start ?? now - DAY_MS)) / DAY_MS)),
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
@@ -5072,11 +5138,10 @@
     }
 
     function formatClockDuration(milliseconds) {
-      const total = Math.max(0, Math.floor(milliseconds / 1_000));
-      const hours = Math.floor(total / 3_600);
-      const minutes = Math.floor((total % 3_600) / 60);
-      const seconds = total % 60;
-      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      const totalMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
     }
 
     function updateActionClock() {
@@ -5144,9 +5209,12 @@
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
-      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.now) - 7 * DAY_MS, ...mapped.map(task => task.start));
-      const nextDomainEnd = Math.max(Number(nextProps.now), nextDomainStart + 1_000, ...mapped.map(task => task.end));
+      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
+      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
       timeline.currentTime = Number(nextProps.now);
+      if (applyExternalView && nextProps.view) {
+        timeline.options.totalRange = nextProps.totalRange ?? nextProps.view;
+      }
       timeline.setRows(normalizedRows(nextProps.rows), { render: false });
       timeline.setTasks(mapped, { domainStart: nextDomainStart, domainEnd: nextDomainEnd, preserveScroll: true, preserveHistory: true });
       originalItems = mapping.sources;

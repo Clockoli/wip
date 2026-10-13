@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
   <link rel="stylesheet" href="../styles/running-status.css">
+  <link rel="stylesheet" href="../styles/interface-width.css">
 </head>
 <body>
 <div class="page-tabs-shell">
@@ -21,7 +22,7 @@
   </nav>
 </div>
 <div id="running-status"></div>
-<main>
+<main class="settings-main">
   <section class="card connection-card" aria-labelledby="connection-title">
     <div id="message" role="status" aria-live="polite"></div>
     <div class="card-heading">
@@ -172,6 +173,17 @@
     <p id="time-repositories-empty" class="help">No time repositories are connected. Use one that already contains Clockoli data, or set up a new private repository.</p>
     <div id="time-repository-list" class="time-repository-list"></div>
     <a id="add-time-repository" class="button-link secondary-link time-repositories-add" href="#">Add time repository</a>
+  </section>
+
+  <section class="card" aria-labelledby="interface-width-title">
+    <div class="card-heading"><div><h2 id="interface-width-title">Interface width</h2><p>Choose the width of Activity, Reports, Top tasks, and the toolbar panel.</p></div></div>
+    <label for="interface-width">Show Clockoli</label>
+    <select id="interface-width" aria-describedby="interface-width-help">
+      <option value="contained">Within a centered column</option>
+      <option value="full">Across the available screen width</option>
+    </select>
+    <p id="interface-width-help" class="help">Settings always stays in a centered column. The toolbar panel spans the page; this setting changes the width of its content, not its height.</p>
+    <p id="interface-width-feedback" class="form-feedback" role="status" aria-live="polite"></p>
   </section>
 
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
@@ -345,6 +357,7 @@
   </details>
 </main>
 <script src="../domain/recovery-actions.js"></script>
+<script type="module" src="../ui/interface-width.js"></script>
 <script type="module" src="options.js"></script>
 </body>
 </html>

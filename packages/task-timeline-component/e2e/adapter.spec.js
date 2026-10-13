@@ -35,6 +35,7 @@ async function mount(page, overrides = {}) {
       rows: overrides.rows || [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }],
       now,
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
+      totalRange: overrides.totalRange,
       weeklyCalendar: overrides.weeklyCalendar,
       onCalendarNavigate: overrides.trackCalendarNavigation ? range => window.__calls.push(['navigate', range.start, range.end]) : undefined,
       onStart(item) {
@@ -92,6 +93,246 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
 
+test('hides the sole project label across Timeline, Calendar and details, restoring it for multiple projects', async ({ page }) => {
+  const now = Date.now();
+  const items = [{ id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - HOUR, endedAt: now - HOUR / 2, rowId: 'other', isEditable: true }];
+  await mount(page, { items, rows: [{ id: 'other', title: 'Other' }] });
+  const root = page.locator('#timeline .shell');
+  expect(await root.locator('.row-label').count()).toBe(0);
+  await root.locator('.task').first().click();
+  expect(await root.locator('.details-project').count()).toBe(0);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  expect(await root.locator('.calendar-row-name').count()).toBe(0);
+  expect(await root.locator('.calendar-sticky-header').first().evaluate(node => node.getBoundingClientRect().height)).toBe(44);
+
+  await page.evaluate(() => window.__timeline.update({ rows: [{ id: 'other', title: 'Other' }, { id: 'second', title: 'Second' }] }));
+  expect(await root.locator('.calendar-row-name').first().textContent()).toBe('Other');
+  expect(await root.locator('.calendar-sticky-header').first().evaluate(node => node.getBoundingClientRect().height)).toBe(68);
+  await page.evaluate(() => window.__timeline.setViewMode('timeline'));
+  expect(await root.locator('.row-label').allTextContents()).toEqual(['Other', 'Second']);
+  await root.locator('.task').first().click();
+  expect(await root.locator('.details-project').first().textContent()).toBe('Other');
+
+  await page.evaluate(() => window.__timeline.update({ rows: [{ id: 'other', title: 'Other' }] }));
+  expect(await root.locator('.row-label').count()).toBe(0);
+  expect(await root.locator('.details-project').count()).toBe(0);
+});
+
+test('Timeline shows no seconds in times, durations, or selected Start and End', async ({ page }) => {
+  const start = new Date(2026, 9, 12, 9, 0, 49).getTime();
+  const end = new Date(2026, 9, 12, 10, 0, 25).getTime();
+  await mount(page, {
+    items: [{ id: 'entry:precise', url: 'https://example.com/precise', title: 'Precise', startedAt: start, endedAt: end, rowId: 'one', isEditable: true }],
+    view: { start: start - HOUR, end: end + HOUR, focusedAt: start },
+  });
+  const card = page.locator('#timeline .task[data-task-key="entry:precise"]');
+  await expect(page.locator('#timeline .domain-start')).toHaveText(/\d{2}\.\d{2}\.2026 \d{2}:\d{2}$/);
+  await expect(page.locator('#timeline .domain-end')).toHaveText(/\d{2}\.\d{2}\.2026 \d{2}:\d{2}$/);
+  await expect(page.locator('#timeline .tracked')).not.toContainText('s');
+  await expect(card).toHaveAttribute('aria-label', 'Precise: 12.10.2026 09:00 — 12.10.2026 10:00');
+  await expect(card.locator('.task-time')).toHaveText('09:00–10:00 · 59m');
+  await card.hover();
+  await expect(card.locator('.edit-clock.start')).toHaveText('Start09:00');
+  await expect(card.locator('.edit-clock.end')).toHaveText('End10:00');
+  await expect(card.locator('.edit-clock.duration')).toHaveText('Duration59m');
+  await card.click();
+  const details = await page.locator('#timeline .details-value').allTextContents();
+  expect(details).toEqual(['Start09:00', 'End10:00', 'Duration59m']);
+  expect(await page.evaluate(() => {
+    const task = window.__timeline.__timeline._findTask('entry:precise');
+    return [task.start, task.end];
+  })).toEqual([start, end]);
+});
+
+test('Timeline labels each local day with its tracked time, splitting midnight and updating after changes', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 12));
+  const day = new Date(2026, 9, 10);
+  const next = new Date(2026, 9, 11);
+  const third = new Date(2026, 9, 12);
+  const end = new Date(2026, 9, 13);
+  const startAt = new Date(2026, 9, 10, 23).getTime();
+  const endAt = new Date(2026, 9, 11, 1).getTime();
+  await mount(page, {
+    items: [{ id: 'entry:overnight', url: 'https://example.com/overnight', title: 'Overnight', startedAt: startAt, endedAt: endAt, rowId: 'one', isEditable: true }],
+    view: { start: day.getTime(), end: end.getTime(), focusedAt: next.getTime() },
+  });
+  await expect(page.locator(`#timeline .day-band[data-start="${day.getTime()}"] .day-tracked`)).toHaveText('Tracked: 1h');
+  await expect(page.locator(`#timeline .day-band[data-start="${next.getTime()}"] .day-tracked`)).toHaveText('Tracked: 1h');
+  await expect(page.locator(`#timeline .day-band[data-start="${third.getTime()}"] .day-tracked`)).toHaveText('Tracked: 0m');
+  await expect(page.locator('#timeline .tracked')).toBeHidden();
+  await page.evaluate(({ endAt, hour }) => window.__timeline.update({ items: [{ ...window.__items[0], endedAt: endAt + hour }] }), { endAt, hour: HOUR });
+  await expect(page.locator(`#timeline .day-band[data-start="${next.getTime()}"] .day-tracked`)).toHaveText('Tracked: 2h');
+});
+
+test('Timeline shows daily tracked time without a separate Today summary above the ruler', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 12));
+  const day = new Date(2026, 9, 12).getTime();
+  await mount(page, {
+    items: [{ id: 'active:today', url: 'https://example.com/today', title: 'Today', startedAt: day + 11 * HOUR, endedAt: null, rowId: 'one', isRunning: true }],
+    view: { start: day, end: day + 12 * HOUR, focusedAt: day + 12 * HOUR },
+  });
+  await expect(page.locator(`#timeline .day-band[data-start="${day}"] .day-tracked`)).toHaveText('Tracked: 1h');
+  await expect(page.locator('#timeline .meta .tracked')).toBeHidden();
+  await expect(page.locator('#timeline .meta .domain-start')).toBeVisible();
+  await expect(page.locator('#timeline .meta .domain-end')).toBeVisible();
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await expect(page.locator('#timeline .meta .tracked')).toBeHidden();
+});
+
+test('Timeline shows Total for a week without replacing individual day totals', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 12));
+  const start = new Date(2026, 9, 5).getTime();
+  const end = new Date(2026, 9, 12).getTime();
+  await mount(page, {
+    items: [
+      { id: 'first', url: 'https://example.com/first', title: 'First', startedAt: start + 9 * HOUR, endedAt: start + 10 * HOUR, rowId: 'one' },
+      { id: 'last', url: 'https://example.com/last', title: 'Last', startedAt: end - 2 * HOUR, endedAt: end - HOUR, rowId: 'one' },
+    ],
+    view: { start, end, focusedAt: start },
+  });
+  await expect(page.locator('#timeline .meta .tracked')).toHaveText('Total: 2h');
+  await expect(page.locator(`#timeline .day-band[data-start="${start}"] .day-tracked`)).toHaveText('Tracked: 1h');
+  await expect(page.locator(`#timeline .day-band[data-start="${end - 24 * HOUR}"] .day-tracked`)).toHaveText('Tracked: 1h');
+});
+
+test('Timeline keeps daily completed and running time correct when panning', async ({ page }) => {
+  const now = new Date(2026, 9, 12, 12);
+  const yesterday = new Date(2026, 9, 11).getTime();
+  await page.clock.install({ time: now });
+  await mount(page, {
+    items: [
+      { id: 'completed:today', url: 'https://example.com/done', title: 'Done', startedAt: new Date(2026, 9, 12, 9).getTime(), endedAt: new Date(2026, 9, 12, 10).getTime(), rowId: 'one' },
+      { id: 'active:today', url: 'https://example.com/active', title: 'Active', startedAt: new Date(2026, 9, 12, 11, 30).getTime(), endedAt: null, rowId: 'one', isRunning: true },
+    ],
+    view: { start: yesterday, end: now.getTime(), focusedAt: yesterday },
+  });
+  const summary = page.locator(`#timeline .day-band[data-start="${new Date(2026, 9, 12).getTime()}"] .day-tracked`);
+  await expect(summary).toHaveText('Tracked: 1h 30m');
+  await page.locator('#timeline .viewport').evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  await expect(summary).toHaveText('Tracked: 1h 30m');
+  await page.clock.runFor(60_000);
+  await expect(summary).toHaveText('Tracked: 1h 31m');
+  await page.evaluate(() => window.__timeline.update({ items: [{ ...window.__items[0], endedAt: new Date(2026, 9, 12, 10, 30).getTime() }, window.__items[1]] }));
+  await expect(summary).toHaveText('Tracked: 2h 1m');
+  await page.setViewportSize({ width: 420, height: 800 });
+  expect(await summary.evaluate(element => {
+    const label = element.getBoundingClientRect();
+    const shell = element.closest('.shell').getBoundingClientRect();
+    return label.left >= shell.left && label.right <= shell.right;
+  })).toBe(true);
+});
+
+test('Timeline does not call a historical period today', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 12));
+  await mount(page, {
+    items: [{ id: 'yesterday', url: 'https://example.com/yesterday', title: 'Yesterday', startedAt: new Date(2026, 9, 11, 9).getTime(), endedAt: new Date(2026, 9, 11, 10).getTime(), rowId: 'one' }],
+    view: { start: new Date(2026, 9, 11).getTime(), end: new Date(2026, 9, 12).getTime(), focusedAt: new Date(2026, 9, 11).getTime() },
+  });
+  await expect(page.locator('#timeline .tracked')).toBeHidden();
+});
+
+test('Timeline daily total follows a running timer across the next minute', async ({ page }) => {
+  const now = new Date(2026, 9, 12, 12);
+  const day = new Date(2026, 9, 12).getTime();
+  await page.clock.install({ time: now });
+  await mount(page, {
+    items: [{ id: 'active:today', url: 'https://example.com/today', title: 'Today', startedAt: now.getTime() - 2 * 60_000, endedAt: null, rowId: 'one', isRunning: true }],
+    view: { start: day, end: now.getTime(), focusedAt: now.getTime() },
+  });
+  const total = page.locator(`#timeline .day-band[data-start="${day}"] .day-tracked`);
+  await expect(total).toHaveText('Tracked: 2m');
+  await page.clock.runFor(61_000);
+  await expect(total).toHaveText('Tracked: 3m');
+});
+
+test('Timeline updates todays total when elapsed time crosses a minute inside the same clock minute', async ({ page }) => {
+  const now = new Date(2026, 9, 12, 12, 0, 5);
+  const day = new Date(2026, 9, 12).getTime();
+  await page.clock.install({ time: now });
+  await mount(page, {
+    items: [{ id: 'active:seconds', url: 'https://example.com/today', title: 'Today', startedAt: now.getTime() - 50_000, endedAt: null, rowId: 'one', isRunning: true }],
+    view: { start: day, end: now.getTime(), focusedAt: now.getTime() },
+  });
+  const total = page.locator(`#timeline .day-band[data-start="${day}"] .day-tracked`);
+  await expect(total).toHaveText('Tracked: 0m');
+  await page.clock.runFor(11_000);
+  await expect(total).toHaveText('Tracked: 1m');
+});
+
+test('Timeline creates a new daily total when a running timer crosses local midnight', async ({ page }) => {
+  const now = new Date(2026, 9, 12, 23, 59);
+  const today = new Date(2026, 9, 12).getTime();
+  const tomorrow = new Date(2026, 9, 13).getTime();
+  await page.clock.install({ time: now });
+  await mount(page, {
+    items: [{ id: 'active:midnight', url: 'https://example.com/midnight', title: 'Midnight', startedAt: now.getTime() - 2 * 60_000, endedAt: null, rowId: 'one', isRunning: true }],
+    view: { start: today, end: now.getTime(), focusedAt: now.getTime() },
+  });
+  await page.clock.runFor(120_000);
+  await expect(page.locator(`#timeline .day-band[data-start="${today}"] .day-tracked`)).toHaveText('Tracked: 3m');
+  await expect(page.locator(`#timeline .day-band[data-start="${tomorrow}"] .day-tracked`)).toHaveText('Tracked: 1m');
+  await expect(page.locator('#timeline .tracked')).toBeHidden();
+});
+
+test('Calendar shows minute-only times on the card, hover badges, and selected details', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 11));
+  const start = new Date(2026, 9, 12, 9, 0, 49).getTime();
+  const end = new Date(2026, 9, 12, 10, 0, 25).getTime();
+  await mount(page, {
+    items: [{ id: 'entry:precise', url: 'https://example.com/precise', title: 'Precise', startedAt: start, endedAt: end, rowId: 'one', isEditable: true }],
+    view: { start: start - HOUR, end: end + HOUR, focusedAt: start },
+  });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const card = page.locator('#timeline .calendar-task[data-task-key="entry:precise"]').first();
+  await expect(page.locator('#timeline .domain-start')).toHaveText(/\d{2}\.\d{2}\.2026 \d{2}:\d{2}$/);
+  await expect(page.locator('#timeline .domain-end')).toHaveText(/\d{2}\.\d{2}\.2026 \d{2}:\d{2}$/);
+  await expect(card.locator('.calendar-task-time')).toHaveText('09:00–10:00');
+  await card.hover();
+  await expect(card.locator('.calendar-edit-clock.start')).toHaveText('Start09:00');
+  await expect(card.locator('.calendar-edit-clock.end')).toHaveText('End10:00');
+  await card.click();
+  expect(await page.locator('#timeline .details-value').allTextContents()).toEqual([
+    'Start09:00', 'End10:00', 'Duration59m',
+  ]);
+  expect(await page.evaluate(() => {
+    const task = window.__timeline.__timeline._findTask('entry:precise');
+    return [task.start, task.end];
+  })).toEqual([start, end]);
+});
+
+test('Timeline running action and sub-minute durations show no seconds', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 12, 11, 0, 16));
+  const now = new Date(2026, 9, 12, 11, 0, 16).getTime();
+  await mount(page, {
+    items: [
+      { id: 'entry:short', title: 'Short', startedAt: now - 60_000, endedAt: now - 45_000, rowId: 'one', isEditable: true },
+      { id: 'active:now', title: 'Running', startedAt: now - 16_000, endedAt: null, rowId: 'two', isRunning: true, isEditable: false },
+    ],
+  });
+  await page.locator('#timeline .task[data-task-key="entry:short"]').click();
+  await expect(page.locator('#timeline .details-value').last()).toHaveText('Duration0m');
+  await page.locator('#timeline .task[data-task-key="active:now"]').click();
+  await expect(page.locator('#timeline .clockoli-timeline-action[data-started-at]')).toHaveText('Stop 00:00');
+  await expect(page.locator('#timeline .tracked')).not.toContainText('s');
+});
+
+test('direct-connection tooltips do not mention seconds in Timeline or Calendar', async ({ page }) => {
+  const previousDay = new Date();
+  previousDay.setDate(previousDay.getDate() - 1);
+  previousDay.setHours(9, 0, 0, 0);
+  const start = previousDay.getTime();
+  await mount(page, {
+    view: { start: start - HOUR, end: start + 7_200_000, focusedAt: start },
+    items: [
+      { id: 'entry:first', title: 'First', startedAt: start, endedAt: start + 3_600_000, rowId: 'one', isEditable: true },
+      { id: 'entry:next', title: 'Next', startedAt: start + 3_601_000, endedAt: start + 5_400_000, rowId: 'one', isEditable: true },
+    ],
+  });
+  await expect(page.locator('#timeline .connector-dot')).toHaveAttribute('title', 'First → Next: connected');
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await expect(page.locator('#timeline .calendar-connector-dot').first()).toHaveAttribute('title', 'First → Next: connected');
+});
+
 test('switches Timeline and Calendar without losing running state', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
@@ -141,6 +382,241 @@ test('Activity Calendar defaults to a Monday–Sunday week while the popup retai
   await mount(page);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   expect((await page.evaluate(() => window.__timeline.getCalendarRange())).days).toBeLessThan(7);
+});
+
+test('weekly Timeline and Calendar show Total alongside separate local day totals', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const tuesday = new Date(2026, 9, 13).getTime();
+  const wednesday = new Date(2026, 9, 14).getTime();
+  const thursday = new Date(2026, 9, 15).getTime();
+  const now = wednesday + 12 * HOUR;
+  await page.clock.install({ time: new Date(now) });
+  await mount(page, {
+    weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [
+      { id: 'entry:overnight', url: 'https://example.com/overnight', title: 'Overnight', startedAt: monday + 23 * HOUR, endedAt: tuesday + HOUR, rowId: 'one', isEditable: true },
+      { id: 'entry:wednesday', url: 'https://example.com/wednesday', title: 'Wednesday', startedAt: wednesday + 9 * HOUR, endedAt: wednesday + 10 * HOUR, rowId: 'one', isEditable: true },
+      { id: 'active:wednesday', url: 'https://example.com/active', title: 'Active', startedAt: wednesday + 11 * HOUR, endedAt: null, rowId: 'one', isRunning: true },
+    ],
+    view: { start: monday, end: now, focusedAt: now },
+    totalRange: { start: monday, end: new Date(2026, 9, 19).getTime() },
+  });
+  for (const [day, duration] of [[monday, '1h'], [tuesday, '1h'], [wednesday, '2h']]) {
+    await expect(page.locator(`#timeline .day-band[data-start="${day}"] .day-tracked`)).toHaveText(`Tracked: ${duration}`);
+  }
+  await expect(page.locator('#timeline .tracked')).toHaveText('Total: 4h');
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const calendarDay = day => page.locator(`#timeline .calendar-day-header[data-start="${day}"]`);
+  for (const [day, duration] of [[monday, '1h'], [tuesday, '1h'], [wednesday, '2h'], [thursday, '0m']]) {
+    await expect(calendarDay(day).locator('.calendar-day-tracked')).toHaveText(`Tracked: ${duration}`);
+  }
+  await expect(page.locator('#timeline .tracked')).toHaveText('Total: 4h');
+  await expect(page.locator('#timeline .tracked')).toBeVisible();
+  await page.evaluate(end => window.__timeline.update({ items: window.__items.map(item => item.id === 'entry:wednesday' ? { ...item, endedAt: end } : item) }), wednesday + 10.5 * HOUR);
+  await expect(calendarDay(wednesday).locator('.calendar-day-tracked')).toHaveText('Tracked: 2h 30m');
+  await expect(calendarDay(tuesday).locator('.calendar-day-tracked')).toHaveText('Tracked: 1h');
+  await expect(page.locator('#timeline .tracked')).toHaveText('Total: 4h 30m');
+  await page.evaluate(({ start, end }) => {
+    window.__timeline.update({ totalRange: { start, end }, view: { start, end, focusedAt: start } });
+    window.__timeline.setCalendarRange({ start, end });
+  }, { start: wednesday, end: thursday });
+  await expect(page.locator('#timeline .tracked')).toBeHidden();
+});
+
+test('Calendar Total follows the displayed week when browsing away from the selected period', async ({ page }) => {
+  const previousMonday = new Date(2026, 9, 5).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 12));
+  await mount(page, {
+    weeklyCalendar: true,
+    items: [
+      { id: 'previous', url: 'https://example.com/previous', title: 'Previous', startedAt: previousMonday + HOUR, endedAt: previousMonday + 3 * HOUR, rowId: 'one' },
+      { id: 'current', url: 'https://example.com/current', title: 'Current', startedAt: monday + HOUR, endedAt: monday + 2 * HOUR, rowId: 'one' },
+    ],
+    view: { start: monday, end: new Date(2026, 9, 14, 12).getTime(), focusedAt: monday },
+    totalRange: { start: monday, end: new Date(2026, 9, 19).getTime() },
+  });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await expect(page.locator('#timeline .tracked')).toHaveText('Total: 1h');
+  await page.evaluate(() => window.__timeline.shiftCalendar(-1));
+  await expect(page.locator('#timeline .tracked')).toHaveText('Total: 2h');
+});
+
+test('Calendar opens at the busiest start-time group rather than a lone overnight entry', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 14).getTime();
+  const items = [2, 10, 11, 12].map((hour, index) => ({
+    id: `entry:${index}`, url: `https://example.com/${index}`, title: `Task ${index}`,
+    startedAt: day + hour * HOUR, endedAt: day + (hour + 1) * HOUR, rowId: 'one', isEditable: true,
+  }));
+  await mount(page, { weeklyCalendar: true, items, rows: [{ id: 'one', title: 'One' }] });
+  const position = await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    const main = root.querySelector('.calendar-task[data-task-key="entry:1"]');
+    return { scrollTop: viewport.scrollTop, mainTop: main.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+      headerHeight: window.__timeline.__timeline._calendarMetrics.headerHeight };
+  });
+  expect(position.scrollTop).toBeGreaterThan(0);
+  expect(position.mainTop).toBeGreaterThan(position.headerHeight);
+  expect(position.mainTop).toBeLessThan(180);
+});
+
+test('Calendar favors a dominant group spread across the day over two overnight records', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 12).getTime();
+  const hours = [1, 2, 9, 12, 15, 18, 21];
+  await mount(page, { weeklyCalendar: true, items: hours.map((hour, index) => ({
+    id: `entry:${index}`, url: `https://example.com/${index}`, title: `Entry ${index}`,
+    startedAt: day + hour * HOUR, endedAt: day + (hour + 1) * HOUR, rowId: 'one',
+  })) });
+  const position = await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    return document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport').scrollTop;
+  });
+  expect(position).toBeGreaterThan(300);
+});
+
+test('Calendar keeps a workday together despite multi-hour pauses within the dominant distribution', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const monday = new Date(2026, 8, 28).getTime();
+  const starts = [10, 10.75, 15.5, 16.5, 21.2, 11.1, 18.9, 10.9, 10, 10.96,
+    14.85, 18.75, 19.18, 19.98, 20.01, 20.43, 20.78, 20.8];
+  await mount(page, { weeklyCalendar: true, items: starts.map((hour, index) => ({
+    id: `work:${index}`, url: `https://example.com/work/${index}`, title: `Work ${index}`,
+    startedAt: monday + index % 5 * 24 * HOUR + hour * HOUR,
+    endedAt: monday + index % 5 * 24 * HOUR + (hour + 0.01) * HOUR, rowId: 'one',
+  })), view: { start: monday, end: monday + 7 * 24 * HOUR, focusedAt: monday } });
+  const position = await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    const morning = root.querySelector('.calendar-task[data-task-key="work:0"]');
+    return morning.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+  });
+  expect(position).toBeGreaterThan(0);
+  expect(position).toBeLessThan(180);
+});
+
+test('Calendar opens at the first record when there is no group, including before 08:00', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 14).getTime();
+  await mount(page, { weeklyCalendar: true, items: [{ id: 'early', url: 'https://example.com/early',
+    title: 'Early', startedAt: day + 4 * HOUR, endedAt: day + 5 * HOUR, rowId: 'one' }] });
+  const position = await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    return { top: root.querySelector('.calendar-task[data-task-key="early"]').getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+      headerHeight: window.__timeline.__timeline._calendarMetrics.headerHeight };
+  });
+  expect(position.top).toBeGreaterThan(position.headerHeight);
+  expect(position.top).toBeLessThan(180);
+});
+
+test('Calendar refocuses when a previously empty week loads, but keeps manual scroll on later updates', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 14).getTime();
+  await mount(page, { weeklyCalendar: true, items: [] });
+  const positions = await page.evaluate(({ day, hour }) => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    const initial = viewport.scrollTop;
+    const items = [{ id: 'loaded', url: 'https://example.com/loaded', title: 'Loaded',
+      startedAt: day + 15 * hour, endedAt: day + 16 * hour, rowId: 'one' }];
+    calendar.update({ items });
+    const loaded = viewport.scrollTop;
+    viewport.scrollTop = 0;
+    calendar.update({ items: [...items] });
+    return { initial, loaded, preserved: viewport.scrollTop };
+  }, { day, hour: HOUR });
+  expect(positions.loaded).toBeGreaterThan(positions.initial);
+  expect(positions.preserved).toBe(0);
+});
+
+test('Calendar does not override a manual scroll while waiting for week records', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 14).getTime();
+  await mount(page, { weeklyCalendar: true, items: [] });
+  const position = await page.evaluate(({ day, hour }) => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -150 }));
+    calendar.update({ items: [{ id: 'loaded', url: 'https://example.com/loaded', title: 'Loaded',
+      startedAt: day + 15 * hour, endedAt: day + 16 * hour, rowId: 'one' }] });
+    return viewport.scrollTop;
+  }, { day, hour: HOUR });
+  expect(position).toBe(0);
+});
+
+test('Calendar refocuses on every week change, including a week loaded after navigation', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const monday = new Date(2026, 9, 12).getTime();
+  const previousMonday = new Date(2026, 9, 5).getTime();
+  const entry = (id, day, hour) => ({ id, url: `https://example.com/${id}`, title: id,
+    startedAt: day + hour * HOUR, endedAt: day + (hour + 1) * HOUR, rowId: 'one' });
+  const current = [entry('current', monday, 10)];
+  const previous = [entry('previous', previousMonday, 15)];
+  await mount(page, { weeklyCalendar: true, items: current });
+  const positions = await page.evaluate(({ monday, previousMonday, current, previous }) => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    const currentTop = viewport.scrollTop;
+    calendar.setCalendarRange({ start: previousMonday, end: monday });
+    const emptyTop = viewport.scrollTop;
+    calendar.update({ items: [...current, ...previous] });
+    const previousTop = viewport.scrollTop;
+    calendar.setCalendarRange({ start: monday, end: new Date(2026, 9, 19).getTime() });
+    const againTop = viewport.scrollTop;
+    return { currentTop, emptyTop, previousTop, againTop };
+  }, { monday, previousMonday, current, previous });
+  expect(positions.previousTop).toBeGreaterThan(positions.currentTop);
+  expect(positions.previousTop).toBeGreaterThan(positions.emptyTop);
+  expect(positions.againTop).toBe(positions.currentTop);
+});
+
+test('Calendar refocuses after week load even if cached overnight entries were already present', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const monday = new Date(2026, 9, 12).getTime();
+  const previousMonday = new Date(2026, 9, 5).getTime();
+  const entry = (id, day, hour) => ({ id, url: `https://example.com/${id}`, title: id,
+    startedAt: day + hour * HOUR, endedAt: day + (hour + 1) * HOUR, rowId: 'one' });
+  const cached = [entry('night:a', previousMonday, 0), entry('night:b', previousMonday, 1)];
+  const loaded = [entry('day:a', previousMonday, 10), entry('day:b', previousMonday, 11),
+    entry('day:c', previousMonday, 12), entry('day:d', previousMonday, 13)];
+  await mount(page, { weeklyCalendar: true, items: [entry('current', monday, 10), ...cached] });
+  const position = await page.evaluate(({ previousMonday, monday, loaded }) => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    calendar.setCalendarRange({ start: previousMonday, end: monday });
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    const before = viewport.scrollTop;
+    calendar.update({ items: [...window.__items, ...loaded] });
+    return { before, after: viewport.scrollTop };
+  }, { previousMonday, monday, loaded });
+  expect(position.after).toBeGreaterThan(position.before);
+});
+
+test('Calendar current-day total follows an active timer within the same wall-clock minute', async ({ page }) => {
+  const now = new Date(2026, 9, 14, 12, 0, 5);
+  const day = new Date(2026, 9, 14).getTime();
+  await page.clock.install({ time: now });
+  await mount(page, {
+    weeklyCalendar: true,
+    items: [{ id: 'active:day', url: 'https://example.com/day', title: 'Day', startedAt: now.getTime() - 50_000, endedAt: null, rowId: 'one', isRunning: true }],
+    view: { start: day, end: now.getTime(), focusedAt: now.getTime() },
+  });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const total = page.locator(`#timeline .calendar-day-header[data-start="${day}"] .calendar-day-tracked`);
+  await expect(total).toHaveText('Tracked: 0m');
+  await page.clock.runFor(11_000);
+  await expect(total).toHaveText('Tracked: 1m');
 });
 
 test('narrow weekly Calendar starts at today with a pinned hour rail', async ({ page }) => {
@@ -1046,7 +1522,7 @@ test('running action updates in place without dropping keyboard focus', async ({
     window.__stopButton = button;
     return button.textContent;
   });
-  await page.evaluate(() => window.__timeline.update({ now: Date.now() + 2_000 }));
+  await page.evaluate(() => window.__timeline.update({ now: Date.now() + 60_000 }));
   const after = await page.evaluate(() => ({
     same: window.__stopButton === document.querySelector('#timeline').shadowRoot.querySelector('.clockoli-timeline-action[data-started-at]'),
     focused: document.querySelector('#timeline').shadowRoot.activeElement === window.__stopButton,
@@ -1593,7 +2069,12 @@ test('minimum-width badges paint above adjacent task blocks', async ({ page }) =
   await page.locator('#timeline .task[data-task-key="entry:after"]').click();
   const middle = page.locator('#timeline .task[data-task-key="entry:middle"]');
   await middle.hover();
-  const hoveredZ = await middle.evaluate(element => getComputedStyle(element).zIndex);
+  const hoveredZ = await middle.evaluate(element => {
+    // Adjacent minimum-width blocks can intercept the pointer at its center.
+    // Test the hovered stacking state itself, regardless of hit-testing order.
+    element.classList.add('hovered');
+    return getComputedStyle(element).zIndex;
+  });
   await page.mouse.move(0, 0);
   await middle.evaluate(element => {
     element.classList.add('editing');
@@ -1741,6 +2222,23 @@ test('component timer itself clamps a running entry at the next interval', async
   expect(state.domainEnd).toBeGreaterThanOrEqual(state.nextEnd);
   expect(state.rulerEnd).toBe(state.domainEnd);
   expect(state.widthAfter).toBeGreaterThanOrEqual(state.widthBefore);
+});
+
+test('running timer does not move an explicitly selected historical Calendar week', async ({ page }) => {
+  const now = await mount(page, { weeklyCalendar: true });
+  const range = await page.evaluate(now => {
+    const timeline = window.__timeline;
+    timeline.setViewMode('calendar');
+    const start = new Date(now);
+    start.setDate(start.getDate() - 7);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    timeline.setCalendarRange({ start: start.getTime(), end: end.getTime() });
+    timeline.__timeline._updateRunningTaskIncremental(now + 1_000);
+    return { selected: timeline.getCalendarRange(), start: start.getTime(), end: end.getTime() };
+  }, now);
+  expect(range.selected).toMatchObject({ start: range.start, end: range.end });
 });
 
 test('overlapping reconcile preserves the prior tasks and callback source data', async ({ page }) => {
