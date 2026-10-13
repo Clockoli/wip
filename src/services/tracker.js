@@ -1256,7 +1256,13 @@ export class TrackerService {
         summaryCache,
       };
     });
-    if (staleResponse) return this.cachedMenuData(limit, now);
+    if (staleResponse) {
+      // A timer may have been accepted during this read. Retain its local
+      // interval and queue, but populate missing totals from the completed
+      // records we already fetched, overlaying the newer queued mutation.
+      await this.mutateState(state => state.summaryCache ? null : { summaryCache });
+      return this.cachedMenuData(limit, now);
+    }
     const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [], activeCache = state.activeCache;
     const allEntries = overlayPendingEntries([...remoteEntries, ...(state.recentCache ?? [])], pendingWrites);
     const recent = state.recentCache ?? [];
