@@ -230,6 +230,9 @@
     let detailsObserver = null;
     let actionClock = null;
     let suppressViewportScroll = true;
+    let deferredUpdate = null;
+    let deferredFlushTimer = null;
+    let timelineApi = null;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -464,7 +467,10 @@
               savingKeys.delete(edit.id);
               editStates.delete(edit.id);
             } else pendingEdits.set(edit.id, remaining);
-            if (!destroyed) styleTasks();
+            if (!destroyed) {
+              styleTasks();
+              scheduleDeferredFlush();
+            }
           });
         return true;
       },
@@ -728,6 +734,29 @@
     styleTasks();
     requestAnimationFrame(() => { suppressViewportScroll = false; });
 
+    function hasActiveInteraction() {
+      return Boolean(timeline.editState || timeline.calendarEditState || timeline.dragState || pendingEdits.size);
+    }
+
+    function scheduleDeferredFlush() {
+      if (destroyed || !deferredUpdate || deferredFlushTimer !== null) return;
+      // The component processes pointerup before us; commit callbacks then
+      // start the durable local save in a microtask. Flush only after those
+      // callbacks have settled, not while a new drag is under way.
+      deferredFlushTimer = setTimeout(() => {
+        deferredFlushTimer = null;
+        if (!destroyed && !hasActiveInteraction() && deferredUpdate) {
+          const queued = deferredUpdate;
+          deferredUpdate = null;
+          timelineApi?.update(queued);
+        }
+      }, 0);
+    }
+
+    const onGestureEnd = () => scheduleDeferredFlush();
+    global.addEventListener('pointerup', onGestureEnd);
+    global.addEventListener('pointercancel', onGestureEnd);
+
     function reconcile(nextProps, { applyExternalView = false } = {}) {
       suppressViewportScroll = true;
       const previousSelection = timeline.selectedKey;
@@ -769,9 +798,20 @@
       requestAnimationFrame(() => { suppressViewportScroll = false; });
     }
 
-    return {
+    timelineApi = {
       update(next = {}) {
         if (destroyed) return;
+        if (hasActiveInteraction()) {
+          // setTasks() clears editState and replaces the dragged DOM node.
+          // Retain the latest incoming snapshot until pointerup AND the local
+          // edit acceptance finish; background sync must not cancel a gesture.
+          deferredUpdate = { ...(deferredUpdate ?? {}), ...next };
+          return true;
+        }
+        if (deferredUpdate) {
+          next = { ...deferredUpdate, ...next };
+          deferredUpdate = null;
+        }
         const onlyNow = Object.keys(next).every(key => key === 'now');
         const candidateProps = { ...props, ...next };
         try {
@@ -806,6 +846,10 @@
         styleObserver?.disconnect();
         detailsObserver?.disconnect();
         clearInterval(actionClock);
+        if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
+        global.removeEventListener('pointerup', onGestureEnd);
+        global.removeEventListener('pointercancel', onGestureEnd);
+        deferredUpdate = null;
         timeline.destroy();
       },
       getView: viewFromComponent,
@@ -837,6 +881,7 @@
       getCalendarRange() { return timeline.getCalendarRange(); },
       __timeline: timeline,
     };
+    return timelineApi;
   }
 
   global.ClockoliTaskTimeline = Object.freeze({
