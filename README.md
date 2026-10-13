@@ -51,7 +51,7 @@ For downloaded unsigned apps, macOS may require **Open Anyway** in System Settin
 - Find recently tracked work by task URL or title and see completed and running totals.
 - Report across selected personal and organization time repositories, filter by person or task source, and export CSV or JSON timesheets.
 - Apply browser-local hourly rates for billable reporting without writing rates to time repositories.
-- Keep readable time records in private GitHub repositories you control; accepted timer actions are queued locally and synchronized when GitHub is available.
+- Keep readable time records in private GitHub repositories you control; accepted timer actions are queued locally and synchronized automatically on a one-minute alarm when GitHub is available. Tracked-time completion commits remain individually linked to their GitHub issues.
 - Migrate user-supplied Clockify annual Detailed Reports via in-page capture or CSV export, with a preview and explicit mapped-user import. See [Add-ons](docs/add-ons.md).
 
 See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
