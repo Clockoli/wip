@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { TrackerService } from '../src/services/tracker.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
-import { serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
+import { parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
 import { assertMessageAllowed } from '../src/background/message-policy.js';
 import { loadDestinationRecords } from '../src/services/reports.js';
 
@@ -47,7 +47,7 @@ test('Activity returns the current safe pending/conflict projection after record
     loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
     configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' }, generation: 1 }),
     selectReadDestinations: () => [destination], destinationUser: async () => 'alice', loadDestinationRecords,
-    trackerForDestination: async () => ({ getRecoveryState: async () => ({ pendingWrites: state.pendingWrites, remoteWriteConfirmed: false }) }),
+    trackerForDestination: async () => ({ projectActivityRecords: async records => ({ records, recovery: { pendingWrites: state.pendingWrites, remoteWriteConfirmed: false } }) }),
     safePendingProjection: (operation, id) => ({ id: operation.id, destinationId: id, operation: operation.operation, status: operation.status, stage: operation.stage, conflictReason: operation.conflictReason, retryCount: 0 }),
     emitReportProgress: () => {},
     ReportService: class {
@@ -65,6 +65,108 @@ test('Activity returns the current safe pending/conflict projection after record
   assert.deepEqual(result.pendingWrites, [{ id: 'conflict', destinationId, operation: 'editEntry', status: 'conflict', stage: 'editEntry', conflictReason: 'queued_entry_missing', retryCount: 0 }]);
   assert.equal(result.remoteWriteConfirmed, false);
   assert.equal(context.reportLoads.size, 0);
+});
+
+
+function activityReloadFixture() {
+  const initialActive = buildActiveTimer({
+    user: 'alice', id: '01K2ABCDEF0123456789ABCDEF',
+    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Search bug',
+    timezone: 'UTC', startedAt: '2026-10-13T08:00:00.000Z',
+  });
+  const original = buildEntry({ active: initialActive, endedAt: '2026-10-13T09:00:00.000Z' });
+  const path = 'times/2026-10/alice.jsonl', sha = 'a'.repeat(40);
+  const remote = parseMonthlyRecords(serializeMonthlyRecords([original]), { user: 'alice', month: '2026-10', path, sha });
+  const store = {
+    state: { activeCache: null, recentCache: structuredClone(remote), summaryCache: null, pendingWrites: [] },
+    async getState() { return structuredClone(this.state); },
+    async mutateState(mutate) {
+      const patch = mutate(structuredClone(this.state));
+      if (patch) Object.assign(this.state, structuredClone(patch));
+      return this.getState();
+    },
+  };
+  const github = {};
+  const makeTracker = () => new TrackerService({
+    github, store, user: 'alice', clock: () => new Date('2026-10-13T10:00:00.000Z'),
+  });
+  const destination = { id: destinationId, owner: 'acme', repo: 'time', label: 'acme/time' };
+  let tracker = makeTracker();
+  const context = vm.createContext({
+    AbortController, Map, store: { ensureDataVersion: async () => {} }, reportLoads: new Map(),
+    loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    selectReadDestinations: () => [destination], destinationUser: async () => 'alice',
+    loadDestinationRecords, githubForConfig: () => ({}),
+    trackerForDestination: async () => tracker,
+    safePendingProjection: (operation, id) => ({
+      id: operation.id, operation: operation.operation, status: operation.status,
+      stage: operation.stage, destinationId: id,
+    }),
+    emitReportProgress: () => {},
+    ReportService: class {
+      async loadUserRange() { return structuredClone(remote); } // GitHub is deliberately one minute behind.
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
+  const load = async (startDate = '2026-10-13', endDate = startDate) =>
+    plain(await context.loadTimes({ payload: { startDate, endDate } }, sender));
+  return { store, path, sha, remote, load, get tracker() { return tracker; },
+    reload() { tracker = makeTracker(); } };
+}
+
+test('Activity Timeline reload displays durable queued edits instead of the older GitHub interval', async () => {
+  const app = activityReloadFixture();
+  const original = app.remote[0];
+  await app.tracker.queueEntryEdit({
+    path: app.path, originalSha: app.sha, index: original._index, original: { id: original.id },
+    edits: { startedAt: '2026-10-13T08:15:00.000Z', endedAt: '2026-10-13T09:15:00.000Z' },
+  });
+  const expected = app.store.state.recentCache[0];
+  assert.equal(app.store.state.pendingWrites.length, 1);
+  const initial = await app.load();
+  assert.equal(initial.recent[0].startedAt, expected.startedAt);
+  assert.equal(initial.recent[0].endedAt, expected.endedAt);
+  assert.equal(initial.recent[0]._pending, true);
+  assert.equal(initial.recent[0].destinationId, destinationId);
+  app.reload(); // New Activity page and new TrackerService, same IndexedDB.
+  const reopened = await app.load();
+  assert.equal(reopened.recent[0].startedAt, expected.startedAt);
+  assert.equal(reopened.recent[0].endedAt, expected.endedAt);
+  assert.equal(reopened.pendingCount, 1);
+  assert.equal(app.store.state.pendingWrites.length, 1, 'loading Activity cannot clear the local queue');
+});
+
+test('Activity Timeline applies pending day moves, deletion and completion to GitHub history', async () => {
+  const app = activityReloadFixture();
+  const original = app.remote[0];
+  await app.tracker.queueEntryEdit({
+    path: app.path, originalSha: app.sha, index: original._index, original: { id: original.id },
+    edits: { startedAt: '2026-10-12T08:00:00.000Z', endedAt: '2026-10-12T09:00:00.000Z' },
+  });
+  assert.equal((await app.load('2026-10-13')).recent.length, 0, 'the old date must not show the moved record');
+  const moved = await app.load('2026-10-12');
+  assert.equal(moved.recent.length, 1, 'pending day move must be visible in its new date range');
+  assert.equal(moved.recent[0].entryDate, '2026-10-12');
+
+  // Separate fixture: delete is visible immediately even though GitHub has not changed.
+  const deleting = activityReloadFixture();
+  await deleting.tracker.queueEntryDelete({
+    path: deleting.path, originalSha: deleting.sha, index: 0, original: { id: deleting.remote[0].id },
+  });
+  assert.equal((await deleting.load()).recent.length, 0, 'queued deletion must hide the remote record');
+
+  // Separate fixture: a completed timer is still only in IndexedDB.
+  const completing = activityReloadFixture();
+  const running = buildActiveTimer({
+    user: 'alice', id: '01K2ABCDEF0123456789ABCDEG', taskUrl: 'https://example.com/other',
+    timezone: 'UTC', startedAt: '2026-10-13T09:30:00.000Z',
+  });
+  completing.store.state.activeCache = running;
+  await completing.tracker.stop('', { background: true });
+  const response = await completing.load();
+  assert.equal(response.recent.length, 2);
+  assert.equal(response.recent.find(record => record.id === running.id)?._pending, true);
 });
 
 test('page state exposes full totals while retaining safe active and pending projections', async () => {
