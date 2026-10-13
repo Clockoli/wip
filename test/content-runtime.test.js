@@ -2083,7 +2083,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   vm.runInContext(recoverySource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
-    globalThis.panel = { renderMenu, loadSelectedTimes, applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, setTimelineViewMode,
+    globalThis.panel = { renderMenu, loadSelectedTimes, applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
@@ -3016,6 +3016,30 @@ test('all strip, header, and shared block Stop and switch paths can cancel a lon
   assert.equal(harness.confirmations.length, 6);
   assert.ok(harness.confirmations.every(text => text === 'This entry is 13 hours long. Save anyway?'));
   assert.equal(harness.messages.filter(message => ['STOP', 'START', 'SWITCH_TASK'].includes(message.type)).length, 0);
+});
+
+test('passive state reconciliation never replaces a focused List description input', () => {
+  const now = new Date('2026-10-13T12:00:00.000Z').getTime();
+  const original = activityEntry('1', '2026-10-13', '08');
+  const state = { configured: true, active: null, pendingWrites: [], pendingCount: 0 };
+  const harness = dailyPanelHarness({ state, records: [original], now });
+  const menu = harness.renderMenu({ compact: true });
+  harness.attach(menu);
+  const input = menu.querySelector('.today-description');
+  assert.ok(input, 'a recent completed entry is shown in List');
+  input.value = 'Unsaved user draft';
+  input.oninput();
+  input.focus();
+  harness.set(state, [{ ...original, description: 'Remote change', _sha: 'remote-sha' }]);
+  harness.refreshCompactSurface();
+  assert.equal(menu.querySelector('.today-description'), input, 'a focused List editor remains mounted');
+  assert.equal(harness.document.activeElement, input);
+  assert.equal(input.value, 'Unsaved user draft');
+
+  harness.document.panelShadow.activeElement = null;
+  harness.refreshCompactSurface();
+  assert.notEqual(menu.querySelector('.today-description'), input, 'a later safe refresh can rebuild the list');
+  assert.equal(menu.querySelector('.today-description').value, 'Unsaved user draft', 'the draft survives that refresh');
 });
 
 test('mounted panel refresh updates controls, errors, totals and now while preserving editor, scroll and focus', () => {
