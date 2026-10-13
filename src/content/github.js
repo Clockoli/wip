@@ -1719,12 +1719,12 @@
     const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode ? 'Tracked time' : 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
-      try { errorText = ''; renderUi(); await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
+      try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
     const syncing = hasRunnablePending();
     refresh.disabled = syncing; // Background queue activity must not animate the toolbar.
-    refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
+    refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (emptyState) container.append(emptyState);
