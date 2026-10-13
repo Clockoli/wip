@@ -145,7 +145,7 @@ test('Top tasks exposes the same sync and refresh action as the tracking panel',
 });
 
 
-test('background timer sync never blocks timer actions and drives a disabled spinning refresh icon', () => {
+test('background timer sync never blocks actions or animates a passive refresh icon', () => {
   assert.match(worker, /tracker\.switchTask\([\s\S]*\{ background: true \}/);
   assert.match(worker, /const acceptanceExecutor = new SerialExecutor\(\)/);
   assert.match(worker, /acceptsLocally[\s\S]*acceptanceExecutor\.run/,
@@ -169,7 +169,8 @@ test('background timer sync never blocks timer actions and drives a disabled spi
   assert.match(js, /function updateRefreshControl\(\)[\s\S]*state\.loading \|\| hasRunnablePending\(\)[\s\S]*refresh\.disabled = busy/);
   assert.match(css, /\.icon-button\.syncing svg\{[^}]*animation:/);
   assert.match(content, /refresh\.disabled = syncing/);
-  assert.match(content, /refresh\.classList\.toggle\('syncing', syncing\)/);
+  assert.doesNotMatch(content, /refresh\.classList\.toggle\('syncing', syncing\)/);
+  assert.match(js, /refresh\.classList\.toggle\('syncing', state\.loading\)/);
   assert.doesNotMatch(content, /stop\.disabled = pageState\.pendingCount > 0/);
   assert.doesNotMatch(content, /startButton\.disabled = !current \|\| pageState\.pendingCount > 0/);
 });
