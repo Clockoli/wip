@@ -1072,7 +1072,7 @@
     // -----------------------------------------------------------------------
 
     setTasks(taskData, { domainStart = null, domainEnd = null, preserveScroll = false, preserveHistory = false } = {}) {
-      const oldCenter = preserveScroll && this.domainEnd > this.domainStart && this.viewport
+      const oldCenter = preserveScroll && this.segments.length
         ? this.xToTime(this._scrollLeftNow() + this._viewportWidthNow() / 2)
         : null;
 
@@ -5117,7 +5117,10 @@
       const previousMaxScroll = Math.max(0, timeline.totalWidth - previousWidth);
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const anchorTime = previousMode === 'timeline'
-        ? timeline.xToTime(previousScroll + previousWidth / 2) : null;
+        ? timeline.segments.length
+          ? timeline.xToTime(previousScroll + previousWidth / 2)
+          : (props.view?.focusedAt ?? null)
+        : null;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
       const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.now) - 7 * DAY_MS, ...mapped.map(task => task.start));
