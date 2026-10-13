@@ -1164,7 +1164,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
     'a failed automatic refresh keeps stale cached mutation controls locked');
   assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length >= 1, true);
 
-  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
+  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
   const retrying = retry.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(recentReplies.length, 1, 'Retry starts one new fresh load');
@@ -1524,7 +1524,7 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   assert.equal(secondDeletion.payload.originalSha, 'post-delete', 'surviving rows use the rewritten monthly-file SHA');
   assert.equal(secondDeletion.payload.index, 0, 'surviving rows use their rewritten monthly-file index');
   loadedRecent = [{ ...newer, _pending: true }, older];
-  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
+  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
   await sync.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const pending = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Pending').at(-1);
   assert.equal(pending.disabled, true, 'a queued row renders a visible disabled Pending indicator');
