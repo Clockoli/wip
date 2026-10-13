@@ -2461,7 +2461,7 @@ test('every Stop retains its own GitHub issue-reference tracking commit in a min
     new Date('2026-08-18T10:00:00.000Z'),
     new Date('2026-08-18T11:00:00.000Z'),
   ];
-  const tracker = service({ github, store, clock: () => times.shift() ?? new Date('2026-08-18T11:00:00.000Z') });
+  const tracker = service({ github, store, clock: () => times.shift() ?? new Date('2026-08-18T11:00:00.000Z'), idFactory: deterministicRecordId });
   await tracker.start(issue.url, 'Issue 123', '', { background: true });
   await tracker.stop('', { background: true });
   await tracker.start(pull.url, 'PR 44', '', { background: true });
