@@ -441,8 +441,9 @@ async function loadTimes(message, sender) {
         maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
       });
       const tracker = await trackerForDestination(destination.id, { localOnly: true });
-      recoveries.set(destination.id, await tracker.getRecoveryState());
-      return recent;
+      const projected = await tracker.projectActivityRecords(recent, message.payload || {});
+      recoveries.set(destination.id, projected.recovery);
+      return projected.records;
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
     const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || []).map(operation => safePendingProjection(operation, destinationId)));
