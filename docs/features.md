@@ -236,6 +236,8 @@ Independently, a silent background pull checks connected personal branches at st
 
 If GitHub is temporarily unreachable, the panel can show that the completion is saved locally and waiting to sync. Do not clear local configuration while work is pending.
 
+A freshly edited Timeline interval is persisted in IndexedDB before the edit is acknowledged. Reloading the page while GitHub is still catching up shows that local interval, not an older GitHub version. Remote reads that race with a newer local mutation cannot replace the accepted cache. Timeline reconciliation preserves the current time viewport even when virtualized rows are briefly empty.
+
 ## Conflict handling
 
 Clockoli checks repository identity, branch routing, file SHA, and original record content before mutation.
