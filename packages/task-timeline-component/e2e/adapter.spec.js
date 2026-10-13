@@ -240,6 +240,30 @@ test('reconciliation keeps the viewport anchored even when virtual segments are 
   expect(result.scroll).toBeGreaterThan(0);
 });
 
+test('repeated background reconciliation never resets manually scrolled Timeline to the far left', async ({ page }) => {
+  await mount(page);
+  const before = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline._setScrollLeft(Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) * 0.65);
+    const scroll = timeline._scrollLeftNow();
+    const time = timeline.xToTime(scroll + timeline._viewportWidthNow() / 2);
+    return { scroll, time };
+  });
+  expect(before.scroll).toBeGreaterThan(1);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const state = await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      window.__timeline.update({ items: window.__items, now: Date.now() });
+      return {
+        scroll: timeline._scrollLeftNow(),
+        time: timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2),
+      };
+    });
+    expect(state.scroll).toBeGreaterThan(1);
+    expect(Math.abs(state.time - before.time)).toBeLessThan(120_000);
+  }
+});
+
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {
   const now = await mount(page);
   await page.evaluate(() => {
