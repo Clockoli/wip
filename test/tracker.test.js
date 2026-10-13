@@ -2423,3 +2423,55 @@ test('an older in-flight GitHub recent load must not overwrite a newer committed
   assert.equal(store.value.recentCache[0]?.startedAt, updated.startedAt);
   assert.equal(store.value.recentCache[0]?._sha, 'new-commit-sha');
 });
+
+
+test('minute flush batches distinct locally queued timeline edits into one non-reference Git commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const a = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  const b = entry('2026-08-18T10:00:00.000Z', '2026-08-18T10:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([a, b]), 'seed-sha');
+  const tracker = service({ github, store });
+  const rows = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = rows;
+  await tracker.queueEntryEdit({
+    path, originalSha: 'seed-sha', index: 0, original: rows[0],
+    edits: { startedAt: '2026-08-18T08:10:00.000Z' },
+  });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'seed-sha', index: 1, original: rows[1],
+    edits: { endedAt: '2026-08-18T10:40:00.000Z' },
+  });
+  assert.equal(github.atomicWrites.length, 0, 'both edits must remain durable locally until the scheduled flush');
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 1, 'routine entry edits should share one atomic Git commit');
+  assert.match(github.atomicWrites[0].message, /^time: edit linked entries alice$/);
+  assert.doesNotMatch(github.atomicWrites[0].message, /tracked|#[0-9]+/);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].startedAt, '2026-08-18T08:10:00.000Z');
+  assert.equal(saved[1].endedAt, '2026-08-18T10:40:00.000Z');
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('every Stop retains its own GitHub issue-reference tracking commit in a minute flush', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const times = [
+    new Date('2026-08-18T08:00:00.000Z'),
+    new Date('2026-08-18T09:00:00.000Z'),
+    new Date('2026-08-18T10:00:00.000Z'),
+    new Date('2026-08-18T11:00:00.000Z'),
+  ];
+  const tracker = service({ github, store, clock: () => times.shift() ?? new Date('2026-08-18T11:00:00.000Z') });
+  await tracker.start(issue.url, 'Issue 123', '', { background: true });
+  await tracker.stop('', { background: true });
+  await tracker.start(pull.url, 'PR 44', '', { background: true });
+  await tracker.stop('', { background: true });
+  assert.equal(github.atomicWrites.length, 0);
+  await tracker.syncPending();
+  const tracked = github.atomicWrites.filter(write => /^time: alice tracked /.test(write.message));
+  assert.equal(tracked.length, 2);
+  assert.match(tracked[0].message, / on acme\/frontend#123$/);
+  assert.match(tracked[1].message, / on acme\/frontend#44$/);
+  assert.notEqual(tracked[0].message, tracked[1].message);
+  assert.equal(store.value.pendingWrites.length, 0);
+});
