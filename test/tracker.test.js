@@ -346,6 +346,33 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.description, 'Final edit');
 });
 
+test('coalesced local edits persist the latest acceptance time without resetting the original queue timestamp', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  let now = new Date('2026-08-18T12:00:00.000Z');
+  const tracker = service({ github, store, clock: () => now });
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { startedAt: '2026-08-18T08:10:00.000Z' } });
+  assert.equal(store.value.pendingWrites[0].lastLocalEditAt, now.toISOString());
+  const queuedAt = store.value.pendingWrites[0].queuedAt;
+  now = new Date('2026-08-18T12:00:10.000Z');
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:10:00.000Z' } });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].queuedAt, queuedAt);
+  assert.equal(store.value.pendingWrites[0].lastLocalEditAt, now.toISOString(),
+    'the next 15-second countdown begins after the most recent local edit');
+
+  const linked = service({ github, store, clock: () => now });
+  await linked.queueEntriesEdit({ entries: [{ path, originalSha: 'monthly-sha', index: 0,
+    original: store.value.recentCache[0], edits: { description: 'First' } }] });
+  now = new Date('2026-08-18T12:00:14.000Z');
+  await linked.queueEntriesEdit({ entries: [{ path, originalSha: 'monthly-sha', index: 0,
+    original: store.value.recentCache[0], edits: { description: 'Second' } }] });
+  const last = store.value.pendingWrites.at(-1);
+  assert.equal(last.operation, 'editEntries');
+  assert.equal(last.lastLocalEditAt, now.toISOString());
+});
+
 test('successive accepted timeline edits survive a worker restart with the latest interval', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
