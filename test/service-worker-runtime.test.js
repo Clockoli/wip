@@ -45,6 +45,7 @@ test('startup handles an alarm rejection while Chrome replaces the service worke
     chrome: { alarms: { create: (...args) => { calls.push(args); return Promise.reject(new Error('No SW')); } } },
     store: { migrateLegacyPatAuth: async () => {} },
     syncPendingNow: async () => {},
+    pullRemoteNow: async () => {},
     resumeClockifyMigration: async () => {},
   });
   vm.runInContext(sourceBetween('function scheduleSyncAlarm(', 'function hasRunnablePending(')
@@ -80,8 +81,8 @@ test('extracted service-worker handler routes START to the first matching destin
   };
   const context = handlerContext({
     store,
-    trackerForDestination: async destinationId => ({
-      start: async (...args) => { calls.push({ destinationId, args }); return { id: 'timer', _pending: true }; },
+    trackerForDestination: async (destinationId, options) => ({
+      start: async (...args) => { calls.push({ destinationId, options, args }); return { id: 'timer', _pending: true }; },
     }),
   });
   const result = await context.handle({ type: 'START', taskUrl: 'https://example.test/team/42', taskTitle: 'Team task' }, extensionSender);
@@ -89,6 +90,7 @@ test('extracted service-worker handler routes START to the first matching destin
   assert.deepEqual(calls.map(call => [call.destinationId, call.args[0], call.args[3]?.background]), [
     ['github:2', 'https://example.test/team/42', true],
   ]);
+  assert.equal(calls[0].options?.localOnly, true, 'Start must not wait for GitHub preflight');
 });
 
 test('multi-destination read callbacks use local-only contexts and retain persistent bodies for merging', () => {
@@ -168,8 +170,8 @@ test('extracted service-worker handler pins STOP to the active destination', asy
   };
   const context = handlerContext({
     store,
-    trackerForDestination: async destinationId => ({
-      stop: async (...args) => { calls.push({ destinationId, args }); return { pending: true, entry: { id: 'running' } }; },
+    trackerForDestination: async (destinationId, options) => ({
+      stop: async (...args) => { calls.push({ destinationId, options, args }); return { pending: true, entry: { id: 'running' } }; },
     }),
   });
   const result = await context.handle({ type: 'STOP', description: 'done' }, extensionSender);
@@ -177,6 +179,7 @@ test('extracted service-worker handler pins STOP to the active destination', asy
   assert.deepEqual(calls.map(call => [call.destinationId, call.args[0], call.args[1]?.background]), [
     ['github:2', 'done', true],
   ]);
+  assert.equal(calls[0].options?.localOnly, true, 'Stop must not wait for GitHub preflight');
 });
 
 test('extracted service-worker handler requires and routes a completed edit destination', async () => {
@@ -184,8 +187,8 @@ test('extracted service-worker handler requires and routes a completed edit dest
   const store = { getDestinationRegistry: async () => registry };
   const context = handlerContext({
     store,
-    trackerForDestination: async destinationId => ({
-      queueEntryEdit: async payload => { calls.push({ destinationId, payload }); return { pending: true }; },
+    trackerForDestination: async (destinationId, options) => ({
+      queueEntryEdit: async payload => { calls.push({ destinationId, options, payload }); return { pending: true }; },
     }),
   });
   await assert.rejects(
@@ -198,6 +201,41 @@ test('extracted service-worker handler requires and routes a completed edit dest
   assert.deepEqual(calls.map(call => call.destinationId), ['github:2']);
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0].payload)), { original: { id: 'entry' }, edits: { description: 'updated' } });
   assert.equal('destinationId' in calls[0].payload, false);
+  assert.equal(calls[0].options?.localOnly, true, 'queued edits must never wait for GitHub preflight');
+});
+
+test('passive GitHub pulls run independently and never send UI messages or trigger a render', async () => {
+  const calls = [];
+  const context = vm.createContext({
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' }, registry }),
+    trackerForDestination: async (id, options) => ({
+      pullRemoteSilently: async () => { calls.push({ id, localOnly: options.localOnly }); },
+    }),
+  });
+  const source = sourceBetween('let pendingPull = null;', 'function scheduleSyncAlarm(');
+  assert.doesNotMatch(source, /renderUi|chrome\\.tabs\\.sendMessage|chrome\\.runtime\\.sendMessage|loading|spinner/);
+  vm.runInContext(source, context);
+  await context.pullRemoteNow();
+  assert.deepEqual(calls, [
+    { id: 'github:1', localOnly: true },
+    { id: 'github:2', localOnly: true },
+  ]);
+});
+
+test('a failed passive pull does not block the other time repositories', async () => {
+  const calls = [];
+  const context = vm.createContext({
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' }, registry }),
+    trackerForDestination: async id => ({
+      pullRemoteSilently: async () => {
+        calls.push(id);
+        if (id === 'github:1') throw new Error('GitHub offline');
+      },
+    }),
+  });
+  vm.runInContext(sourceBetween('let pendingPull = null;', 'function scheduleSyncAlarm('), context);
+  await context.pullRemoteNow();
+  assert.deepEqual(calls, ['github:1', 'github:2']);
 });
 
 test('extracted alarm handler synchronizes every pending destination without consulting default state', async () => {
