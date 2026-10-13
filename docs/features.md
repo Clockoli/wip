@@ -236,7 +236,7 @@ Independently, a silent background pull checks connected personal branches at st
 
 If GitHub is temporarily unreachable, the panel can show that the completion is saved locally and waiting to sync. Do not clear local configuration while work is pending.
 
-A freshly edited Timeline interval is persisted in IndexedDB before the edit is acknowledged. Reloading the page while GitHub is still catching up shows that local interval, not an older GitHub version. Remote reads that race with a newer local mutation cannot replace the accepted cache. Timeline reconciliation preserves the current time viewport even when virtualized rows are briefly empty.
+Activity's Timeline and Calendar also merge the still-pending local IndexedDB operations over the remote history on every load, so a page reload before the minute GitHub push shows the newly edited interval, not the old GitHub version. A queued deletion, Stop, or move across date boundaries is reflected in its correct range. A freshly edited Timeline interval is persisted in IndexedDB before the edit is acknowledged. Reloading the page while GitHub is still catching up shows that local interval, not an older GitHub version. Remote reads that race with a newer local mutation cannot replace the accepted cache. Timeline reconciliation preserves the current time viewport even when virtualized rows are briefly empty.
 
 ## Conflict handling
 
