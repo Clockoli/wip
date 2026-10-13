@@ -53,8 +53,7 @@ test('startup handles an alarm rejection while Chrome replaces the service worke
   const scheduled = context.scheduleSync();
   assert.equal(typeof scheduled?.then, 'function', 'startup must observe the alarm promise');
   await scheduled;
-  await context.scheduleSyncAlarm('sync-pending-now', { when: 250 });
-  assert.deepEqual(calls.map(([name]) => name), ['sync-pending', 'clockify-migration-resume', 'sync-pending-now']);
+  assert.deepEqual(calls.map(([name]) => name), ['sync-pending', 'clockify-migration-resume']);
 });
 
 function handlerContext(overrides = {}) {
@@ -273,7 +272,7 @@ test('extracted alarm handler synchronizes every pending destination without con
     } },
   });
   vm.runInContext(sourceBetween('let pendingSync = null;', 'function requestPendingSync('), context);
-  vm.runInContext("chrome.alarms.onAlarm.addListener(alarm => {\n  if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});\n});", context);
+  vm.runInContext("chrome.alarms.onAlarm.addListener(alarm => {\n  if (alarm.name === 'sync-pending') void syncPendingNow().catch(() => {});\n});", context);
   assert.equal(listeners.length, 1);
   listeners[0]({ name: 'sync-pending' });
   await new Promise(resolve => setImmediate(resolve));
@@ -290,7 +289,7 @@ for (const [label, operation] of [
     id: 'edit', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'sha_conflict',
   }],
 ]) {
-  test(`extracted pending sync keeps retry scheduling alive for a ${label}`, async () => {
+  test(`extracted pending sync leaves a ${label} queued for the next minute`, async () => {
     const queues = { 'github:2': [structuredClone(operation)] };
     const created = [];
     const store = {
@@ -309,9 +308,7 @@ for (const [label, operation] of [
     });
     vm.runInContext(sourceBetween('let pendingSync = null;', 'function requestPendingSync('), context);
     await context.syncPendingNow();
-    assert.equal(created.length, 1);
-    assert.equal(created[0][0], 'sync-pending-now');
-    assert.equal(created[0][1].when > Date.now(), true);
+    assert.deepEqual(created, [], 'retries use the existing periodic alarm');
   });
 }
 
