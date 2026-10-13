@@ -1785,8 +1785,24 @@
   async function loadSelectedTimes() {
     const loadId = ++timesLoadId;
     recentLoaded = false; errorText = ''; renderUi();
-    try { await refreshRecent(true, { calendarFocus: activityViewMode === 'calendar' ? calendarPeriodFocus : null }); }
-    catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
+    try {
+      // Activity must hydrate from the durable local state before waiting for
+      // GitHub. In particular, a reload immediately after a Timeline edit
+      // must never display the old remote interval as the current one.
+      const cached = await send({ type: 'GET_PAGE_STATE', refresh: false });
+      if (loadId !== timesLoadId) return;
+      if (cached?.configured && Array.isArray(cached.recent)) {
+        applyPageState(cached);
+        const range = timesRange();
+        recent = cached.recent.filter(entry => activityRecordDate(entry) >= range.startDate
+          && activityRecordDate(entry) <= range.endDate);
+        recentLoaded = true; recentFresh = false;
+        renderUi();
+      }
+      await refreshRecent(true, { calendarFocus: activityViewMode === 'calendar' ? calendarPeriodFocus : null });
+    } catch (error) {
+      if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error);
+    }
   }
 
   function renderTimesPage(preservedTimeline = null) {
