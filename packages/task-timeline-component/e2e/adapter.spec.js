@@ -266,6 +266,31 @@ test('repeated background reconciliation never resets manually scrolled Timeline
   }
 });
 
+test('Timeline restores remembered viewport after Chromium temporarily clamps scrollLeft to zero', async ({ page }) => {
+  await mount(page);
+  const before = await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const timeline = window.__timeline.__timeline;
+    const desired = Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) * 0.65;
+    timeline._setScrollLeft(desired);
+    timeline.viewport.dispatchEvent(new Event('scroll'));
+    return timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
+  });
+  const after = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    // Simulate Chrome temporarily resetting scroll during a virtual layout pass.
+    timeline.viewport.scrollLeft = 0;
+    timeline._scrollLeft = 0;
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+    return {
+      scroll: timeline._scrollLeftNow(),
+      centeredAt: timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2),
+    };
+  });
+  expect(after.scroll).toBeGreaterThan(0);
+  expect(Math.abs(after.centeredAt - before)).toBeLessThan(120_000);
+});
+
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {
   const now = await mount(page);
   await page.evaluate(() => {
