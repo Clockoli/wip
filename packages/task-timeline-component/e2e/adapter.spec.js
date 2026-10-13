@@ -230,6 +230,7 @@ test('reconciliation keeps the viewport anchored even when virtual segments are 
     const timeline = window.__timeline.__timeline;
     const viewport = timeline.viewport;
     timeline._setScrollLeft(Math.max(0, timeline.totalWidth - viewport.clientWidth) / 2);
+    viewport.dispatchEvent(new Event('scroll'));
     const before = timeline.xToTime(timeline._scrollLeftNow() + viewport.clientWidth / 2);
     timeline.segments = [];
     window.__timeline.update({ items: window.__items, now: Date.now() });
