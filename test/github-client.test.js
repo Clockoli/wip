@@ -216,6 +216,26 @@ test('GitHub client returns branch ETags and accepts a conditional 304 snapshot'
   assert.equal(calls.length, 4, '304 skips commit and tree requests');
 });
 
+test('GitHub branch snapshots optionally include the active timer alongside monthly files', async () => {
+  const monthlySha = 'a'.repeat(40), activeSha = 'b'.repeat(40);
+  const fetchImpl = async url => {
+    if (url.endsWith('/git/ref/heads/main')) return response(200, { object: { sha: 'parent' } }, { etag: '"current"' });
+    if (url.endsWith('/git/commits/parent')) return response(200, { tree: { sha: 'tree' } });
+    if (url.includes('/git/trees/tree?recursive=1')) return response(200, { tree: [
+      { path: 'times/2026-10/alice.jsonl', type: 'blob', sha: monthlySha, size: 123 },
+      { path: 'active/alice.json', type: 'blob', sha: activeSha, size: 42 },
+      { path: 'active/other.json', type: 'blob', sha: 'c'.repeat(40), size: 42 },
+    ] });
+    throw new Error(`Unexpected ${url}`);
+  };
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl });
+  const snapshot = await client.listTextFilesSnapshot('times/', { includeActive: 'active/alice.json' });
+  assert.deepEqual(snapshot.files, [
+    { path: 'active/alice.json', sha: activeSha, size: 42 },
+    { path: 'times/2026-10/alice.jsonl', sha: monthlySha, size: 123 },
+  ]);
+});
+
 test('GitHub client atomically updates multiple text files from one verified tree', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
