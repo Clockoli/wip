@@ -1723,7 +1723,7 @@
       catch (error) { node.disabled = false; setError(error); }
     });
     const syncing = hasRunnablePending();
-    refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
+    refresh.disabled = syncing; // Background queue activity must not animate the toolbar.
     refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
@@ -2665,6 +2665,10 @@
       if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
       const track = strip.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
     }
+    // Queue reconciliation may refresh the panel while an unsaved List editor is
+    // focused. Keep that input mounted; the next normal render can show updates.
+    const preserveTodayEditor = today.contains?.(activeElement) && activeElement?.classList?.contains('today-description');
+    if (!preserveTodayEditor) {
     today.replaceChildren();
     const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
     const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
@@ -2714,6 +2718,7 @@
       row.append(resume); today.append(row);
     }
     if (!entries.length) today.append(el('div', recentLoaded ? 'No completed entries today.' : 'Loading today’s entries…', 'muted'));
+    }
     feedback.replaceChildren(); renderPanelFeedback(feedback);
     const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
     refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();
