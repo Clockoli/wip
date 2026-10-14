@@ -76,6 +76,33 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await expect(page.locator('.times-view-button').first()).toBeVisible({ timeout: 5000 });
+    const tabs = page.locator('.times-view-modes');
+    expect(await tabs.evaluate(element => element.nextElementSibling?.classList.contains('times-toolbar'))).toBe(true);
+    const status = page.locator('.running-status');
+    const [statusBox, tabsBox] = await Promise.all([status.boundingBox(), tabs.boundingBox()]);
+    expect(tabsBox.y).toBeGreaterThanOrEqual(statusBox.y + statusBox.height);
+    const tabAppearance = await tabs.evaluate(element => {
+      const buttons = [...element.querySelectorAll('button')];
+      const boxes = buttons.map(button => button.getBoundingClientRect());
+      const selected = buttons.find(button => button.getAttribute('aria-pressed') === 'true');
+      return { gap: getComputedStyle(element).gap, selectedUnderline: getComputedStyle(selected).borderBottomColor,
+        selectedWidth: getComputedStyle(selected).borderBottomWidth,
+        firstRadius: getComputedStyle(buttons[0]).borderTopLeftRadius,
+        adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right < 2) };
+    });
+    expect(tabAppearance.gap).toBe('0px');
+    expect(tabAppearance.selectedWidth).toBe('3px');
+    expect(tabAppearance.selectedUnderline).not.toBe('rgba(0, 0, 0, 0)');
+    expect(tabAppearance.firstRadius).toBe('0px');
+    expect(tabAppearance.adjacent).toBe(true);
+    const tabCenter = await tabs.evaluate(element => {
+      const row = element.getBoundingClientRect();
+      const buttons = element.querySelectorAll('button');
+      const first = buttons[0].getBoundingClientRect();
+      const last = buttons[buttons.length - 1].getBoundingClientRect();
+      return Math.abs((first.left + last.right) / 2 - (row.left + row.right) / 2);
+    });
+    expect(tabCenter).toBeLessThan(2);
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await page.getByRole('button', { name: 'Previous week' }).click();
     const groups = page.locator('.activity-list .entry');
@@ -104,8 +131,20 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await start.click({ timeout: 5000 });
     const stop = page.getByRole('button', { name: 'Stop tracking Activity test task' });
     await expect(stop).toBeVisible({ timeout: 5000 });
+    const strip = page.locator('.running-status.is-active .running-status-row');
+    await expect(strip.locator('.running-status-live')).toHaveText('Tracking now');
+    await expect(strip.locator('.running-status-task')).toHaveText('Activity test task');
+    await expect(strip.locator('.running-status-metrics')).toBeVisible();
+    await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
     await expect(stop).toBeVisible();
+    const stripBounds = await strip.evaluate(element => ({ left: element.getBoundingClientRect().left,
+      right: element.getBoundingClientRect().right,
+      childrenFit: [...element.children].every(child => child.hidden || child.getBoundingClientRect().right <= element.getBoundingClientRect().right) }));
+    expect(stripBounds.left).toBeGreaterThanOrEqual(0);
+    expect(stripBounds.right).toBeLessThanOrEqual(390);
+    expect(stripBounds.childrenFit).toBe(true);
+    await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-mobile.png') });
     await page.screenshot({ path: join(tmpdir(), 'clockoli-activity-list-mobile.png') });
     const mobile = await page.evaluate(() => ({ width: document.documentElement.scrollWidth,
       viewport: window.innerWidth,

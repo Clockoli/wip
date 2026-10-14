@@ -8,6 +8,7 @@ const optionsJs = await readFile(new URL('src/options/options.js', root), 'utf8'
 const optionsCss = await readFile(new URL('src/options/options.css', root), 'utf8');
 const popupHtml = await readFile(new URL('src/popup/popup.html', root), 'utf8');
 const content = await readFile(new URL('src/content/github.js', root), 'utf8');
+const timePicker = content.slice(content.indexOf('function timePicker('), content.indexOf('function timestampAtOriginalOffset('));
 const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
 test('repository-first setup requests App access only for the concrete target', () => {
@@ -102,7 +103,8 @@ test('popup and GitHub use one tracker renderer with task terminology and one sc
   assert.match(content, /\.entry-actions\.dirty \.entry-edit,\.entry-actions\.dirty \.entry-delete \{ display:none \}/,
     'Save/Cancel replace full Edit/Delete while a direct time draft is dirty');
   assert.match(content, /\.compact-time-picker legend \{[^}]*position:absolute[^}]*clip-path:inset\(50%\)/);
-  assert.doesNotMatch(content, /time-step|time-unit|WHEEL_THRESHOLD|wheelRemainder|addEventListener\('wheel'/);
+  assert.doesNotMatch(content, /time-step|time-unit|WHEEL_THRESHOLD|wheelRemainder/);
+  assert.doesNotMatch(timePicker, /addEventListener\('wheel'/);
   assert.match(content, /\.task-result-untitled \.task-url \{[^}]*overflow:hidden[^}]*text-overflow:ellipsis[^}]*white-space:nowrap/,
     'untitled URLs stay clamped even at the 2,048-character identity limit');
   assert.match(content, /url\.title = identity/,
@@ -140,7 +142,8 @@ test('opening the tracker renders cached entries and refreshes them without a se
 test('direct time input preserves editing without wheel or plus/minus controls', () => {
   assert.match(content, /hourField\.addEventListener\('input', changed\)/);
   assert.match(content, /minuteField\.addEventListener\('input', changed\)/);
-  assert.doesNotMatch(content, /WHEEL_THRESHOLD|wheelRemainder|addEventListener\('wheel'|time-step/);
+  assert.doesNotMatch(content, /WHEEL_THRESHOLD|wheelRemainder|time-step/);
+  assert.doesNotMatch(timePicker, /addEventListener\('wheel'/);
 });
 
 test('main-panel time drafts link crossed neighboring boundaries before save', () => {

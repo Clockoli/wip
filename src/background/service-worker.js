@@ -1538,7 +1538,7 @@ async function toggleActionSurface(tab) {
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
+      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
     });
   } catch {
     return openTimesPage();

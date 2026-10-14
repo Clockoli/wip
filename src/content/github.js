@@ -1310,7 +1310,7 @@
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
-      isolateShadowHost(root, { wide: timesMode });
+      isolateShadowHost(root, { wide: true });
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
@@ -2069,7 +2069,6 @@
     }
     const toolbar = el('section', undefined, 'times-toolbar');
     const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
-    body.append(toolbar);
     const result = el('section', undefined, 'times-results activity-list');
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
@@ -2162,7 +2161,7 @@
     }
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
-    body.append(views, weekNavigation(), listTotal);
+    body.append(views, toolbar, weekNavigation(), listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2943,6 +2942,7 @@
     const scrollTop = scroll?.scrollTop;
     const diagnosticsOpen = feedback.querySelector?.('details')?.open;
     const active = pageState.active, current = taskFromLocation();
+    strip.classList.toggle('is-active', Boolean(active));
     const activeIdentity = active ? String(active.id || active.startedAt) : '';
     const preserveActiveDescription = Boolean(active && activeElement?.classList?.contains('strip-description')
       && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
@@ -2951,8 +2951,8 @@
       strip.setAttribute('data-active-id', activeIdentity); strip.setAttribute('data-active-url', active ? taskUrlOf(active) : '');
     }
     if (active && !preserveActiveDescription) {
-      strip.append(siteFavicon(active, 'strip-favicon'));
       const copy = el('div', undefined, 'strip-task-copy');
+      copy.append(siteFavicon(active, 'strip-favicon'));
       copy.append(taskResult(active, 'strip-task'));
       const description = el('input');
       description.className = 'strip-description';
@@ -2982,13 +2982,18 @@
         catch (error) { setError(error); }
       });
       descriptionField.append(description, saveDescription); copy.append(descriptionField);
-      strip.append(copy, el('span', formatElapsed(active.startedAt), 'running-elapsed'));
+      const elapsed = el('span', formatElapsed(active.startedAt), 'running-status-elapsed running-elapsed');
+      elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
+      const todayTotal = el('span', undefined, 'running-status-today');
+      const todayValue = el('strong', trackedTotalText('todayTrackedMs'));
+      todayValue.setAttribute('data-tracked-total', 'todayTrackedMs');
+      todayTotal.append(document.createTextNode('Today '), todayValue);
       const stop = button('Stop and save', 'danger', async () => {
         try { await stopTimelineEntry({ ...pageState.active, description: description.value }); } catch {}
       });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      strip.append(stop);
+      globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, elapsed, today: todayTotal, stop });
     }
     if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
       const track = button('Track this task', 'primary popup-timeline-track', async () => {
@@ -3111,22 +3116,6 @@
     pageNavigation.append(tasks, reports, ...(compact ? [activity] : []), settings);
     headerActions.append(pageNavigation);
     if (compact) {
-      const modeButton = (mode, label) => {
-        const control = button(label, 'reports-button timeline-view-button', () => setTimelineViewMode(mode));
-        control.setAttribute('data-timeline-view-mode', mode);
-        control.setAttribute('aria-pressed', String(timelineViewMode === mode));
-        return control;
-      };
-      const timelineMode = modeButton('timeline', 'Timeline');
-      const calendarMode = modeButton('calendar', 'Calendar');
-      const listMode = modeButton('list', 'List');
-      const viewModes = el('div', undefined, 'timeline-view-modes');
-      viewModes.setAttribute('role', 'group');
-      viewModes.setAttribute('aria-label', 'Timeline view');
-      viewModes.append(timelineMode, calendarMode, listMode);
-      headerActions.prepend(viewModes);
-    }
-    if (compact) {
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
         close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
@@ -3151,7 +3140,17 @@
         compactSurface = { strip, today, feedback, overlaps, timeline: null, body, host: null };
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
-        body.append(strip);
+        const modeButton = (mode, label) => {
+          const control = button(label, 'timeline-view-button', () => setTimelineViewMode(mode));
+          control.setAttribute('data-timeline-view-mode', mode);
+          control.setAttribute('aria-pressed', String(timelineViewMode === mode));
+          return control;
+        };
+        const viewModes = el('div', undefined, 'timeline-view-modes');
+        viewModes.setAttribute('role', 'group');
+        viewModes.setAttribute('aria-label', 'Timeline view');
+        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'));
+        body.append(strip, viewModes);
         body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
       }
@@ -3319,6 +3318,7 @@
     const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
     const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
       ? shadow?.querySelector('.popup-timeline-section') : null;
+    const preservedActivityCalendarScroll = preservedActivityTimeline && timelineInstance.captureCalendarScroll?.();
     preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
     if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
@@ -3528,8 +3528,10 @@
       :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       :host(.times-surface[data-clockoli-width="full"]) .times-page { width:100%; border-inline:0 }
       :host(.times-surface) .times-body { padding:24px }
-      :host(.times-surface) .times-view-modes { display:flex; gap:6px; margin-bottom:16px }
-      :host(.times-surface) .times-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) }
+      :host(.times-surface) .times-view-modes { display:flex; justify-content:center; gap:0; margin-bottom:16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .times-view-button { min-height:40px; margin-bottom:-1px; padding:8px 18px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 }
+      :host(.times-surface) .times-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
       :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
       :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
       :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
@@ -3589,7 +3591,9 @@
     `);
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
-      :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-bottom:0 }
+      :host(.popup-surface) .tracker-toolbar { flex-direction:column; align-items:stretch; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .timeline-brand { display:flex; justify-content:center; min-width:0 }
+      :host(.popup-surface) .clockoli-wordmark { display:block; width:auto; max-width:160px; height:28px; object-fit:contain }
       :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
@@ -3604,9 +3608,11 @@
       :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
       :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
-      :host(.full-width-popup-surface) .timeline-view-modes { display:inline-flex; align-items:center; margin-right:8px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; overflow:hidden }
-      :host(.full-width-popup-surface) .timeline-view-button { border:0; border-radius:0; padding:5px 8px }
-      :host(.full-width-popup-surface) .timeline-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)); color:var(--fgColor-default,var(--ck-fg)) }
+      .timeline-view-modes { display:flex; justify-content:center; align-items:stretch; gap:0; margin:0 var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .timeline-view-button { min-height:40px; margin-bottom:-1px; padding:8px 16px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:600 }
+      .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      .timeline-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
+      :host(.popup-surface) .timeline-view-button { flex:1; padding-inline:4px }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
       :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
@@ -3626,12 +3632,24 @@
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .active-task-strip.is-active { gap:16px; margin:10px var(--clockoli-gutter) 0; padding:12px 18px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-left:4px solid var(--ck-success); border-radius:12px; background:linear-gradient(105deg,color-mix(in srgb,var(--ck-success) 9%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 42%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
+      .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:8px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap }
+      .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,var(--ck-success) 16%,transparent) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
       .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
-      .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-task-copy { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:2px 8px; flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-task .task-title,.strip-task.task-result-untitled .task-url { margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650 }
+      .strip-description-field { grid-column:2 }
       .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
       .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-metrics { display:flex; align-items:center; gap:18px; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-elapsed { font-size:18px; font-weight:700; line-height:1.2 }
+      .active-task-strip .running-status-today { padding-left:18px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      .active-task-strip .running-status-today strong { color:inherit }
+      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } .active-task-strip .running-status-metrics { margin-left:auto } }
+      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .running-status-metrics { order:2; margin-left:0; gap:10px } .active-task-strip .running-status-elapsed { font-size:16px } .active-task-strip .running-status-today { padding-left:10px } .active-task-strip > .danger { order:3; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:4; flex-basis:100% } }
+      @media(prefers-color-scheme:dark) { .active-task-strip.is-active { box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 15%,transparent) } }
       .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
       .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
       .today-date { margin:14px 0 4px; font-size:12px; font-weight:600 }
@@ -3647,7 +3665,14 @@
     }
     if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
-    if (timesMode) { shadow.append(style, renderTimesPage(preservedActivityTimeline)); if (preservedActivityTimeline) refreshMountedTimeline(); return; }
+    if (timesMode) {
+      shadow.append(style, renderTimesPage(preservedActivityTimeline));
+      if (preservedActivityTimeline) {
+        refreshMountedTimeline();
+        timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
+      }
+      return;
+    }
     if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);

@@ -489,6 +489,25 @@ test('Calendar opens at the busiest start-time group rather than a lone overnigh
   expect(position.mainTop).toBeLessThan(180);
 });
 
+test('Calendar skips a lone early entry near the main work block', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const day = new Date(2026, 9, 14).getTime();
+  await mount(page, { weeklyCalendar: true, items: [7, 10, 11, 12, 13].map((hour, index) => ({
+    id: `entry:${index}`, url: `https://example.com/${index}`, title: `Task ${index}`,
+    startedAt: day + hour * HOUR, endedAt: day + (hour + 0.5) * HOUR, rowId: 'one',
+  })) });
+  const position = await page.evaluate(() => {
+    window.__timeline.setViewMode('calendar');
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    const main = root.querySelector('.calendar-task[data-task-key="entry:1"]');
+    return { top: main.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+      headerHeight: window.__timeline.__timeline._calendarMetrics.headerHeight };
+  });
+  expect(position.top).toBeGreaterThan(position.headerHeight);
+  expect(position.top).toBeLessThan(180);
+});
+
 test('Calendar favors a dominant group spread across the day over two overnight records', async ({ page }) => {
   await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
   const day = new Date(2026, 9, 12).getTime();

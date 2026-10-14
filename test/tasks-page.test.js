@@ -264,6 +264,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
     } } },
   });
   if (runningStatus) {
+    vm.runInContext(fs.readFileSync(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8'), context);
     const strip = fs.readFileSync(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
     vm.runInContext(`(() => { ${strip.replace(/^import .*;\n/gm, '').replace('export function', 'function')}\nglobalThis.mountRunningStatus = mountRunningStatus; })()`, context);
   }

@@ -47,7 +47,9 @@ test('header menu exposes queued recent-entry management without exposing the to
 test('time inputs are direct text controls without wheel, keyboard stepping, or drag handlers', () => {
   assert.match(source, /hourField\.addEventListener\('input', changed\)/);
   assert.match(source, /minuteField\.addEventListener\('input', changed\)/);
-  assert.doesNotMatch(source, /addEventListener\('wheel'|passive: false|wheelRemainder|WHEEL_THRESHOLD/);
+  const timePicker = source.slice(source.indexOf('function timePicker('), source.indexOf('function timestampAtOriginalOffset('));
+  assert.doesNotMatch(timePicker, /addEventListener\('wheel'|passive: false/);
+  assert.doesNotMatch(source, /wheelRemainder|WHEEL_THRESHOLD/);
   assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown|time-step|time-unit/);
   assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
 });

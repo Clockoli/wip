@@ -30,7 +30,7 @@ test('Times page is a packaged shared-renderer surface with week navigation, fil
   for (const file of ['src/times/times.html', 'src/times/times.css']) assert.equal(fs.existsSync(new URL(`../${file}`, import.meta.url)), true, `${file} must exist`);
   const html = read('src/times/times.html');
   assert.match(html, /clockoli-times-root/);
-  assert.match(content, /isolateShadowHost\(root, \{ wide: timesMode \}\)/);
+  assert.match(content, /isolateShadowHost\(root, \{ wide: true \}\)/);
   assert.match(content, /function weekNavigation\(/);
   assert.match(content, /Previous week/);
   assert.match(content, /Next week/);

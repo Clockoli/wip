@@ -113,6 +113,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/times/times.html',
   'src/ui/interface-width.js',
   'src/ui/running-status.js',
+  'src/ui/tracking-card.js',
   'src/vendor/html2pdf.LICENSE.txt',
   'src/vendor/html2pdf.bundle.min.js',
 ];

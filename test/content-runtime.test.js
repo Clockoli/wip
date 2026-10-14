@@ -6,10 +6,11 @@ import { formatClockDuration } from '../src/domain/reporting.js';
 import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/values.js';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
+const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 // The fake DOM does not mount the real timeline adapter. Render the shared panel's
 // non-timeline body so its tracker controls remain covered by these component tests.
-const domHarnessSource = source.replace(
+const domHarnessSource = trackingCardSource + '\n' + source.replace(
   'renderMenu({ compact: true, onClose: closeFullWidthPopup })',
   'renderMenu({ onClose: closeFullWidthPopup })',
 );
@@ -2110,6 +2111,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     } : undefined },
   });
   vm.runInContext(recoverySource, context);
+  vm.runInContext(trackingCardSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
     globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
@@ -2282,6 +2284,11 @@ test('active strip uses a favicon and saves its editable description with Stop',
     callback({ ok: true, data: state });
   } });
   const menu = harness.renderMenu({ compact: true });
+  const strip = menu.querySelector('.active-task-strip');
+  assert.ok(strip.classList.contains('is-active'));
+  assert.equal(strip.querySelector('.running-status-live').textContent, 'Tracking now');
+  assert.equal(strip.querySelector('.running-status-elapsed').getAttribute('role'), 'timer');
+  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
   assert.match(menu.querySelector('.strip-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
   const description = menu.querySelector('.strip-description');
   description.value = 'Published launch story'; description.oninput();
@@ -3760,6 +3767,7 @@ async function runningStatusHarness(initial) {
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
     confirm: text => { confirmations.push(text); return confirmed; },
   });
+  vm.runInContext(trackingCardSource, context);
   vm.runInContext(moduleSource.replace(/^import .*;\n/gm, '').replace('export function mountRunningStatus', 'function mountRunningStatus'), context);
   const send = async message => {
     calls.push({ ...message });
@@ -3813,6 +3821,10 @@ test('shared running status renders idle totals and unknown summaries without in
 test('shared running status ticks without replacing controls and rereads after Stop', async () => {
   const h = await runningStatusHarness(runningStatusState());
   const link = h.find('running-status-task'), stop = h.find('running-status-stop');
+  assert.equal(h.container.classList.contains('is-active'), true);
+  assert.equal(h.find('running-status-live').textContent, 'Tracking now');
+  assert.equal(h.find('running-status-live').hidden, false);
+  assert.equal(h.find('running-status-metrics').children.length, 2);
   assert.equal(link.textContent, '<img> Fix tracking'); assert.equal(link.children.length, 0);
   assert.equal(link.href, 'https://github.com/acme/app/issues/7');
   assert.equal(link.rel, 'noreferrer'); assert.equal(stop.textContent, 'Stop and save');
@@ -3825,6 +3837,8 @@ test('shared running status ticks without replacing controls and rereads after S
   assert.deepEqual(h.calls[stopIndex], { type: 'STOP' });
   assert.ok(h.calls.slice(stopIndex + 1).some(call => call.type === 'GET_PAGE_STATE'));
   assert.equal(h.find('running-status-idle').hidden, false); assert.equal(stop.hidden, true);
+  assert.equal(h.container.classList.contains('is-active'), false);
+  assert.equal(h.find('running-status-live').hidden, true);
   h.destroy();
 });
 

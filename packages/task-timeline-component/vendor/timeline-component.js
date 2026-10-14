@@ -112,7 +112,7 @@
         width: 100%;
         max-height: 650px;
         overflow: auto;
-        overscroll-behavior: contain;
+        overscroll-behavior: auto;
         outline: none;
         background: #fff;
       }
@@ -3169,10 +3169,15 @@
         ).sort((a, b) => a - b);
         let blockStart = 0, bestStart = 0, bestCount = 1;
         for (let i = 1; i <= starts.length; i++) {
-          if (i < starts.length && starts[i] - starts[i - 1] <= 360) continue;
+          if (i < starts.length && starts[i] - starts[i - 1] <= 240) continue;
           if (i - blockStart > bestCount) { bestStart = blockStart; bestCount = i - blockStart; }
           blockStart = i;
         }
+        // A single early start can bridge into a much denser work block.
+        // Keep sparse days intact, but skip that outlier when the next two
+        // starts form the beginning of the dominant group.
+        if (bestCount >= 4 && starts[bestStart + 1] - starts[bestStart] > 120
+          && starts[bestStart + 2] - starts[bestStart + 1] <= 90) bestStart++;
         const startMinutes = starts.length ? starts[bestStart] : 8 * 60;
         const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, startMinutes - 90)));
         this.calendarViewport.scrollTop = top;
@@ -3211,7 +3216,6 @@
         const maxTop = Math.max(0, metrics.height - viewportHeight);
         targetTop = clamp(item.top - metrics.headerHeight - Math.max(12, verticalOffset), 0, maxTop);
       }
-
       this.calendarViewport.scrollTo({ left: targetLeft, top: targetTop, behavior: 'auto' });
       this.calendarScrollInitialized = true;
       return true;
@@ -4091,7 +4095,25 @@
 
       this.calendarViewport.addEventListener('wheel', e => {
         if (!(e.ctrlKey || e.metaKey)) this.calendarManualScroll = true;
-        if (!(e.ctrlKey || e.metaKey)) return;
+        if (!(e.ctrlKey || e.metaKey)) {
+          if (e.shiftKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+          e.preventDefault();
+          const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.calendarViewport.clientHeight : 1;
+          const delta = e.deltaY * unit;
+          const viewport = this.calendarViewport;
+          const before = viewport.scrollTop;
+          viewport.scrollTop = clamp(before + delta, 0, Math.max(0, viewport.scrollHeight - viewport.clientHeight));
+          let remaining = delta - (viewport.scrollTop - before);
+          for (let parent = this.host.parentElement; parent && Math.abs(remaining) > 0.01;
+            parent = parent.parentElement || parent.getRootNode().host) {
+            const overflow = getComputedStyle(parent).overflowY;
+            if (parent !== this.host.ownerDocument.scrollingElement && overflow !== 'auto' && overflow !== 'scroll') continue;
+            const previous = parent.scrollTop;
+            parent.scrollTop = clamp(previous + remaining, 0, Math.max(0, parent.scrollHeight - parent.clientHeight));
+            remaining -= parent.scrollTop - previous;
+          }
+          return;
+        }
         e.preventDefault();
         let delta = e.deltaY;
         if (e.deltaMode === 1) delta *= 16;
@@ -4295,6 +4317,7 @@
 
     _bindViewportEvents() {
       this.viewport.addEventListener('wheel', e => {
+        if (!e.ctrlKey && !e.metaKey && !e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) return;
         const rect = this.viewport.getBoundingClientRect();
         const anchor = clamp(e.clientX - rect.left, 0, this._viewportWidthNow());
         if (e.ctrlKey || e.metaKey) {

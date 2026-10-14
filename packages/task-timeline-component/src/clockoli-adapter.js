@@ -860,6 +860,14 @@
         styleTasks();
       },
       getViewMode() { return timeline.getViewMode(); },
+      captureCalendarScroll() {
+        return timeline.getViewMode() === 'calendar'
+          ? { top: timeline.calendarViewport.scrollTop, manual: timeline.calendarManualScroll } : null;
+      },
+      restoreCalendarScroll(position) {
+        if (!position || timeline.getViewMode() !== 'calendar') return;
+        timeline.calendarViewport.scrollTop = position.manual ? position.top : timeline.calendarAutoScrollTop;
+      },
       setCalendarDate(value) { timeline.setCalendarDate(value); },
       setCalendarRange(range) { timeline.setCalendarRange(range); },
       shiftCalendar(direction) { timeline.shiftCalendar(direction); },
