@@ -260,7 +260,7 @@ test('accepted start invalidates older recent loads before rendering and can mou
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
   assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
-  assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
+  assert.match(content, /isStopDisabled: Boolean\(\(entry\._active \|\| sameTask\(entry, pageState\.active\)\) && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
   assert.match(content, /if \(!entry \|\| !trackableTaskIdentityOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
@@ -467,10 +467,10 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /strip\.append\(track\)/);
   assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
-  assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
-  assert.match(content, /onStop: item => stopTimelineEntry/);
+  assert.match(worker, /timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
+  assert.match(content, /onStop: item => \{[\s\S]*?sameTask\(entry, pageState\.active\) \? pageState\.active : entry/);
   assert.match(content, /type: 'STOP', description: activeDescriptionValue\(activeEntry\)/);
-  assert.match(timeline, /Stop \$\{formatClockDuration/);
+  assert.match(timeline, /button\.textContent = 'Stop and save'/);
   assert.doesNotMatch(timeline, /STOP /);
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);

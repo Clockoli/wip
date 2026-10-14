@@ -93,6 +93,31 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
 
+test('a completed record of the running task offers Stop and save rather than disabled Start', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { items: [
+    { id: 'entry:old', url: 'https://example.com/c', title: 'Task C', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true, isCurrentTask: true, isStartDisabled: true },
+    { id: 'active:now', url: 'https://example.com/c', title: 'Task C', startedAt: now - 120_000, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
+  ] });
+  await page.locator('#timeline .task[data-task-key="entry:old"]').click();
+  const action = page.locator('#timeline .clockoli-timeline-action.primary');
+  await expect(action).toHaveText('Stop and save');
+  await expect(action).toBeEnabled();
+  await page.locator('#timeline .task[data-task-key="active:now"]').click();
+  await expect(action).toHaveText('Stop and save');
+  await expect(action).toBeEnabled();
+  await page.locator('#timeline .task[data-task-key="entry:old"]').click();
+  await action.click();
+  expect(await page.evaluate(() => window.__calls)).toContainEqual(['stop', 'entry:old']);
+  expect(await page.evaluate(() => window.__calls)).not.toContainEqual(['start', 'entry:old']);
+  await page.evaluate(() => {
+    window.__items = window.__items.filter(item => item.id !== 'active:now').map(item => ({ ...item, isCurrentTask: false, isStartDisabled: false }));
+    window.__timeline.update({ items: window.__items });
+  });
+  await expect(action).toHaveText('Start tracking');
+  await expect(action).toBeEnabled();
+});
+
 test('hides the sole project label across Timeline, Calendar and details, restoring it for multiple projects', async ({ page }) => {
   const now = Date.now();
   const items = [{ id: 'entry:a', url: 'https://example.com/a', title: 'Task A', startedAt: now - HOUR, endedAt: now - HOUR / 2, rowId: 'other', isEditable: true }];
@@ -312,7 +337,7 @@ test('Timeline running action and sub-minute durations show no seconds', async (
   await page.locator('#timeline .task[data-task-key="entry:short"]').click();
   await expect(page.locator('#timeline .details-value').last()).toHaveText('Duration0m');
   await page.locator('#timeline .task[data-task-key="active:now"]').click();
-  await expect(page.locator('#timeline .clockoli-timeline-action[data-started-at]')).toHaveText('Stop 00:00');
+  await expect(page.locator('#timeline .clockoli-timeline-action.primary')).toHaveText('Stop and save');
   await expect(page.locator('#timeline .tracked')).not.toContainText('s');
 });
 
@@ -1509,7 +1534,7 @@ test('a failed Calendar favicon stays failed without an observer recreate loop',
   await expect(image).toHaveCount(1);
 });
 
-test('running action updates in place without dropping keyboard focus', async ({ page }) => {
+test('running action keeps its save label and keyboard focus as time advances', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => {
     const root = document.querySelector('#timeline').shadowRoot;
@@ -1517,20 +1542,21 @@ test('running action updates in place without dropping keyboard focus', async ({
   });
   const before = await page.evaluate(() => {
     const root = document.querySelector('#timeline').shadowRoot;
-    const button = root.querySelector('.clockoli-timeline-action[data-started-at]');
+    const button = root.querySelector('.clockoli-timeline-action.primary');
     button.focus();
     window.__stopButton = button;
     return button.textContent;
   });
   await page.evaluate(() => window.__timeline.update({ now: Date.now() + 60_000 }));
   const after = await page.evaluate(() => ({
-    same: window.__stopButton === document.querySelector('#timeline').shadowRoot.querySelector('.clockoli-timeline-action[data-started-at]'),
+    same: window.__stopButton === document.querySelector('#timeline').shadowRoot.querySelector('.clockoli-timeline-action.primary'),
     focused: document.querySelector('#timeline').shadowRoot.activeElement === window.__stopButton,
     text: window.__stopButton.textContent,
   }));
   expect(after.same).toBeTruthy();
   expect(after.focused).toBeTruthy();
-  expect(after.text).not.toBe(before);
+  expect(after.text).toBe(before);
+  expect(after.text).toBe('Stop and save');
 });
 
 test('rejected Delete restores the exact selected block', async ({ page }) => {
@@ -2133,6 +2159,32 @@ test('the Timeline details pointer connects the hovered block to the details pan
       startsAtTask: Math.abs(rect.top - task.bottom) < 1,
       reachesDetails: Math.abs(rect.bottom - details.top) < 1 };
   })).toMatchObject({ hidden: false, aligned: true, startsAtTask: true, reachesDetails: true });
+});
+
+test('Calendar shows task details above the slotted week navigation and summary, while Timeline keeps them below', async ({ page }) => {
+  await mount(page, { weeklyCalendar: true });
+  const placement = () => page.evaluate(() => {
+    const root = document.querySelector('#timeline').shadowRoot;
+    const details = root.querySelector('.details').getBoundingClientRect();
+    const navigation = document.querySelector('#timeline .week-navigation').getBoundingClientRect();
+    const meta = root.querySelector('.meta').getBoundingClientRect();
+    const chart = root.querySelector('.viewport:not([hidden]), .calendar-view:not([hidden])').getBoundingClientRect();
+    return { aboveWeek: details.bottom <= navigation.top && navigation.bottom <= meta.top && meta.bottom <= chart.top,
+      belowChart: details.top >= chart.bottom };
+  });
+  await page.evaluate(() => {
+    const navigation = document.createElement('div');
+    navigation.className = 'week-navigation';
+    navigation.slot = 'week-navigation';
+    navigation.textContent = 'Week';
+    document.querySelector('#timeline').append(navigation);
+  });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.locator('#timeline .calendar-task').first().click();
+  await expect(page.locator('#timeline .details-title')).toBeVisible();
+  expect(await placement()).toMatchObject({ aboveWeek: true, belowChart: false });
+  await page.evaluate(() => window.__timeline.setViewMode('timeline'));
+  expect(await placement()).toMatchObject({ aboveWeek: false, belowChart: true });
 });
 
 test('Calendar hover stays below day and project labels', async ({ page }) => {

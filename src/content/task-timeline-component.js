@@ -40,6 +40,14 @@
         box-shadow: var(--tt-shadow);
         overflow: hidden;
       }
+      .shell.calendar-mode { display: flex; flex-direction: column; }
+      .shell.calendar-mode slot[name="week-navigation"] { display: block; order: -2; }
+      .shell.calendar-mode .meta { order: -1; }
+      .shell.calendar-mode .details {
+        order: -3;
+        border-top: 0;
+        border-bottom: 1px solid var(--tt-border);
+      }
       .meta {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -765,6 +773,7 @@
       .hint { color: var(--tt-muted); }
     </style>
     <section class="shell">
+      <slot name="week-navigation"></slot>
       <div class="meta">
         <div class="domain-start"></div>
         <div class="tracked">Tracked: 0m</div>
@@ -2801,6 +2810,7 @@
 
     _applyViewModeDom() {
       const calendar = this.viewMode === 'calendar';
+      this.shell.classList.toggle('calendar-mode', calendar);
       this.viewport.hidden = calendar;
       this.calendarView.hidden = !calendar;
       this._updateTimelineMeta();
@@ -4650,7 +4660,7 @@
       resizeStart: editable || running,
       resizeEnd: editable && !running,
       start: !item?.isStartDisabled,
-      stop: running && !item?.isStopDisabled,
+      stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
       delete: running ? !item?.isDeleteDisabled : !pending && !item?.isDeleteDisabled,
     };
   }
@@ -4683,7 +4693,6 @@
     let originalItems = new Map();
     let styleObserver = null;
     let detailsObserver = null;
-    let actionClock = null;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -5044,7 +5053,7 @@
       const existing = timeline.details.querySelector('.clockoli-timeline-actions');
       if (!item) { existing?.remove(); return; }
       const permissions = permissionsFor(item);
-      const mode = item.isRunning || item.endedAt == null ? 'running' : 'completed';
+      const mode = item.isCurrentTask ? 'current' : item.isRunning || item.endedAt == null ? 'running' : 'completed';
       const savedDescription = item.savedDescription ?? item.description ?? '';
       if (existing?.dataset.itemId === String(key) && existing.dataset.mode === mode) {
         const description = existing.querySelector('.clockoli-timeline-description');
@@ -5057,8 +5066,7 @@
         const deletion = existing.querySelector('.danger');
         const primary = existing.querySelector('.primary');
         if (deletion) deletion.disabled = !permissions.delete;
-        if (primary) primary.disabled = mode === 'running' ? !permissions.stop : !permissions.start;
-        updateActionClock();
+        if (primary) primary.disabled = mode === 'completed' ? !permissions.start : !permissions.stop;
         return;
       }
       existing?.remove();
@@ -5107,11 +5115,10 @@
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
         actions.append(button);
       }
-      if ((item.isRunning || item.endedAt == null) && typeof props.onStop === 'function') {
+      if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'clockoli-timeline-action primary';
-        button.dataset.startedAt = String(item.startedAt);
-        button.textContent = `Stop ${formatClockDuration((Number(props.now) || Date.now()) - Number(item.startedAt))}`;
+        button.textContent = 'Stop and save';
         button.disabled = !permissions.stop;
         button.addEventListener('click', () => runAction(button, 'stop', () => props.onStop(sourceItem(key))));
         actions.append(button);
@@ -5135,19 +5142,6 @@
       } finally {
         if (!destroyed) renderActions();
       }
-    }
-
-    function formatClockDuration(milliseconds) {
-      const totalMinutes = Math.max(0, Math.floor(milliseconds / 60_000));
-      const hours = Math.floor(totalMinutes / 60);
-      const minutes = totalMinutes % 60;
-      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-    }
-
-    function updateActionClock() {
-      const button = timeline.details?.querySelector('.clockoli-timeline-action[data-started-at]');
-      if (!button) return;
-      button.textContent = `Stop ${formatClockDuration((Number(props.now) || Date.now()) - Number(button.dataset.startedAt))}`;
     }
 
     function permissionEvent(event) {
@@ -5195,7 +5189,6 @@
     styleObserver.observe(timeline.shadow, { childList: true, subtree: true });
     detailsObserver = new MutationObserver(renderActions);
     detailsObserver.observe(timeline.detailsInfo, { childList: true, subtree: true });
-    actionClock = setInterval(updateActionClock, 1_000);
     hydrateExternalState();
     applyView(initialProps.view);
     styleTasks();
@@ -5244,12 +5237,10 @@
             }
             else timeline._renderTimelineNowLine?.();
             props = candidateProps;
-            updateActionClock();
             return true;
           }
           reconcile(candidateProps, { applyExternalView: Object.hasOwn(next, 'view') });
           props = candidateProps;
-          updateActionClock();
           return true;
         } catch (error) {
           queueMicrotask(() => {
@@ -5263,7 +5254,6 @@
         destroyed = true;
         styleObserver?.disconnect();
         detailsObserver?.disconnect();
-        clearInterval(actionClock);
         timeline.destroy();
       },
       getView: viewFromComponent,

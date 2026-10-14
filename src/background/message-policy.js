@@ -92,9 +92,17 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
   return requested;
 }
 
-export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin) {
-  assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin);
-  return normalizeTaskUrl(payloadTaskUrl);
+export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin, sourceEntry, storedRecords = []) {
+  const kind = assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin);
+  if (kind === 'extension') return normalizeStoredTaskIdentity(payloadTaskUrl);
+  try { return normalizeTaskUrl(payloadTaskUrl); }
+  catch (error) {
+    const identity = normalizeStoredTaskIdentity(payloadTaskUrl);
+    if (!sourceEntry || !storedRecords.some(record => record.id === sourceEntry.id
+        && record.destinationId === sourceEntry.destinationId && record.entryDate === sourceEntry.entryDate
+        && record.taskUrl === identity)) throw new Error('Imported task requires a matching stored record');
+    return identity;
+  }
 }
 
 export function taskUrlForParticipantLoad(payloadTaskUrl, sender, extensionOrigin) {

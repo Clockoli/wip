@@ -39,6 +39,14 @@
         box-shadow: var(--tt-shadow);
         overflow: hidden;
       }
+      .shell.calendar-mode { display: flex; flex-direction: column; }
+      .shell.calendar-mode slot[name="week-navigation"] { display: block; order: -2; }
+      .shell.calendar-mode .meta { order: -1; }
+      .shell.calendar-mode .details {
+        order: -3;
+        border-top: 0;
+        border-bottom: 1px solid var(--tt-border);
+      }
       .meta {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -764,6 +772,7 @@
       .hint { color: var(--tt-muted); }
     </style>
     <section class="shell">
+      <slot name="week-navigation"></slot>
       <div class="meta">
         <div class="domain-start"></div>
         <div class="tracked">Tracked: 0m</div>
@@ -2800,6 +2809,7 @@
 
     _applyViewModeDom() {
       const calendar = this.viewMode === 'calendar';
+      this.shell.classList.toggle('calendar-mode', calendar);
       this.viewport.hidden = calendar;
       this.calendarView.hidden = !calendar;
       this._updateTimelineMeta();

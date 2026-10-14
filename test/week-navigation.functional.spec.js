@@ -66,6 +66,20 @@ async function expectWeekHeaderLayout(root) {
   await expect(section.locator('.domain-end')).toBeHidden();
 }
 
+async function expectCalendarDetailsAboveWeek(root) {
+  const host = root.locator('.task-timeline-host');
+  const [details, navigation, total, chart] = await Promise.all([
+    host.locator('.details').boundingBox(),
+    root.locator('.week-navigation').boundingBox(),
+    host.locator('.tracked').boundingBox(),
+    host.locator('.calendar-view').boundingBox(),
+  ]);
+  expect(details && navigation && total && chart).toBeTruthy();
+  expect(details.y + details.height).toBeLessThanOrEqual(navigation.y);
+  expect(navigation.y + navigation.height).toBeLessThanOrEqual(total.y);
+  expect(total.y + total.height).toBeLessThanOrEqual(chart.y);
+}
+
 function textBounds(locator) {
   return locator.evaluate(element => {
     const range = document.createRange(); range.selectNodeContents(element);
@@ -177,9 +191,13 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.task-timeline-host .calendar-day-header')).toHaveCount(7);
     await expect(activityRoot.locator('.task-timeline-host .calendar-task.running')).toHaveCount(1);
     await expect(activityRoot.locator('.task-timeline-host .calendar-row-name')).toHaveCount(0);
+    await activityRoot.locator('.calendar-task.running').click();
+    await expect(activityRoot.locator('.task-timeline-host .details-title')).toBeVisible();
     await expectWeekHeaderLayout(activityRoot);
+    await expectCalendarDetailsAboveWeek(activityRoot);
     await activity.setViewportSize({ width: 480, height: 900 });
     await expectWeekHeaderLayout(activityRoot);
+    await expectCalendarDetailsAboveWeek(activityRoot);
     await activity.setViewportSize({ width: 1280, height: 900 });
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(activityRoot.locator('.task-timeline-host .calendar-task.running')).toHaveCount(0);
@@ -217,9 +235,13 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(popupRoot.getByRole('button', { name: 'Previous week' })).toBeVisible();
     await expect(popupRoot.locator('.task-timeline-host .calendar-day-header')).toHaveCount(7);
     await expect(popupRoot.locator('.task-timeline-host .calendar-task.running')).toHaveCount(1);
+    await popupRoot.locator('.calendar-task.running').click();
+    await expect(popupRoot.locator('.task-timeline-host .details-title')).toBeVisible();
+    await expectCalendarDetailsAboveWeek(popupRoot);
     await expectWeekHeaderLayout(popupRoot);
     await page.setViewportSize({ width: 480, height: 900 });
     await expectWeekHeaderLayout(popupRoot);
+    await expectCalendarDetailsAboveWeek(popupRoot);
     await page.setViewportSize({ width: 1280, height: 900 });
     await popupRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(popupRoot.locator('.calendar-task').filter({ hasText: 'Previous week entry' })).toBeVisible();

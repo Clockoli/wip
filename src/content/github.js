@@ -183,7 +183,7 @@
       && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
       && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
   }
-  function trackableTaskIdentityOf(value) { return timesMode || popupMode ? storedTaskIdentityOf(value) : taskUrlOf(value); }
+  function trackableTaskIdentityOf(value) { return storedTaskIdentityOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
@@ -776,6 +776,23 @@
     return navigation;
   }
 
+  function placeCalendarWeekNavigation(root, mode) {
+    const host = root.querySelector('.task-timeline-host');
+    if (!host) return;
+    const navigation = [...root.querySelectorAll('.week-navigation')].find(node => node.parentElement !== host)
+      || host.querySelector('.week-navigation');
+    if (!navigation) return;
+    if (mode === 'calendar') {
+      const oldNavigation = host.querySelector('.week-navigation');
+      if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
+      navigation.slot = 'week-navigation';
+      host.append(navigation);
+    } else if (navigation.parentElement === host) {
+      navigation.removeAttribute('slot');
+      root.insertBefore(navigation, root.querySelector(timesMode ? '.times-list-total' : '.timeline-shell'));
+    }
+  }
+
   function shiftWeek(direction) {
     const current = new Date(weekWindow().start);
     current.setDate(current.getDate() + 7 * direction);
@@ -1002,7 +1019,7 @@
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
     recent = recentLoaded && (timesMode || selectedWeekStart !== null)
-      ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial)) : incoming;
+      ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
     if (!Array.isArray(data)) {
       pageState = reconcileTimelineAcceptedActive({
@@ -2139,6 +2156,7 @@
     timeline.hidden = activityViewMode === 'list'; result.hidden = activityViewMode !== 'list';
     filterLabel.hidden = activityViewMode !== 'list'; toolbar.classList.toggle('times-visual', activityViewMode !== 'list');
     body.append(timeline, result, calendarStatus);
+    placeCalendarWeekNavigation(body, activityViewMode);
     const bulk = el('details', undefined, 'bulk-time');
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
     const summary = el('summary', 'Add time'); bulk.append(summary);
@@ -2219,11 +2237,12 @@
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
+        isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active,
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+        isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
           || Boolean(!entry._active && entry._pending)
@@ -2612,7 +2631,8 @@
     const previousDescription = activeDescriptionValue();
     const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
     try {
-      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription,
+        sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } });
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
@@ -2664,6 +2684,7 @@
     const host = el('div', undefined, 'task-timeline-host'); timelineShell.append(host);
     if (compactSurface) compactSurface.host = host;
     section.append(timelineShell, timelineQueueIndicator);
+    placeCalendarWeekNavigation(section, timelineViewMode);
     globalThis.requestAnimationFrame(() => {
       if (!host.isConnected) return;
       try {
@@ -2687,7 +2708,10 @@
         },
         onViewChange: view => { if (timesMode) activityTimelineView = view; else timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
-        onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
+        onStop: item => {
+          const entry = timelineEntriesById.get(item.id);
+          return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
+        },
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
@@ -2869,6 +2893,7 @@
   function applyCompactViewMode() {
     if (!compactSurface) return;
     const list = timelineViewMode === 'list';
+    placeCalendarWeekNavigation(compactSurface.timeline, timelineViewMode);
     compactSurface.timeline.hidden = false;
     const shell = compactSurface.timeline.querySelector('.timeline-shell');
     if (shell) shell.hidden = list;

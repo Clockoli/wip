@@ -15,6 +15,20 @@ const domHarnessSource = source.replace(
 );
 assert.notEqual(domHarnessSource, source);
 
+test('calendar tracking uses the stored identity in both the GitHub panel and Activity', () => {
+  const begin = source.indexOf('  function trackableTaskIdentityOf(value) {');
+  const end = source.indexOf('\n  function taskTitleOf(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const snippet = source.slice(begin, end);
+  for (const timesMode of [false, true]) {
+    const context = vm.createContext({ timesMode, popupMode: false, normalizeTaskUrl, storedTaskIdentityOf: entry => /^(https?:\/\/|[\w-]+\/[\w-]+\/[\w-]+$)/.test(entry.taskUrl) ? entry.taskUrl : null, taskUrlOf: entry => normalizeTaskUrl(entry.taskUrl) });
+    vm.runInContext(`${snippet}\nthis.trackable = trackableTaskIdentityOf;`, context);
+    assert.equal(context.trackable({ taskUrl: 'manticoresoftware/Routines/1-dev-call' }), 'manticoresoftware/Routines/1-dev-call');
+    assert.equal(context.trackable({ taskUrl: 'https://github.com/acme/repo/issues/7' }), 'https://github.com/acme/repo/issues/7');
+    assert.equal(context.trackable({ taskUrl: 'not a task identity' }), null);
+  }
+});
+
 test('extension-context interruption stops stale content timers without rendering an error', () => {
   assert.match(source, /function deactivateExtensionContext\(\) \{[\s\S]*?clearInterval\(tick\)/);
   assert.match(source, /function setError\(error = ''\) \{ if \(isExtensionContextInvalidated\(error\)\) \{ deactivateExtensionContext\(\); return; \}/);
@@ -2627,6 +2641,29 @@ test('Activity Timeline includes the running task from local state without repla
   assert.ok(items.some(item => item.id === 'active:running' && item.isRunning && item.endedAt === null));
 });
 
+test('selected completion of the active task stops the active timer rather than its old record', async () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('completed', '2026-09-05', '08', 'https://example.com/running');
+  const active = { id: 'running', taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: new Date(now - 60_000).toISOString() };
+  const state = { configured: true, active, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, records: [entry], now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'STOP') {
+        state.active = null;
+        callback({ ok: true, data: { entry: { ...entry, id: 'stopped', endedAt: new Date(now).toISOString() } } });
+      } else callback({ ok: true, data: state });
+    },
+  });
+  h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  const item = h.timelineItems(0, now).find(value => value.id === `entry:${entry.id}`);
+  assert.equal(item.isCurrentTask, true);
+  assert.equal(item.isStartDisabled, true);
+  await h.timelineMounts.at(-1).onStop(item);
+  assert.equal(h.messages.some(message => message.type === 'STOP'), true);
+  assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
+});
+
 test('Activity Timeline updates a timer started or stopped elsewhere without discarding completed records', async () => {
   const now = new Date('2026-09-05T12:00:00Z').getTime();
   const entry = activityEntry('completed', '2026-09-05', '08');
@@ -2649,6 +2686,29 @@ test('Activity Timeline updates a timer started or stopped elsewhere without dis
   assert.ok(h.timelineUpdates.at(-1).items.some(item => item.id === `entry:${entry.id}`));
   assert.equal(h.timelineUpdates.at(-1).items.some(item => item.isRunning), false);
   assert.equal(h.timelineMounts.length, initialMounts, 'state changes keep the existing timeline mounted');
+});
+
+test('GitHub Calendar keeps the selected week when a bounded recent-state response arrives on reopen', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const early = activityEntry('early', '2026-10-06', '08');
+  const late = activityEntry('late', '2026-10-09', '08');
+  const state = { configured: true, active: null, pendingWrites: [] };
+  let weekEntries = [early, late];
+  const h = dailyPanelHarness({ state, records: [early, late], now, timelineEnabled: true,
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_WEEK'
+      ? { ...state, recent: message.payload.startDate === '2026-10-05' ? weekEntries : [] }
+      : { ...state, recent: [late] } }); },
+  });
+  const menu = h.renderMenu({ compact: true });
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.ok(h.recentEntry('early'), 'the full week has been loaded');
+  h.applyPageState({ ...state, recent: [late] });
+  assert.ok(h.recentEntry('early'), 'a bounded recent response must not erase earlier entries in the week');
+  assert.ok(h.timelineItems(new Date(2026, 9, 5).getTime(), now).some(item => item.id === 'entry:early'), 'the calendar projection stays intact');
+  weekEntries = [late];
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Next week"]').onclick({ isTrusted: true });
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.equal(h.recentEntry('early'), undefined, 'an authoritative week reload can remove a deleted entry');
 });
 
 test('Activity Timeline starts on Monday and refocuses after a week change', async () => {
@@ -3900,17 +3960,20 @@ test('Activity edits imported time and metadata without submitting a non-URL as 
   }
 });
 
-test('Imported identities cannot be restarted from the timeline', async () => {
+test('imported identities can be restarted from the GitHub calendar with record provenance', async () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const entry = activityEntry('1', '2026-09-05', '08', identity);
+  entry.destinationId = 'github:1';
   // activityEntry times are UTC, so `now` must be a UTC instant too; a local
   // noon at UTC+4 or further east is not after the entry's start, so it is dropped.
   const now = Date.parse('2026-09-05T12:00:00Z');
   const h = dailyPanelHarness({ records: [entry], now,
     state: { configured: true, active: null, pendingWrites: [] } });
-  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, true);
-  assert.equal(await h.restartTimelineEntry(entry), false);
-  assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
+  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, false);
+  assert.equal(await h.restartTimelineEntry(entry), true);
+  const request = h.messages.find(message => message.type === 'SWITCH_TASK');
+  assert.equal(request.taskUrl, identity);
+  assert.deepEqual(structuredClone(request.sourceEntry), { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate });
 });
 
 test('Activity only permits replacing an imported identity with a valid task URL', async () => {

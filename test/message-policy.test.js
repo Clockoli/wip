@@ -174,9 +174,22 @@ test('page Start does not fall back to the original document when the tab has le
 
 test('only extension pages can start an imported identity', () => {
   assert.equal(taskUrlForStart('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
+  assert.equal(taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
   assert.throws(() => taskUrlForStart('acme/project/imported-task', content, origin), /task URL/i);
-  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /task URL/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /stored record/i);
   assert.throws(() => taskUrlForStart('acme/project/bad task', extension, origin), /task URL/i);
+});
+
+test('content timeline switch accepts an imported identity only with a matching stored record', () => {
+  const identity = 'manticoresoftware/Routines/1-dev-call';
+  const sourceEntry = { id: 'record-1', destinationId: 'github:1', entryDate: '2026-10-12' };
+  const records = [{ ...sourceEntry, taskUrl: identity }];
+  assert.equal(taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, records), identity);
+  for (const invalid of [
+    [], [{ ...records[0], id: 'other' }], [{ ...records[0], destinationId: 'github:2' }],
+    [{ ...records[0], entryDate: '2026-10-13' }], [{ ...records[0], taskUrl: 'acme/other/task' }],
+  ]) assert.throws(() => taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, invalid), /stored record/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/bad task', content, origin, sourceEntry, records), /task URL/i);
 });
 
 test('timeline task switching may select a previously tracked task from another GitHub page', () => {

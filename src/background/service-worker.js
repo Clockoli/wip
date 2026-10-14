@@ -6,7 +6,7 @@ import {
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
-import { taskUrlOf } from '../domain/values.js';
+import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
@@ -1186,9 +1186,27 @@ async function handle(message, sender) {
       return { ...result, destinationId };
     }
     case 'SWITCH_TASK': {
-      const taskUrl = message.timelineTask
-        ? taskUrlForTimelineSwitch(message.taskUrl ?? message.issue, sender, extensionOrigin)
-        : taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
+      const timelineTask = message.timelineTask === true;
+      const requestedTask = message.taskUrl ?? message.issue;
+      let storedRecords = [];
+      if (timelineTask && assertMessageAllowed('SWITCH_TASK', sender, extensionOrigin) === 'content') {
+        let pageTask = false;
+        try { normalizeTaskUrl(requestedTask); pageTask = true; } catch { /* imported identity requires record proof */ }
+        if (!pageTask) {
+          const source = message.sourceEntry;
+          if (!source || typeof source.id !== 'string' || source.id.length > 100
+              || !/^github:[1-9]\d*$/.test(source.destinationId)
+              || typeof source.entryDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(source.entryDate)
+              || new Date(`${source.entryDate}T00:00:00.000Z`).toISOString().slice(0, 10) !== source.entryDate) {
+            throw new Error('Imported task requires a valid source record');
+          }
+          const loaded = await loadTimes({ payload: { startDate: source.entryDate, endDate: source.entryDate } }, sender);
+          if (!loaded.configured || loaded.partial) throw new Error('Imported task source record is unavailable');
+          storedRecords = loaded.recent;
+        }
+      }
+      const taskUrl = timelineTask ? taskUrlForTimelineSwitch(requestedTask, sender, extensionOrigin, message.sourceEntry, storedRecords)
+        : taskUrlForStart(requestedTask, sender, extensionOrigin);
       const targetDestinationId = await resolveStartDestinationId(store, taskUrl);
       const sourceDestinationId = await activeDestinationId(store);
       if (!sourceDestinationId || sourceDestinationId === targetDestinationId) {
