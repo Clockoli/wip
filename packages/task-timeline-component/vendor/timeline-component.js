@@ -1091,7 +1091,7 @@
         ? this._calendarSegments().map(segment => `${segment.dayStart}:${segment.segmentStart}`).join('|') : '';
       const atAutomaticCalendarPosition = !this.calendarManualScroll && (
         Math.abs(this.calendarViewport.scrollTop - this.calendarAutoScrollTop) < 1
-        || this.calendarAutoFocusPending && this.calendarViewport.scrollTop === 0
+        || this.calendarViewport.scrollTop === 0
       );
 
       this._clearRunningTimer();
@@ -1131,7 +1131,7 @@
 
       this.baseDomainEnd = this.domainEnd;
       if (!preserveHistory) this.clearHistory();
-      if (this.viewMode === 'calendar' && this.calendarAutoFocusPending) {
+      if (this.viewMode === 'calendar' && (this.calendarAutoFocusPending || atAutomaticCalendarPosition)) {
         const nextCalendarStarts = this._calendarSegments().map(segment => `${segment.dayStart}:${segment.segmentStart}`).join('|');
         if (nextCalendarStarts && nextCalendarStarts !== previousCalendarStarts) {
           if (atAutomaticCalendarPosition) this.calendarScrollInitialized = false;
@@ -4093,6 +4093,10 @@
         }
       });
 
+      this.calendarViewport.addEventListener('pointerdown', e => {
+        const right = this.calendarViewport.getBoundingClientRect().right;
+        if (e.target === this.calendarViewport && e.clientX >= right - 18) this.calendarManualScroll = true;
+      });
       this.calendarViewport.addEventListener('wheel', e => {
         if (!(e.ctrlKey || e.metaKey)) this.calendarManualScroll = true;
         if (!(e.ctrlKey || e.metaKey)) {

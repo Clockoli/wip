@@ -1192,9 +1192,14 @@
       try {
         const before = visiblePanelStateKey();
         const beforeRecent = visibleRecentKey();
+        const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
         const data = await send({ type: 'GET_PAGE_STATE' });
         applyPageState(data);
-        if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+        // The page-state cache is bounded and cannot replace a complete Activity week.
+        if (timesMode) {
+          const remainingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
+          if ([...pendingIds].some(id => !remainingIds.has(id))) await refreshRecent(true);
+        } else if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
         else updatePanelClocks();
       } catch { schedulePendingRefresh(); }

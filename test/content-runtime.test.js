@@ -3010,6 +3010,31 @@ test('Activity Calendar leaves the mounted week intact and reports a failed hist
   assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Could not load this week.');
 });
 
+test('pending-write polling does not replace a loaded Calendar week with bounded recent cache', async () => {
+  const now = new Date(2026, 9, 8, 12).getTime();
+  const records = ['05', '06', '07', '08', '09'].map(day => activityEntry(day, `2026-10-${day}`, '10'));
+  const cached = records.slice(3);
+  const pending = { id: 'edit-first-monday', operation: 'editEntry', status: 'pending' };
+  const anotherPending = { id: 'other-write', operation: 'editEntry', status: 'pending' };
+  let pollingPending = true;
+  const h = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records, now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'GET_PAGE_STATE'
+      ? { configured: true, active: null, recent: cached, pendingWrites: pollingPending ? [pending, anotherPending] : [anotherPending], pendingCount: pollingPending ? 2 : 1 }
+      : { configured: true, active: null, recent: records, pendingWrites: [] } }); },
+  });
+  h.renderActivity();
+  h.applyPageState({ configured: true, active: null, pendingWrites: [pending, anotherPending], pendingCount: 2 });
+  const poll = [...h.timeouts.values()].find(timer => timer.delay === 500);
+  assert.ok(poll, 'an accepted boundary edit schedules a page-state poll');
+  await poll.callback();
+  for (const record of records) assert.ok(h.recentEntry(record.id), `${record.entryDate} must survive while the edit is pending`);
+  pollingPending = false;
+  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'), 'a completed edit reloads the whole week while another write remains pending');
+  for (const record of records) assert.ok(h.recentEntry(record.id), `${record.entryDate} must survive after synchronization`);
+});
+
 test('popup Calendar shows the week spinner until the complete week response arrives', async () => {
   const now = new Date(2026, 8, 5, 12).getTime();
   const state = { configured: true, active: null, pendingWrites: [] };

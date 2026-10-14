@@ -647,6 +647,54 @@ test('Calendar refocuses after week load even if cached overnight entries were a
   expect(position.after).toBeGreaterThan(position.before);
 });
 
+test('Calendar refocuses early records when a cached partial week is completed', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const monday = new Date(2026, 9, 5).getTime();
+  const entry = (id, day, hour) => ({ id, url: `https://example.com/${id}`, title: id,
+    startedAt: monday + day * 24 * HOUR + hour * HOUR,
+    endedAt: monday + day * 24 * HOUR + (hour + 1) * HOUR, rowId: 'one' });
+  const cached = [entry('late:one', 3, 18), entry('late:two', 4, 19), entry('late:three', 4, 20)];
+  const early = [entry('monday', 0, 9 + 40 / 60), entry('tuesday', 1, 10),
+    entry('wednesday:one', 2, 11), entry('wednesday:two', 2, 12)];
+  await mount(page, { weeklyCalendar: true, items: [] });
+  const position = await page.evaluate(({ monday, cached, early }) => {
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    calendar.setCalendarRange({ start: monday, end: monday + 7 * 24 * 60 * 60 * 1000 });
+    calendar.update({ items: cached });
+    const root = document.querySelector('#timeline').shadowRoot;
+    const viewport = root.querySelector('.calendar-viewport');
+    const cachedScroll = viewport.scrollTop;
+    calendar.update({ items: [...cached, ...early] });
+    const mondayCard = root.querySelector('.calendar-task[data-task-key="monday"]');
+    return { cachedScroll, finalScroll: viewport.scrollTop, count: root.querySelectorAll('.calendar-task').length,
+      top: mondayCard.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+      headerHeight: calendar.__timeline._calendarMetrics.headerHeight,
+      height: viewport.clientHeight };
+  }, { monday, cached, early });
+  expect(position.count).toBe(7);
+  expect(position.top).toBeGreaterThan(position.headerHeight);
+  expect(position.top).toBeLessThan(position.height);
+  const manualTop = await page.evaluate(({ cached, early, earlier }) => {
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }));
+    window.__timeline.update({ items: [...cached, ...early, earlier] });
+    return viewport.scrollTop;
+  }, { cached, early, earlier: entry('earlier', 0, 8) });
+  expect(manualTop).toBe(0);
+  const dragTop = await page.evaluate(({ monday, cached, early, earlier }) => {
+    const viewport = document.querySelector('#timeline').shadowRoot.querySelector('.calendar-viewport');
+    window.__timeline.setCalendarRange({ start: monday, end: monday + 7 * 24 * 60 * 60 * 1000 });
+    window.__timeline.update({ items: cached });
+    viewport.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: viewport.getBoundingClientRect().right - 2 }));
+    viewport.scrollTop = 0;
+    window.__timeline.update({ items: [...cached, ...early, earlier] });
+    return viewport.scrollTop;
+  }, { monday, cached, early, earlier: entry('earlier', 0, 8) });
+  expect(dragTop).toBe(0);
+});
+
 test('Calendar current-day total follows an active timer within the same wall-clock minute', async ({ page }) => {
   const now = new Date(2026, 9, 14, 12, 0, 5);
   const day = new Date(2026, 9, 14).getTime();
