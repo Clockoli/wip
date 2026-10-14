@@ -206,7 +206,7 @@ Tags are `X.Y.Z` with no `v` prefix. Before tagging, update the version and matc
 `.github/workflows/release.yml`:
 
 - checks that tag and manifest version match, runs tests, validation and Firefox lint on Ubuntu;
-- builds Chrome ZIP, Firefox XPI and `Clockoli-X.Y.Z-source.zip` (`git archive` of the tag);
+- builds Chrome ZIP, Firefox XPI, Safari web-extension ZIP (`Clockoli-X.Y.Z-safari-extension.zip`, for Safari's Add Temporary Extension) and `Clockoli-X.Y.Z-source.zip` (`git archive` of the tag);
 - signs Firefox only when AMO signing secrets are configured; partial credentials fail;
 - builds Safari on macOS with `github.run_number` as the build number, always producing the unsigned app and adding signed artifacts when all Apple secrets exist;
 - collects all files into the existing `release-zip` Actions artifact, then passes that artifact to `Muvon/ci-workflow` for the GitHub release and changelog notes.

@@ -39,6 +39,7 @@ jobs:
           fi
       - run: python3 scripts/build-release.py "$RUNNER_TEMP/Clockoli-$TAG.zip"
       - run: python3 scripts/build-release.py --target firefox "$RUNNER_TEMP/Clockoli-$TAG-firefox.xpi"
+      - run: python3 scripts/build-release.py --target safari "$RUNNER_TEMP/Clockoli-$TAG-safari-extension.zip"
       - run: npm run lint:firefox
       - run: git archive --format=zip --output="$RUNNER_TEMP/Clockoli-$TAG-source.zip" "$TAG"
       - name: Detect Firefox signing configuration

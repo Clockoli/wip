@@ -42,14 +42,33 @@ Clockoli fits teams that already work in GitHub and care more about owning and a
 
 ## Install
 
-| Browser | How to install |
-|---|---|
-| **Chrome and other Chromium browsers** (102+) | [Add Clockoli from the Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl). It updates automatically. |
-| **Firefox** (140+) | Download the signed `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and install it from `about:addons` → gear menu → **Install Add-on From File**. A release without a signed XPI can only be loaded temporarily. |
-| **Safari** (18+, macOS) | Download `Clockoli-X.Y.Z-safari-unsigned.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases), open `Clockoli.app`, allow unsigned extensions in Safari's Developer settings, then enable Clockoli in Settings → Extensions. |
+**Chrome and other Chromium browsers (102+):** [add Clockoli from the Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl). It updates automatically.
 
-> [!NOTE]
-> Clockoli is not yet listed on addons.mozilla.org or the Mac App Store, so Firefox and Safari installs from release files do not update automatically. Store reviews can also make the Chrome Web Store version trail the latest GitHub release. [Getting started](docs/getting-started.md#1-install-clockoli) covers every install path, including loading this repository unpacked for development.
+<details>
+<summary><strong>Firefox (140+) and Safari (18+, macOS)</strong>: manual install from a GitHub release</summary>
+
+<br>
+
+Clockoli is not yet listed on addons.mozilla.org or the Mac App Store, so these installs do not update automatically.
+
+**Firefox**
+
+1. Download `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases).
+2. Open `about:addons`, choose the gear menu → **Install Add-on From File**, and select the file.
+
+A release without a signed XPI can only be loaded temporarily, from `about:debugging#/runtime/this-firefox`.
+
+**Safari**
+
+1. Download `Clockoli-X.Y.Z-safari-extension.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
+2. In Safari Settings → Advanced, turn on **Show features for web developers**.
+3. In Safari Settings → Developer, choose **Add Temporary Extension…** and select the extracted folder.
+
+Safari removes temporary extensions after 24 hours or when you quit Safari; add the folder again to keep using Clockoli. A signed Safari app will remove this step.
+
+</details>
+
+Store reviews can make the Chrome Web Store version trail the latest GitHub release. [Getting started](docs/getting-started.md#1-install-clockoli) covers every install path, including loading this repository unpacked for development.
 
 ## Quick start
 
