@@ -782,9 +782,9 @@
     const navigation = [...root.querySelectorAll('.week-navigation')].find(node => node.parentElement !== host)
       || host.querySelector('.week-navigation');
     if (!navigation) return;
+    const oldNavigation = host.querySelector('.week-navigation');
+    if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
     if (mode === 'calendar') {
-      const oldNavigation = host.querySelector('.week-navigation');
-      if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
       navigation.slot = 'week-navigation';
       host.append(navigation);
     } else if (navigation.parentElement === host) {
