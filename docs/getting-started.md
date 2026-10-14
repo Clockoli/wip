@@ -27,12 +27,13 @@ The unsigned `Clockoli-X.Y.Z-firefox.xpi` is for store submission and temporary 
 
 ### Safari
 
-1. Download `Clockoli-X.Y.Z-safari-unsigned.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
-2. Move `Clockoli.app` to Applications and open it. If macOS blocks it, choose **Open Anyway** in System Settings → Privacy & Security.
-3. In Safari Settings → Advanced, enable features for web developers. Then, in Settings → Developer, enable **Allow unsigned extensions**.
-4. Enable Clockoli in Settings → Extensions.
+1. Download `Clockoli-X.Y.Z-safari-extension.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
+2. In Safari Settings → Advanced, turn on **Show features for web developers**.
+3. In Safari Settings → Developer, choose **Add Temporary Extension…** and select the extracted folder. It must contain `manifest.json` at its top level.
 
-Safari can turn off **Allow unsigned extensions** when it restarts; enable it again if Clockoli disappears. When a release includes `Clockoli-X.Y.Z-safari.zip`, it contains the signed, notarized app and does not need unsigned extensions.
+Safari removes temporary extensions after 24 hours or when you quit Safari ([Apple documentation](https://developer.apple.com/documentation/safariservices/running-your-safari-web-extension)). Add the folder again to keep using Clockoli. Let pending changes sync before you quit Safari.
+
+The `Clockoli-X.Y.Z-safari-unsigned.zip` app is ad-hoc signed and not notarized, so macOS can refuse to open it on another Mac. When a release includes `Clockoli-X.Y.Z-safari.zip`, it contains the signed, notarized app: move `Clockoli.app` to Applications, open it once, and enable Clockoli in Safari Settings → Extensions. That installation stays across restarts.
 
 ### Development checkout (Chromium)
 

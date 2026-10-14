@@ -32,6 +32,7 @@ Chrome's original manifest and ZIP format are preserved. Its existing `minimum_c
 | `Clockoli-X.Y.Z-firefox.xpi` | AMO upload or Firefox temporary loading |
 | `Clockoli-X.Y.Z-firefox-signed.xpi` | Optional unlisted AMO-signed file installation |
 | `Clockoli-X.Y.Z-source.zip` | Tagged source for AMO review; not an extension installation package |
+| `Clockoli-X.Y.Z-safari-extension.zip` | Safari web-extension files; extract and use Safari's **Add Temporary Extension…** |
 | `Clockoli-X.Y.Z-safari-unsigned.zip` | Ad-hoc signed macOS app for Allow Unsigned Extensions |
 | `Clockoli-X.Y.Z-safari.zip` | Optional Developer ID app, notarized and stapled |
 | `Clockoli-X.Y.Z-safari.pkg` | Optional Mac App Store upload through Transporter |
