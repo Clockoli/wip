@@ -118,7 +118,8 @@ test('Activity can restart an imported task identity without inventing a URL', (
   assert.match(content, /function trackableTaskIdentityOf\(value\)/);
   assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\)/);
   assert.match(content, /taskUrl: trackableTaskIdentityOf\(entry\)/);
-  assert.match(content, /resume\.disabled = !trackableTaskIdentityOf\(entry\)/);
+  assert.match(content, /if \(\(timesMode \|\| popupMode \|\| fullWidthPopupOpen\) && trackableTaskIdentityOf\(entry\)\)/);
+  assert.match(content, /else await restartTimelineEntry\(entry\)/);
 });
 
 test('timeline switch adopts the worker timestamp without overriding later manual scroll', () => {

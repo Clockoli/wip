@@ -32,12 +32,15 @@ const crossing = { id: 'cross-week', taskUrl: 'https://github.com/acme/app/issue
   _path: 'times/' + day(saturday).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 3 };
 globalThis.weekReads = [];
 globalThis.includeCrossWeek = false;
+globalThis.holdNextWeekRead = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_TIMES') {
     globalThis.weekReads.push({ type: message.type, ...message.payload });
-    respond({ ok: true, data: { configured: true, recent: [record, current, ...(globalThis.includeCrossWeek ? [crossing] : [])].filter(entry =>
+    const finish = () => respond({ ok: true, data: { configured: true, recent: [record, current, ...(globalThis.includeCrossWeek ? [crossing] : [])].filter(entry =>
       (message.payload.startDate <= entry.entryDate && message.payload.endDate >= entry.entryDate)
       || entry === crossing && message.payload.startDate === day(monday) && entry.endedAt > mondayStart.toISOString()) } });
+    if (globalThis.holdNextWeekRead) { globalThis.holdNextWeekRead = false; globalThis.finishHeldWeekRead = finish; return true; }
+    finish();
   } else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { configured: true, active, recent: [current] } });
   else if (message.type === 'GET_PAGE_STATE' || message.type === 'GET_STATE') {
     respond({ ok: true, data: { configured: true, active, pendingWrites: [], pendingCount: 0,
@@ -335,7 +338,12 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectWeekHeaderLayout(activityRoot);
     await expectCalendarDetailsAboveWeek(activityRoot);
     await activity.setViewportSize({ width: 1280, height: 900 });
+    await worker.evaluate(() => { globalThis.holdNextWeekRead = true; });
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
+    await expect(activityRoot.locator('.calendar-week-loading')).toBeVisible();
+    expect(await activityRoot.locator('.calendar-week-spinner').evaluate(element => getComputedStyle(element).width)).toBe('64px');
+    await worker.evaluate(() => { globalThis.finishHeldWeekRead(); globalThis.finishHeldWeekRead = null; });
+    await expect(activityRoot.locator('.calendar-week-loading')).toBeHidden();
     await expect(activityRoot.locator('.task-timeline-host .calendar-task.running')).toHaveCount(0);
     await expect(activityRoot.locator('.task-timeline-host .calendar-day-header')).toHaveCount(7);
     await expect(activityRoot.locator('.task-timeline-host .calendar-task')).toHaveCount(1);
@@ -451,10 +459,16 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectWeekHeaderLayout(popupRoot);
     await expectCalendarDetailsAboveWeek(popupRoot);
     await page.setViewportSize({ width: 1280, height: 900 });
+    await worker.evaluate(() => { globalThis.holdNextWeekRead = true; });
     await popupRoot.getByRole('button', { name: 'Previous week' }).click();
+    await expect(popupRoot.locator('.calendar-week-loading')).toBeVisible();
+    await worker.evaluate(() => { globalThis.finishHeldWeekRead(); globalThis.finishHeldWeekRead = null; });
+    await expect(popupRoot.locator('.calendar-week-loading')).toBeHidden();
     await expect(popupRoot.locator('.calendar-task').filter({ hasText: 'Previous week entry' })).toBeVisible();
     await popupRoot.getByRole('button', { name: 'List', exact: true }).click();
     await expect(popupRoot.getByRole('link', { name: 'Current week entry' })).toBeVisible();
+    await expect(popupRoot.locator('.today-list.activity-list .entry-record')).not.toHaveCount(0);
+    await expect(popupRoot.locator('.today-list.activity-list .entry-date-header')).not.toHaveCount(0);
     await expect(popupRoot.getByRole('button', { name: 'Previous week' })).toBeVisible({ timeout: 5000 });
     await popupRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(popupRoot.getByRole('link', { name: 'Previous week entry' })).toBeVisible();
@@ -482,6 +496,12 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.calendar-day-header').first()).toContainText(new Date().getDay() === 1 ? 'Tracked: 2h' : 'Tracked: 1h');
     await activityRoot.getByRole('button', { name: 'List', exact: true }).click();
     await expect(activityRoot.locator('.times-results').getByRole('link', { name: 'Cross-week entry' })).toBeVisible();
+    const listRow = root => root.locator('.activity-list .entry-record').first().evaluate(node => {
+      const css = getComputedStyle(node);
+      return { children: [...node.children].map(child => child.className), padding: css.padding,
+        border: css.borderBottomWidth, background: css.backgroundColor, radius: css.borderRadius };
+    });
+    expect(await listRow(popupRoot)).toEqual(await listRow(activityRoot));
     const toolbar = await context.newPage();
     toolbar.on('pageerror', error => errors.push(error.message));
     await toolbar.setViewportSize({ width: 420, height: 650 });
@@ -503,6 +523,8 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectViewTabsBelowTracking(toolbarRoot);
     await toolbarRoot.getByRole('button', { name: 'List', exact: true }).click();
     await expectViewTabsBelowTracking(toolbarRoot, 'List');
+    await expect(toolbarRoot.locator('.today-list.activity-list .entry-record')).not.toHaveCount(0);
+    expect(await toolbarRoot.locator('.today-list').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
     await toolbarRoot.getByRole('button', { name: 'Timeline', exact: true }).click();
     await toolbar.setViewportSize({ width: 420, height: 520 });
     await expectPanelScroll(toolbar, toolbarRoot, '.menu');

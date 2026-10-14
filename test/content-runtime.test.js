@@ -2245,7 +2245,7 @@ test('daily strip omits idle branding and panel List keeps its week navigation',
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
   assert.ok(!nodes.some(node => node.textContent === 'Yesterday task'));
   assert.ok(nodes.some(node => node.classList?.contains('entry-pending')));
-  assert.ok(nodes.some(node => node.textContent === '▶ Continue'));
+  assert.ok(menu.querySelector('.today-list').querySelector('.entry-date-header'));
   assert.equal(menu.querySelector('.today-list').hidden, true);
   assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
   harness.setTimelineViewMode('list');
@@ -2944,13 +2944,47 @@ test('Activity Calendar ignores an older week response after navigating again', 
   const second = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
   const third = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 17).getTime(), end: new Date(2026, 7, 24).getTime() });
   assert.equal(loads.length, 3);
-  loads[2].callback({ ok: true, data: { configured: true, recent: [newest] } }); await third;
+  const overlay = activity.querySelector('.calendar-week-loading');
+  assert.ok(overlay, 'Calendar has a large in-place loading indicator');
+  assert.equal(overlay.hidden, false);
+  assert.equal(overlay.getAttribute('role'), 'status');
   loads[1].callback({ ok: true, data: { configured: true, recent: [older] } }); await second;
+  assert.equal(overlay.hidden, false, 'a superseded response does not dismiss the current load');
+  loads[2].callback({ ok: true, data: { configured: true, recent: [newest] } }); await third;
+  assert.equal(overlay.hidden, true, 'the canceled initial read cannot keep the selected week loading');
   loads[0].callback({ ok: false, error: { message: 'Superseded read' } }); await first;
+  assert.equal(overlay.hidden, true, 'a canceled read cannot restore the spinner');
   assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${newest.id}`));
   assert.equal(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${older.id}`), false);
   assert.equal(harness.debugWeek().errorText, '', 'an obsolete initial load does not report an error');
   assert.equal(harness.timelineMounts.length, 1);
+});
+
+test('Activity Calendar navigation dismisses a pending initial page-state load', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const pageStates = [], weeks = [];
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'GET_PAGE_STATE') pageStates.push(callback);
+      else if (message.type === 'LOAD_TIMES') weeks.push(callback);
+      else callback({ ok: true, data: state });
+    },
+  });
+  const activity = harness.renderActivity();
+  harness.frames.splice(0).forEach(frame => frame());
+  const first = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  assert.equal(pageStates.length, 1);
+  const overlay = activity.querySelector('.calendar-week-loading');
+  assert.equal(overlay.hidden, false);
+  const next = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
+  assert.equal(weeks.length, 1);
+  weeks[0]({ ok: true, data: { ...state, recent: [] } }); await next;
+  assert.equal(overlay.hidden, true, 'the pending page-state read must not retain the week spinner');
+  pageStates[0]({ ok: true, data: { ...state, recent: [] } }); await first;
+  assert.equal(weeks.length, 1, 'a canceled initial load does not start another week read');
+  assert.equal(overlay.hidden, true);
 });
 
 test('Activity Calendar leaves the mounted week intact and reports a failed historical read', async () => {
@@ -2968,11 +3002,59 @@ test('Activity Calendar leaves the mounted week intact and reports a failed hist
   await activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
   const displayedWeek = activity.querySelector('.week-navigation-label').textContent;
   await harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
+  assert.equal(activity.querySelector('.calendar-week-loading').hidden, true, 'failed reads dismiss the spinner');
   assert.equal(harness.timelineMounts.length, 1);
   assert.equal(activity.querySelector('.week-navigation-label').textContent, displayedWeek);
   assert.equal(harness.timelineUpdates.at(-1).totalRange.start, new Date(2026, 7, 31).getTime());
   assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${entry.id}`));
   assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Could not load this week.');
+});
+
+test('pending-write polling does not replace a loaded Calendar week with bounded recent cache', async () => {
+  const now = new Date(2026, 9, 8, 12).getTime();
+  const records = ['05', '06', '07', '08', '09'].map(day => activityEntry(day, `2026-10-${day}`, '10'));
+  const cached = records.slice(3);
+  const pending = { id: 'edit-first-monday', operation: 'editEntry', status: 'pending' };
+  const anotherPending = { id: 'other-write', operation: 'editEntry', status: 'pending' };
+  let pollingPending = true;
+  const h = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records, now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'GET_PAGE_STATE'
+      ? { configured: true, active: null, recent: cached, pendingWrites: pollingPending ? [pending, anotherPending] : [anotherPending], pendingCount: pollingPending ? 2 : 1 }
+      : { configured: true, active: null, recent: records, pendingWrites: [] } }); },
+  });
+  h.renderActivity();
+  h.applyPageState({ configured: true, active: null, pendingWrites: [pending, anotherPending], pendingCount: 2 });
+  const poll = [...h.timeouts.values()].find(timer => timer.delay === 500);
+  assert.ok(poll, 'an accepted boundary edit schedules a page-state poll');
+  await poll.callback();
+  for (const record of records) assert.ok(h.recentEntry(record.id), `${record.entryDate} must survive while the edit is pending`);
+  pollingPending = false;
+  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'), 'a completed edit reloads the whole week while another write remains pending');
+  for (const record of records) assert.ok(h.recentEntry(record.id), `${record.entryDate} must survive after synchronization`);
+});
+
+test('popup Calendar shows the week spinner until the complete week response arrives', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const loads = [];
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html',
+    respond(message, callback) {
+      if (message.type === 'LOAD_WEEK') loads.push(callback);
+      else callback({ ok: true, data: state });
+    },
+  });
+  const menu = h.renderMenu({ compact: true }); h.attachCompact(menu);
+  h.frames.splice(0).forEach(frame => frame());
+  h.setTimelineViewMode('calendar');
+  assert.equal(loads.length, 1);
+  const overlay = menu.querySelector('.calendar-week-loading');
+  assert.ok(overlay);
+  assert.equal(overlay.hidden, false);
+  loads[0]({ ok: true, data: { ...state, recent: [], partial: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(overlay.hidden, true, 'partial data is reported as an error, not an endless spinner');
 });
 
 test('Activity List restores its week and entries when an arrow read fails', async () => {
@@ -2995,37 +3077,27 @@ test('Activity List restores its week and entries when an arrow read fails', asy
   assert.equal(h.debugWeek().errorText, 'Week unavailable');
 });
 
-test('List shows favicons and editable descriptions below task titles', async () => {
+test('popup List uses the Activity record controls, task identity and description editor', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', taskTitle: 'External work', description: 'Initial note', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3_600_000).toISOString(), endedAt: new Date(now - 1_800_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
   const state = { configured: true, active: null, pendingWrites: [] };
-  const harness = dailyPanelHarness({ state, records: [entry], now, respond(message, callback) { callback({ ok: true, data: state }); } });
+  const harness = dailyPanelHarness({ state, records: [entry], now, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html', respond(message, callback) { callback({ ok: true, data: state }); } });
   const menu = harness.renderMenu({ compact: true });
-  assert.match(menu.querySelector('.today-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
-  const description = menu.querySelector('.today-description');
-  assert.equal(description.value, 'Initial note');
-  description.value = 'Updated note'; await description.onchange();
-  const edit = harness.messages.find(message => message.type === 'QUEUE_ENTRY_EDIT');
-  assert.equal(edit.payload.edits.description, 'Updated note');
+  assert.match(menu.querySelector('.entry-record-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  assert.equal(menu.querySelector('.entry-description-link').textContent, 'Initial note');
+  assert.ok(menu.querySelector('.entry-track-control'));
+  assert.ok(menu.querySelector('.entry-edit'));
+  assert.ok(menu.querySelector('.entry-delete'));
 });
 
-test('List keeps a newer description draft while an older save finishes', async () => {
+test('popup List uses the same grouped entry and time controls as Activity', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', description: 'Initial', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3_600_000).toISOString(), endedAt: new Date(now - 1_800_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
-  let editCallback;
-  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now, respond(message, callback) {
-    if (message.type === 'QUEUE_ENTRY_EDIT') { editCallback = callback; return; }
-    callback({ ok: true, data: {} });
-  } });
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html' });
   const menu = harness.renderMenu({ compact: true });
-  const description = menu.querySelector('.today-description');
-  description.value = 'First'; description.oninput();
-  const saving = description.onchange();
-  await Promise.resolve();
-  description.value = 'Second'; description.oninput();
-  editCallback({ ok: true, data: { operationId: 'entry-edit' } });
-  await saving;
-  assert.equal(harness.surface().today.querySelector('.today-description').value, 'Second');
+  const list = menu.querySelector('.today-list');
+  assert.ok(list.classList.contains('activity-list'));
+  for (const selector of ['.entry-date-header', '.entry-record-task-identity', '.entry-time-row', '.entry-edit', '.entry-delete']) assert.ok(list.querySelector(selector));
 });
 
 test('Timeline details stops projecting a reverted draft over later authoritative descriptions', () => {
@@ -3056,7 +3128,7 @@ for (const permissions of [[], ['favicon']]) {
     const harness = dailyPanelHarness(options);
     const menu = harness.renderMenu({ compact: true });
     const activity = dailyPanelHarness({ ...options, pageUrl: 'chrome-extension://clockoli/src/times/times.html' }).renderActivity();
-    for (const icon of [menu.querySelector('.strip-favicon'), menu.querySelector('.today-favicon'), activity.querySelector('.entry-record-favicon')]) {
+    for (const icon of [menu.querySelector('.strip-favicon'), menu.querySelector('.entry-record-favicon'), activity.querySelector('.entry-record-favicon')]) {
       assert.ok(icon);
       if (permissions.length) {
         assert.equal(icon.tag, 'img');
@@ -3439,28 +3511,25 @@ test('all strip, header, and shared block Stop and switch paths can cancel a lon
   assert.equal(harness.messages.filter(message => ['STOP', 'START', 'SWITCH_TASK'].includes(message.type)).length, 0);
 });
 
-test('passive state reconciliation never replaces a focused List description input', () => {
+test('passive state reconciliation never replaces a focused List editor', () => {
   const now = new Date('2026-10-13T12:00:00.000Z').getTime();
   const original = activityEntry('1', '2026-10-13', '08');
   const state = { configured: true, active: null, pendingWrites: [], pendingCount: 0 };
   const harness = dailyPanelHarness({ state, records: [original], now });
   const menu = harness.renderMenu({ compact: true });
   harness.attach(menu);
-  const input = menu.querySelector('.today-description');
-  assert.ok(input, 'a recent completed entry is shown in List');
-  input.value = 'Unsaved user draft';
-  input.oninput();
+  const input = harness.document.createElement('input');
+  input.matches = selector => selector === 'input,textarea';
+  menu.querySelector('.today-list').append(input);
   input.focus();
   harness.set(state, [{ ...original, description: 'Remote change', _sha: 'remote-sha' }]);
   harness.refreshCompactSurface();
-  assert.equal(menu.querySelector('.today-description'), input, 'a focused List editor remains mounted');
+  assert.ok(menu.querySelector('.today-list').contains(input), 'a focused List editor remains mounted');
   assert.equal(harness.document.activeElement, input);
-  assert.equal(input.value, 'Unsaved user draft');
 
   harness.document.panelShadow.activeElement = null;
   harness.refreshCompactSurface();
-  assert.notEqual(menu.querySelector('.today-description'), input, 'a later safe refresh can rebuild the list');
-  assert.equal(menu.querySelector('.today-description').value, 'Unsaved user draft', 'the draft survives that refresh');
+  assert.ok(!menu.querySelector('.today-list').contains(input), 'a later safe refresh can rebuild the list');
 });
 
 test('mounted panel refresh updates controls, errors, totals and now while preserving editor, scroll and focus', () => {
