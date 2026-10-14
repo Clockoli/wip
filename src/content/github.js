@@ -1919,12 +1919,12 @@
     const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode ? 'Tracked time' : 'Recent entries'));
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
-      try { errorText = ''; renderUi(); await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
+      try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
     const syncing = hasRunnablePending();
-    refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
-    refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
+    refresh.disabled = syncing; // Background queue activity must not animate the toolbar.
+    refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (emptyState) container.append(emptyState);
@@ -1987,6 +1987,16 @@
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
     try {
+      // Hydrate durable local edits before the remote week read. Page state is
+      // bounded, so it must not replace records already loaded for this week.
+      const cached = await send({ type: 'GET_PAGE_STATE', refresh: false });
+      if (loadId !== timesLoadId) return;
+      if (cached?.configured && Array.isArray(cached.recent)) {
+        applyPageState(cached);
+        recent = mergeActivityRecords(cached.recent, timesRange(), true);
+        recentLoaded = true; recentFresh = false;
+        renderUi();
+      }
       await refreshRecent(true);
       if (loadId === timesLoadId) await refreshActivityState();
     }
@@ -2992,6 +3002,10 @@
       if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
       const track = strip.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
     }
+    // Queue reconciliation may refresh the panel while an unsaved List editor is
+    // focused. Keep that input mounted; the next normal render can show updates.
+    const preserveTodayEditor = today.contains?.(activeElement) && activeElement?.classList?.contains('today-description');
+    if (!preserveTodayEditor) {
     today.replaceChildren();
     const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
     const { startDate, endDate } = timesRange();
@@ -3046,6 +3060,7 @@
       row.append(resume); today.append(row);
     }
     if (!entries.length) today.append(el('div', recentLoaded ? 'No completed entries today.' : 'Loading today’s entries…', 'muted'));
+    }
     feedback.replaceChildren(); renderPanelFeedback(feedback);
     const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
     refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();

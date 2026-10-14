@@ -124,7 +124,7 @@ test('Activity view messages accept only valid modes from Activity surfaces', as
 
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
-  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
     assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
   }
   for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
@@ -229,7 +229,7 @@ test('trusted extension pages can perform popup-only operations', () => {
 
 test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
   const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
-  for (const type of ['SYNC', 'LOAD_RECENT', 'EDIT_ENTRIES', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['LOAD_RECENT', 'EDIT_ENTRIES', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
   for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
   assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', sender, origin), /not allowed/);
 });
@@ -340,4 +340,11 @@ test('participant totals follow the current GitHub SPA tab URL instead of the or
     () => taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4885', sender, origin),
     /current page/i,
   );
+});
+
+
+test('manual SYNC message is not part of the extension or content sender policy', () => {
+  const extensionOrigin = 'chrome-extension://abc/';
+  assert.throws(() => assertMessageAllowed('SYNC', { url: extensionOrigin + 'src/tasks/tasks.html' }, extensionOrigin), /not allowed/);
+  assert.throws(() => assertMessageAllowed('SYNC', { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } }, extensionOrigin), /not allowed/);
 });

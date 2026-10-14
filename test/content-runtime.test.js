@@ -1118,6 +1118,18 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
   assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(\) => revealTimeEditor\(\)\)/);
 });
 
+test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
+  const start = source.indexOf('  async function loadSelectedTimes(onFailure = null) {');
+  const end = source.indexOf('\n  function renderTimesPage(', start);
+  assert.ok(start >= 0 && end > start);
+  const loader = source.slice(start, end);
+  const cache = loader.indexOf("send({ type: 'GET_PAGE_STATE', refresh: false })");
+  const remote = loader.indexOf('await refreshRecent(true');
+  assert.ok(cache >= 0 && remote > cache, 'local Activity records must render before any remote request');
+  assert.match(loader, /recent = mergeActivityRecords\(cached\.recent, timesRange\(\), true\)/);
+  assert.match(loader, /recentLoaded = true; recentFresh = false;\s*renderUi\(\)/);
+});
+
 test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
@@ -1178,7 +1190,7 @@ test('opening before remote state refresh renders cache immediately and keeps st
     'a failed automatic refresh keeps stale cached mutation controls locked');
   assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length >= 1, true);
 
-  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
+  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
   const retrying = retry.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(recentReplies.length, 1, 'Retry starts one new fresh load');
@@ -1539,7 +1551,7 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   assert.equal(secondDeletion.payload.originalSha, 'post-delete', 'surviving rows use the rewritten monthly-file SHA');
   assert.equal(secondDeletion.payload.index, 0, 'surviving rows use their rewritten monthly-file index');
   loadedRecent = [{ ...newer, _pending: true }, older];
-  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Sync and refresh').at(-1);
+  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
   await sync.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const pending = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Pending').at(-1);
   assert.equal(pending.disabled, true, 'a queued row renders a visible disabled Pending indicator');
@@ -2100,7 +2112,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   vm.runInContext(recoverySource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
-    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, setTimelineViewMode,
+    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
@@ -2892,6 +2904,7 @@ test('Activity Calendar ignores an older week response after navigating again', 
   harness.frames.splice(0).forEach(frame => frame());
   const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
   const first = calendar.onclick({ isTrusted: true });
+  for (let attempt = 0; attempt < 5 && !loads.length; attempt++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(loads.length, 1, 'the current week starts loading on a view switch');
   const older = activityEntry('older-response', '2026-08-26', '08');
   const newest = activityEntry('newest-response', '2026-08-19', '08');
@@ -3391,6 +3404,30 @@ test('all strip, header, and shared block Stop and switch paths can cancel a lon
   assert.equal(harness.confirmations.length, 6);
   assert.ok(harness.confirmations.every(text => text === 'This entry is 13 hours long. Save anyway?'));
   assert.equal(harness.messages.filter(message => ['STOP', 'START', 'SWITCH_TASK'].includes(message.type)).length, 0);
+});
+
+test('passive state reconciliation never replaces a focused List description input', () => {
+  const now = new Date('2026-10-13T12:00:00.000Z').getTime();
+  const original = activityEntry('1', '2026-10-13', '08');
+  const state = { configured: true, active: null, pendingWrites: [], pendingCount: 0 };
+  const harness = dailyPanelHarness({ state, records: [original], now });
+  const menu = harness.renderMenu({ compact: true });
+  harness.attach(menu);
+  const input = menu.querySelector('.today-description');
+  assert.ok(input, 'a recent completed entry is shown in List');
+  input.value = 'Unsaved user draft';
+  input.oninput();
+  input.focus();
+  harness.set(state, [{ ...original, description: 'Remote change', _sha: 'remote-sha' }]);
+  harness.refreshCompactSurface();
+  assert.equal(menu.querySelector('.today-description'), input, 'a focused List editor remains mounted');
+  assert.equal(harness.document.activeElement, input);
+  assert.equal(input.value, 'Unsaved user draft');
+
+  harness.document.panelShadow.activeElement = null;
+  harness.refreshCompactSurface();
+  assert.notEqual(menu.querySelector('.today-description'), input, 'a later safe refresh can rebuild the list');
+  assert.equal(menu.querySelector('.today-description').value, 'Unsaved user draft', 'the draft survives that refresh');
 });
 
 test('mounted panel refresh updates controls, errors, totals and now while preserving editor, scroll and focus', () => {

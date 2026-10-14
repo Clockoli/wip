@@ -159,8 +159,11 @@ Clockoli accepts timer mutations locally during temporary connectivity loss, but
 - One global active timer is shared across destinations. A cross-repository switch durably queues source completion before target Start.
 - Every accepted timer and queued mutation stays pinned to its acceptance-time destination when routing changes.
 - A locally accepted mutation is not fully synchronized until its GitHub write completes.
-- Pending writes are attempted at extension startup and on a one-minute alarm.
-- **Sync now** requests an immediate retry.
+- Locally accepted queued writes are scheduled after 15 seconds of inactivity following the **latest** IndexedDB-accepted mutation, including coalesced changes to an existing queue entry. The queued timestamps survive worker restarts. A normal service-worker timer handles the fast path; an MV3 alarm (minimum 30 seconds in installed Chrome) and a recurring one-minute retry alarm handle worker suspension, browser restarts, and missed/deferred timers. Writes never start before the persisted quiet-period deadline. Consecutive independent edits can share one atomic commit, but tracked-time completions keep individual issue-reference commit messages.
+- Clockoli also checks each configured personal branch for remote changes at startup and about once per minute. Unchanged branch ETags skip file downloads; changed snapshots hydrate only the current user's active record and the recent/summary monthly files into IndexedDB.
+- This passive pull never displays a spinner, replaces UI elements, or waits on the local mutation queue. Any pending local work or concurrent local change defers applying the snapshot until a later pass. Oversized, malformed, or unavailable remote data leaves the previous local cache untouched.
+- The open tracker keeps its current editor and view; pulled data is picked up on the next local-state read or user-requested refresh. Team-wide Reports and other-user branches continue to load on demand.
+- The visible Refresh controls reload data only; they never push queued writes.
 - A conflicted dependency can pause a queued cross-repository Start until its source completion is resolved.
 
 Do not clear browser data or Clockoli local configuration while a Stop is waiting to synchronize.

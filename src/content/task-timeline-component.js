@@ -876,6 +876,7 @@
         overscanScreens: 1.5,
         magneticSnap: true,
         magnetStepsMinutes: [1, 5, 15],
+        calendarMagnetStepMinutes: null,
         magnetScaleThresholdDays: [1, 3],
         magnetZonePx: 20,
         magnetSnapPx: 8,
@@ -3314,10 +3315,11 @@
     }
 
     _calendarMagnetStepMs(rawTime, state) {
-      // Calendar editing uses the same 1/5/15-minute precision selected by
-      // the current period. We no longer promote the step merely because the
-      // marks are visually close: round-time magnetic hit-testing is gone, so
-      // a 1px-per-minute calendar can still edit reliably at one-minute steps.
+      // Clients may keep Calendar's finer precision when Timeline uses a
+      // larger editing grid. Without an override, preserve the existing
+      // scale-aware Calendar behavior.
+      const override = Number(this.options.calendarMagnetStepMinutes);
+      if (Number.isFinite(override) && override > 0) return override * 60 * SECOND;
       return Math.max(60 * SECOND, this._magnetStepMs());
     }
 
@@ -4552,20 +4554,8 @@
     .task:hover, .task.hovered:not(.selected), .task.editing { z-index: 10; }
     .task.selected { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
     .task.focused:not(.selected) { outline: 2px solid var(--focus-outlineColor, var(--ck-focus, #0969da)); outline-offset: 1px; }
-    .task.pending { opacity: .72; }
+    .task.pending, .calendar-task.pending { opacity: 1; }
     .task.pending::after { display: none; }
-    .clockoli-entry-saving { position: absolute; left: 6px; top: 50%; z-index: 2; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 12px); overflow: hidden; transform: translateY(-50%); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1.2; white-space: nowrap; pointer-events: none; }
-    .task .clockoli-entry-saving { left: 14px; max-width: calc(100% - 20px); }
-    .task.clockoli-saving .task-main { padding-left: 88px; }
-    .task.clockoli-saving.clockoli-compact-saving .task-main { padding-left: 32px; }
-    .task.clockoli-compact-saving .clockoli-entry-saving { max-width: none; overflow: visible; }
-    .task.clockoli-compact-saving .clockoli-entry-saving-label { display: none; }
-    .task.clockoli-minimum-width.clockoli-compact-saving .clockoli-entry-saving { left: 50%; width: 18px; justify-content: center; transform: translate(-50%, -50%); }
-    .task.clockoli-minimum-width.clockoli-compact-saving .task-main { padding-left: 0; }
-    .calendar-task.clockoli-saving .calendar-task-name { padding-left: 80px; }
-    .clockoli-entry-saving-spinner { width: 12px; height: 12px; flex: none; border: 2px solid var(--tt-border); border-top-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); border-radius: 50%; animation: clockoli-entry-spin .8s linear infinite; }
-    @keyframes clockoli-entry-spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .clockoli-entry-saving-spinner { animation: none; } }
     .task.running { border-style: dashed; }
     .task.clockoli-minimum-width .edit-clock.start { left:auto; right:calc(100% + 4px); top:50%; bottom:auto; transform:translateY(-50%); }
     .task.clockoli-minimum-width .edit-clock.end { left:calc(100% + 4px); right:auto; top:50%; bottom:auto; transform:translateY(-50%); }
@@ -4693,6 +4683,10 @@
     let originalItems = new Map();
     let styleObserver = null;
     let detailsObserver = null;
+    let suppressViewportScroll = true;
+    let deferredUpdate = null;
+    let deferredFlushTimer = null;
+    let timelineApi = null;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -4873,7 +4867,8 @@
       onCalendarRangeChange: range => props.onCalendarNavigate?.(range),
       ...(initialProps.weeklyCalendar === true ? { calendarDayMinWidth: 96 } : {}),
       magneticSnap: true,
-      magnetStepsMinutes: [1 / 60],
+      magnetStepsMinutes: [5],
+      calendarMagnetStepMinutes: 1,
       magnetScaleThresholdDays: [7],
       canChange: canRun,
       onStart(task, event) {
@@ -4929,7 +4924,10 @@
               savingKeys.delete(edit.id);
               editStates.delete(edit.id);
             } else pendingEdits.set(edit.id, remaining);
-            if (!destroyed) styleTasks();
+            if (!destroyed) {
+              styleTasks();
+              scheduleDeferredFlush();
+            }
           });
         return true;
       },
@@ -4975,26 +4973,6 @@
     function styleTasks() {
       if (destroyed) return;
       for (const element of timeline.shadow.querySelectorAll('.task[data-task-key], .calendar-task[data-task-key]')) {
-        const saving = savingKeys.has(element.dataset.taskKey) || Boolean(sourceItem(element.dataset.taskKey)?.isPending);
-        element.classList.toggle('clockoli-saving', saving);
-        if (saving) element.setAttribute('aria-busy', 'true');
-        else element.removeAttribute('aria-busy');
-        const indicator = element.querySelector('.clockoli-entry-saving');
-        if (saving && !indicator) {
-          const overlay = document.createElement('span');
-          overlay.className = 'clockoli-entry-saving';
-          const spinner = document.createElement('span');
-          spinner.className = 'clockoli-entry-saving-spinner';
-          spinner.setAttribute('aria-hidden', 'true');
-          const label = document.createElement('span');
-          label.className = 'clockoli-entry-saving-label';
-          label.textContent = 'Saving…';
-          overlay.append(spinner, label);
-          element.append(overlay);
-        } else if (!saving) indicator?.remove();
-        const label = element.getAttribute('aria-label') || '';
-        if (saving && !label.endsWith(' · Saving…')) element.setAttribute('aria-label', `${label} · Saving…`);
-        else if (!saving && label.endsWith(' · Saving…')) element.setAttribute('aria-label', label.slice(0, -' · Saving…'.length));
         const item = sourceItem(element.dataset.taskKey);
         element.style.setProperty('--clockoli-task-color', resolveColor(item || { id: element.dataset.taskKey }));
         if (element.classList.contains('task')) {
@@ -5004,7 +4982,6 @@
           const displayWidth = timeline._findTask?.(element.dataset.taskKey)?.displayWidth ?? task.width;
           const minimum = displayWidth <= MINIMUM_ITEM_WIDTH + 1;
           element.classList.toggle('clockoli-minimum-width', minimum);
-          element.classList.toggle('clockoli-compact-saving', saving && task.width < 110);
           if (minimum) {
             const start = element.querySelector('.edit-clock.start');
             const end = element.querySelector('.edit-clock.end');
@@ -5176,7 +5153,10 @@
     timeline.shadow.addEventListener('pointerdown', permissionEvent, true);
     timeline.shadow.addEventListener('dblclick', permissionEvent, true);
     timeline.shadow.addEventListener('keydown', permissionEvent, true);
-    timeline.viewport.addEventListener('scroll', () => { styleTasks(); notifyView(); }, { passive: true });
+    timeline.viewport.addEventListener('scroll', () => {
+      styleTasks();
+      if (!suppressViewportScroll) notifyView();
+    }, { passive: true });
     if (props.weeklyCalendar) {
       const viewport = timeline.calendarViewport;
       const positionTimeRail = () => timeline.calendarCanvas.style.setProperty('--clockoli-calendar-scroll-left', `${viewport.scrollLeft}px`);
@@ -5192,14 +5172,48 @@
     hydrateExternalState();
     applyView(initialProps.view);
     styleTasks();
+    requestAnimationFrame(() => { suppressViewportScroll = false; });
+
+    function hasActiveInteraction() {
+      return Boolean(timeline.editState || timeline.calendarEditState || timeline.dragState || pendingEdits.size);
+    }
+
+    function scheduleDeferredFlush() {
+      if (destroyed || !deferredUpdate || deferredFlushTimer !== null) return;
+      // The component processes pointerup before us; commit callbacks then
+      // start the durable local save in a microtask. Flush only after those
+      // callbacks have settled, not while a new drag is under way.
+      deferredFlushTimer = setTimeout(() => {
+        deferredFlushTimer = null;
+        if (!destroyed && !hasActiveInteraction() && deferredUpdate) {
+          const queued = deferredUpdate;
+          deferredUpdate = null;
+          timelineApi?.update(queued);
+        }
+      }, 0);
+    }
+
+    const onGestureEnd = () => scheduleDeferredFlush();
+    global.addEventListener('pointerup', onGestureEnd);
+    global.addEventListener('pointercancel', onGestureEnd);
 
     function reconcile(nextProps, { applyExternalView = false } = {}) {
+      suppressViewportScroll = true;
       const previousSelection = timeline.selectedKey;
       const previousFocus = timeline.focusedKey;
       const previousMode = timeline.getViewMode();
       const previousScroll = timeline._scrollLeftNow?.() ?? 0;
-      const previousMaxScroll = Math.max(0, timeline.totalWidth - timeline._viewportWidthNow());
+      const previousWidth = timeline._viewportWidthNow();
+      const previousMaxScroll = Math.max(0, timeline.totalWidth - previousWidth);
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
+      const rememberedCenter = Number(props.view?.focusedAt);
+      const anchorTime = previousMode === 'timeline'
+        ? previousScroll > 1 && timeline.segments.length
+          ? timeline.xToTime(previousScroll + previousWidth / 2)
+          : Number.isFinite(rememberedCenter) && rememberedCenter > 0
+            ? rememberedCenter
+            : (timeline.segments.length ? timeline.xToTime(previousScroll + previousWidth / 2) : null)
+        : null;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
       const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
@@ -5217,12 +5231,30 @@
       hydrateExternalState();
       if (applyExternalView && nextProps.view) applyView(nextProps.view);
       else if (wasRightPinned) timeline.scrollToEnd();
+      else if (anchorTime != null && Number.isFinite(anchorTime)) {
+        // setTasks rebuilds the scrollable geometry and Chrome can clamp the
+        // viewport to zero during that DOM replacement. Restore the time
+        // the user was actually viewing, not the clamped pixel scroll value.
+        timeline._setScrollLeft(timeline.timeToX(anchorTime) - previousWidth / 2);
+      }
       styleTasks();
+      requestAnimationFrame(() => { suppressViewportScroll = false; });
     }
 
-    return {
+    timelineApi = {
       update(next = {}) {
         if (destroyed) return;
+        if (hasActiveInteraction()) {
+          // setTasks() clears editState and replaces the dragged DOM node.
+          // Retain the latest incoming snapshot until pointerup AND the local
+          // edit acceptance finish; background sync must not cancel a gesture.
+          deferredUpdate = { ...(deferredUpdate ?? {}), ...next };
+          return true;
+        }
+        if (deferredUpdate) {
+          next = { ...deferredUpdate, ...next };
+          deferredUpdate = null;
+        }
         const onlyNow = Object.keys(next).every(key => key === 'now');
         const candidateProps = { ...props, ...next };
         try {
@@ -5254,6 +5286,10 @@
         destroyed = true;
         styleObserver?.disconnect();
         detailsObserver?.disconnect();
+        if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
+        global.removeEventListener('pointerup', onGestureEnd);
+        global.removeEventListener('pointercancel', onGestureEnd);
+        deferredUpdate = null;
         timeline.destroy();
       },
       getView: viewFromComponent,
@@ -5285,6 +5321,7 @@
       getCalendarRange() { return timeline.getCalendarRange(); },
       __timeline: timeline,
     };
+    return timelineApi;
   }
 
   global.ClockoliTaskTimeline = Object.freeze({

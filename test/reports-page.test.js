@@ -83,11 +83,11 @@ test('reports use requested defaults, monotonic progress and task identity label
   assert.doesNotMatch(js, /['"`]Repositories:/);
 });
 
-test('recoverable queued entry-edit conflicts keep the background retry alarm alive', () => {
+test('recoverable queued edit conflicts are handled by the periodic background sync', () => {
   assert.match(worker, /function hasRunnablePending\(queue\) \{[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(worker, /function shouldContinuePendingSync\(\)[\s\S]*getPendingDestinationIds\(\)[\s\S]*destinationIds\.some\(destinationId => hasRunnablePending\(entries\[destinationId\]\?\.pendingWrites\)\)/);
-  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\) \{\s*void scheduleSyncAlarm\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
-  assert.match(worker, /if \(await shouldContinuePendingSync\(\)\.catch\(\(\) => false\)\) \{\s*void scheduleSyncAlarm\('sync-pending-now', \{ when: Date\.now\(\) \+ 5_000 \}\)/);
+  assert.match(worker, /scheduleSyncAlarm\('sync-pending', \{ periodInMinutes: 1 \}\)/);
+  assert.doesNotMatch(worker, /sync-pending-now/);
 });
 
 

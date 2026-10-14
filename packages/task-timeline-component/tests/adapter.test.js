@@ -75,7 +75,7 @@ test('Calendar keeps unavailable resources and imported identities without favic
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), '5a07b3e59fed833bbf7bbefb6cc85178a82e954c1f247e4170b0322a7d7e772b');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'c4b9d8b49f90a2d4a62bdc224b3f5f5f5bfe1745e9ba43c88fc09848c5269051');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
@@ -97,12 +97,48 @@ test('adapter maps durable Clockoli state and preserves the old block styling co
   assert.match(source, /background: color-mix\(in srgb, var\(--clockoli-task-color/);
 });
 
+test('pending timeline and calendar entries never display background saving feedback', () => {
+  assert.match(source, /\.task\.pending, \.calendar-task\.pending \{ opacity: 1; \}/);
+  assert.match(source, /\.task\.pending::after \{ display: none; \}/);
+  assert.doesNotMatch(source, /clockoli-entry-saving|clockoli-compact-saving|clockoli-saving/);
+  assert.doesNotMatch(source, /Saving…|aria-busy/);
+  assert.match(source, /timeline\.pendingKeys = new Set/);
+  assert.match(source, /!pending && !item\?\.isDeleteDisabled/);
+});
+
+test('Clockoli graphic Timeline edits use a five-minute grid while Calendar keeps its one-minute precision', () => {
+  assert.match(source, /magnetStepsMinutes: \[5\]/);
+  assert.match(source, /calendarMagnetStepMinutes: 1/);
+  assert.match(vendor, /_calendarMagnetStepMs\(rawTime, state\)[\s\S]*?this\.options\.calendarMagnetStepMinutes/);
+  assert.doesNotMatch(source, /magnetStepsMinutes: \[1 \/ 60\]/);
+});
+
 test('adapter keeps atomic Clockoli switching and action permissions', () => {
   assert.match(source, /event\?\.source === 'replaced'/);
   assert.match(source, /return true;/);
   assert.match(source, /permissionsFor/);
   assert.match(source, /stopImmediatePropagation/);
   assert.match(source, /props\.onStart\(item, event\)/);
+});
+
+test('completed current task keeps the static Stop and save action', () => {
+  assert.match(source, /stop: \(running \|\| item\?\.isCurrentTask\) && !item\?\.isStopDisabled/);
+  assert.match(source, /const mode = item\.isCurrentTask \? 'current'/);
+  assert.match(source, /item\.isRunning \|\| item\.endedAt == null \|\| item\.isCurrentTask\) && typeof props\.onStop/);
+  assert.match(source, /button\.textContent = 'Stop and save'/);
+  assert.doesNotMatch(source, /formatClockDuration|updateActionClock|actionClock/);
+});
+
+test('weekly Calendar controls coexist with preserved viewport anchors and deferred gestures', () => {
+  assert.match(source, /initialProps\.weeklyCalendar[\s\S]*?calendar-toolbar \{ display:none \}/);
+  assert.match(source, /const domainStart = Math\.min\([\s\S]*?initialProps\.domainStart/);
+  assert.match(source, /totalRange: initialProps\.totalRange \?\? initialProps\.view/);
+  assert.match(source, /nextProps\.domainStart[\s\S]*?nextProps\.view\?\.end/);
+  assert.match(source, /const anchorTime = previousMode === 'timeline'[\s\S]*?timeline\.xToTime/);
+  assert.match(source, /timeline\._setScrollLeft\(timeline\.timeToX\(anchorTime\) - previousWidth \/ 2\)/);
+  assert.match(source, /timeline\.editState \|\| timeline\.calendarEditState \|\| timeline\.dragState \|\| pendingEdits\.size/);
+  assert.match(source, /global\.addEventListener\('pointerup', onGestureEnd\)/);
+  assert.match(source, /global\.removeEventListener\('pointerup', onGestureEnd\)/);
 });
 
 test('adapter supports external Timeline and Calendar controls without applying Timeline scale to Calendar', () => {
