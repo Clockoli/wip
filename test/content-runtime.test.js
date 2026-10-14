@@ -2592,6 +2592,32 @@ test('Activity List and Timeline retain the Monday part of a prior-Saturday inte
   assert.equal(activity.querySelector('.times-list-total').textContent, 'Total: 1h');
 });
 
+test('Activity full week reload removes a deleted Sunday record that crossed into Monday', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  const crossing = { ...activityEntry('crossing', '2026-10-11', '23'),
+    startedAt: new Date(monday - 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() };
+  const neighbor = activityEntry('neighbor', '2026-10-13', '08');
+  const state = { configured: true, active: null, recent: [], pendingWrites: [] };
+  let response = { ...state, recent: [crossing, neighbor] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? response : state }); },
+  });
+  h.renderActivity();
+  await h.loadSelectedTimes();
+  assert.ok(h.recentEntry('crossing'));
+
+  response = { ...state, recent: [neighbor], partial: true };
+  await h.loadSelectedTimes();
+  assert.ok(h.recentEntry('crossing'), 'a partial response cannot prove the older record was deleted');
+
+  response = { ...state, recent: [neighbor] };
+  await h.loadSelectedTimes();
+  assert.equal(h.recentEntry('crossing'), undefined, 'a complete week response removes the deleted overlapping record');
+  assert.ok(h.recentEntry('neighbor'), 'records still present in the week must survive');
+});
+
 test('Activity view switches return from a historical Calendar week to the current List and Timeline week', async () => {
   const now = new Date(2026, 9, 14, 12).getTime();
   const state = { configured: true, active: null, pendingWrites: [] };

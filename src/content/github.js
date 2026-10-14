@@ -884,7 +884,11 @@
   }
 
   function mergeActivityRecords(incoming, range, partial = false) {
-    const inRange = entry => activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate;
+    const start = new Date(`${range.startDate}T00:00:00`).getTime();
+    const inRange = entry => {
+      const date = activityRecordDate(entry);
+      return date <= range.endDate && (date >= range.startDate || new Date(entry.endedAt).getTime() > start);
+    };
     const records = new Map(recent.filter(entry => partial || !inRange(entry)).map(entry => [activityRecordKey(entry), entry]));
     for (const entry of incoming) records.set(activityRecordKey(entry), entry);
     return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
