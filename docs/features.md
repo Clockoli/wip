@@ -277,4 +277,4 @@ For configured multi-repository routing, the version 6 settings export contains 
 
 ## Deliberate limits
 
-The current beta includes manual completed-entry creation through the Activity bulk importer. It does not include reminders, mobile applications, Firefox packaging, or a side-by-side conflict diff editor. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.
+The current beta includes manual completed-entry creation through the Activity bulk importer. It does not include reminders, mobile applications, or a side-by-side conflict diff editor. Firefox and Safari builds ship as release files and are not yet listed in their browser stores. Data-repository administrators can rewrite Git history, so Git history is inspectable and recoverable but not tamper-proof against administrators.

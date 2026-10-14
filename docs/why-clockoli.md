@@ -128,8 +128,8 @@ Clockoli is intentionally opinionated:
 - Readers of each time repository can see the URLs, titles, timestamps, and descriptions stored there.
 - Branch protection or rulesets that prevent direct writes can make a repository unsuitable.
 - Start, Stop, and switches are accepted into durable local queues and then reconciled with GitHub; cross-repository switches depend on source completion before target Start.
-- The current beta is Chrome/Chromium-only and installed unpacked.
-- There is no automatic update channel, mobile app, reminder system, or invoicing workflow; manual completed entries use the Times bulk importer.
+- Chrome and other Chromium browsers install from the Chrome Web Store. Firefox and Safari builds are not yet in their stores, so those file installations update manually.
+- There is no mobile app or reminder system; manual completed entries use the Activity bulk importer.
 - Local rates are not synchronized with teammates.
 
 These are not hidden implementation gaps; they follow from the current product scope and should be part of the adoption decision.

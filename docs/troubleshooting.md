@@ -298,7 +298,7 @@ Before connecting, open **More settings** → **Backup & restore** to reach **Im
 Include:
 
 - Clockoli commit or package identity;
-- Chrome/Chromium version;
+- browser name and version;
 - the visible error text and recovery action;
 - whether the surface was GitHub, popup, Tasks, Reports, or Settings;
 - whether a timer or pending write existed;
