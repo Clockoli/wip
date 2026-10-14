@@ -276,6 +276,14 @@ export class ReportService {
     return normalizeCache(await this.cache?.getReportCache?.(repositoryKey), repositoryKey);
   }
 
+  async cachedMonthly(path, sha) {
+    if (!sha) return null;
+    const cache = await this.readCache(this.github.repositoryKey || 'repository');
+    if (!cache.files.some(file => file.path === path && file.sha === sha) || typeof cache.blobs[sha] !== 'string') return null;
+    const { user, month } = parseMonthlyRecordsPath(path);
+    return { path, sha, entries: parseMonthlyRecords(cache.blobs[sha], { user, month, path, sha }) };
+  }
+
   async saveCache(value) {
     await this.cache?.saveReportCache?.(value);
   }

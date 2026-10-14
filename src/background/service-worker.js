@@ -278,10 +278,11 @@ async function contextForDestination(destinationId, { localOnly = false } = {}) 
     if (!user) throw new Error('Refresh the GitHub connection to load your tracking identity.');
     await destinationStore.patchState({ user });
   }
+  const reports = new ReportService({ github, cache: store });
   return {
     config, destinationId,
-    reports: new ReportService({ github, cache: store }),
-    tracker: new TrackerService({ github, store: destinationStore, user, actorId: Number.isSafeInteger(auth.githubUserId) ? `github:${auth.githubUserId}` : `clockoli:${config.repoId}:${user}`, actorName: user, recentDays: config.recentDays || 7 }),
+    reports,
+    tracker: new TrackerService({ github, store: destinationStore, reports, user, actorId: Number.isSafeInteger(auth.githubUserId) ? `github:${auth.githubUserId}` : `clockoli:${config.repoId}:${user}`, actorName: user, recentDays: config.recentDays || 7 }),
   };
 }
 
