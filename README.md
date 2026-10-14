@@ -12,7 +12,6 @@
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl"><img alt="Chrome Web Store version" src="https://img.shields.io/chrome-web-store/v/omkikhlcnbjpfbiicogjekhjgmbajmnl?label=Chrome%20Web%20Store"></a>
   <a href="https://github.com/clockoli/clockoli/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/clockoli/clockoli/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <img alt="Browsers: Chrome 102+, Firefox 140+, Safari 18+" src="https://img.shields.io/badge/browsers-Chrome%20102%2B%20%C2%B7%20Firefox%20140%2B%20%C2%B7%20Safari%2018%2B-informational">
 </p>
 
 <p align="center">
@@ -45,11 +44,11 @@ Clockoli fits teams that already work in GitHub and care more about owning and a
 **Chrome and other Chromium browsers (102+):** [add Clockoli from the Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl). It updates automatically.
 
 <details>
-<summary><strong>Firefox (140+) and Safari (18+, macOS)</strong>: manual install from a GitHub release</summary>
+<summary><strong>Firefox (140+) and Safari (18+, macOS) preview</strong>: manual install from a GitHub release</summary>
 
 <br>
 
-Clockoli is not yet listed on addons.mozilla.org or the Mac App Store, so these installs do not update automatically.
+Firefox and Safari builds are still in testing. They are not listed on addons.mozilla.org or the Mac App Store, so these installs do not update automatically.
 
 **Firefox**
 
@@ -133,7 +132,7 @@ Anyone who can read a time repository can read the URLs, titles, timestamps and 
 
 ## Current limitations
 
-- Firefox and Safari builds are not yet in their browser stores; file installs update manually.
+- Chrome and other Chromium browsers are the supported platform. Firefox and Safari builds are still in testing and update manually.
 - There is no mobile app, no reminders and no side-by-side conflict editor. Unresolved sync conflicts can need your action.
 - Everyone who tracks time needs a GitHub account. GitHub outages and API rate limits affect Clockoli.
 - Git history makes edits visible, but repository administrators can rewrite it. It is not a tamper-proof audit log.
