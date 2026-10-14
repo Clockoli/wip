@@ -90,6 +90,22 @@ test('silent pull caches remote completed and active records and reuses the bran
   assert.equal(github.blobReads.length, 2, 'an unchanged GitHub branch must not redownload data');
 });
 
+test('interactive menu loading preserves the silent-pull ETag for the next background check', async () => {
+  const { store, github, tracker } = fixture();
+  github.getText = async path => {
+    const file = github.files.get(path);
+    assert.ok(file);
+    return { text: file.text, sha: file.sha };
+  };
+  assert.equal(await tracker.pullRemoteSilently(), true);
+  await tracker.loadMenuData();
+  assert.equal(store.state.summaryCache.silentPull.etag, github.etag);
+
+  assert.equal(await tracker.pullRemoteSilently(), false);
+  assert.equal(github.snapshots.at(-1).etag, github.etag);
+  assert.equal(github.blobReads.length, 2, 'opening the menu must not redownload unchanged blobs');
+});
+
 test('a pending local operation blocks background pulls without modifying the queue or active timer', async () => {
   const { store, github, tracker } = fixture();
   store.state.pendingWrites = [{ id: 'local', operation: 'completeTimer', status: 'pending' }];

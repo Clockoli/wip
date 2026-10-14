@@ -103,6 +103,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/user-storage-branch.js',
   'src/storage/chrome-store.js',
   'src/styles/github-primer.css',
+  'src/styles/interface-width.css',
   'src/styles/page-tabs.css',
   'src/styles/running-status.css',
   'src/tasks/tasks.css',
@@ -110,7 +111,9 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/tasks/tasks.js',
   'src/times/times.css',
   'src/times/times.html',
+  'src/ui/interface-width.js',
   'src/ui/running-status.js',
+  'src/ui/tracking-card.js',
   'src/vendor/html2pdf.LICENSE.txt',
   'src/vendor/html2pdf.bundle.min.js',
 ];

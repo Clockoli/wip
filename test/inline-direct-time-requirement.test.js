@@ -14,7 +14,9 @@ test('recent rows keep direct Start/Stop editing without wheel or step controls'
   assert.match(source, /inline-time-value/);
   assert.match(source, /startPicker = timePicker\('Start'[\s\S]*compact: true/);
   assert.match(source, /stopPicker = timePicker\('Stop'[\s\S]*compact: true/);
-  assert.doesNotMatch(source, /addEventListener\('wheel'|WHEEL_THRESHOLD|wheelRemainder|time-step/);
+  const timePicker = source.slice(source.indexOf('function timePicker('), source.indexOf('function timestampAtOriginalOffset('));
+  assert.doesNotMatch(timePicker, /addEventListener\('wheel'/);
+  assert.doesNotMatch(source, /WHEEL_THRESHOLD|wheelRemainder|time-step/);
   assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown/);
 });
 

@@ -29,6 +29,18 @@ class MemoryBackend {
   async deleteMany(keys) { for (const key of keys) this.values.delete(key); }
 }
 
+test('Activity view preference survives a store restart and is cleared with local configuration', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  assert.equal(await store.getActivityViewMode(), null);
+  await assert.rejects(store.setActivityViewMode('unknown'), /Activity view/);
+  await store.setActivityViewMode('calendar');
+  assert.equal(await new ChromeStore(backend).getActivityViewMode(), 'calendar');
+  await store.setActivityViewMode('list');
+  assert.equal(await new ChromeStore(backend).getActivityViewMode(), 'list');
+  await store.clearConfig();
+  assert.equal(await store.getActivityViewMode(), null);
+});
+
 test('extension store persists config, token, caches, and queue through an isolated backend', async () => {
   const backend = new MemoryBackend();
   const store = new ChromeStore(backend);
@@ -409,7 +421,7 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], interfaceWidth: 'contained', otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
   assert.equal(saved.revision, 1);

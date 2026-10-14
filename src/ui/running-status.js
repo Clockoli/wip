@@ -1,8 +1,8 @@
 import { formatClockDuration } from '../domain/reporting.js';
 import { normalizeTaskUrl, localDateParts, entryDateValue } from '../domain/values.js';
+import './tracking-card.js';
 
 const SECOND_MS = 1_000;
-const MINUTE_SECONDS = 60;
 const HOUR_MS = 3_600_000;
 const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
@@ -19,8 +19,9 @@ export function mountRunningStatus(container, { send, onChange }) {
   const today = make('span', 'running-status-today');
   const stop = make('button', 'running-status-stop'); stop.type = 'button'; stop.textContent = 'Stop and save';
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
-  for (const node of [task, elapsed, today, stop]) node.hidden = true;
-  row.append(idle, task, elapsed, today, stop);
+  row.append(idle);
+  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, elapsed, today, stop });
+  for (const node of [live, task, metrics, stop]) node.hidden = true;
   container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false;
@@ -41,14 +42,15 @@ export function mountRunningStatus(container, { send, onChange }) {
     today.textContent = `Today ${totalText}`;
     if (state.active) {
       const seconds = Math.max(0, Math.floor((Date.now() - new Date(state.active.startedAt).getTime()) / SECOND_MS));
-      elapsed.textContent = `${formatClockDuration(Math.floor(seconds / MINUTE_SECONDS) * MINUTE_SECONDS)} ${seconds % MINUTE_SECONDS}s`;
+      elapsed.textContent = formatClockDuration(Math.floor(seconds / 60) * 60);
     }
   }
 
   function render() {
     const active = state.active;
+    container.classList.toggle('is-active', Boolean(active));
     idle.hidden = Boolean(active);
-    for (const node of [task, elapsed, today, stop]) node.hidden = !active;
+    for (const node of [live, task, metrics, stop]) node.hidden = !active;
     stop.disabled = busy;
     if (active) {
       const url = active.taskUrl || active.issue?.url || '';

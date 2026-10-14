@@ -67,6 +67,63 @@ test('Activity returns the current safe pending/conflict projection after record
   assert.equal(context.reportLoads.size, 0);
 });
 
+test('Activity history search and weekly reads keep independent background loads', async () => {
+  const calls = [];
+  const context = vm.createContext({ AbortController, Map,
+    store: { ensureDataVersion: async () => {} }, reportLoads: new Map(), githubForConfig: () => ({}),
+    loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
+    selectReadDestinations: () => [{ id: destinationId }], destinationUser: async () => 'alice',
+    loadDestinationRecords: async (destinations, read, { signal }) => ({
+      records: await read(destinations[0], signal), partial: false, conflicts: [], readStatus: [],
+    }),
+    trackerForDestination: async () => ({ projectActivityRecords: async records => ({ records, recovery: { pendingWrites: [], remoteWriteConfirmed: true } }) }),
+    emitReportProgress: () => {}, safePendingProjection: () => ({}),
+    ReportService: class {
+      async loadUserRange(range, user, options) {
+        return new Promise(resolve => calls.push({ range, user, signal: options.signal, resolve }));
+      }
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
+  const search = context.loadTimes({ search: true, payload: { startDate: '0001-01-01', endDate: '9999-12-31' } }, sender);
+  const week = context.loadTimes({ payload: { startDate: '2026-10-05', endDate: '2026-10-11' } }, sender);
+  for (let i = 0; i < 10 && calls.length < 2; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(call => call.range.startDate).sort(), ['0001-01-01', '0001-01-01']);
+  assert.equal(calls.every(call => !call.signal.aborted), true);
+  assert.equal(context.reportLoads.size, 2);
+  for (const call of calls) call.resolve([]);
+  await Promise.all([search, week]);
+  assert.equal(context.reportLoads.size, 0);
+});
+
+test('weekly Activity reads include Saturday and Sunday intervals overlapping Monday across a month boundary', async () => {
+  const monday = new Date('2026-06-01T00:00:00').getTime();
+  const records = [
+    { id: 'saturday-long', entryDate: '2026-05-30', startedAt: new Date(monday - 25 * 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() },
+    { id: 'overnight', entryDate: '2026-05-31', startedAt: new Date(monday - 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() },
+    { id: 'sunday-only', entryDate: '2026-05-31', startedAt: new Date(monday - 7_200_000).toISOString(), endedAt: new Date(monday - 3_600_000).toISOString() },
+    { id: 'monday', entryDate: '2026-06-01', startedAt: new Date(monday + 7_200_000).toISOString(), endedAt: new Date(monday + 10_800_000).toISOString() },
+  ];
+  let readRange;
+  const context = vm.createContext({ AbortController, Map,
+    store: { ensureDataVersion: async () => {} }, reportLoads: new Map(), githubForConfig: () => ({}),
+    loadCoordinator: { beginLoad: async () => 1, assertCurrent: () => {} },
+    configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
+    selectReadDestinations: () => [{ id: destinationId }], destinationUser: async () => 'alice', loadDestinationRecords,
+    trackerForDestination: async () => ({ projectActivityRecords: async records => ({ records, recovery: { pendingWrites: [], remoteWriteConfirmed: true } }) }),
+    emitReportProgress: () => {}, safePendingProjection: () => ({}),
+    ReportService: class { async loadUserRange(range) {
+      readRange = range;
+      return records.filter(record => record.entryDate >= range.startDate && record.entryDate <= range.endDate);
+    } },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function loadTimes('), worker.indexOf('async function loadTasks(')), context);
+  const result = plain(await context.loadTimes({ payload: { startDate: '2026-06-01', endDate: '2026-06-07' } }, sender));
+  assert.equal(readRange.startDate, '0001-01-01');
+  assert.deepEqual(result.recent.map(record => record.id).sort(), ['monday', 'overnight', 'saturday-long']);
+});
 
 function activityReloadFixture() {
   const initialActive = buildActiveTimer({
@@ -167,6 +224,31 @@ test('Activity Timeline applies pending day moves, deletion and completion to Gi
   const response = await completing.load();
   assert.equal(response.recent.length, 2);
   assert.equal(response.recent.find(record => record.id === running.id)?._pending, true);
+});
+
+test('weekly Activity overlays queued edits before overlap filtering, including moves across week boundaries', async () => {
+  const app = activityReloadFixture();
+  const original = app.remote[0];
+  await app.tracker.queueEntryEdit({
+    path: app.path, originalSha: app.sha, index: original._index, original: { id: original.id },
+    edits: { startedAt: '2026-10-11T23:00:00.000Z', endedAt: '2026-10-12T01:00:00.000Z' },
+  });
+  app.reload();
+  const overlapping = await app.load('2026-10-12', '2026-10-18');
+  assert.equal(overlapping.recent.length, 1, 'a queued Sunday interval crossing Monday belongs in the week');
+  assert.equal(overlapping.recent[0]._pending, true);
+  assert.equal((await app.load('2026-10-05', '2026-10-11')).recent.length, 1);
+
+  const leaving = activityReloadFixture();
+  await leaving.tracker.queueEntryEdit({
+    path: leaving.path, originalSha: leaving.sha, index: leaving.remote[0]._index,
+    original: { id: leaving.remote[0].id },
+    edits: { startedAt: '2026-10-19T08:00:00.000Z', endedAt: '2026-10-19T09:00:00.000Z' },
+  });
+  leaving.reload();
+  assert.equal((await leaving.load('2026-10-12', '2026-10-18')).recent.length, 0,
+    'the old week must not show the remote interval after a pending move');
+  assert.equal((await leaving.load('2026-10-19', '2026-10-25')).recent[0]._pending, true);
 });
 
 test('page state exposes full totals while retaining safe active and pending projections', async () => {

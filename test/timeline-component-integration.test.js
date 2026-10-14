@@ -33,12 +33,14 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
 
   assert.deepEqual(manifest.content_scripts[0].js, [
     'src/domain/recovery-actions.js',
+    'src/ui/tracking-card.js',
     'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);
   assert.ok(!manifest.web_accessible_resources[0].resources.includes('src/content/elastic-timeline-editor.css'));
   assert.match(content, /globalThis\.ClockoliTaskTimeline\?\.createTimeline/);
-  assert.match(content, /items,\s*rows,\s*now,\s*view: timesMode \? activityTimelineView : timelineView,\s*viewMode: timesMode \? .* : timelineGraphicViewMode/);
+  assert.match(content, /items,\s*rows,\s*now,\s*domainStart: periodStart,\s*totalRange: activityTotalRange\(\),\s*view: timesMode \? activityTimelineView : timelineView,\s*viewMode: timesMode \? .* : timelineGraphicViewMode/);
+  assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow\.now,\s*domainStart: periodStart,\s*totalRange: activityTotalRange\(\)/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.TaskTimeline = TaskTimeline/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.ClockoliTaskTimeline = Object\.freeze/);
   assert.doesNotMatch(read('src/content/task-timeline-component.js'), /\bexport\s*\{/);
@@ -143,6 +145,7 @@ test('running entry with a worker timestamp beyond the old edge is included afte
     const timelineOptimisticCompletions = new Map();
     const timelineOptimisticEdits = new Map();
     const pageState = { active: { id: 'worker-active', taskUrl: 'https://example.com/new', startedAt: workerStartedAt } };
+    const weekWindow = () => ({ start: 0 });
     ${content.slice(start, end)}
     return now => popupTimelineEntries(0, now);
   `)('2026-09-03T10:00:00.010Z');
@@ -152,6 +155,25 @@ test('running entry with a worker timestamp beyond the old edge is included afte
   assert.equal(advanced.length, 1);
   assert.equal(advanced[0].id, 'worker-active');
   assert.equal(advanced[0]._active, true);
+});
+
+test('optimistic completions outside a selected week do not extend its timeline', () => {
+  const content = read('src/content/github.js');
+  const start = content.indexOf('  function mergeTimelineCompletedEntries(');
+  const end = content.indexOf('\n\n  function popupTimelineItems', start);
+  assert.ok(start >= 0 && end > start);
+  const project = Function(`
+    const recent = [];
+    const timelineOptimisticCompletions = new Map([['future', {
+      id: 'future', startedAt: '2026-09-10T08:00:00.000Z', endedAt: '2026-09-10T09:00:00.000Z'
+    }]]);
+    const timelineOptimisticEdits = new Map();
+    const pageState = { active: null };
+    const weekWindow = () => ({ start: Date.parse('2026-08-31T00:00:00Z') });
+    ${content.slice(start, end)}
+    return popupTimelineEntries(Date.parse('2026-08-31T00:00:00Z'), Date.parse('2026-09-07T00:00:00Z') - 1);
+  `);
+  assert.equal(project().length, 0);
 });
 
 test('ordinary Start tracking projects the running block and right-edge scroll before worker acceptance', () => {
@@ -205,6 +227,7 @@ test('optimistic start helper updates the mounted timeline and scrolls before an
     const refreshCompactSurface = () => {};
     const localDateValue = date => date.toISOString().slice(0, 10);
     const refreshMountedTimeline = () => true;
+    const weekWindow = () => ({ start: 0 });
     const renderUi = () => { throw new Error('mounted timeline must not be remounted'); };
     ${content.slice(start, end)}
     const context = acceptTimelineStartImmediately({ taskUrl: 'https://example.com/new', taskTitle: 'New task' });
@@ -238,7 +261,7 @@ test('accepted start invalidates older recent loads before rendering and can mou
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
   assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
-  assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
+  assert.match(content, /isStopDisabled: Boolean\(\(entry\._active \|\| sameTask\(entry, pageState\.active\)\) && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
   assert.match(content, /if \(!entry \|\| !trackableTaskIdentityOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
@@ -265,6 +288,7 @@ test('timeline and panel STOP share one single-flight acceptance across a deferr
 
   const run = Function(`
     let timelineStopInFlight = false;
+    const timesMode = false, activityViewMode = 'timeline';
     let sends = 0;
     let release = null;
     let refreshes = 0;
@@ -327,6 +351,7 @@ test('optimistic start acceptance rolls back internal state if rendering throws'
     const refreshTimelineQueueIndicator = () => {};
     const refreshCompactSurface = () => {};
     const localDateValue = date => date.toISOString().slice(0, 10);
+    const weekWindow = () => ({ start: 0 });
     const renderUi = () => {};
     ${content.slice(start, end)}
     try { acceptTimelineStartImmediately({ taskUrl: 'https://example.com/new' }, { completePrevious: true }); }
@@ -379,7 +404,7 @@ test('tracking timeline renders named rows and the configurable main project for
   assert.match(content, /projectNameForUrl\(storedTaskIdentityOf\(entry\), pageState\.projects, pageState\.otherProjectName\)/);
   assert.match(content, /rowId: projectRowId\(projectName\)/);
   assert.match(content, /const otherProjectName = String\(pageState\.otherProjectName \|\| 'Other'\)/);
-  assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now \}\)/);
+  assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow.now,/);
   assert.match(content, /createTimeline\(host, \{\s*items,\s*rows,/);
   assert.match(content, /otherProjectName/);
   assert.match(read('src/background/service-worker.js'), /projects: preferences\.projects,[\s\S]*otherProjectName: preferences\.otherProjectName/);
@@ -443,10 +468,10 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /strip\.append\(track\)/);
   assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
-  assert.match(worker, /message\.timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
-  assert.match(content, /onStop: item => stopTimelineEntry/);
+  assert.match(worker, /timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
+  assert.match(content, /onStop: item => \{[\s\S]*?sameTask\(entry, pageState\.active\) \? pageState\.active : entry/);
   assert.match(content, /type: 'STOP', description: activeDescriptionValue\(activeEntry\)/);
-  assert.match(timeline, /Stop \$\{formatClockDuration/);
+  assert.match(timeline, /button\.textContent = 'Stop and save'/);
   assert.doesNotMatch(timeline, /STOP /);
   assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
   assert.doesNotMatch(content, /\.timeline-stop \{/);

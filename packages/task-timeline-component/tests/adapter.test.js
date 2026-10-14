@@ -75,7 +75,7 @@ test('Calendar keeps unavailable resources and imported identities without favic
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'fdef796cc0b36f7ce494c057079323c83d1084902737315573d9e116197a9ac6');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'cc2ae9771ad73186b23f8e2cc701bf4321296b183dae7249cbe072ed1ebef560');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
@@ -119,6 +119,26 @@ test('adapter keeps atomic Clockoli switching and action permissions', () => {
   assert.match(source, /permissionsFor/);
   assert.match(source, /stopImmediatePropagation/);
   assert.match(source, /props\.onStart\(item, event\)/);
+});
+
+test('completed current task keeps the static Stop and save action', () => {
+  assert.match(source, /stop: \(running \|\| item\?\.isCurrentTask\) && !item\?\.isStopDisabled/);
+  assert.match(source, /const mode = item\.isCurrentTask \? 'current'/);
+  assert.match(source, /item\.isRunning \|\| item\.endedAt == null \|\| item\.isCurrentTask\) && typeof props\.onStop/);
+  assert.match(source, /button\.textContent = 'Stop and save'/);
+  assert.doesNotMatch(source, /formatClockDuration|updateActionClock|actionClock/);
+});
+
+test('weekly Calendar controls coexist with preserved viewport anchors and deferred gestures', () => {
+  assert.match(source, /initialProps\.weeklyCalendar[\s\S]*?calendar-toolbar \{ display:none \}/);
+  assert.match(source, /const domainStart = Math\.min\([\s\S]*?initialProps\.domainStart/);
+  assert.match(source, /totalRange: initialProps\.totalRange \?\? initialProps\.view/);
+  assert.match(source, /nextProps\.domainStart[\s\S]*?nextProps\.view\?\.end/);
+  assert.match(source, /const anchorTime = previousMode === 'timeline'[\s\S]*?timeline\.xToTime/);
+  assert.match(source, /timeline\._setScrollLeft\(timeline\.timeToX\(anchorTime\) - previousWidth \/ 2\)/);
+  assert.match(source, /timeline\.editState \|\| timeline\.calendarEditState \|\| timeline\.dragState \|\| pendingEdits\.size/);
+  assert.match(source, /global\.addEventListener\('pointerup', onGestureEnd\)/);
+  assert.match(source, /global\.removeEventListener\('pointerup', onGestureEnd\)/);
 });
 
 test('adapter supports external Timeline and Calendar controls without applying Timeline scale to Calendar', () => {

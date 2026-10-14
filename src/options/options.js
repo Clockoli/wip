@@ -1486,6 +1486,7 @@ function renderDestinationControls(preferences = {}) {
 
 function renderDisplayPreferences(preferences) {
   $('recent-days').value = state?.config?.recentDays || preferences.recentDays || 7;
+  $('interface-width').value = preferences.interfaceWidth === 'full' ? 'full' : 'contained';
   $('other-project-name').value = preferences.otherProjectName || 'Other';
   $('show-queue-diagnostics').checked = preferences.showQueueDiagnostics === true;
   $('projects-list').replaceChildren();
@@ -2238,6 +2239,24 @@ $('show-queue-diagnostics').addEventListener('change', async () => {
   } catch (error) {
     control.checked = previous;
     formFeedback('diagnostics-feedback', error.message || 'Could not save diagnostics setting.', 'error');
+  } finally { control.disabled = false; }
+});
+
+$('interface-width').addEventListener('change', async () => {
+  const control = $('interface-width');
+  const previous = localPreferences?.interfaceWidth === 'full' ? 'full' : 'contained';
+  if (!localPreferences) { control.value = previous; return; }
+  control.disabled = true;
+  formFeedback('interface-width-feedback', 'Saving interface width…');
+  try {
+    const result = await send({ type: 'SET_INTERFACE_WIDTH', width: control.value });
+    localPreferences = result.preferences;
+    control.value = localPreferences.interfaceWidth;
+    document.documentElement.dataset.clockoliWidth = control.value;
+    formFeedback('interface-width-feedback', 'Interface width saved.', 'success');
+  } catch (error) {
+    control.value = previous;
+    formFeedback('interface-width-feedback', error.message || 'Could not save interface width.', 'error');
   } finally { control.disabled = false; }
 });
 

@@ -37,8 +37,45 @@
   let timelineView = null;
   let activityTimelineView = null;
   let activityViewMode = 'timeline';
+  const ACTIVITY_VIEW_KEY = 'clockoli:activity-view';
+  if (timesMode) {
+    try {
+      const savedView = globalThis.localStorage?.getItem(ACTIVITY_VIEW_KEY);
+      if (['timeline', 'calendar', 'list'].includes(savedView)) activityViewMode = savedView;
+    } catch { /* unavailable storage keeps the default view */ }
+  }
   let timelineViewMode = 'timeline';
   let timelineGraphicViewMode = 'timeline';
+  let activityViewSelection = 0;
+  let activityViewSave = null;
+  async function restoreActivityViewMode() {
+    const selection = activityViewSelection;
+    try {
+      const { mode } = await send({ type: 'GET_ACTIVITY_VIEW_MODE' });
+      if (selection !== activityViewSelection) return;
+      if (mode === null && timesMode && activityViewMode !== 'timeline') {
+        await saveActivityViewMode(activityViewMode);
+        return;
+      }
+      if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+      activityViewMode = mode;
+      timelineViewMode = mode;
+      if (mode !== 'list') timelineGraphicViewMode = mode;
+      if (timesMode) {
+        try { globalThis.localStorage?.setItem(ACTIVITY_VIEW_KEY, mode); } catch { /* storage may be unavailable */ }
+      }
+      applyCompactViewMode();
+      if (timelineInstance && mode !== 'list') timelineInstance.setViewMode(mode);
+      renderUi();
+    } catch { /* keep the available local or default selection if the worker is offline */ }
+  }
+  function saveActivityViewMode(mode) {
+    const selection = ++activityViewSelection;
+    const save = () => send({ type: 'SET_ACTIVITY_VIEW_MODE', mode });
+    activityViewSave = activityViewSave ? activityViewSave.catch(() => {}).then(save) : save();
+    void activityViewSave.catch(error => { if (selection === activityViewSelection) setError(error); });
+    return activityViewSave;
+  }
   let timelineInstance = null;
   let timelineWindow = null;
   let timelineEntriesById = new Map();
@@ -72,18 +109,23 @@
   let recentLoad = null;
   let recentLoadId = 0;
   let timesLoadId = 0;
+  let activityStateLoadId = 0;
   let activityCalendarLoadId = 0;
   let activityCalendarStatusText = '';
-  let calendarPeriodFocus = null;
-  let activityCalendarOpened = false;
+  let selectedWeekStart = null;
   let suppressCalendarNavigate = false;
-  const calendarOnlyKeys = new Set();
   let activeInlineKey = null;
-  let timesPeriod = 'last-three-days';
-  let timesStartDate = '';
-  let timesEndDate = '';
   let timesFilter = '';
+  const ACTIVITY_SEARCH_PAGE_SIZE = 20;
+  let activitySearchPage = 0;
   let timesHasTrackedTime = null;
+  let activitySearchEntries = null;
+  let activitySearchLoading = false;
+  let activitySearchError = '';
+  let activitySearchPartial = false;
+  let activitySearchTimer = null;
+  let activitySearchGeneration = 0;
+  let renderActivitySearch = null;
   let bulkDraft = '';
   let bulkMutation = false;
   let bulkOpen = false;
@@ -141,7 +183,7 @@
       && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
       && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
   }
-  function trackableTaskIdentityOf(value) { return timesMode || popupMode ? storedTaskIdentityOf(value) : taskUrlOf(value); }
+  function trackableTaskIdentityOf(value) { return storedTaskIdentityOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
@@ -663,8 +705,8 @@
   }
 
   function formatElapsed(startedAt) {
-    const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
-    return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000));
+    return [Math.floor(minutes / 60), minutes % 60].map(value => String(value).padStart(2, '0')).join(':');
   }
 
   function formatDuration(seconds) {
@@ -678,44 +720,163 @@
   }
 
   function timesRange() {
-    const today = new Date(), endToday = localDateValue(today), start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
-    const date = value => localDateValue(value), move = days => { const value = new Date(start); value.setDate(value.getDate() + days); return value; };
-    if (timesPeriod === 'last-three-days') return { startDate: date(move(-2)), endDate: endToday };
-    if (timesPeriod === 'today') return { startDate: endToday, endDate: endToday };
-    if (timesPeriod === 'yesterday') { const value = date(move(-1)); return { startDate: value, endDate: value }; }
-    const mondayOffset = (today.getDay() + 6) % 7;
-    if (timesPeriod === 'this-week') return { startDate: date(move(-mondayOffset)), endDate: endToday };
-    if (timesPeriod === 'last-week') return { startDate: date(move(-mondayOffset - 7)), endDate: date(move(-mondayOffset - 1)) };
-    if (timesPeriod === 'this-month') return { startDate: `${endToday.slice(0, 7)}-01`, endDate: endToday };
-    if (timesPeriod === 'last-month') {
-      const last = new Date(today.getFullYear(), today.getMonth(), 0, 12), first = new Date(last.getFullYear(), last.getMonth(), 1, 12);
-      return { startDate: date(first), endDate: date(last) };
+    const start = new Date(weekWindow().start), end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { startDate: localDateValue(start), endDate: localDateValue(end) };
+  }
+
+  function weekWindow(value = selectedWeekStart ?? Date.now()) {
+    const day = new Date(value);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - (day.getDay() + 6) % 7);
+    const end = new Date(day);
+    end.setDate(end.getDate() + 7);
+    return { start: day.getTime(), end: end.getTime() };
+  }
+
+  function resetWeekForViewSwitch() {
+    selectedWeekStart = null;
+    activityTimelineView = null;
+    timelineView = null;
+    ++activityCalendarLoadId;
+    if (timelineInstance?.setCalendarRange) {
+      suppressCalendarNavigate = true;
+      try { timelineInstance.setCalendarRange(weekWindow()); }
+      finally { suppressCalendarNavigate = false; }
     }
-    if (timesPeriod === 'custom' && validEntryDate(timesStartDate) && validEntryDate(timesEndDate) && timesStartDate <= timesEndDate) return { startDate: timesStartDate, endDate: timesEndDate };
-    throw new Error('Choose a valid custom date range.');
+    const navigation = (fullWidthPopupShadow || shadow)?.querySelector('.week-navigation');
+    const { startDate, endDate } = timesRange();
+    const label = navigation?.querySelector('.week-navigation-label');
+    if (label) label.textContent = `${startDate} – ${endDate}`;
+    const next = navigation?.querySelector('[aria-label="Next week"]');
+    if (next) next.disabled = true;
   }
 
-  function calendarWindowForPeriod({ startDate, endDate }) {
-    const start = new Date(`${startDate}T12:00:00`), end = new Date(`${endDate}T12:00:00`);
-    start.setHours(0, 0, 0, 0);
-    end.setDate(end.getDate() + 1);
-    end.setHours(0, 0, 0, 0);
-    return { start: start.getTime(), end: end.getTime() };
+  function weekNavigation() {
+    const navigation = el('div', undefined, 'week-navigation');
+    navigation.setAttribute('role', 'group');
+    navigation.setAttribute('aria-label', 'Browse weeks');
+    const label = el('span', undefined, 'week-navigation-label');
+    let nextControl;
+    const updateNavigation = () => {
+      const { startDate, endDate } = timesRange();
+      label.textContent = `${startDate} – ${endDate}`;
+      nextControl.disabled = weekWindow().start >= weekWindow(Date.now()).start;
+    };
+    for (const [direction, name, glyph] of [[-1, 'Previous week', '‹'], [1, 'Next week', '›']]) {
+      const control = button(glyph, 'secondary week-navigation-button', async () => {
+        try { await shiftWeek(direction); }
+        finally { updateNavigation(); }
+      });
+      control.setAttribute('aria-label', name);
+      if (direction < 0) navigation.append(control, label);
+      else { nextControl = control; navigation.append(control); }
+    }
+    updateNavigation();
+    return navigation;
   }
 
-  function focusActivityCalendarPeriod(range = calendarPeriodFocus) {
-    if (!timesMode || activityViewMode !== 'calendar' || !timelineInstance?.setCalendarRange) return;
-    if (!range && !activityCalendarOpened) range = timesRange();
-    if (!range) return;
+  function placeCalendarWeekNavigation(root, mode) {
+    const host = root.querySelector('.task-timeline-host');
+    if (!host) return;
+    const navigation = [...root.querySelectorAll('.week-navigation')].find(node => node.parentElement !== host)
+      || host.querySelector('.week-navigation');
+    if (!navigation) return;
+    const oldNavigation = host.querySelector('.week-navigation');
+    if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
+    if (mode === 'calendar') {
+      navigation.slot = 'week-navigation';
+      host.append(navigation);
+    } else if (navigation.parentElement === host) {
+      navigation.removeAttribute('slot');
+      root.insertBefore(navigation, root.querySelector(timesMode ? '.times-list-total' : '.timeline-shell'));
+    }
+  }
+
+  function shiftWeek(direction) {
+    const current = new Date(weekWindow().start);
+    current.setDate(current.getDate() + 7 * direction);
+    if (current.getTime() > weekWindow(Date.now()).start) return;
+    const previousWeek = selectedWeekStart;
+    const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
+    selectedWeekStart = current.getTime();
+    activityTimelineView = null;
+    timelineView = null;
+    const range = weekWindow();
+    if (timelineInstance?.setCalendarRange) {
+      suppressCalendarNavigate = true;
+      try { timelineInstance.setCalendarRange(range); }
+      finally { suppressCalendarNavigate = false; }
+    }
+    if (timesMode) return loadSelectedTimes(previousLoaded => {
+      if (selectedWeekStart !== current.getTime()) return;
+      selectedWeekStart = previousWeek;
+      activityTimelineView = previousActivityView;
+      timelineView = previousTimelineView;
+      recentLoaded = previousLoaded;
+      suppressCalendarNavigate = true;
+      try { timelineInstance?.setCalendarRange?.(weekWindow()); }
+      finally { suppressCalendarNavigate = false; }
+    });
+    return loadActivityCalendarWeek(range).then(loaded => {
+      if (loaded === false && selectedWeekStart === current.getTime()) {
+        selectedWeekStart = previousWeek;
+        timelineView = null;
+        suppressCalendarNavigate = true;
+        try { timelineInstance?.setCalendarRange?.(weekWindow()); }
+        finally { suppressCalendarNavigate = false; }
+        refreshMountedTimeline();
+      }
+    });
+  }
+
+  function activityPeriodTimelineView(now) {
+    const { start, end } = weekWindow();
+    return { start, end, focusedAt: Math.min(now, end - 1) };
+  }
+
+  function activityTotalRange() {
+    return weekWindow();
+  }
+
+  function listWeekTotalText() {
+    if (!recentLoaded) return 'Total: …';
+    const { start, end } = weekWindow();
+    const now = Math.min(timelineNow(), end - 1);
+    const { items } = popupTimelineItems(start, now);
+    const total = items.reduce((sum, item) => {
+      const stop = item.isRunning ? now : item.endedAt;
+      return sum + Math.max(0, Math.min(stop, end, Date.now()) - Math.max(item.startedAt, start));
+    }, 0);
+    const minutes = Math.floor(total / 60_000);
+    return `Total: ${minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`}`;
+  }
+
+  function updateListWeekTotal() {
+    for (const scope of [shadow, fullWidthPopupShadow]) {
+      const total = scope?.querySelector('.times-list-total,.popup-list-total');
+      if (total) total.textContent = listWeekTotalText();
+    }
+  }
+
+  function focusActivityCalendarPeriod() {
+    if (activityViewMode !== 'calendar' || !timelineInstance?.setCalendarRange) return;
+    const window = weekWindow();
+    const current = timelineInstance.getCalendarRange?.();
+    if (current?.start === window.start && current?.end === window.end) return;
     suppressCalendarNavigate = true;
-    try { timelineInstance.setCalendarRange(calendarWindowForPeriod(range)); }
+    try { timelineInstance.setCalendarRange(window); }
     finally { suppressCalendarNavigate = false; }
-    calendarPeriodFocus = null;
-    activityCalendarOpened = true;
   }
 
   function activityRecordDate(entry) {
     return entry.entryDate || localDateValue(new Date(entry.startedAt));
+  }
+
+  function overlapsSelectedWeek(entry) {
+    const { start, end } = weekWindow();
+    const started = new Date(entry.startedAt).getTime(), ended = new Date(entry.endedAt).getTime();
+    return Number.isFinite(started) && Number.isFinite(ended) && started < end && ended > start;
   }
 
   function activityRecordKey(entry) {
@@ -723,14 +884,32 @@
   }
 
   function mergeActivityRecords(incoming, range, partial = false) {
-    const inRange = entry => activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate;
+    const start = new Date(`${range.startDate}T00:00:00`).getTime();
+    const inRange = entry => {
+      const date = activityRecordDate(entry);
+      return date <= range.endDate && (date >= range.startDate || new Date(entry.endedAt).getTime() > start);
+    };
     const records = new Map(recent.filter(entry => partial || !inRange(entry)).map(entry => [activityRecordKey(entry), entry]));
     for (const entry of incoming) records.set(activityRecordKey(entry), entry);
     return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
   }
 
   async function loadActivityCalendarWeek(range) {
-    if (!timesMode || !range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
+    if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
+    if (timesMode && loadingRecent) {
+      ++timesLoadId;
+      ++recentLoadId;
+      recentLoad = null;
+      loadingRecent = false;
+    }
+    const nextWeek = weekWindow(range.start).start;
+    const previousWeek = selectedWeekStart;
+    const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
+    if (selectedWeekStart !== nextWeek) {
+      selectedWeekStart = nextWeek;
+      activityTimelineView = null;
+      timelineView = null;
+    }
     const loadId = ++activityCalendarLoadId;
     const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
     const setStatus = text => {
@@ -740,20 +919,30 @@
     };
     setStatus('Loading week…');
     try {
-      const data = await send({ type: 'LOAD_TIMES', payload });
+      const data = await send({ type: timesMode ? 'LOAD_TIMES' : 'LOAD_WEEK', payload });
       if (loadId !== activityCalendarLoadId) return;
       if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
       recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
-      const listRange = timesRange();
-      for (const entry of data.recent) {
-        const date = activityRecordDate(entry);
-        if (date < listRange.startDate || date > listRange.endDate) calendarOnlyKeys.add(activityRecordKey(entry));
-      }
+      if (timesMode) { recentLoaded = true; recentFresh = true; }
       refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
       if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
+      return true;
     } catch (error) {
-      if (loadId === activityCalendarLoadId) { setStatus('Could not load this week.'); setError(error); }
+      if (loadId === activityCalendarLoadId) {
+        selectedWeekStart = previousWeek;
+        activityTimelineView = previousActivityView;
+        timelineView = previousTimelineView;
+        if (timelineInstance?.setCalendarRange) {
+          suppressCalendarNavigate = true;
+          try { timelineInstance.setCalendarRange(weekWindow()); }
+          finally { suppressCalendarNavigate = false; }
+        }
+        refreshMountedTimeline();
+        setStatus('Could not load this week.'); setError(error);
+        return false;
+      }
     }
   }
 
@@ -833,19 +1022,13 @@
 
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
-    recent = timesMode && recentLoaded ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial)) : incoming;
-    if (timesMode && recentLoaded) {
-      const range = timesRange();
-      for (const entry of recent) {
-        const date = activityRecordDate(entry), key = activityRecordKey(entry);
-        if (date < range.startDate || date > range.endDate) calendarOnlyKeys.add(key);
-        else calendarOnlyKeys.delete(key);
-      }
-    }
+    recent = recentLoaded && (timesMode || selectedWeekStart !== null)
+      ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
     todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
     if (!Array.isArray(data)) {
       pageState = reconcileTimelineAcceptedActive({
-        ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
+        ...pageState, configured: data?.configured !== false,
+        active: timesMode && data?.active === undefined && data?.configured !== false ? pageState.active : data?.active ?? null,
         pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
         partial: Boolean(data?.partial), readStatus: data?.readStatus ?? [], readConflicts: data?.conflicts ?? [],
       });
@@ -867,11 +1050,13 @@
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
     pageState = reconcileTimelineAcceptedActive(data);
+    root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
+    fullWidthPopupRoot?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     applyTrackedTotals(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
     reconcileTimelineQueuedOperations(pendingIds);
-    if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+    if (!timesMode && Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
       recentFresh = true;
@@ -1125,7 +1310,7 @@
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
-      isolateShadowHost(root, { wide: timesMode });
+      isolateShadowHost(root, { wide: true });
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
       return true;
@@ -1261,8 +1446,14 @@
     return next;
   }
 
-  function refreshRecent(force = false, { calendarFocus = null } = {}) {
+  function refreshRecent(force = false) {
     if (recentLoad && !force) return recentLoad;
+    if (timesMode && force && timesFilter.trim()) {
+      clearTimeout(activitySearchTimer); activitySearchTimer = null;
+      activitySearchGeneration++;
+      activitySearchEntries = null; activitySearchLoading = false;
+      activitySearchError = ''; activitySearchPartial = false;
+    }
     const loadId = ++recentLoadId, request = recentRequest();
     recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
     let load;
@@ -1280,10 +1471,7 @@
       }
       if (loadId === recentLoadId) {
         applyMenuData(data, true);
-        if (timesMode && activityViewMode === 'calendar' && timelineInstance?.getCalendarRange) {
-          if (calendarFocus) focusActivityCalendarPeriod(calendarFocus);
-          await loadActivityCalendarWeek(timelineInstance.getCalendarRange());
-        }
+        if (timesMode && activityViewMode === 'calendar') focusActivityCalendarPeriod();
       }
       return data;
     }).finally(() => {
@@ -1663,7 +1851,23 @@
       const disabled = Boolean(loadingRecent || !recentFresh);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
-      inline.setDisabled(disabled); actions.append(edit, inline.cancel, inline.save, remove);
+      inline.setDisabled(disabled);
+      if (timesMode && trackableTaskIdentityOf(entry)) {
+        const running = sameTask(entry, pageState.active);
+        const label = `${running ? 'Stop' : 'Start'} tracking ${taskTitleOf(entry) || storedTaskIdentityOf(entry)}`;
+        const track = button(label, `entry-track-control ${running ? 'entry-stop' : 'entry-track'}`, async (_event, node) => {
+          if (node.disabled || running !== sameTask(entry, pageState.active)) return;
+          node.disabled = true;
+          try {
+            if (running) await stopTimelineEntry(pageState.active);
+            else await restartTimelineEntry(entry);
+          } catch (error) { setError(error); }
+        });
+        track.title = label; track.setAttribute('aria-label', label);
+        track.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+        actions.append(track);
+      }
+      actions.append(edit, inline.cancel, inline.save, remove);
       if (!inline.save.hidden) actions.classList.add('dirty');
       const time = el('span', recentTimeText(entry), 'entry-time-range entry-time-display');
       timeRow.append(time, inline.node, inline.duration, actions);
@@ -1782,26 +1986,67 @@
     }
   }
 
-  async function loadSelectedTimes() {
+  async function loadSelectedTimes(onFailure = null) {
     const loadId = ++timesLoadId;
+    const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
     try {
-      // Activity must hydrate from the durable local state before waiting for
-      // GitHub. In particular, a reload immediately after a Timeline edit
-      // must never display the old remote interval as the current one.
+      // Hydrate durable local edits before the remote week read. Page state is
+      // bounded, so it must not replace records already loaded for this week.
       const cached = await send({ type: 'GET_PAGE_STATE', refresh: false });
       if (loadId !== timesLoadId) return;
       if (cached?.configured && Array.isArray(cached.recent)) {
         applyPageState(cached);
-        const range = timesRange();
-        recent = cached.recent.filter(entry => activityRecordDate(entry) >= range.startDate
-          && activityRecordDate(entry) <= range.endDate);
+        recent = mergeActivityRecords(cached.recent, timesRange(), true);
         recentLoaded = true; recentFresh = false;
         renderUi();
       }
-      await refreshRecent(true, { calendarFocus: activityViewMode === 'calendar' ? calendarPeriodFocus : null });
-    } catch (error) {
-      if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error);
+      await refreshRecent(true);
+      if (loadId === timesLoadId) await refreshActivityState();
+    }
+    catch (error) {
+      if (loadId !== timesLoadId) return;
+      onFailure?.(previousLoaded);
+      if (error?.name !== 'AbortError') setError(error);
+      else renderUi();
+    }
+  }
+
+  function scheduleActivitySearch() {
+    if (activitySearchEntries || activitySearchLoading || activitySearchTimer || !timesFilter.trim()) return;
+    activitySearchTimer = setTimeout(async () => {
+      activitySearchTimer = null;
+      if (!timesFilter.trim()) return;
+      const generation = ++activitySearchGeneration;
+      activitySearchLoading = true; activitySearchError = '';
+      renderActivitySearch?.();
+      try {
+        const data = await send({ type: 'SEARCH_ACTIVITY' });
+        if (generation !== activitySearchGeneration) return;
+        if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Activity history could not be loaded.');
+        activitySearchEntries = data.recent;
+        activitySearchPartial = Boolean(data.partial || data.conflicts?.length);
+      } catch (error) {
+        if (generation !== activitySearchGeneration) return;
+        activitySearchError = error.message || 'Activity search failed.';
+      } finally {
+        if (generation === activitySearchGeneration) {
+          activitySearchLoading = false;
+          renderActivitySearch?.();
+        }
+      }
+    }, 250);
+  }
+
+  async function refreshActivityState() {
+    const loadId = ++activityStateLoadId;
+    const state = await send({ type: 'GET_PAGE_STATE', refresh: false });
+    if (loadId !== activityStateLoadId) return;
+    const previous = pageState.active;
+    applyPageState(state);
+    if (!refreshMountedTimeline()) renderUi();
+    if (previous && (previous.id !== pageState.active?.id || previous.startedAt !== pageState.active?.startedAt)) {
+      await refreshRecent(true);
     }
   }
 
@@ -1824,67 +2069,107 @@
     }
     const toolbar = el('section', undefined, 'times-toolbar');
     const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
-    const periodLabel = el('label', 'Period'), period = el('select'); period.setAttribute('aria-label', 'Time period');
-    for (const [value, label] of [['last-three-days', 'Last 3 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']]) {
-      const option = el('option', label); option.value = value; option.selected = timesPeriod === value; period.append(option);
-    }
-    period.addEventListener('change', () => {
-      timesPeriod = period.value;
-      calendarPeriodFocus = timesPeriod === 'custom' ? null : timesRange();
-      if (timesPeriod === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
-      else void loadSelectedTimes();
-    }); periodLabel.append(period); toolbar.append(periodLabel);
-    if (timesPeriod === 'custom') {
-      const startLabel = el('label', 'From'), start = el('input'); start.type = 'date'; start.value = timesStartDate; start.addEventListener('input', () => { timesStartDate = start.value; }); startLabel.append(start);
-      const endLabel = el('label', 'Through'), end = el('input'); end.type = 'date'; end.value = timesEndDate; end.addEventListener('input', () => { timesEndDate = end.value; }); endLabel.append(end);
-      const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => { calendarPeriodFocus = timesRange(); return loadSelectedTimes(); })); toolbar.append(custom);
-    }
-    body.append(toolbar);
     const result = el('section', undefined, 'times-results activity-list');
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
       const draftKeys = new Set(drafts.map(activityRecordKey));
-      const entries = recordsWithDrafts().filter(entry => !calendarOnlyKeys.has(activityRecordKey(entry)) || draftKeys.has(activityRecordKey(entry)));
+      const range = timesRange();
+      const entries = query
+        ? [...(activitySearchEntries || []).filter(entry => !draftKeys.has(activityRecordKey(entry))),
+          ...recent.filter(entry => entry._pending && !draftKeys.has(activityRecordKey(entry))), ...drafts]
+        : recordsWithDrafts().filter(entry => (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
+          || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
       const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
+      if (query) {
+        result.append(el('p', 'Search results across all weeks', 'muted'));
+        if (activitySearchPartial) result.append(el('p', 'Some time repositories or conflicting records could not be searched. Results may be incomplete.', 'notice partial-read-warning'));
+      }
       let empty = null;
-      if (!matches.length) {
+      if (query && !activitySearchEntries) {
+        empty = el('div', undefined, 'activity-empty');
+        empty.setAttribute('role', 'status');
+        empty.append(el('p', activitySearchError || 'Searching all activity…', activitySearchError ? 'error' : 'muted'));
+        if (activitySearchError) empty.append(button('Retry search', 'secondary', () => {
+          activitySearchError = ''; scheduleActivitySearch(); renderFiltered();
+        }));
+      } else if (!matches.length) {
         empty = el('div', undefined, 'activity-empty');
         const firstUse = !entries.length && timesHasTrackedTime === false;
-        empty.append(el('p', entries.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
-        if (entries.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
+        empty.append(el('p', query ? 'No entries match across all weeks.' : entries.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
+        if (query || entries.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
         else if (!firstUse) empty.append(button('Add time', 'secondary', async () => { bulkOpen = true; bulk.open = true; input.focus(); }));
       }
+      const pageCount = Math.ceil(matches.length / ACTIVITY_SEARCH_PAGE_SIZE);
+      if (query && activitySearchEntries) activitySearchPage = Math.min(activitySearchPage, Math.max(0, pageCount - 1));
+      const sortedMatches = query && activitySearchEntries
+        ? [...matches].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()) : matches;
+      const visibleMatches = query && activitySearchEntries
+        ? sortedMatches.slice(activitySearchPage * ACTIVITY_SEARCH_PAGE_SIZE, (activitySearchPage + 1) * ACTIVITY_SEARCH_PAGE_SIZE) : sortedMatches;
       if (query && inlineDrafts.size) {
-        const visible = new Set(matches.map(entryKey));
-        for (const entry of drafts) if (!visible.has(entryKey(entry))) matches.push(entry);
+        const visible = new Set(visibleMatches.map(entryKey));
+        for (const entry of drafts) if (!visible.has(entryKey(entry))) visibleMatches.push(entry);
       }
-      renderRecent(result, matches, empty);
+      renderRecent(result, visibleMatches, empty);
+      if (query && activitySearchEntries && pageCount > 1) {
+        const pagination = el('nav', undefined, 'times-search-pagination');
+        pagination.setAttribute('aria-label', 'Search results pages');
+        const previous = button('Previous page', 'secondary', () => { activitySearchPage--; renderFiltered(); });
+        const next = button('Next page', 'secondary', () => { activitySearchPage++; renderFiltered(); });
+        previous.disabled = activitySearchPage === 0;
+        next.disabled = activitySearchPage === pageCount - 1;
+        const start = activitySearchPage * ACTIVITY_SEARCH_PAGE_SIZE + 1;
+        pagination.append(previous, el('span', `${start}–${Math.min(start + ACTIVITY_SEARCH_PAGE_SIZE - 1, matches.length)} of ${matches.length} · Page ${activitySearchPage + 1} of ${pageCount}`), next);
+        result.append(pagination);
+      }
     };
-    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered();
+    renderActivitySearch = renderFiltered;
+    filter.addEventListener('input', () => {
+      timesFilter = filter.value;
+      activitySearchPage = 0;
+      if (timesFilter.trim()) scheduleActivitySearch();
+      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
+      renderFiltered();
+    });
+    if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
+    renderFiltered();
     const views = el('div', undefined, 'times-view-modes');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
     for (const mode of ['timeline', 'calendar', 'list']) {
       const control = button(mode[0].toUpperCase() + mode.slice(1), 'times-view-button', () => {
+        const switched = activityViewMode !== mode;
         activityViewMode = mode;
+        try { globalThis.localStorage?.setItem(ACTIVITY_VIEW_KEY, mode); } catch { /* keep this tab's selection */ }
+        saveActivityViewMode(mode);
+        if (switched) {
+          resetWeekForViewSwitch();
+          if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
+          return loadSelectedTimes();
+        }
+        if (mode === 'list') renderFiltered();
         for (const choice of views.children) choice.setAttribute('aria-pressed', String(choice === control));
         timeline.hidden = mode === 'list'; result.hidden = mode !== 'list';
+        listTotal.hidden = mode !== 'list';
         calendarStatus.hidden = mode !== 'calendar';
         filterLabel.hidden = mode !== 'list'; toolbar.classList.toggle('times-visual', mode !== 'list');
         if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
+        if (mode === 'timeline' && !activityTimelineView) refreshMountedTimeline();
         if (mode === 'calendar') focusActivityCalendarPeriod();
         if (mode === 'calendar') return loadActivityCalendarWeek(timelineInstance?.getCalendarRange?.());
       });
       control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
     }
-    body.append(views);
+    const listTotal = el('div', listWeekTotalText(), 'times-list-total');
+    listTotal.hidden = activityViewMode !== 'list';
+    body.append(views, toolbar, weekNavigation(), listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
-    calendarStatus.hidden = activityViewMode !== 'calendar'; body.append(calendarStatus);
+    calendarStatus.hidden = activityViewMode !== 'calendar';
     const timeline = renderPopupTimeline(preservedTimeline);
     timeline.hidden = activityViewMode === 'list'; result.hidden = activityViewMode !== 'list';
     filterLabel.hidden = activityViewMode !== 'list'; toolbar.classList.toggle('times-visual', activityViewMode !== 'list');
-    body.append(timeline, result);
+    body.append(timeline, result, calendarStatus);
+    placeCalendarWeekNavigation(body, activityViewMode);
     const bulk = el('details', undefined, 'bulk-time');
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
     const summary = el('summary', 'Add time'); bulk.append(summary);
@@ -1908,9 +2193,6 @@
     page.append(body); return page;
   }
 
-  const POPUP_WINDOW_MS = 24 * 60 * 60 * 1000;
-  const POPUP_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
-
   function mergeTimelineCompletedEntries(completed, optimisticCompletions) {
     const byId = new Map();
     const anonymous = [];
@@ -1926,18 +2208,25 @@
   }
 
   function popupTimelineEntries(windowStart, now) {
+    const week = weekWindow();
+    windowStart = Math.max(windowStart, week.start);
     const completed = recent.filter(entry => entry._path && (entry._sha || entry._pending)
       && Number.isFinite(new Date(entry.startedAt).getTime()) && Number.isFinite(new Date(entry.endedAt).getTime())
-      && new Date(entry.startedAt).getTime() < now && new Date(entry.endedAt).getTime() > windowStart)
+      && new Date(entry.startedAt).getTime() < Math.min(now, week.end) && new Date(entry.endedAt).getTime() > windowStart)
       .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
     const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
-    if (pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
+    if (weekWindow().start === weekWindow(Date.now()).start
+      && pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
       entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
     }
     return entries.map(entry => {
       const optimistic = timelineOptimisticEdits.get(entry.id);
       return { ...entry, isPending: Boolean(entry._pending || optimistic), ...(optimistic || {}) };
     })
+      .filter(entry => Number.isFinite(new Date(entry.startedAt).getTime())
+        && Number.isFinite(new Date(entry.endedAt).getTime())
+        && (entry._active ? new Date(entry.startedAt).getTime() <= now : new Date(entry.startedAt).getTime() < Math.min(now, week.end))
+        && new Date(entry.endedAt).getTime() > windowStart)
       .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
   }
 
@@ -1958,14 +2247,15 @@
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
         savedDescription: entry.description || '',
-        startedAt: Math.max(historyStart, new Date(entry.startedAt).getTime()),
+        startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
+        isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active,
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+        isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
           || Boolean(!entry._active && entry._pending)
@@ -1985,9 +2275,11 @@
   }
 
   function popupTimelineRows(entries) {
-    const rows = (pageState.projects || []).map(project => ({ id: projectRowId(project.name), title: project.name }));
+    const names = new Set(entries.map(entry => projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, pageState.otherProjectName)));
+    const rows = (pageState.projects || []).filter(project => names.has(project.name))
+      .map(project => ({ id: projectRowId(project.name), title: project.name }));
     const otherProjectName = String(pageState.otherProjectName || 'Other');
-    if (entries.some(entry => projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, otherProjectName) === otherProjectName)) {
+    if (names.has(otherProjectName) && !rows.some(row => row.id === projectRowId(otherProjectName))) {
       rows.push({ id: projectRowId(otherProjectName), title: otherProjectName });
     }
     return rows.length ? rows : [{ id: projectRowId(otherProjectName), title: otherProjectName }];
@@ -2005,6 +2297,7 @@
   }
 
   function activityHistoryStart(fallback) {
+    if (timesMode && activityViewMode !== 'calendar') return fallback;
     return recent.reduce((start, entry) => {
       const timestamp = new Date(entry.startedAt).getTime();
       return Number.isFinite(timestamp) ? Math.min(start, timestamp) : start;
@@ -2013,13 +2306,21 @@
 
   function refreshMountedTimeline() {
     if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
-    timelineWindow = { ...timelineWindow, now: timelineNow(),
-      historyStart: timesMode
-        ? activityHistoryStart(timelineWindow.historyStart)
-        : timelineWindow.historyStart };
+    const periodStart = weekWindow().start;
+    timelineWindow = { ...timelineWindow, now: Math.min(timelineNow(), weekWindow().end - 1),
+      historyStart: activityHistoryStart(periodStart) };
     const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
     timelineEntriesById = byId;
-    timelineInstance.update({ items, rows, now: timelineWindow.now });
+    const refocus = !(timesMode ? activityTimelineView : timelineView);
+    if (refocus) {
+      if (timesMode) activityTimelineView = activityPeriodTimelineView(timelineWindow.now);
+      else timelineView = activityPeriodTimelineView(timelineWindow.now);
+    }
+    timelineInstance.update({ items, rows, now: timelineWindow.now,
+      domainStart: periodStart, totalRange: activityTotalRange(),
+      ...(refocus && timelineInstance.getViewMode?.() !== 'calendar'
+        ? { view: timesMode ? activityTimelineView : timelineView } : {}) });
+    updateListWeekTotal();
     refreshCompactSurface();
     refreshTimelineQueueIndicator();
     return true;
@@ -2035,11 +2336,13 @@
   function finishTimelineStop() {
     timelineStopInFlight = false;
     refreshMountedTimeline();
+    if (timesMode && activityViewMode === 'list') renderUi();
   }
 
   function refreshMountedTimelineAtRightEdge(startedAt) {
     const startedAtMs = new Date(startedAt).getTime();
     if (!Number.isFinite(startedAtMs)) return false;
+    if (weekWindow().start !== weekWindow(Date.now()).start) return refreshMountedTimeline();
     timelineScrollToRightPending = true;
     if (!timelineInstance || !timelineWindow || !timelineView) return false;
     const now = Math.max(Date.now(), startedAtMs);
@@ -2341,7 +2644,8 @@
     const previousDescription = activeDescriptionValue();
     const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
     try {
-      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription });
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription,
+        sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } });
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
@@ -2359,6 +2663,7 @@
     } finally {
       timelineStartInFlight = false;
       refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
     }
     return true;
   }
@@ -2366,29 +2671,33 @@
   function renderPopupTimeline(preservedSection = null) {
     if (preservedSection) return preservedSection;
     const section = el('section', undefined, 'popup-timeline-section');
+    if (!timesMode) {
+      const listTotal = el('div', listWeekTotalText(), 'popup-list-total');
+      listTotal.hidden = timelineViewMode !== 'list';
+      section.append(weekNavigation(), listTotal);
+    }
     timelineQueueIndicator = el('div', undefined, 'timeline-queue-status muted');
     timelineQueueIndicator.setAttribute('role', 'status');
     timelineQueueIndicator.setAttribute('aria-live', 'polite');
     timelineQueueIndicator.hidden = true;
-    section.append(timelineQueueIndicator);
     const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
     if (!createTimeline) {
-      section.append(el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
+      section.append(timelineQueueIndicator, el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
       return section;
     }
-    if (!recentLoaded && !timelineAcceptedActive) { section.append(el('div', 'Loading timeline…', 'muted')); return section; }
-    const now = timelineNow(), historyStart = timesMode
-      ? activityHistoryStart(now - POPUP_HISTORY_MS) : now - POPUP_HISTORY_MS;
-    const defaultStart = now - POPUP_WINDOW_MS;
+    if (!recentLoaded && !timelineAcceptedActive) { section.append(timelineQueueIndicator, el('div', 'Loading timeline…', 'muted')); return section; }
+    const now = Math.min(timelineNow(), weekWindow().end - 1), periodStart = weekWindow().start;
+    const historyStart = activityHistoryStart(periodStart);
     timelineWindow = { historyStart, now };
-    if (timesMode) activityTimelineView ||= { start: defaultStart, end: now, focusedAt: now };
-    else timelineView ||= { start: defaultStart, end: now, focusedAt: now };
+    if (timesMode) activityTimelineView ||= activityPeriodTimelineView(now);
+    else timelineView ||= activityPeriodTimelineView(now);
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     const timelineShell = el('div', undefined, 'timeline-shell');
     const host = el('div', undefined, 'task-timeline-host'); timelineShell.append(host);
     if (compactSurface) compactSurface.host = host;
-    section.append(timelineShell);
+    section.append(timelineShell, timelineQueueIndicator);
+    placeCalendarWeekNavigation(section, timelineViewMode);
     globalThis.requestAnimationFrame(() => {
       if (!host.isConnected) return;
       try {
@@ -2396,9 +2705,11 @@
         items,
         rows,
         now,
+        domainStart: periodStart,
+        totalRange: activityTotalRange(),
         view: timesMode ? activityTimelineView : timelineView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
-        weeklyCalendar: timesMode,
+        weeklyCalendar: true,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
           if (timesMode) {
@@ -2410,7 +2721,10 @@
         },
         onViewChange: view => { if (timesMode) activityTimelineView = view; else timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
-        onStop: item => stopTimelineEntry(timelineEntriesById.get(item.id)),
+        onStop: item => {
+          const entry = timelineEntriesById.get(item.id);
+          return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
+        },
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
@@ -2477,7 +2791,7 @@
           catch (error) { setError(error); throw error; }
         },
         });
-        timelineInstance.scrollToEnd();
+        if (!timesMode && weekWindow().start === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();
         if (timesMode && activityViewMode === 'calendar') {
           focusActivityCalendarPeriod();
           void loadActivityCalendarWeek(timelineInstance.getCalendarRange());
@@ -2532,6 +2846,7 @@
   }
 
   function updatePanelClocks() {
+    if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
     for (const scope of [shadow, fullWidthPopupShadow]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
       for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) value.textContent = formatElapsed(pageState.active.startedAt);
@@ -2591,22 +2906,31 @@
   function applyCompactViewMode() {
     if (!compactSurface) return;
     const list = timelineViewMode === 'list';
-    compactSurface.timeline.hidden = list;
+    placeCalendarWeekNavigation(compactSurface.timeline, timelineViewMode);
+    compactSurface.timeline.hidden = false;
+    const shell = compactSurface.timeline.querySelector('.timeline-shell');
+    if (shell) shell.hidden = list;
+    const total = compactSurface.timeline.querySelector('.popup-list-total');
+    if (total) { total.hidden = !list; total.textContent = listWeekTotalText(); }
     compactSurface.overlaps.hidden = list;
     compactSurface.today.hidden = !list;
-    for (const control of fullWidthPopupShadow?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+    for (const control of (fullWidthPopupShadow || shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
       control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
     }
   }
 
   function setTimelineViewMode(mode) {
     if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+    const switched = timelineViewMode !== mode;
     timelineViewMode = mode;
+    saveActivityViewMode(mode);
+    if (switched) resetWeekForViewSwitch();
     if (mode !== 'list') {
       timelineGraphicViewMode = mode;
       timelineInstance?.setViewMode(mode);
     }
     applyCompactViewMode();
+    if (switched) void loadActivityCalendarWeek(weekWindow()).catch(setError);
   }
 
   function refreshCompactSurface() {
@@ -2618,6 +2942,7 @@
     const scrollTop = scroll?.scrollTop;
     const diagnosticsOpen = feedback.querySelector?.('details')?.open;
     const active = pageState.active, current = taskFromLocation();
+    strip.classList.toggle('is-active', Boolean(active));
     const activeIdentity = active ? String(active.id || active.startedAt) : '';
     const preserveActiveDescription = Boolean(active && activeElement?.classList?.contains('strip-description')
       && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
@@ -2626,8 +2951,8 @@
       strip.setAttribute('data-active-id', activeIdentity); strip.setAttribute('data-active-url', active ? taskUrlOf(active) : '');
     }
     if (active && !preserveActiveDescription) {
-      strip.append(siteFavicon(active, 'strip-favicon'));
       const copy = el('div', undefined, 'strip-task-copy');
+      copy.append(siteFavicon(active, 'strip-favicon'));
       copy.append(taskResult(active, 'strip-task'));
       const description = el('input');
       description.className = 'strip-description';
@@ -2657,13 +2982,18 @@
         catch (error) { setError(error); }
       });
       descriptionField.append(description, saveDescription); copy.append(descriptionField);
-      strip.append(copy, el('span', formatElapsed(active.startedAt), 'running-elapsed'));
+      const elapsed = el('span', formatElapsed(active.startedAt), 'running-status-elapsed running-elapsed');
+      elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
+      const todayTotal = el('span', undefined, 'running-status-today');
+      const todayValue = el('strong', trackedTotalText('todayTrackedMs'));
+      todayValue.setAttribute('data-tracked-total', 'todayTrackedMs');
+      todayTotal.append(document.createTextNode('Today '), todayValue);
       const stop = button('Stop and save', 'danger', async () => {
         try { await stopTimelineEntry({ ...pageState.active, description: description.value }); } catch {}
       });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      strip.append(stop);
+      globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, elapsed, today: todayTotal, stop });
     }
     if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
       const track = button('Track this task', 'primary popup-timeline-track', async () => {
@@ -2687,10 +3017,15 @@
     if (!preserveTodayEditor) {
     today.replaceChildren();
     const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
+    const { startDate, endDate } = timesRange();
     const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
-      .filter(entry => entry.entryDate === localDateValue() && entry.endedAt)
+      .filter(entry => entry.endedAt && ((activityRecordDate(entry) >= startDate && activityRecordDate(entry) <= endDate)
+        || overlapsSelectedWeek(entry)))
       .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+    let previousDate = '';
     for (const entry of entries) {
+      const date = activityRecordDate(entry);
+      if (date !== previousDate) { today.append(el('div', date, 'today-date muted')); previousDate = date; }
       const row = el('div', undefined, 'entry-record today-record');
       const identity = el('div', undefined, 'today-task-identity');
       const task = taskResult(entry, 'today-task');
@@ -2780,22 +3115,6 @@
     const settings = button('Settings', 'reports-button settings-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Open settings'; settings.prepend(icon('gear', GEAR_PATH));
     pageNavigation.append(tasks, reports, ...(compact ? [activity] : []), settings);
     headerActions.append(pageNavigation);
-    if (compact && onClose) {
-      const modeButton = (mode, label) => {
-        const control = button(label, 'reports-button timeline-view-button', () => setTimelineViewMode(mode));
-        control.setAttribute('data-timeline-view-mode', mode);
-        control.setAttribute('aria-pressed', String(timelineViewMode === mode));
-        return control;
-      };
-      const timelineMode = modeButton('timeline', 'Timeline');
-      const calendarMode = modeButton('calendar', 'Calendar');
-      const listMode = modeButton('list', 'List');
-      const viewModes = el('div', undefined, 'timeline-view-modes');
-      viewModes.setAttribute('role', 'group');
-      viewModes.setAttribute('aria-label', 'Timeline view');
-      viewModes.append(timelineMode, calendarMode, listMode);
-      headerActions.prepend(viewModes);
-    }
     if (compact) {
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
@@ -2821,7 +3140,17 @@
         compactSurface = { strip, today, feedback, overlaps, timeline: null, body, host: null };
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
-        body.append(strip);
+        const modeButton = (mode, label) => {
+          const control = button(label, 'timeline-view-button', () => setTimelineViewMode(mode));
+          control.setAttribute('data-timeline-view-mode', mode);
+          control.setAttribute('aria-pressed', String(timelineViewMode === mode));
+          return control;
+        };
+        const viewModes = el('div', undefined, 'timeline-view-modes');
+        viewModes.setAttribute('role', 'group');
+        viewModes.setAttribute('aria-label', 'Timeline view');
+        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'));
+        body.append(strip, viewModes);
         body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
       }
@@ -2925,6 +3254,7 @@
     if (fullWidthPopupRoot?.isConnected) return;
     fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
     fullWidthPopupRoot.className = 'full-width-popup-surface';
+    fullWidthPopupRoot.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
     fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
     (document.body || document.documentElement).append(fullWidthPopupRoot);
@@ -2966,9 +3296,14 @@
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
       if (!fullWidthPopupOpen) return false;
       renderUi();
-      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
+      const refreshedState = send({ type: 'GET_PAGE_STATE', refresh: true });
+      void restoreActivityViewMode();
+      applyPageState(await refreshedState);
       if (!fullWidthPopupOpen) return false;
-      if (pageState.configured) await refreshRecent(true);
+      if (pageState.configured) {
+        await refreshRecent(true);
+        if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
+      }
       else renderUi();
     } catch (error) { setError(error); }
     return true;
@@ -2983,6 +3318,7 @@
     const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
     const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
       ? shadow?.querySelector('.popup-timeline-section') : null;
+    const preservedActivityCalendarScroll = preservedActivityTimeline && timelineInstance.captureCalendarScroll?.();
     preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
     if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
@@ -3190,25 +3526,37 @@
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
       /* Activity redesign: compact, scan-first list rows. */
       :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface[data-clockoli-width="full"]) .times-page { width:100%; border-inline:0 }
       :host(.times-surface) .times-body { padding:24px }
-      :host(.times-surface) .times-view-modes { display:flex; gap:6px; margin-bottom:16px }
-      :host(.times-surface) .times-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) }
+      :host(.times-surface) .times-view-modes { display:flex; justify-content:center; gap:0; margin-bottom:16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .times-view-button { min-height:40px; margin-bottom:-1px; padding:8px 18px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 }
+      :host(.times-surface) .times-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
       :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
       :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
       :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
-      :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr }
+      :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr; justify-items:end }
+      .week-navigation { display:grid; grid-template-columns:minmax(30px,1fr) auto minmax(30px,1fr); align-items:center; gap:8px; width:100%; margin:0; white-space:nowrap }
+      .week-navigation-label { font-size:12px; font-weight:600; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
+      .week-navigation-button { min-width:30px; min-height:30px; padding:2px 7px; font-size:20px; line-height:1 }
+      .week-navigation-button:first-child { justify-self:start }
+      .week-navigation-button:last-child { justify-self:end }
+      :host(.times-surface) .times-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
+      :host(.times-surface) .times-list-total[hidden] { display:none }
       :host(.times-surface) .times-filter[hidden] { display:none }
+      :host(.times-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; margin:18px 0 4px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-variant-numeric:tabular-nums; text-align:center }
       :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
       :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:38px; background-color:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .section-head { margin-bottom:14px }
       :host(.times-surface) .section-head strong { font-size:20px; font-weight:600 }
-      :host(.times-surface) .entry { padding:0; margin:0 0 18px }
-      :host(.times-surface) .entry-date-header { margin:0 0 8px }
-      :host(.times-surface) .activity-list { border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.times-surface) .entry-record { position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
+      :host(.times-surface) .entry { padding:0; margin:0 0 16px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:10px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .entry-date-header { margin:0; padding:11px 14px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:9px 9px 0 0; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .activity-list { border-top:0 }
+      :host(.times-surface) .entry-record { position:relative; padding:14px 110px 14px 14px; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
+      :host(.times-surface) .entry-record:last-child { border-bottom:0; border-radius:0 0 9px 9px }
       :host(.times-surface) .entry-record + .entry-record { margin-top:0 }
       :host(.times-surface) .entry-record:hover { background:linear-gradient(90deg,var(--bgColor-default,var(--ck-bg)) 0,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 45%,var(--bgColor-default,var(--ck-bg))) 100%) }
-      :host(.times-surface) .entry-record.entry-overlap { padding:14px 76px 14px 0; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      :host(.times-surface) .entry-record.entry-overlap { padding:14px 110px 14px 14px; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
       :host(.times-surface) .entry-time-row { gap:8px; min-height:18px; margin:0 0 8px; font:600 13px/1.35 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); letter-spacing:-.15px }
       :host(.times-surface) .entry-time-display { color:var(--fgColor-default,var(--ck-fg)) }
       :host(.times-surface) .inline-duration { margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-family:var(--fontStack-sansSerif,"Mona Sans VF",sans-serif); font-weight:500 }
@@ -3223,29 +3571,36 @@
       :host(.times-surface) .entry-record-task-result { margin:0 }
       :host(.times-surface) .entry-description-link { margin:5px 0 0 27px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
       :host(.times-surface) .entry-description-link:hover { background:transparent; color:var(--fgColor-accent,var(--ck-accent)); text-decoration:underline }
-      :host(.times-surface) .entry-actions { position:absolute; top:12px; right:0; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
+      :host(.times-surface) .entry-actions { position:absolute; top:12px; right:14px; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
       :host(.times-surface) .entry-record:hover .entry-actions,:host(.times-surface) .entry-record:focus-within .entry-actions,:host(.times-surface) .entry-actions-visible { opacity:1; transform:translateY(0); pointer-events:auto }
-      :host(.times-surface) .entry-actions .entry-edit,:host(.times-surface) .entry-actions .entry-delete { width:30px; height:30px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
+      :host(.times-surface) .entry-actions .entry-edit,:host(.times-surface) .entry-actions .entry-delete,:host(.times-surface) .entry-actions .entry-track-control { width:30px; height:30px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
+      :host(.times-surface) .entry-actions .entry-track-control::after { content:'▶'; font-size:13px }
+      :host(.times-surface) .entry-actions .entry-stop::after { content:'■'; font-size:15px }
+      :host(.times-surface) .entry-actions .entry-track-control:hover { border-color:var(--fgColor-accent,var(--ck-accent)); color:var(--fgColor-accent,var(--ck-accent)) }
+      :host(.times-surface) .entry-actions .entry-stop { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       :host(.times-surface) .entry-actions .entry-edit::after { content:'✎'; font-size:16px }
       :host(.times-surface) .entry-actions .entry-delete::after { content:'×'; font-size:20px; font-weight:400; line-height:1 }
       :host(.times-surface) .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       :host(.times-surface) .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
-      :host(.times-surface) .entry-actions.dirty .entry-edit,:host(.times-surface) .entry-actions.dirty .entry-delete { display:none }
+      :host(.times-surface) .entry-actions.dirty .entry-edit,:host(.times-surface) .entry-actions.dirty .entry-delete,:host(.times-surface) .entry-actions.dirty .entry-track-control { display:none }
       :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
-      @media(hover:none) { :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } :host(.times-surface) .entry-record { padding-right:0 } }
-      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } :host(.times-surface) .entry-record { padding-right:0 } :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none } }
+      @media(hover:none) { :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } :host(.times-surface) .entry-record { padding-right:0 } }
+      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } :host(.times-surface) .entry-record { padding-right:0 } :host(.times-surface) .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
       @media(max-width:400px) { :host(.times-surface) .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
-      :host(.popup-surface) .tracker-toolbar { justify-content:flex-start; margin:16px -16px -14px; padding:10px 12px; border-top:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-bottom:0 }
+      :host(.popup-surface) .tracker-toolbar { flex-direction:column; align-items:stretch; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .timeline-brand { display:flex; justify-content:center; min-width:0 }
+      :host(.popup-surface) .clockoli-wordmark { display:block; width:auto; max-width:160px; height:28px; object-fit:contain }
       :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
       :host(.popup-surface) .reports-button svg { width:14px; height:14px }
       :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
-      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:calc(100vh - 8px); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,var(--ck-border)); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
+      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:min(720px,70vh); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,var(--ck-border)); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
+      :host(.full-width-popup-surface[data-clockoli-width="contained"]) .tracker-toolbar,:host(.full-width-popup-surface[data-clockoli-width="contained"]) .menu-body { max-width:1100px; margin-inline:auto }
       :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
       :host(.full-width-popup-surface) .menu-body { padding:0 }
       :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
@@ -3253,9 +3608,11 @@
       :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
       :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
-      :host(.full-width-popup-surface) .timeline-view-modes { display:inline-flex; align-items:center; margin-right:8px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; overflow:hidden }
-      :host(.full-width-popup-surface) .timeline-view-button { border:0; border-radius:0; padding:5px 8px }
-      :host(.full-width-popup-surface) .timeline-view-button[aria-pressed="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)); color:var(--fgColor-default,var(--ck-fg)) }
+      .timeline-view-modes { display:flex; justify-content:center; align-items:stretch; gap:0; margin:0 var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .timeline-view-button { min-height:40px; margin-bottom:-1px; padding:8px 16px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:600 }
+      .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      .timeline-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
+      :host(.popup-surface) .timeline-view-button { flex:1; padding-inline:4px }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
       :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
@@ -3269,18 +3626,33 @@
         :host(.full-width-popup-surface) .header-navigation .reports-button { min-width:0; justify-content:center; gap:3px; padding:5px 2px; font-size:10px; white-space:nowrap }
         :host(.full-width-popup-surface) .header-navigation .reports-button svg { width:12px; height:12px }
       }
-      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100vw; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
+      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100%; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
+      :host(.full-width-popup-surface) .popup-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
+      :host(.full-width-popup-surface) .popup-list-total[hidden] { display:none }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .active-task-strip.is-active { gap:16px; margin:10px var(--clockoli-gutter) 0; padding:12px 18px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-left:4px solid var(--ck-success); border-radius:12px; background:linear-gradient(105deg,color-mix(in srgb,var(--ck-success) 9%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 42%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
+      .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:8px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap }
+      .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,var(--ck-success) 16%,transparent) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
       .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
-      .strip-task-copy { flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-task-copy { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:2px 8px; flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-task .task-title,.strip-task.task-result-untitled .task-url { margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650 }
+      .strip-description-field { grid-column:2 }
       .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
       .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-metrics { display:flex; align-items:center; gap:18px; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-elapsed { font-size:18px; font-weight:700; line-height:1.2 }
+      .active-task-strip .running-status-today { padding-left:18px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      .active-task-strip .running-status-today strong { color:inherit }
+      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } .active-task-strip .running-status-metrics { margin-left:auto } }
+      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .running-status-metrics { order:2; margin-left:0; gap:10px } .active-task-strip .running-status-elapsed { font-size:16px } .active-task-strip .running-status-today { padding-left:10px } .active-task-strip > .danger { order:3; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:4; flex-basis:100% } }
+      @media(prefers-color-scheme:dark) { .active-task-strip.is-active { box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 15%,transparent) } }
       .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
       .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
+      .today-date { margin:14px 0 4px; font-size:12px; font-weight:600 }
       .today-record { display:flex; align-items:center; gap:12px; margin-top:8px }
       .today-task-identity { display:flex; align-items:flex-start; gap:10px; flex:1; min-width:0 } .today-task { flex:1; min-width:0 } .today-task .task-url { display:none } .today-task.task-result-untitled .task-url { display:block }
       @media(max-width:520px) { .active-task-strip,.today-record { flex-wrap:wrap } .strip-task-copy,.strip-idle,.today-task-identity { flex-basis:70% } }
@@ -3293,7 +3665,14 @@
     }
     if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
-    if (timesMode) { shadow.append(style, renderTimesPage(preservedActivityTimeline)); if (preservedActivityTimeline) refreshMountedTimeline(); return; }
+    if (timesMode) {
+      shadow.append(style, renderTimesPage(preservedActivityTimeline));
+      if (preservedActivityTimeline) {
+        refreshMountedTimeline();
+        timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
+      }
+      return;
+    }
     if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
@@ -3371,11 +3750,19 @@
 
   if (timesMode) {
     mountInHeader(); renderUi();
+    void restoreActivityViewMode();
     void loadSelectedTimes();
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void refreshRecent(true).then(refreshActivityState).catch(setError);
+    });
+    setInterval(() => {
+      if (!document.hidden) void refreshActivityState().catch(setError);
+    }, 5_000);
   } else if (popupMode) {
     menuOpen = true;
     mountInHeader();
     renderUi();
+    void restoreActivityViewMode();
     refreshPopupTask().then(async () => {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
       renderUi();

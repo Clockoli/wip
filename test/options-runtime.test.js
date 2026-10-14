@@ -9,7 +9,13 @@ import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/val
 
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
+const widthCss = await readFile(new URL('../src/styles/interface-width.css', import.meta.url), 'utf8');
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
+
+test('Settings stays in a centered column regardless of the shared width preference', () => {
+  assert.match(html, /<main class="settings-main">/);
+  assert.match(widthCss, /html\[data-clockoli-width="full"\] main:not\(\.settings-main\)\s*\{\s*max-width:none;\s*\}/);
+});
 const preferences = {
   rates: { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
   invoicing: {
@@ -49,7 +55,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [], windowListeners = {}, documentListeners = {}, tabListeners = {};
   const context = vm.createContext({
-    document: { getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
+    document: { documentElement: { dataset: {} }, getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
     window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeStoredTaskIdentity, normalizeTaskUrl,
@@ -102,6 +108,30 @@ test('queue diagnostics saves immediately without submitting unrelated draft set
   assert.deepEqual(JSON.parse(JSON.stringify(request)), { type: 'SET_QUEUE_DIAGNOSTICS', enabled: true });
   assert.equal(page.requests.some(item => item.type === 'UPDATE_DISPLAY_PREFERENCES'), false);
   assert.equal(page.nodes.get('diagnostics-feedback').textContent, 'Queue diagnostics saved.');
+});
+
+test('interface width saves separately, updates the page and reverts on failure', async () => {
+  assert.match(html, /id="interface-width"/);
+  const page = harness({ reply: request => request.type === 'SET_INTERFACE_WIDTH'
+    ? { preferences: { ...preferences, interfaceWidth: request.width } } : {} });
+  page.render(connectedState);
+  page.context.savedPreferences = { ...preferences, interfaceWidth: 'contained' };
+  vm.runInContext('localPreferences = savedPreferences; renderDisplayPreferences(localPreferences);', page.context);
+  const control = page.nodes.get('interface-width');
+  assert.equal(control.value, 'contained');
+  control.value = 'full';
+  await control.listeners.change();
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.at(-1))), { type: 'SET_INTERFACE_WIDTH', width: 'full' });
+  assert.equal(page.context.document.documentElement.dataset.clockoliWidth, 'full');
+  assert.doesNotMatch(html, /id="toolbar-display-mode"/);
+
+  const failed = harness({ reply: request => request.type === 'SET_INTERFACE_WIDTH' ? new Error('No storage') : {} });
+  failed.render(connectedState);
+  failed.context.savedPreferences = { ...preferences, interfaceWidth: 'contained' };
+  vm.runInContext('localPreferences = savedPreferences; renderDisplayPreferences(localPreferences);', failed.context);
+  failed.nodes.get('interface-width').value = 'full';
+  await failed.nodes.get('interface-width').listeners.change();
+  assert.equal(failed.nodes.get('interface-width').value, 'contained');
 });
 
 test('ready discovery populates both default options without selection writes and preserves silent DOM', async () => {

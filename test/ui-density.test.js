@@ -11,11 +11,12 @@ function renderer(name, nextName) {
   return content.slice(start, end);
 }
 
-test('Activity renders compact scan-first rows with contextual controls', () => {
-  assert.match(content, /\.activity-list \{ border-top:1px solid var\(--borderColor-muted/);
-  assert.match(content, /\.entry-record \{ position:relative; padding:14px 76px 14px 0; border:0; border-bottom:1px solid var\(--borderColor-muted/);
+test('Activity groups scan-first rows in bordered days with contextual controls', () => {
+  assert.match(content, /:host\(\.times-surface\) \.entry \{[^}]*border:1px solid var\(--borderColor-default/);
+  assert.match(content, /:host\(\.times-surface\) \.entry-date-header \{[^}]*border-bottom:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \{ position:relative; padding:14px 110px 14px 14px; border:0; border-bottom:1px solid var\(--borderColor-muted/);
   assert.match(content, /\.entry-record \+ \.entry-record \{ margin-top:0/);
-  assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:0;[^}]*opacity:0/);
+  assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:14px;[^}]*opacity:0/);
   assert.match(content, /\.entry-editing \.inline-time-range \{ display:block/,
     'direct time fields remain available only after the explicit edit action');
 });
@@ -27,12 +28,11 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
   assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*width:100vw[^}]*max-width:none/s);
 });
 
-test('Activity defaults to Last 3 days and puts filter before period on one row', () => {
-  assert.match(content, /let timesPeriod = 'last-three-days'/);
-  assert.match(content, /timesPeriod === 'last-three-days'[\s\S]*move\(-2\)/);
+test('Activity places week navigation below view controls without a period selector', () => {
   const page = renderer('renderTimesPage(preservedTimeline = null)', 'renderMenu()');
-  assert.match(page, /\['last-three-days', 'Last 3 days'\]/);
-  assert.ok(page.indexOf("filterLabel.className = 'times-filter'") < page.indexOf('periodLabel.append(period)'), 'filter must be created before period');
+  assert.match(page, /filterLabel\.className = 'times-filter'/);
+  assert.match(page, /toolbar\.append\(filterLabel\);[\s\S]*body\.append\(views, toolbar, weekNavigation\(\), listTotal\)/);
+  assert.doesNotMatch(page.split('function mergeTimelineCompletedEntries')[0], /Time period|times-custom|periodLabel/);
   assert.match(content, /\.times-toolbar\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/s);
   assert.match(content, /\.times-filter\s*\{[^}]*grid-column:auto/s);
 });

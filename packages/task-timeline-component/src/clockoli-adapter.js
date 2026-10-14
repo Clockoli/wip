@@ -195,7 +195,7 @@
       resizeStart: editable || running,
       resizeEnd: editable && !running,
       start: !item?.isStartDisabled,
-      stop: running && !item?.isStopDisabled,
+      stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
       delete: running ? !item?.isDeleteDisabled : !pending && !item?.isDeleteDisabled,
     };
   }
@@ -228,7 +228,6 @@
     let originalItems = new Map();
     let styleObserver = null;
     let detailsObserver = null;
-    let actionClock = null;
     let suppressViewportScroll = true;
     let deferredUpdate = null;
     let deferredFlushTimer = null;
@@ -236,7 +235,8 @@
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
-    style.textContent = CLOCKOLI_STYLE;
+    style.textContent = CLOCKOLI_STYLE + (initialProps.weeklyCalendar
+      ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '');
 
     function sourceItem(instanceId) {
       return originalItems.get(String(instanceId)) || null;
@@ -388,13 +388,14 @@
     const initialMapping = mapItems(initialProps.items, now);
     const tasks = initialMapping.mapped;
     originalItems = initialMapping.sources;
-    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, now - 7 * DAY_MS, ...tasks.map(task => task.start));
-    const domainEnd = Math.max(now, domainStart + 1_000, ...tasks.map(task => task.end));
+    const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, Number(initialProps.domainStart ?? now - 7 * DAY_MS), ...tasks.map(task => task.start));
+    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now, domainStart + 1_000, ...tasks.map(task => task.end));
     const timeline = new global.TaskTimeline(host, {
       tasks,
       rows: normalizedRows(initialProps.rows),
       domainStart,
       domainEnd,
+      totalRange: initialProps.totalRange ?? initialProps.view,
       visibleDays: Math.max(1 / 24, Math.min(7, ((initialProps.view?.end ?? now) - (initialProps.view?.start ?? now - DAY_MS)) / DAY_MS)),
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
@@ -574,7 +575,7 @@
       const existing = timeline.details.querySelector('.clockoli-timeline-actions');
       if (!item) { existing?.remove(); return; }
       const permissions = permissionsFor(item);
-      const mode = item.isRunning || item.endedAt == null ? 'running' : 'completed';
+      const mode = item.isCurrentTask ? 'current' : item.isRunning || item.endedAt == null ? 'running' : 'completed';
       const savedDescription = item.savedDescription ?? item.description ?? '';
       if (existing?.dataset.itemId === String(key) && existing.dataset.mode === mode) {
         const description = existing.querySelector('.clockoli-timeline-description');
@@ -587,8 +588,7 @@
         const deletion = existing.querySelector('.danger');
         const primary = existing.querySelector('.primary');
         if (deletion) deletion.disabled = !permissions.delete;
-        if (primary) primary.disabled = mode === 'running' ? !permissions.stop : !permissions.start;
-        updateActionClock();
+        if (primary) primary.disabled = mode === 'completed' ? !permissions.start : !permissions.stop;
         return;
       }
       existing?.remove();
@@ -637,11 +637,10 @@
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
         actions.append(button);
       }
-      if ((item.isRunning || item.endedAt == null) && typeof props.onStop === 'function') {
+      if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'clockoli-timeline-action primary';
-        button.dataset.startedAt = String(item.startedAt);
-        button.textContent = `Stop ${formatClockDuration((Number(props.now) || Date.now()) - Number(item.startedAt))}`;
+        button.textContent = 'Stop and save';
         button.disabled = !permissions.stop;
         button.addEventListener('click', () => runAction(button, 'stop', () => props.onStop(sourceItem(key))));
         actions.append(button);
@@ -665,20 +664,6 @@
       } finally {
         if (!destroyed) renderActions();
       }
-    }
-
-    function formatClockDuration(milliseconds) {
-      const total = Math.max(0, Math.floor(milliseconds / 1_000));
-      const hours = Math.floor(total / 3_600);
-      const minutes = Math.floor((total % 3_600) / 60);
-      const seconds = total % 60;
-      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-
-    function updateActionClock() {
-      const button = timeline.details?.querySelector('.clockoli-timeline-action[data-started-at]');
-      if (!button) return;
-      button.textContent = `Stop ${formatClockDuration((Number(props.now) || Date.now()) - Number(button.dataset.startedAt))}`;
     }
 
     function permissionEvent(event) {
@@ -729,7 +714,6 @@
     styleObserver.observe(timeline.shadow, { childList: true, subtree: true });
     detailsObserver = new MutationObserver(renderActions);
     detailsObserver.observe(timeline.detailsInfo, { childList: true, subtree: true });
-    actionClock = setInterval(updateActionClock, 1_000);
     hydrateExternalState();
     applyView(initialProps.view);
     styleTasks();
@@ -777,9 +761,12 @@
         : null;
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
-      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.now) - 7 * DAY_MS, ...mapped.map(task => task.start));
-      const nextDomainEnd = Math.max(Number(nextProps.now), nextDomainStart + 1_000, ...mapped.map(task => task.end));
+      const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
+      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
       timeline.currentTime = Number(nextProps.now);
+      if (applyExternalView && nextProps.view) {
+        timeline.options.totalRange = nextProps.totalRange ?? nextProps.view;
+      }
       timeline.setRows(normalizedRows(nextProps.rows), { render: false });
       timeline.setTasks(mapped, { domainStart: nextDomainStart, domainEnd: nextDomainEnd, preserveScroll: true, preserveHistory: true });
       originalItems = mapping.sources;
@@ -827,12 +814,10 @@
             }
             else timeline._renderTimelineNowLine?.();
             props = candidateProps;
-            updateActionClock();
             return true;
           }
           reconcile(candidateProps, { applyExternalView: Object.hasOwn(next, 'view') });
           props = candidateProps;
-          updateActionClock();
           return true;
         } catch (error) {
           queueMicrotask(() => {
@@ -846,7 +831,6 @@
         destroyed = true;
         styleObserver?.disconnect();
         detailsObserver?.disconnect();
-        clearInterval(actionClock);
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
         global.removeEventListener('pointerup', onGestureEnd);
         global.removeEventListener('pointercancel', onGestureEnd);
@@ -876,6 +860,14 @@
         styleTasks();
       },
       getViewMode() { return timeline.getViewMode(); },
+      captureCalendarScroll() {
+        return timeline.getViewMode() === 'calendar'
+          ? { top: timeline.calendarViewport.scrollTop, manual: timeline.calendarManualScroll } : null;
+      },
+      restoreCalendarScroll(position) {
+        if (!position || timeline.getViewMode() !== 'calendar') return;
+        timeline.calendarViewport.scrollTop = position.manual ? position.top : timeline.calendarAutoScrollTop;
+      },
       setCalendarDate(value) { timeline.setCalendarDate(value); },
       setCalendarRange(range) { timeline.setCalendarRange(range); },
       shiftCalendar(direction) { timeline.shiftCalendar(direction); },

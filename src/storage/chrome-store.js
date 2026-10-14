@@ -21,6 +21,8 @@ const OTHER_PROJECT_NAME = 'otherProjectName';
 const OTHER_PROJECT_CLIENT = 'otherProjectClient';
 const REPORTING_UTC = 'reportingUtc';
 const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
+const INTERFACE_WIDTH = 'interfaceWidth';
+const ACTIVITY_VIEW_MODE = 'activityViewMode';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
 const ADDON_ENABLED = 'addonEnabled';
@@ -36,7 +38,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -857,7 +859,7 @@ export class ChromeStore {
   }
 
   async getLocalPreferences() {
-    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, ...SETTINGS_KEYS]);
+    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, ...SETTINGS_KEYS]);
     const normalizedBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
     const billing = { ...normalizedBilling, invoicing: invoicingSettings(normalizedBilling) };
     const revision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
@@ -874,9 +876,25 @@ export class ChromeStore {
     const showQueueDiagnostics = values[SHOW_QUEUE_DIAGNOSTICS] === true;
     return {
       recentDays, projects,
+      interfaceWidth: values[INTERFACE_WIDTH] === 'full' ? 'full' : 'contained',
       ...(values.dataVersion === 5 ? { defaultDestinationId: values[DESTINATION_REGISTRY]?.defaultDestinationId ?? null } : {}),
       otherProjectName, otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision,
     };
+  }
+
+  async setInterfaceWidth(width) {
+    if (!['contained', 'full'].includes(width)) throw new Error('Invalid interface width');
+    return this.backend.mutateMany([INTERFACE_WIDTH], () => ({ set: { [INTERFACE_WIDTH]: width }, result: width }));
+  }
+
+  async getActivityViewMode() {
+    const values = await this.backend.getMany([ACTIVITY_VIEW_MODE]);
+    return ['timeline', 'calendar', 'list'].includes(values[ACTIVITY_VIEW_MODE]) ? values[ACTIVITY_VIEW_MODE] : null;
+  }
+
+  async setActivityViewMode(mode) {
+    if (!['timeline', 'calendar', 'list'].includes(mode)) throw new Error('Invalid Activity view mode');
+    return this.backend.mutateMany([ACTIVITY_VIEW_MODE], () => ({ set: { [ACTIVITY_VIEW_MODE]: mode }, result: mode }));
   }
 
   async saveBillingSettings(value, projectLinks = null, expectedRevision = null) {

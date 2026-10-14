@@ -1303,6 +1303,7 @@ export class TrackerService {
       reportDate: today,
       weekEntries: remoteEntries.filter(entry => startDate(entry) >= thisWeekStart),
       computedAt: now.getTime(),
+      ...(initialState.summaryCache?.silentPull ? { silentPull: initialState.summaryCache.silentPull } : {}),
     };
     // Apply the queue inside the storage transaction so a concurrent acceptance cannot be overwritten.
     let staleResponse = false;

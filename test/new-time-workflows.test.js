@@ -26,14 +26,15 @@ test('main tracker uses one inline editor with Enter-save and no legacy Edit pan
   assert.doesNotMatch(worker, /message\.type === 'EDIT_ENTRY'/);
 });
 
-test('Times page is a packaged shared-renderer surface with requested periods, filtering, bulk input, and navigation', () => {
+test('Times page is a packaged shared-renderer surface with week navigation, filtering, and bulk input', () => {
   for (const file of ['src/times/times.html', 'src/times/times.css']) assert.equal(fs.existsSync(new URL(`../${file}`, import.meta.url)), true, `${file} must exist`);
   const html = read('src/times/times.html');
   assert.match(html, /clockoli-times-root/);
-  assert.match(content, /isolateShadowHost\(root, \{ wide: timesMode \}\)/);
-  for (const value of ['today', 'yesterday', 'this-week', 'last-week', 'this-month', 'last-month', 'custom']) {
-    assert.match(content, new RegExp(`['\"]${value}['\"]`));
-  }
+  assert.match(content, /isolateShadowHost\(root, \{ wide: true \}\)/);
+  assert.match(content, /function weekNavigation\(/);
+  assert.match(content, /Previous week/);
+  assert.match(content, /Next week/);
+  assert.doesNotMatch(content, /periodLabel\.append\(period\)/);
   assert.match(content, /Search activity[\s\S]*URL or title/);
   assert.match(content, /View activity/);
   assert.match(content, /button\('Activity'/);
@@ -48,7 +49,7 @@ test('Times page is a packaged shared-renderer surface with requested periods, f
   assert.match(worker, /async function loadTimes\(message, sender\)[\s\S]*sender\?\.documentId \?\? sender\?\.tab\?\.id[\s\S]*:times:\$\{requestOwner\}/);
   assert.match(worker, /message\.type === 'LOAD_TIMES'\) return loadTimes\(message, sender\)/);
   assert.match(content, /function refreshRecent\(force = false[^)]*\)[\s\S]*loadId === recentLoadId/);
-  assert.match(content, /loadSelectedTimes[\s\S]*refreshRecent\(true, \{ calendarFocus:/);
+  assert.match(content, /async function loadSelectedTimes\([^)]*\)[\s\S]*await refreshRecent\(true/);
 });
 
 test('status filtering and status-shaped task DTOs are removed while URL/title filtering remains', () => {

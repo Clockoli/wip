@@ -1,0 +1,4 @@
+html[data-clockoli-width="full"] main:not(.settings-main) { max-width:none; }
+html[data-clockoli-width="full"] .app-header { padding-inline:24px; }
+html[data-clockoli-width="full"]:has(#clockoli-popup-root),
+html[data-clockoli-width="full"] body:has(#clockoli-popup-root) { width:min(800px,100vw); }

@@ -6,14 +6,29 @@ import { formatClockDuration } from '../src/domain/reporting.js';
 import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/values.js';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
+const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 // The fake DOM does not mount the real timeline adapter. Render the shared panel's
 // non-timeline body so its tracker controls remain covered by these component tests.
-const domHarnessSource = source.replace(
+const domHarnessSource = trackingCardSource + '\n' + source.replace(
   'renderMenu({ compact: true, onClose: closeFullWidthPopup })',
   'renderMenu({ onClose: closeFullWidthPopup })',
 );
 assert.notEqual(domHarnessSource, source);
+
+test('calendar tracking uses the stored identity in both the GitHub panel and Activity', () => {
+  const begin = source.indexOf('  function trackableTaskIdentityOf(value) {');
+  const end = source.indexOf('\n  function taskTitleOf(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const snippet = source.slice(begin, end);
+  for (const timesMode of [false, true]) {
+    const context = vm.createContext({ timesMode, popupMode: false, normalizeTaskUrl, storedTaskIdentityOf: entry => /^(https?:\/\/|[\w-]+\/[\w-]+\/[\w-]+$)/.test(entry.taskUrl) ? entry.taskUrl : null, taskUrlOf: entry => normalizeTaskUrl(entry.taskUrl) });
+    vm.runInContext(`${snippet}\nthis.trackable = trackableTaskIdentityOf;`, context);
+    assert.equal(context.trackable({ taskUrl: 'manticoresoftware/Routines/1-dev-call' }), 'manticoresoftware/Routines/1-dev-call');
+    assert.equal(context.trackable({ taskUrl: 'https://github.com/acme/repo/issues/7' }), 'https://github.com/acme/repo/issues/7');
+    assert.equal(context.trackable({ taskUrl: 'not a task identity' }), null);
+  }
+});
 
 test('extension-context interruption stops stale content timers without rendering an error', () => {
   assert.match(source, /function deactivateExtensionContext\(\) \{[\s\S]*?clearInterval\(tick\)/);
@@ -1105,14 +1120,14 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
 });
 
 test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
-  const start = source.indexOf('  async function loadSelectedTimes() {');
+  const start = source.indexOf('  async function loadSelectedTimes(onFailure = null) {');
   const end = source.indexOf('\n  function renderTimesPage(', start);
   assert.ok(start >= 0 && end > start);
   const loader = source.slice(start, end);
   const cache = loader.indexOf("send({ type: 'GET_PAGE_STATE', refresh: false })");
   const remote = loader.indexOf('await refreshRecent(true');
   assert.ok(cache >= 0 && remote > cache, 'local Activity records must render before any remote request');
-  assert.match(loader, /recent = cached\.recent\.filter/);
+  assert.match(loader, /recent = mergeActivityRecords\(cached\.recent, timesRange\(\), true\)/);
   assert.match(loader, /recentLoaded = true; recentFresh = false;\s*renderUi\(\)/);
 });
 
@@ -1226,10 +1241,10 @@ test('each recent record keeps task identity inside its highlighted time row', a
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href));
+  const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href)).slice(-4);
   assert.equal(taskLinks.length, 4, 'every highlighted time row renders its task title');
   assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 7', 'Issue 8', 'Issue 7']);
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).map(node => node.textContent),
+  assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).slice(-4).map(node => node.textContent),
     [issue(7).url, issue(7).url, issue(8).url, issue(7).url], 'each highlighted row retains its canonical URL source line');
   assert.equal(createdNodes.some(node => node.className.includes('time-repository-label')), false,
     'Activity keeps repository provenance out of individual time rows');
@@ -1298,7 +1313,7 @@ test('main-panel times are directly editable, relative-day labeled, and overlapp
     ['Today', 'Today', 'Yesterday', 'Wed']);
   assert.equal(createdNodes.filter(node => node.className.includes('entry-overlap')).slice(-2).length, 2);
   assert.equal(createdNodes.filter(node => node.className.includes('overlap-warning')).slice(-2).length, 2);
-  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value'));
+  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
   assert.equal(inlineValues.length, 16, 'every main-panel record exposes Start and Stop hour/minute spinbuttons');
   assert.equal(createdNodes.filter(node => node.className.includes('inline-save')).slice(-4).every(node => node.hidden), true);
 
@@ -1379,7 +1394,8 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const visibleOverlapWarnings = () => createdNodes.filter(node => node.className.includes('overlap-warning') && node.isConnected);
+  const visibleOverlapWarnings = () => createdNodes.filter(node => node.tag === 'shadow').at(-1).walk()
+    .filter(node => node.className?.includes('overlap-warning'));
   assert.equal(visibleOverlapWarnings().length, 2, 'a seconds-only overlap is initially visible even though both boundaries display 15:00');
 
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
@@ -1858,7 +1874,7 @@ test('Times bulk import preserves its draft and remains single-flight across rer
     location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [] } });
       else if (message.type === 'BULK_ADD_TIMES') { bulkCalls += 1; bulkCallback = callback; }
-      else callback({ ok: true, data: {} });
+      else callback({ ok: true, data: { configured: true, active: null, recent: [], pendingWrites: [] } });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
   });
@@ -1922,7 +1938,7 @@ test('Activity surfaces repository read failures and conflict omissions', async 
 });
 
 
-test('Times ignores a rejected initial load after a newer period succeeds', async () => {
+test('Times ignores a rejected initial load after navigating to another week', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
   const location = { protocol: 'chrome-extension:', hostname: 'clockoli', pathname: '/src/times/times.html', href: 'chrome-extension://clockoli/src/times/times.html' };
@@ -1935,7 +1951,8 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
   const loads = [];
   const context = vm.createContext({
     location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      if (message.type === 'LOAD_TIMES') loads.push({ message: structuredClone(message), callback });
+      if (message.type === 'LOAD_TIMES' && message.payload.startDate === '0001-01-01') callback({ ok: true, data: { configured: true, recent: [] } });
+      else if (message.type === 'LOAD_TIMES') loads.push({ message: structuredClone(message), callback });
       else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
@@ -1945,18 +1962,17 @@ test('Times ignores a rejected initial load after a newer period succeeds', asyn
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads.length, 1);
 
-  const period = createdNodes.findLast(node => node.tag === 'select' && node.getAttribute('aria-label') === 'Time period');
-  period.value = 'yesterday'; period.onchange({ isTrusted: true });
+  const previous = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Previous week');
+  const navigation = previous.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(loads.length, 2);
   loads[1].callback({ ok: true, data: { configured: true, recent: [] } });
   await new Promise(resolve => setTimeout(resolve, 0));
   loads[0].callback({ ok: false, error: { code: 'superseded', message: 'Time load was superseded by a configuration change.' } });
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await navigation;
 
   assert.equal(createdNodes.some(node => node.textContent === 'Time load was superseded by a configuration change.'), false);
-  const selected = createdNodes.filter(node => node.tag === 'option' && node.selected).at(-1);
-  assert.equal(selected.value, 'yesterday');
+  assert.ok(createdNodes.some(node => node.className === 'week-navigation-label' && node.textContent === `${loads[1].message.payload.startDate} – ${loads[1].message.payload.endDate}`));
 });
 
 
@@ -1974,6 +1990,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
     makeEntry('x', 'https://example.com/x', 'X', '2026-08-21T10:00:00+00:00', '2026-08-21T11:00:00+00:00', 0),
     makeEntry('y', 'https://example.com/y', 'Y', '2026-08-21T11:00:00+00:00', '2026-08-21T12:00:00+00:00', 1),
   ];
+  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-08-21T12:00:00Z'])); } static now() { return new Date('2026-08-21T12:00:00Z').getTime(); } }
   const messages = [];
   const document = {
     documentElement: new FakeNode('html'), activeElement: null,
@@ -1988,7 +2005,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
       else if (message.type === 'QUEUE_ENTRIES_EDIT') callback({ ok: true, data: [] });
       else callback({ ok: true, data: {} });
     } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},
   });
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
@@ -2047,8 +2064,8 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.doesNotMatch(source, /Sync or resolve the pending entry before starting\./);
 });
 
-function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, respond = null, runtimeManifest = { permissions: ['favicon'] }, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
-  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [], timelineModes = [], timelineUpdates = [], timelineDates = [], timelineRanges = [];
+function dailyPanelHarness({ state, records = [], participants = null, now = Date.now(), confirmResult = true, pageUrl = 'https://github.com/acme/app/issues/7', header = false, actionSurface = false, timelineEnabled = false, notifyViewModeChange = false, respond = null, localStorage, runtimeManifest = { permissions: ['favicon'] }, runtimeGetURL = path => `chrome-extension://clockoli/${String(path).replace(/^\//, '')}` } = {}) {
+  const messages = [], frames = [], intervals = [], confirmations = [], timelineMounts = [], timelineModes = [], timelineUpdates = [], timelineDates = [], timelineRanges = [], timelineScrolls = [];
   const documentListeners = new Map(), windowListeners = new Map(), runtimeListeners = [];
   const timeouts = new Map();
   let timeoutId = 0;
@@ -2076,15 +2093,16 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     document.getElementById = id => document.body.walk().find(node => node.id === id) || null;
   }
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-  const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl), __CLOCKOLI_ACTION_SURFACE__: actionSurface,
+  const context = vm.createContext({ document, Date: FixedDate, URL, console, location: new URL(pageUrl), localStorage, __CLOCKOLI_ACTION_SURFACE__: actionSurface,
     addEventListener: (type, listener) => windowListeners.set(type, listener),
     requestAnimationFrame: callback => frames.push(callback), setInterval: callback => { intervals.push(callback); return intervals.length; }, clearInterval() {},
     setTimeout: (callback, delay) => { const id = ++timeoutId; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
     confirm: message => { confirmations.push(message); return confirmResult; }, chrome: { runtime: { getManifest: () => runtimeManifest, getURL: runtimeGetURL, onMessage: { addListener: listener => runtimeListeners.push(listener) }, sendMessage(message, callback) { messages.push(message); if (respond) respond(message, callback); else callback({ ok: true, data: state || {} }); } } },
     ClockoliTaskTimeline: { createColorResolver: () => item => item.url === 'https://example.com/today' ? '#123456' : '#654321', createTimeline: timelineEnabled ? (_host, options) => {
       timelineMounts.push(options);
-      let selectedDate = now, selectedRange = null;
-      return { update(value) { timelineUpdates.push(value); }, destroy() {}, scrollToEnd() {}, setViewMode(mode) { timelineModes.push(mode); }, setCalendarDate(value) { selectedDate = value; selectedRange = null; timelineDates.push(value); }, setCalendarRange(range) { selectedRange = range; timelineRanges.push(range); }, getCalendarRange() {
+      let selectedDate = now, selectedRange = options.weeklyCalendar ? { start: options.view.start, end: options.view.end } : null;
+      if (selectedRange) timelineRanges.push(selectedRange);
+      return { update(value) { timelineUpdates.push(value); }, destroy() {}, scrollToEnd() { timelineScrolls.push(true); }, setViewMode(mode) { timelineModes.push(mode); if (notifyViewModeChange) options.onViewModeChange(mode); }, setCalendarDate(value) { selectedDate = value; selectedRange = null; timelineDates.push(value); }, setCalendarRange(range) { selectedRange = range; timelineRanges.push(range); }, getCalendarRange() {
         if (selectedRange) return { ...selectedRange, days: Math.round((selectedRange.end - selectedRange.start) / 86_400_000) };
         const day = new Date(selectedDate); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (day.getDay() + 6) % 7);
         const start = day.getTime(); day.setDate(day.getDate() + 7);
@@ -2093,16 +2111,19 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
     } : undefined },
   });
   vm.runInContext(recoverySource, context);
+  vm.runInContext(trackingCardSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
-    globalThis.panel = { renderMenu, loadSelectedTimes, applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
+    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
+      debugWeek: () => ({ errorText, selectedWeekStart, recentLoaded, recentLoadId, timesLoadId }),
       mount(instance, view = null) { timelineInstance = instance; timelineWindow = { historyStart: 0, now: 1 }; if (view) timelineView = view; },
       surface() { return compactSurface; },
       popupRoot() { return fullWidthPopupShadow; },
       attach(menu) { fullWidthPopupShadow = document.createElement('shadow'); document.panelShadow = fullWidthPopupShadow; fullWidthPopupShadow.append(menu); },
+      attachCompact(menu) { shadow = document.createElement('shadow'); shadow.append(menu); },
       overlapHost(host, entries) { compactSurface.host = host; timelineEntriesById = new Map(entries); },
       optimisticEdit(id) { return timelineOptimisticEdits.get(id); },
       optimisticCompletion(id) { return timelineOptimisticCompletions.get(id); },
@@ -2111,10 +2132,11 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
       clearDescriptionDraft() { descriptionDraft = null; },
       rememberTimelineDescription(entry, value) { return rememberTimelineDescription(entry, value); },
       timelineItems(historyStart, currentNow) { return popupTimelineItems(historyStart, currentNow).items; },
+      timelineRows(historyStart, currentNow) { return popupTimelineItems(historyStart, currentNow).rows; },
     };
   })();`, context);
   if (state && !header) context.panel.set(state, records, participants);
-  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timelineModes, timelineUpdates, timelineDates, timelineRanges, timeouts, advance(ms) { now += ms; } };
+  return { ...context.panel, set(value, entries, participants) { state = value; context.panel?.set(value, entries, participants); }, document, documentListeners, windowListeners, runtimeListeners, messages, frames, intervals, confirmations, timelineMounts, timelineModes, timelineUpdates, timelineDates, timelineRanges, timelineScrolls, timeouts, advance(ms) { now += ms; } };
 }
 
 test('tracking from a Projects issue pane sends the direct issue URL and recognizes its running timer', async () => {
@@ -2157,7 +2179,7 @@ test('header totals-only polling preserves the description draft and updates exi
     assert.equal(total.textContent, '1m'); assert.equal(week.textContent, '1m');
   }
   assert.equal(root.querySelector('.running-elapsed'), elapsed);
-  assert.equal(elapsed.textContent, '00:01:01');
+  assert.equal(elapsed.textContent, '00:01');
 });
 
 test('header description draft survives a required rerender without leaking to a new timer', async () => {
@@ -2210,10 +2232,10 @@ test('header opening retries failed initial reads and retains Retry until recove
   assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
 });
 
-test('daily strip omits idle branding and List exclusively owns today records', () => {
+test('daily strip omits idle branding and panel List keeps its week navigation', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const record = { id: 'today', taskUrl: 'https://example.com/today', taskTitle: 'Today task', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3600000).toISOString(), endedAt: new Date(now - 1800000).toISOString(), durationSeconds: 1800, _pending: true, _path: 'times/example' };
-  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [record, { ...record, id: 'yesterday', taskTitle: 'Yesterday task', entryDate: '2000-01-01' }] });
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, timelineEnabled: true, records: [record, { ...record, id: 'yesterday', taskTitle: 'Yesterday task', entryDate: '2000-01-01', startedAt: '2000-01-01T08:00:00Z', endedAt: '2000-01-01T08:30:00Z' }] });
   const menu = harness.renderMenu({ compact: true, onClose: () => {} });
   harness.attach(menu);
   let nodes = menu.walk();
@@ -2228,11 +2250,15 @@ test('daily strip omits idle branding and List exclusively owns today records', 
   assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
   harness.setTimelineViewMode('list');
   assert.equal(menu.querySelector('.today-list').hidden, false);
-  assert.equal(menu.querySelector('.popup-timeline-section').hidden, true);
+  assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
+  assert.equal(menu.querySelector('.timeline-shell').hidden, true);
+  assert.equal(menu.querySelector('.popup-list-total').hidden, false);
+  assert.ok(menu.querySelector('.week-navigation'));
   assert.equal(menu.querySelector('[data-timeline-view-mode="list"]').getAttribute('aria-pressed'), 'true');
   harness.setTimelineViewMode('timeline');
   assert.equal(menu.querySelector('.today-list').hidden, true);
   assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
+  assert.equal(menu.querySelector('.timeline-shell').hidden, false);
   harness.set({ configured: true, active: { ...record, startedAt: new Date(now).toISOString() }, pendingWrites: [] }, []);
   nodes = harness.renderMenu({ compact: true }).walk();
   assert.ok(nodes.some(node => node.textContent === 'Stop and save'));
@@ -2258,6 +2284,11 @@ test('active strip uses a favicon and saves its editable description with Stop',
     callback({ ok: true, data: state });
   } });
   const menu = harness.renderMenu({ compact: true });
+  const strip = menu.querySelector('.active-task-strip');
+  assert.ok(strip.classList.contains('is-active'));
+  assert.equal(strip.querySelector('.running-status-live').textContent, 'Tracking now');
+  assert.equal(strip.querySelector('.running-status-elapsed').getAttribute('role'), 'timer');
+  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
   assert.match(menu.querySelector('.strip-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
   const description = menu.querySelector('.strip-description');
   description.value = 'Published launch story'; description.oninput();
@@ -2400,35 +2431,382 @@ test('Activity mounts the popup timeline and calendar over its loaded records wi
   assert.equal(harness.timelineMounts.length, 1);
 });
 
-test('opening Activity Calendar uses the already-selected Last 3 days, not its initial week', async () => {
+test('Activity remembers the selected view when reopened and falls back to Timeline before popup preference loads', () => {
+  const values = new Map();
+  const localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const options = { state: { configured: true, active: null, pendingWrites: [] },
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html', timelineEnabled: true, localStorage };
+  const selected = surface => surface.querySelector('.times-view-modes').walk()
+    .find(node => node.tag === 'button' && node.getAttribute('aria-pressed') === 'true');
+  const first = dailyPanelHarness(options);
+  const firstSurface = first.renderActivity();
+  assert.equal(selected(firstSurface).textContent, 'Timeline');
+  firstSurface.querySelector('.times-view-modes').walk().find(node => node.textContent === 'List').onclick({ isTrusted: true });
+  assert.equal(selected(firstSurface).textContent, 'List');
+  const reopened = dailyPanelHarness(options);
+  const secondSurface = reopened.renderActivity();
+  assert.equal(selected(secondSurface).textContent, 'List');
+  assert.equal(secondSurface.querySelector('.times-results').hidden, false);
+  secondSurface.querySelector('.times-view-modes').walk().find(node => node.textContent === 'Calendar').onclick({ isTrusted: true });
+  const calendar = dailyPanelHarness(options);
+  const thirdSurface = calendar.renderActivity();
+  calendar.frames.splice(0).forEach(frame => frame());
+  assert.equal(selected(thirdSurface).textContent, 'Calendar');
+  assert.equal(calendar.timelineMounts[0].viewMode, 'calendar');
+  const popup = dailyPanelHarness({ ...options, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html' });
+  popup.renderMenu({ compact: true, onClose() {} });
+  popup.frames.splice(0).forEach(frame => frame());
+  assert.equal(popup.timelineMounts[0].viewMode, 'timeline');
+  values.set('clockoli:activity-view', 'invalid');
+  assert.equal(selected(dailyPanelHarness(options).renderActivity()).textContent, 'Timeline');
+});
+
+test('popup and GitHub action panel restore the Activity view and save changes for the next opening', async () => {
+  let persisted = 'calendar';
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const respond = (message, callback) => {
+    if (message.type === 'GET_ACTIVITY_VIEW_MODE') callback({ ok: true, data: { mode: persisted } });
+    else if (message.type === 'SET_ACTIVITY_VIEW_MODE') { persisted = message.mode; callback({ ok: true, data: { mode: persisted } }); }
+    else callback({ ok: true, data: state });
+  };
+  const popup = dailyPanelHarness({ state, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html', respond });
+  await popup.restoreActivityViewMode();
+  const popupMenu = popup.renderMenu({ compact: true, onClose() {} });
+  assert.equal(popupMenu.querySelector('[data-timeline-view-mode="calendar"]').getAttribute('aria-pressed'), 'true');
+  popupMenu.querySelector('[data-timeline-view-mode="list"]').onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(persisted, 'list');
+  const action = dailyPanelHarness({ state, timelineEnabled: true, actionSurface: true, respond });
+  await action.restoreActivityViewMode();
+  const panel = action.renderMenu({ compact: true, onClose() {} });
+  assert.equal(panel.querySelector('[data-timeline-view-mode="list"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(panel.querySelector('.today-list').hidden, false);
+});
+
+test('rapid Activity view switches persist the last selection in order', async () => {
+  const pending = [];
+  let persisted = 'timeline';
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html', respond(message, callback) {
+    if (message.type === 'SET_ACTIVITY_VIEW_MODE') pending.push({ mode: message.mode, callback });
+    else if (message.type === 'GET_ACTIVITY_VIEW_MODE') callback({ ok: true, data: { mode: persisted } });
+    else callback({ ok: true, data: { ...state, recent: [] } });
+  } });
+  h.setTimelineViewMode('calendar');
+  h.setTimelineViewMode('list');
+  assert.equal(pending.length, 1, 'the newer write waits until the older write finishes');
+  persisted = pending[0].mode;
+  pending[0].callback({ ok: true, data: { mode: persisted } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(pending.length, 2);
+  persisted = pending[1].mode;
+  pending[1].callback({ ok: true, data: { mode: persisted } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(persisted, 'list');
+  const reopened = dailyPanelHarness({ state, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html', respond(message, callback) {
+    callback({ ok: true, data: message.type === 'GET_ACTIVITY_VIEW_MODE' ? { mode: persisted } : { ...state, recent: [] } });
+  } });
+  await reopened.restoreActivityViewMode();
+  assert.equal(reopened.renderMenu({ compact: true }).querySelector('[data-timeline-view-mode="list"]').getAttribute('aria-pressed'), 'true');
+});
+
+test('Activity selection restores in the compact toolbar popup, where view controls remain available', async () => {
+  let persisted = null;
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const respond = (message, callback) => {
+    if (message.type === 'GET_ACTIVITY_VIEW_MODE') callback({ ok: true, data: { mode: persisted } });
+    else if (message.type === 'SET_ACTIVITY_VIEW_MODE') { persisted = message.mode; callback({ ok: true, data: { mode: persisted } }); }
+    else callback({ ok: true, data: state });
+  };
+  const activity = dailyPanelHarness({ state, pageUrl: 'chrome-extension://clockoli/src/times/times.html', timelineEnabled: true, respond });
+  const view = activity.renderActivity();
+  view.querySelector('.times-view-modes').walk().find(node => node.textContent === 'Calendar').onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(persisted, 'calendar');
+  const popup = dailyPanelHarness({ state, pageUrl: 'chrome-extension://clockoli/src/popup/popup.html', timelineEnabled: true, respond });
+  await popup.restoreActivityViewMode();
+  const menu = popup.renderMenu({ compact: true });
+  popup.attachCompact(menu);
+  assert.equal(menu.querySelector('[data-timeline-view-mode="calendar"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
+  menu.querySelector('[data-timeline-view-mode="list"]').onclick({ isTrusted: true });
+  assert.equal(menu.querySelector('[data-timeline-view-mode="list"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(menu.querySelector('[data-timeline-view-mode="calendar"]').getAttribute('aria-pressed'), 'false');
+});
+
+test('Activity opens in Timeline if saved-view storage is unavailable', () => {
+  const h = dailyPanelHarness({ state: { configured: true }, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    localStorage: { getItem() { throw new Error('disabled'); }, setItem() { throw new Error('disabled'); } } });
+  const surface = h.renderActivity();
+  surface.querySelector('.times-view-modes').walk().find(node => node.textContent === 'List').onclick({ isTrusted: true });
+  assert.equal(surface.querySelector('.times-results').hidden, false);
+});
+
+test('Activity and popup mount the same seven-day Timeline and Calendar with week arrows instead of a period selector', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  for (const pageUrl of ['chrome-extension://clockoli/src/times/times.html', 'chrome-extension://clockoli/src/popup/popup.html']) {
+    const h = dailyPanelHarness({ state, now, timelineEnabled: true, pageUrl,
+      respond(message, callback) { callback({ ok: true, data: ['LOAD_TIMES', 'LOAD_WEEK'].includes(message.type) ? { ...state, recent: [] } : state }); },
+    });
+    const surface = pageUrl.includes('/times/') ? h.renderActivity() : h.renderMenu({ compact: true, onClose() {} });
+    h.frames.splice(0).forEach(frame => frame());
+    assert.equal(surface.walk().some(node => node.tag === 'select' && node.getAttribute('aria-label') === 'Time period'), false);
+    assert.equal(h.timelineMounts.length, 1);
+    assert.equal(h.timelineMounts[0].weeklyCalendar, true);
+    assert.equal(h.timelineMounts[0].view.start, new Date(2026, 9, 12).getTime());
+    assert.equal(h.timelineMounts[0].totalRange.end, new Date(2026, 9, 19).getTime());
+    const previous = surface.walk().find(node => node.getAttribute('aria-label') === 'Previous week');
+    assert.ok(previous);
+    await previous.onclick({ isTrusted: true });
+    assert.ok(h.messages.some(message => message.type === (pageUrl.includes('/times/') ? 'LOAD_TIMES' : 'LOAD_WEEK')
+      && message.payload.startDate === '2026-10-05' && message.payload.endDate === '2026-10-11'));
+    assert.equal(h.timelineMounts.length, 1);
+    assert.ok(h.timelineUpdates.some(update => update.view?.start === new Date(2026, 9, 5).getTime()));
+  }
+});
+
+test('Timeline rows include only projects visible in the selected week', () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [],
+    projects: [{ name: 'One', substrings: ['/one'] }, { name: 'Two', substrings: ['/two'] }] };
+  const one = activityEntry('one', '2026-10-14', '08');
+  const previous = activityEntry('two', '2026-10-07', '08');
+  const h = dailyPanelHarness({ state, records: [one, previous], now });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.timelineRows(0, now))), [{ id: 'project:one', title: 'One' }]);
+  const two = activityEntry('two', '2026-10-14', '09');
+  h.set(state, [one, two, previous]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.timelineRows(0, now))), [
+    { id: 'project:one', title: 'One' }, { id: 'project:two', title: 'Two' },
+  ]);
+});
+
+test('Activity List and Timeline retain the Monday part of a prior-Saturday interval', async () => {
+  const monday = new Date(2026, 5, 1).getTime();
+  const now = new Date(2026, 5, 3, 12).getTime();
+  const entry = { ...activityEntry('cross-week', '2026-05-30', '23'),
+    startedAt: new Date(monday - 25 * 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() };
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, records: [entry], now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [entry] } : state }); },
+  });
+  const activity = h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  assert.equal(h.timelineItems(0, now)[0].startedAt, monday);
+  await activity.querySelector('.times-view-modes').walk().find(node => node.textContent === 'List').onclick({ isTrusted: true });
+  assert.ok(activity.querySelector('.times-results').walk().some(node => node.textContent === 'Task cross-week'));
+  assert.equal(activity.querySelector('.times-list-total').textContent, 'Total: 1h');
+});
+
+test('Activity full week reload removes a deleted Sunday record that crossed into Monday', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  const crossing = { ...activityEntry('crossing', '2026-10-11', '23'),
+    startedAt: new Date(monday - 3_600_000).toISOString(), endedAt: new Date(monday + 3_600_000).toISOString() };
+  const neighbor = activityEntry('neighbor', '2026-10-13', '08');
+  const state = { configured: true, active: null, recent: [], pendingWrites: [] };
+  let response = { ...state, recent: [crossing, neighbor] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? response : state }); },
+  });
+  h.renderActivity();
+  await h.loadSelectedTimes();
+  assert.ok(h.recentEntry('crossing'));
+
+  response = { ...state, recent: [neighbor], partial: true };
+  await h.loadSelectedTimes();
+  assert.ok(h.recentEntry('crossing'), 'a partial response cannot prove the older record was deleted');
+
+  response = { ...state, recent: [neighbor] };
+  await h.loadSelectedTimes();
+  assert.equal(h.recentEntry('crossing'), undefined, 'a complete week response removes the deleted overlapping record');
+  assert.ok(h.recentEntry('neighbor'), 'records still present in the week must survive');
+});
+
+test('Activity view switches return from a historical Calendar week to the current List and Timeline week', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true, notifyViewModeChange: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [] } : state }); },
+  });
+  const activity = h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  const select = mode => activity.querySelector('.times-view-modes').walk()
+    .find(node => node.tag === 'button' && node.textContent === mode).onclick({ isTrusted: true });
+  await select('Calendar');
+  await activity.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.equal(h.debugWeek().selectedWeekStart, new Date(2026, 9, 5).getTime());
+  await select('Calendar');
+  assert.equal(h.debugWeek().selectedWeekStart, new Date(2026, 9, 5).getTime(), 'reselecting the same view preserves its week');
+  await select('List');
+  assert.equal(new Date(h.debugWeek().selectedWeekStart ?? now).getDate(), 14);
+  assert.equal(activity.querySelector('.times-results').hidden, false, 'List remains selected when the widget reports its view mode');
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-10-12'));
+  await activity.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  await select('Timeline');
+  assert.equal(new Date(h.debugWeek().selectedWeekStart ?? now).getDate(), 14);
+});
+
+test('toolbar panel view switch returns a historical Calendar to the current List week', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    respond(message, callback) { callback({ ok: true, data: ['LOAD_WEEK', 'LOAD_TIMES'].includes(message.type) ? { ...state, recent: [] } : state }); },
+  });
+  const menu = h.renderMenu({ compact: true }); h.attachCompact(menu);
+  h.frames.splice(0).forEach(frame => frame());
+  h.setTimelineViewMode('calendar');
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.equal(h.debugWeek().selectedWeekStart, new Date(2026, 9, 5).getTime());
+  h.setTimelineViewMode('calendar');
+  assert.equal(h.debugWeek().selectedWeekStart, new Date(2026, 9, 5).getTime(), 'reselecting the same view preserves its week');
+  h.setTimelineViewMode('list');
+  assert.equal(h.debugWeek().selectedWeekStart, new Date(2026, 9, 12).getTime());
+  assert.ok(h.messages.some(message => message.type === 'LOAD_WEEK' && message.payload.startDate === '2026-10-12'));
+});
+
+test('Activity Timeline includes the running task from local state without replacing its loaded history', async () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('completed', '2026-09-05', '08');
+  const active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle: 'Running', startedAt: new Date(now - 60_000).toISOString() };
+  const h = dailyPanelHarness({ now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES'
+      ? { configured: true, recent: [entry], pendingWrites: [] }
+      : { configured: true, active, recent: [], pendingWrites: [] } }); },
+  });
+  h.renderActivity();
+  await h.loadSelectedTimes();
+  h.frames.splice(0).forEach(frame => frame());
+  assert.ok(h.messages.some(message => message.type === 'GET_PAGE_STATE' && !message.refresh));
+  const items = h.timelineUpdates.at(-1)?.items ?? h.timelineMounts.at(-1).items;
+  assert.ok(items.some(item => item.id === `entry:${entry.id}`));
+  assert.ok(items.some(item => item.id === 'active:running' && item.isRunning && item.endedAt === null));
+});
+
+test('selected completion of the active task stops the active timer rather than its old record', async () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('completed', '2026-09-05', '08', 'https://example.com/running');
+  const active = { id: 'running', taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: new Date(now - 60_000).toISOString() };
+  const state = { configured: true, active, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, records: [entry], now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'STOP') {
+        state.active = null;
+        callback({ ok: true, data: { entry: { ...entry, id: 'stopped', endedAt: new Date(now).toISOString() } } });
+      } else callback({ ok: true, data: state });
+    },
+  });
+  h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  const item = h.timelineItems(0, now).find(value => value.id === `entry:${entry.id}`);
+  assert.equal(item.isCurrentTask, true);
+  assert.equal(item.isStartDisabled, true);
+  await h.timelineMounts.at(-1).onStop(item);
+  assert.equal(h.messages.some(message => message.type === 'STOP'), true);
+  assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
+});
+
+test('Activity Timeline updates a timer started or stopped elsewhere without discarding completed records', async () => {
+  const now = new Date('2026-09-05T12:00:00Z').getTime();
+  const entry = activityEntry('completed', '2026-09-05', '08');
+  const active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle: 'Running', startedAt: new Date(now - 60_000).toISOString() };
+  let current = null;
+  const h = dailyPanelHarness({ now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES'
+      ? { configured: true, recent: [entry], pendingWrites: [] }
+      : { configured: true, active: current, recent: [], pendingWrites: [] } }); },
+  });
+  h.renderActivity();
+  await h.loadSelectedTimes();
+  h.frames.splice(0).forEach(frame => frame());
+  const initialMounts = h.timelineMounts.length;
+  current = active;
+  await h.refreshActivityState();
+  assert.ok(h.timelineUpdates.at(-1).items.some(item => item.id === 'active:running' && item.isRunning));
+  current = null;
+  await h.refreshActivityState();
+  assert.ok(h.timelineUpdates.at(-1).items.some(item => item.id === `entry:${entry.id}`));
+  assert.equal(h.timelineUpdates.at(-1).items.some(item => item.isRunning), false);
+  assert.equal(h.timelineMounts.length, initialMounts, 'state changes keep the existing timeline mounted');
+});
+
+test('GitHub Calendar keeps the selected week when a bounded recent-state response arrives on reopen', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const early = activityEntry('early', '2026-10-06', '08');
+  const late = activityEntry('late', '2026-10-09', '08');
+  const state = { configured: true, active: null, pendingWrites: [] };
+  let weekEntries = [early, late];
+  const h = dailyPanelHarness({ state, records: [early, late], now, timelineEnabled: true,
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_WEEK'
+      ? { ...state, recent: message.payload.startDate === '2026-10-05' ? weekEntries : [] }
+      : { ...state, recent: [late] } }); },
+  });
+  const menu = h.renderMenu({ compact: true });
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.ok(h.recentEntry('early'), 'the full week has been loaded');
+  h.applyPageState({ ...state, recent: [late] });
+  assert.ok(h.recentEntry('early'), 'a bounded recent response must not erase earlier entries in the week');
+  assert.ok(h.timelineItems(new Date(2026, 9, 5).getTime(), now).some(item => item.id === 'entry:early'), 'the calendar projection stays intact');
+  weekEntries = [late];
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Next week"]').onclick({ isTrusted: true });
+  await menu.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.equal(h.recentEntry('early'), undefined, 'an authoritative week reload can remove a deleted entry');
+});
+
+test('Activity Timeline starts on Monday and refocuses after a week change', async () => {
+  const now = new Date(2026, 9, 12, 19).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [] } : state }); },
+  });
+  const activity = h.renderActivity();
+  await h.loadSelectedTimes();
+  h.frames.splice(0).forEach(frame => frame());
+  const monday = new Date(2026, 9, 12).getTime();
+  assert.equal(h.timelineMounts.at(-1).domainStart, monday);
+  assert.equal(h.timelineMounts.at(-1).view.start, monday);
+  assert.equal(h.timelineScrolls.length, 0, 'initial Activity mount must not scroll past the week');
+  await activity.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  h.frames.splice(0).forEach(frame => frame());
+  assert.ok(h.timelineUpdates.length, JSON.stringify({ mounts: h.timelineMounts.length, frames: h.frames.length, messages: h.messages.filter(item => item.type === 'LOAD_TIMES').map(item => item.payload), debug: h.debugWeek() }));
+  assert.equal(h.timelineUpdates.at(-1).domainStart, new Date(2026, 9, 5).getTime());
+  assert.ok(h.timelineUpdates.some(update => update.view?.start === new Date(2026, 9, 5).getTime()));
+});
+
+test('opening Activity Calendar shares the current Monday–Sunday week with Timeline', async () => {
   const now = new Date(2026, 9, 8, 12).getTime();
   const tuesday = activityEntry('tuesday', '2026-10-06', '08');
   const state = { configured: true, active: null, pendingWrites: [] };
   const h = dailyPanelHarness({ state, now, timelineEnabled: true,
     pageUrl: 'chrome-extension://clockoli/src/times/times.html',
     respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES'
-      ? { ...state, recent: message.payload.startDate === '2026-10-06' ? [tuesday] : [] }
+      ? { ...state, recent: message.payload.startDate === '2026-10-05' ? [tuesday] : [] }
       : state }); },
   });
   const activity = h.renderActivity();
   h.frames.splice(0).forEach(frame => frame());
   const calendar = activity.querySelector('.times-view-modes').walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
   await calendar.onclick({ isTrusted: true });
-  assert.ok(activity.querySelector('.times-toolbar').querySelector('select').walk()
-    .some(node => node.tag === 'option' && node.value === 'last-three-days' && node.selected));
+  assert.equal(activity.querySelector('.times-toolbar').querySelector('select'), null);
   const range = h.timelineRanges.at(-1);
-  assert.equal(new Date(range?.start).getDate(), 6, 'first Calendar open starts Tuesday rather than Monday');
-  assert.equal(new Date(range?.end).getDate(), 9, 'October 8 remains the inclusive last day');
+  assert.equal(new Date(range?.start).getDate(), 5, 'Calendar starts Monday');
+  assert.equal(new Date(range?.end).getDate(), 12, 'Calendar ends after Sunday');
   assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
-    && message.payload.startDate === '2026-10-06' && message.payload.endDate === '2026-10-08'));
+    && message.payload.startDate === '2026-10-05' && message.payload.endDate === '2026-10-11'));
   assert.ok(h.timelineUpdates.some(update => update.items?.some(item => item.id === `entry:${tuesday.id}`)), 'the selected days reach the rendered widget');
   const rangeCount = h.timelineRanges.length;
   await activity.querySelector('.times-view-modes').walk().find(node => node.tag === 'button' && node.textContent === 'List').onclick({ isTrusted: true });
   await calendar.onclick({ isTrusted: true });
-  assert.equal(h.timelineRanges.length, rangeCount, 'reopening Calendar keeps its mounted navigation instead of resetting to the Period');
+  assert.ok(h.timelineRanges.length > rangeCount, 'switching views refocuses the current week');
+  assert.equal(h.timelineRanges.at(-1).start, new Date(2026, 9, 5).getTime());
+  assert.equal(h.timelineMounts.length, 1, 'switching views keeps the widget mounted');
 });
 
-test('Activity Calendar loads last-week records without changing the List period or remounting', async () => {
+test('Activity Calendar returns to the current week in List without remounting', async () => {
   const now = new Date(2026, 8, 5, 12).getTime();
   const lastWeek = activityEntry('last-week-activity', '2026-08-26', '08');
   const state = { configured: true, active: null, pendingWrites: [] };
@@ -2445,7 +2823,7 @@ test('Activity Calendar loads last-week records without changing the List period
   const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
   await calendar.onclick({ isTrusted: true });
   assert.ok(harness.messages.some(message => message.type === 'LOAD_TIMES'
-    && message.payload.startDate === '2026-09-03' && message.payload.endDate === '2026-09-05'), 'opening Calendar loads the selected Last 3 days');
+    && message.payload.startDate === '2026-08-31' && message.payload.endDate === '2026-09-06'), 'opening Calendar loads the current week');
   const monday = new Date(2026, 7, 24).getTime(), followingMonday = new Date(2026, 7, 31).getTime();
   await harness.timelineMounts[0].onCalendarNavigate({ start: monday, end: followingMonday });
   assert.ok(harness.messages.some(message => message.type === 'LOAD_TIMES'
@@ -2454,10 +2832,11 @@ test('Activity Calendar loads last-week records without changing the List period
   assert.equal(harness.timelineMounts.length, 1);
   const list = activity.walk().find(node => node.tag === 'button' && node.textContent === 'List');
   await list.onclick({ isTrusted: true });
-  assert.equal(activity.querySelector('.times-results').walk().some(node => node.textContent === lastWeek.taskTitle), false, 'last-week records do not leak into Last 3 days List');
+  assert.equal(activity.querySelector('.times-results').walk().some(node => node.textContent === lastWeek.taskTitle), false, 'List does not inherit the Calendar week');
+  assert.ok(harness.messages.some(message => message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-08-31'));
 });
 
-test('opening Activity Calendar before its first widget frame still applies the selected days', async () => {
+test('opening Activity Calendar before its first widget frame still applies the week', async () => {
   const now = new Date(2026, 9, 8, 12).getTime();
   const state = { configured: true, active: null, pendingWrites: [] };
   const h = dailyPanelHarness({ state, now, timelineEnabled: true,
@@ -2469,13 +2848,31 @@ test('opening Activity Calendar before its first widget frame still applies the 
     .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
   h.frames.splice(0).forEach(frame => frame());
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 6);
+  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 5);
   assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
-    && message.payload.startDate === '2026-10-06' && message.payload.endDate === '2026-10-08'));
+    && message.payload.startDate === '2026-10-05' && message.payload.endDate === '2026-10-11'));
 });
 
-test('choosing Last week positions Calendar on the previous Monday–Sunday, before or after opening it', async () => {
-  for (const order of ['period-first', 'calendar-first']) {
+test('Calendar shows all seven days of the current week without a period selector', async () => {
+  const now = new Date(2026, 9, 14, 12).getTime();
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) { callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [] } : state }); },
+  });
+  const activity = h.renderActivity();
+  h.frames.splice(0).forEach(frame => frame());
+  assert.equal(activity.querySelector('.times-toolbar').querySelector('select'), null);
+  await activity.querySelector('.times-view-modes').walk()
+    .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  assert.equal(h.timelineRanges.at(-1).start, new Date(2026, 9, 12).getTime());
+  assert.equal(h.timelineRanges.at(-1).end, new Date(2026, 9, 19).getTime(), 'Calendar includes every day through Sunday');
+  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
+    && message.payload.startDate === '2026-10-12' && message.payload.endDate === '2026-10-18'), 'the displayed week is requested');
+});
+
+test('switching to Calendar resets an earlier week, while arrows within Calendar still navigate', async () => {
+  for (const order of ['navigate-first', 'calendar-first']) {
     const now = new Date(2026, 8, 5, 12).getTime();
     const current = activityEntry('current', '2026-09-03', '08');
     const previous = activityEntry('previous', '2026-08-26', '08');
@@ -2491,18 +2888,16 @@ test('choosing Last week positions Calendar on the previous Monday–Sunday, bef
     const openCalendar = async () => activity.querySelector('.times-view-modes').walk()
       .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
     if (order === 'calendar-first') await openCalendar();
-    const period = activity.querySelector('.times-toolbar').querySelector('select');
-    period.value = 'last-week'; period.onchange({});
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (order === 'period-first') await openCalendar();
+    await activity.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+    if (order === 'navigate-first') await openCalendar();
     const selected = h.timelineRanges.at(-1);
-    assert.equal(new Date(selected.start).getDate(), 24, `${order}: Calendar shows 24–30 August, not this week`);
-    assert.equal(new Date(selected.end).getDate(), 31);
+    assert.equal(new Date(selected.start).getDate(), order === 'navigate-first' ? 31 : 24);
+    assert.equal(new Date(selected.end).getDate(), order === 'navigate-first' ? 7 : 31);
     assert.equal(h.timelineMounts.length, 1, `${order}: the widget stays mounted`);
   }
 });
 
-test('Activity Period opens the full month and applied custom dates in Calendar', async () => {
+test('Activity Calendar stays on seven days after repeated week navigation', async () => {
   const now = new Date(2026, 9, 8, 12).getTime();
   const state = { configured: true, active: null, pendingWrites: [] };
   const h = dailyPanelHarness({ state, now, timelineEnabled: true,
@@ -2511,31 +2906,20 @@ test('Activity Period opens the full month and applied custom dates in Calendar'
   });
   const activity = h.renderActivity();
   h.frames.splice(0).forEach(frame => frame());
-  const select = value => { const period = activity.querySelector('.times-toolbar').querySelector('select'); period.value = value; period.onchange({}); };
   const openCalendar = async () => activity.querySelector('.times-view-modes').walk()
     .find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
-
-  select('this-month');
-  await new Promise(resolve => setTimeout(resolve, 0));
   await openCalendar();
-  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 1, 'October starts on October 1, not its final week');
-  assert.equal(new Date(h.timelineRanges.at(-1)?.end).getDate(), 9, 'current month ends after today');
-
-  select('last-month');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getMonth(), 8, 'last month starts on September 1');
-  assert.equal(new Date(h.timelineRanges.at(-1)?.start).getDate(), 1);
-  assert.equal(new Date(h.timelineRanges.at(-1)?.end).getDate(), 1, 'last month ends at October 1 exclusively');
-
-  select('custom');
-  const dates = activity.querySelector('.times-custom').walk().filter(node => node.tag === 'input');
-  dates[0].value = '2026-09-28'; dates[0].oninput({});
-  dates[1].value = '2026-10-06'; dates[1].oninput({});
-  await activity.querySelector('.times-custom').walk().find(node => node.tag === 'button' && node.textContent === 'Apply').onclick({ isTrusted: true });
-  const custom = h.timelineRanges.at(-1);
-  assert.equal(new Date(custom.start).getDate(), 28);
-  assert.equal(new Date(custom.end).getDate(), 7, 'custom end is inclusive in the label and exclusive in the read');
-  assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-09-28' && message.payload.endDate === '2026-10-06'));
+  for (const [direction, startDate, endDate] of [
+    ['Previous week', '2026-09-28', '2026-10-04'],
+    ['Previous week', '2026-09-21', '2026-09-27'],
+    ['Next week', '2026-09-28', '2026-10-04'],
+  ]) {
+    await activity.querySelector('.week-navigation').querySelector(`[aria-label="${direction}"]`).onclick({ isTrusted: true });
+    const range = h.timelineRanges.at(-1);
+    assert.equal(range.end - range.start, 7 * 86_400_000);
+    assert.ok(h.messages.some(message => message.type === 'LOAD_TIMES'
+      && message.payload.startDate === startDate && message.payload.endDate === endDate));
+  }
   assert.equal(h.timelineMounts.length, 1);
 });
 
@@ -2553,7 +2937,8 @@ test('Activity Calendar ignores an older week response after navigating again', 
   harness.frames.splice(0).forEach(frame => frame());
   const calendar = activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar');
   const first = calendar.onclick({ isTrusted: true });
-  assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Loading week…');
+  for (let attempt = 0; attempt < 5 && !loads.length; attempt++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loads.length, 1, 'the current week starts loading on a view switch');
   const older = activityEntry('older-response', '2026-08-26', '08');
   const newest = activityEntry('newest-response', '2026-08-19', '08');
   const second = harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
@@ -2564,6 +2949,7 @@ test('Activity Calendar ignores an older week response after navigating again', 
   loads[0].callback({ ok: false, error: { message: 'Superseded read' } }); await first;
   assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${newest.id}`));
   assert.equal(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${older.id}`), false);
+  assert.equal(harness.debugWeek().errorText, '', 'an obsolete initial load does not report an error');
   assert.equal(harness.timelineMounts.length, 1);
 });
 
@@ -2580,10 +2966,33 @@ test('Activity Calendar leaves the mounted week intact and reports a failed hist
   const activity = harness.renderActivity();
   harness.frames.splice(0).forEach(frame => frame());
   await activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  const displayedWeek = activity.querySelector('.week-navigation-label').textContent;
   await harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
   assert.equal(harness.timelineMounts.length, 1);
+  assert.equal(activity.querySelector('.week-navigation-label').textContent, displayedWeek);
+  assert.equal(harness.timelineUpdates.at(-1).totalRange.start, new Date(2026, 7, 31).getTime());
   assert.ok(harness.timelineUpdates.at(-1).items.some(item => item.id === `entry:${entry.id}`));
   assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Could not load this week.');
+});
+
+test('Activity List restores its week and entries when an arrow read fails', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const entry = activityEntry('current-week', '2026-09-03', '08');
+  const state = { configured: true, active: null, pendingWrites: [] };
+  const h = dailyPanelHarness({ state, records: [entry], now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-08-24') callback({ ok: false, error: { message: 'Week unavailable' } });
+      else callback({ ok: true, data: message.type === 'LOAD_TIMES' ? { ...state, recent: [entry] } : state });
+    },
+  });
+  const activity = h.renderActivity(); h.frames.splice(0).forEach(frame => frame());
+  await activity.querySelector('.times-view-modes').walk().find(node => node.textContent === 'List').onclick({ isTrusted: true });
+  const displayedWeek = activity.querySelector('.week-navigation-label').textContent;
+  await activity.querySelector('.week-navigation').querySelector('[aria-label="Previous week"]').onclick({ isTrusted: true });
+  assert.equal(activity.querySelector('.week-navigation-label').textContent, displayedWeek);
+  assert.equal(activity.querySelector('.times-results').walk().some(node => node.textContent === 'Task current-week'), true);
+  assert.equal(h.debugWeek().errorText, 'Week unavailable');
 });
 
 test('List shows favicons and editable descriptions below task titles', async () => {
@@ -3358,6 +3767,7 @@ async function runningStatusHarness(initial) {
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
     confirm: text => { confirmations.push(text); return confirmed; },
   });
+  vm.runInContext(trackingCardSource, context);
   vm.runInContext(moduleSource.replace(/^import .*;\n/gm, '').replace('export function mountRunningStatus', 'function mountRunningStatus'), context);
   const send = async message => {
     calls.push({ ...message });
@@ -3411,18 +3821,24 @@ test('shared running status renders idle totals and unknown summaries without in
 test('shared running status ticks without replacing controls and rereads after Stop', async () => {
   const h = await runningStatusHarness(runningStatusState());
   const link = h.find('running-status-task'), stop = h.find('running-status-stop');
+  assert.equal(h.container.classList.contains('is-active'), true);
+  assert.equal(h.find('running-status-live').textContent, 'Tracking now');
+  assert.equal(h.find('running-status-live').hidden, false);
+  assert.equal(h.find('running-status-metrics').children.length, 2);
   assert.equal(link.textContent, '<img> Fix tracking'); assert.equal(link.children.length, 0);
   assert.equal(link.href, 'https://github.com/acme/app/issues/7');
   assert.equal(link.rel, 'noreferrer'); assert.equal(stop.textContent, 'Stop and save');
-  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m 0s');
+  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m');
   h.advance(1_000); h.timers.get(1_000)();
-  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m 1s');
+  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m');
   assert.equal(h.find('running-status-stop'), stop);
   await stop.onclick(); await h.settle();
   const stopIndex = h.calls.findIndex(call => call.type === 'STOP');
   assert.deepEqual(h.calls[stopIndex], { type: 'STOP' });
   assert.ok(h.calls.slice(stopIndex + 1).some(call => call.type === 'GET_PAGE_STATE'));
   assert.equal(h.find('running-status-idle').hidden, false); assert.equal(stop.hidden, true);
+  assert.equal(h.container.classList.contains('is-active'), false);
+  assert.equal(h.find('running-status-live').hidden, true);
   h.destroy();
 });
 
@@ -3493,10 +3909,66 @@ function activityEntry(id, date, hour = '10', taskUrl = `https://example.com/${i
 }
 
 function activityHarness(records = [], respond = null) {
-  return dailyPanelHarness({ records, respond, now: new Date('2026-09-05T12:00:00').getTime(),
+  return dailyPanelHarness({ records, respond: respond || ((message, callback) => callback({ ok: true, data: message.type === 'SEARCH_ACTIVITY'
+    ? { configured: true, recent: records } : { configured: true, active: null, pendingCount: 0, pendingWrites: [] } })), now: new Date('2026-09-05T12:00:00').getTime(),
     pageUrl: 'chrome-extension://clockoli/src/times/times.html',
     state: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
 }
+
+test('Activity List starts a row task, switches from another running task, and stops only the matching task', async () => {
+  const first = activityEntry('1', '2026-09-05', '08');
+  const second = activityEntry('2', '2026-09-05', '09');
+  let active = { id: 'other', taskUrl: 'https://example.com/elsewhere', startedAt: '2026-09-05T11:00:00Z' };
+  const h = dailyPanelHarness({ records: [first, second], now: Date.parse('2026-09-05T12:00:00Z'),
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    state: { configured: true, active, pendingWrites: [] },
+    respond(message, callback) {
+      if (message.type === 'SWITCH_TASK') {
+        active = { id: 'running', taskUrl: message.taskUrl, startedAt: '2026-09-05T12:00:00Z' };
+        callback({ ok: true, data: { active, pending: true } });
+      } else if (message.type === 'STOP') {
+        active = null;
+        callback({ ok: true, data: { entry: { id: 'running', taskUrl: second.taskUrl, startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T12:01:00Z', durationSeconds: 60 }, pending: true } });
+      } else callback({ ok: true, data: { configured: true, active, pendingWrites: [] } });
+    },
+  });
+  let root = h.renderActivity();
+  const start = root.querySelectorAll('.entry-track').find(node => node.getAttribute('aria-label') === 'Start tracking Task 2');
+  assert.equal(start.getAttribute('aria-label'), 'Start tracking Task 2');
+  await start.onclick({ isTrusted: true });
+  assert.deepEqual(h.messages.filter(message => message.type === 'SWITCH_TASK').map(message => message.taskUrl), [second.taskUrl]);
+  root = h.renderActivity();
+  assert.equal(root.querySelectorAll('.entry-stop').length, 1);
+  assert.equal(root.querySelectorAll('.entry-track').length, 1);
+  const stop = root.querySelector('.entry-stop');
+  assert.equal(stop.getAttribute('aria-label'), 'Stop tracking Task 2');
+  await start.onclick({ isTrusted: true });
+  assert.equal(h.messages.filter(message => message.type === 'STOP').length, 0, 'stale Start cannot stop the new timer');
+  await stop.onclick({ isTrusted: true });
+  assert.equal(h.messages.filter(message => message.type === 'STOP').length, 1);
+  await stop.onclick({ isTrusted: true });
+  assert.equal(h.messages.filter(message => message.type === 'SWITCH_TASK').length, 1, 'stale Stop cannot restart the task');
+  root = h.renderActivity();
+  assert.equal(root.querySelectorAll('.entry-stop').length, 0);
+});
+
+test('Activity List can restart a validated imported task identity through the timeline switch policy', async () => {
+  const entry = activityEntry('1', '2026-09-05', '08', 'owner/project/imported-task');
+  const h = activityHarness([entry], (message, callback) => callback({ ok: true, data: {
+    active: { id: 'running', taskUrl: entry.taskUrl, startedAt: '2026-09-05T12:00:00Z' }, pendingWrites: [], configured: true,
+  } }));
+  await h.renderActivity().querySelector('.entry-track').onclick({ isTrusted: true });
+  assert.equal(h.messages.find(message => message.type === 'SWITCH_TASK')?.timelineTask, true);
+  assert.equal(h.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, entry.taskUrl);
+});
+
+test('Activity List does not offer tracking for an invalid identity or a pending row', () => {
+  const invalid = activityEntry('1', '2026-09-05', '08', 'not a task URL');
+  const pending = { ...activityEntry('2', '2026-09-05', '09'), _pending: true };
+  const root = activityHarness([invalid, pending]).renderActivity();
+  assert.equal(root.querySelectorAll('.entry-track').length, 0);
+  assert.equal(root.querySelectorAll('.entry-stop').length, 0);
+});
 
 test('Activity groups nonconsecutive tasks by local record date with day totals and per-record identity', () => {
   const entries = [activityEntry('1', '2026-09-05', '08'), activityEntry('2', '2026-09-05', '09'),
@@ -3523,7 +3995,7 @@ for (const origin of ['webkit-extension://clockoli/', 'safari-web-extension://cl
   });
 }
 
-test('Activity displays and searches imported identities without creating a task link', () => {
+test('Activity displays and searches imported identities without creating a task link', async () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const h = activityHarness([activityEntry('1', '2026-09-05', '08', identity)]);
   const root = h.renderActivity();
@@ -3533,6 +4005,7 @@ test('Activity displays and searches imported identities without creating a task
   assert.equal(row.querySelectorAll('a').some(link => link.href === identity), false);
   const filter = root.querySelector('.times-filter').querySelector('input');
   filter.value = 'fixed-last-block'; filter.oninput({});
+  await [...h.timeouts.values()].find(item => item.delay === 250).callback();
   assert.equal(root.querySelectorAll('.entry-record').length, 1);
   filter.value = 'absent'; filter.oninput({});
   assert.equal(root.querySelectorAll('.entry-record').length, 0);
@@ -3564,17 +4037,20 @@ test('Activity edits imported time and metadata without submitting a non-URL as 
   }
 });
 
-test('Imported identities cannot be restarted from the timeline', async () => {
+test('imported identities can be restarted from the GitHub calendar with record provenance', async () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const entry = activityEntry('1', '2026-09-05', '08', identity);
+  entry.destinationId = 'github:1';
   // activityEntry times are UTC, so `now` must be a UTC instant too; a local
   // noon at UTC+4 or further east is not after the entry's start, so it is dropped.
   const now = Date.parse('2026-09-05T12:00:00Z');
   const h = dailyPanelHarness({ records: [entry], now,
     state: { configured: true, active: null, pendingWrites: [] } });
-  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, true);
-  assert.equal(await h.restartTimelineEntry(entry), false);
-  assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
+  assert.equal(h.timelineItems(0, now)[0].isStartDisabled, false);
+  assert.equal(await h.restartTimelineEntry(entry), true);
+  const request = h.messages.find(message => message.type === 'SWITCH_TASK');
+  assert.equal(request.taskUrl, identity);
+  assert.deepEqual(structuredClone(request.sourceEntry), { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate });
 });
 
 test('Activity only permits replacing an imported identity with a valid task URL', async () => {
@@ -3625,8 +4101,9 @@ test('Activity no-match action clears the filter and restores records', async ()
   const h = activityHarness([activityEntry('1', '2026-09-05')]), root = h.renderActivity();
   const filter = root.querySelector('.times-filter').querySelector('input');
   filter.value = 'absent'; filter.oninput({});
+  await [...h.timeouts.values()].find(item => item.delay === 250).callback();
   const empty = root.querySelector('.activity-empty');
-  assert.equal(empty.querySelector('p').textContent, 'No entries match.');
+  assert.equal(empty.querySelector('p').textContent, 'No entries match across all weeks.');
   assert.deepEqual(empty.querySelectorAll('button').map(node => node.textContent), ['Clear filter']);
   await empty.querySelector('button').onclick({ isTrusted: true });
   assert.equal(filter.value, '');

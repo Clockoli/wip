@@ -17,7 +17,7 @@ import {
   syncPendingAll,
 } from '../src/background/destination-runtime.js';
 import { createUlid } from '../src/domain/ulid.js';
-import { taskUrlOf } from '../src/domain/values.js';
+import { normalizeTaskUrl, taskUrlOf } from '../src/domain/values.js';
 
 const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
 const extensionOrigin = 'chrome-extension://clockoli/';
@@ -161,7 +161,7 @@ function handlerContext(overrides = {}) {
     chrome: { runtime: { getURL: () => extensionOrigin }, action: { setIcon: async () => {} }, tabs: { create: async () => {} } },
     assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
     activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll,
-    createUlid, taskUrlOf,
+    createUlid, normalizeTaskUrl, taskUrlOf,
     globalTrackerState: async () => ({ configured: true, active: null, recent: [], pendingWrites: [] }),
     requestPendingSync: () => {},
     ...overrides,
@@ -169,6 +169,37 @@ function handlerContext(overrides = {}) {
   vm.runInContext(sourceBetween('async function handle(', 'chrome.runtime.onMessage.addListener'), context);
   return context;
 }
+
+test('content timeline switch verifies an imported entry before touching the running timer', async () => {
+  const identity = 'manticoresoftware/Routines/1-dev-call';
+  const sourceEntry = { id: 'record-1', destinationId: 'github:1', entryDate: '2026-10-12' };
+  const sender = { url: 'https://github.com/acme/repo/issues/7', tab: { id: 5, url: 'https://github.com/acme/repo/issues/7' } };
+  const calls = [];
+  let records = [{ ...sourceEntry, taskUrl: identity }];
+  let partial = false;
+  const context = handlerContext({
+    store: {},
+    loadTimes: async ({ payload }) => { calls.push(['read', payload.startDate]); return { configured: true, partial, recent: records }; },
+    resolveStartDestinationId: async () => { calls.push(['resolve']); return 'github:1'; },
+    activeDestinationId: async () => { calls.push(['active']); return null; },
+    trackerForDestination: async () => ({ switchTask: async task => { calls.push(['switch', task]); return { active: { taskUrl: task } }; } }),
+  });
+  const message = { type: 'SWITCH_TASK', timelineTask: true, taskUrl: identity, sourceEntry };
+  const result = await context.handle(message, sender);
+  assert.equal(result.active.taskUrl, identity);
+  assert.deepEqual(calls.map(([kind]) => kind), ['read', 'resolve', 'active', 'switch']);
+  calls.length = 0;
+  records = [{ ...sourceEntry, taskUrl: 'acme/other/task' }];
+  await assert.rejects(context.handle(message, sender), /stored record/i);
+  assert.deepEqual(calls.map(([kind]) => kind), ['read']);
+  calls.length = 0;
+  partial = true;
+  await assert.rejects(context.handle(message, sender), /unavailable/i);
+  assert.deepEqual(calls.map(([kind]) => kind), ['read']);
+  calls.length = 0;
+  await assert.rejects(context.handle({ ...message, sourceEntry: { ...sourceEntry, entryDate: '2026-02-30' } }, sender), /valid source record/i);
+  assert.deepEqual(calls, []);
+});
 
 test('extracted service-worker handler routes START to the first matching destination', async () => {
   const calls = [];

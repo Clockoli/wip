@@ -2,12 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch } from '../src/background/message-policy.js';
+import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
+
+test('week reads accept only a Monday–Sunday range from the extension or a GitHub tab', () => {
+  const week = { startDate: '2026-10-05', endDate: '2026-10-11' };
+  assert.deepEqual(weekRangeForSender(week, content, origin), week);
+  assert.deepEqual(weekRangeForSender(week, extension, origin), week);
+  for (const payload of [{ ...week, destinationId: 'github:1' }, { ...week, endDate: '2026-10-12' }, { ...week, startDate: '2026-10-06' }, { ...week, startDate: '2026-02-30' }, null]) {
+    assert.throws(() => weekRangeForSender(payload, content, origin), /week/i);
+  }
+  assert.throws(() => weekRangeForSender(week, { url: 'https://example.com/task', tab: { id: 2 } }, origin), /GitHub/i);
+  assert.throws(() => weekRangeForSender(week, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 2 } }, origin), /not allowed/i);
+  assert.throws(() => weekRangeForSender(week, { url: 'https://github.com/acme/frontend/issues/123' }, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('LOAD_TIMES', content, origin), /not allowed/i);
+  assert.equal(assertMessageAllowed('SEARCH_ACTIVITY', extension, origin), 'extension');
+  assert.throws(() => assertMessageAllowed('SEARCH_ACTIVITY', content, origin), /not allowed/i);
+});
 
 test('email-only CSV response is accepted only from the armed Clockify report tab and uses its URL year', async () => {
   const clockify = { url: 'https://app.clockify.me/reports/detailed', tab: { id: 5 } };
@@ -86,6 +101,27 @@ test('content scripts receive only page-safe state and timer actions', () => {
   assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
 });
 
+test('Activity view messages accept only valid modes from Activity surfaces', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  let mode = null;
+  const context = vm.createContext({ assertMessageAllowed, URL, chrome: { runtime: { getURL: path => `${origin}${path}` } }, store: {
+    getActivityViewMode: async () => mode,
+    setActivityViewMode: async value => { mode = value; return mode; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const read = { type: 'GET_ACTIVITY_VIEW_MODE' }, write = { type: 'SET_ACTIVITY_VIEW_MODE', mode: 'calendar' };
+  assert.equal((await context.handle(write, extension)).mode, 'calendar');
+  assert.equal((await context.handle(read, content)).mode, 'calendar');
+  assert.equal((await context.handle(read, { url: 'https://example.com/task', tab: { id: 2 } })).mode, 'calendar');
+  for (const sender of [{ url: `${origin}src/options/options.html` }, { url: 'https://example.com/task' }, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 3 } }]) {
+    await assert.rejects(context.handle(write, sender));
+  }
+  await assert.rejects(context.handle({ ...write, mode: 'invalid' }, content), /Invalid Activity view/i);
+  await assert.rejects(context.handle({ ...write, token: 'injected' }, content), /Invalid Activity view/i);
+  await assert.rejects(context.handle({ ...read, payload: {} }, extension), /Invalid Activity view/i);
+  assert.equal(mode, 'calendar');
+});
+
 test('any GitHub page can manage its URL task but cannot access privileged state', () => {
   const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
   for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
@@ -138,9 +174,22 @@ test('page Start does not fall back to the original document when the tab has le
 
 test('only extension pages can start an imported identity', () => {
   assert.equal(taskUrlForStart('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
+  assert.equal(taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
   assert.throws(() => taskUrlForStart('acme/project/imported-task', content, origin), /task URL/i);
-  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /task URL/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /stored record/i);
   assert.throws(() => taskUrlForStart('acme/project/bad task', extension, origin), /task URL/i);
+});
+
+test('content timeline switch accepts an imported identity only with a matching stored record', () => {
+  const identity = 'manticoresoftware/Routines/1-dev-call';
+  const sourceEntry = { id: 'record-1', destinationId: 'github:1', entryDate: '2026-10-12' };
+  const records = [{ ...sourceEntry, taskUrl: identity }];
+  assert.equal(taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, records), identity);
+  for (const invalid of [
+    [], [{ ...records[0], id: 'other' }], [{ ...records[0], destinationId: 'github:2' }],
+    [{ ...records[0], entryDate: '2026-10-13' }], [{ ...records[0], taskUrl: 'acme/other/task' }],
+  ]) assert.throws(() => taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, invalid), /stored record/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/bad task', content, origin, sourceEntry, records), /task URL/i);
 });
 
 test('timeline task switching may select a previously tracked task from another GitHub page', () => {
