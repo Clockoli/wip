@@ -1,19 +1,40 @@
 # Getting started with Clockoli
 
-Clockoli is a Chrome/Chromium extension. It uses one GitHub account for sign-in and can store time records in several dedicated private GitHub time repositories.
+Clockoli is a browser extension for Chrome and other Chromium browsers, Firefox, and Safari on macOS. It uses one GitHub account for sign-in and can store time records in several dedicated private GitHub time repositories.
 
 ## What you need
 
-- Chrome or another Chromium browser, version 102 or newer.
+- One of these browsers:
+  - Chrome or another Chromium browser, version 102 or newer;
+  - Firefox 140 or newer;
+  - Safari 18 or newer on macOS.
 - A GitHub account.
-- Access to the current Clockoli source checkout or a trusted current extracted package.
 - Read/write access to a suitable private time repository, or permission to create one. It may belong to you, another person, or an organization. Initializing an organization repository requires GitHub repository-admin permission.
 
 A time repository is separate from the source repositories, documents, tickets, and pages you track. Clockoli does not need write access to a source repository just because one of its issues or pull requests is a task. Your GitHub account supplies identity and access; it is not itself either kind of repository.
 
-## 1. Install the current beta
+## 1. Install Clockoli
 
-The current trusted checkout and its locally built package identify as `0.2.0`. The published `v0.1.11` package predates the product described in this documentation.
+### Chrome and other Chromium browsers
+
+Add Clockoli from the [Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl), then pin it to the toolbar so it is available on non-GitHub pages. Store installations update automatically. Store review can make the listed version trail the latest GitHub release.
+
+### Firefox
+
+Download `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases). Open `about:addons`, choose the gear menu → **Install Add-on From File**, and select it.
+
+The unsigned `Clockoli-X.Y.Z-firefox.xpi` is for store submission and temporary testing. To load it, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the XPI. Temporary installations last until Firefox restarts.
+
+### Safari
+
+1. Download `Clockoli-X.Y.Z-safari-unsigned.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
+2. Move `Clockoli.app` to Applications and open it. If macOS blocks it, choose **Open Anyway** in System Settings → Privacy & Security.
+3. In Safari Settings → Advanced, enable features for web developers. Then, in Settings → Developer, enable **Allow unsigned extensions**.
+4. Enable Clockoli in Settings → Extensions.
+
+Safari can turn off **Allow unsigned extensions** when it restarts; enable it again if Clockoli disappears. When a release includes `Clockoli-X.Y.Z-safari.zip`, it contains the signed, notarized app and does not need unsigned extensions.
+
+### Development checkout (Chromium)
 
 1. Clone or update the repository:
 
@@ -28,18 +49,18 @@ The current trusted checkout and its locally built package identify as `0.2.0`. 
 3. Enable **Developer mode**.
 4. Select **Load unpacked**.
 5. Choose the directory containing Clockoli's `manifest.json`.
-6. Pin Clockoli to the toolbar so it is available on non-GitHub pages.
 
-If you received a trusted ZIP, extract it first and select the extracted directory. Do not select the ZIP itself.
+To use a release `Clockoli-X.Y.Z.zip` unpacked, extract it into a permanent folder first and select that folder. Do not select the ZIP itself.
 
-### Updating an unpacked installation
+### Updating a file installation
 
-An unpacked extension does not update automatically:
+Unpacked and file installations do not update automatically:
 
-1. Pull the latest trusted source or replace the extracted package directory.
-2. Open `chrome://extensions`.
-3. Select **Reload** on the Clockoli card.
-4. Refresh any already-open GitHub tabs so they receive the current content script.
+1. Pull the latest trusted source, or install the newer release file.
+2. For an unpacked installation, open `chrome://extensions` and select **Reload** on the Clockoli card.
+3. Refresh any already-open GitHub tabs so they receive the current content script.
+
+Before you replace an installation or switch browser, sync pending changes, stop the timer, and export settings. Credentials and local state do not move between browsers, browser profiles, or a store and an unpacked installation.
 
 ## 2. Set up Clockoli
 
@@ -49,7 +70,7 @@ Normal setup has two guided steps: sign in with GitHub, then check a time reposi
 
 ### Step 1: activate the device
 
-1. Select **Sign in with GitHub**. Clockoli tries to copy the one-time code, reveals it character by character over about two seconds, then keeps it visible for another four seconds before opening GitHub. If copying is blocked, GitHub still opens; return to Settings and select **Copy**, or copy the visible code manually, before entering it on GitHub.
+1. Select **Sign in with GitHub**. If your browser asks to allow Clockoli access to GitHub, allow it; sign-in cannot continue without that access. Clockoli tries to copy the one-time code, reveals it character by character over about two seconds, then keeps it visible for another four seconds before opening GitHub. If copying is blocked, GitHub still opens; return to Settings and select **Copy**, or copy the visible code manually, before entering it on GitHub.
 2. On GitHub, verify that you reached **github.com** for the Clockoli authorization you initiated in Settings.
 3. Paste the one-time code and approve the request.
 4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.

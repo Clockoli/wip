@@ -20,4 +20,4 @@ Clockoli tracks time against HTTP(S) task URLs and routes records to private per
 
 ## Product scope
 
-The current beta supports Chrome/Chromium 102 or newer and manual completed-entry creation through the Activity bulk importer. It does not provide Firefox packaging, reminders, a mobile app, or automatic updates for unpacked installations.
+The current beta supports Chrome and other Chromium browsers 102 or newer from the Chrome Web Store, Firefox 140 or newer, and Safari 18 or newer on macOS. Firefox and Safari builds ship as release files and are not yet listed in their browser stores. Manual completed entries use the Activity bulk importer. Clockoli does not provide reminders, a mobile app, or automatic updates for unpacked or file installations.

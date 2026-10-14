@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Clockoli private GitHub-backed task time tracking Chrome extension",
+  "description": "Clockoli private GitHub-backed task time tracking browser extension",
   "workspaces": [
     "packages/*"
   ],
