@@ -75,7 +75,7 @@ test('Calendar keeps unavailable resources and imported identities without favic
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'afeb30a58a456dbd59f2d0a020eb362389b8c3b65397b2d6c389ac71c90d5ac8');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'fdef796cc0b36f7ce494c057079323c83d1084902737315573d9e116197a9ac6');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
@@ -95,6 +95,22 @@ test('adapter maps durable Clockoli state and preserves the old block styling co
   assert.match(source, /height: 40px !important/);
   assert.match(source, /border-left: 3px solid var\(--clockoli-task-color/);
   assert.match(source, /background: color-mix\(in srgb, var\(--clockoli-task-color/);
+});
+
+test('pending timeline and calendar entries never display background saving feedback', () => {
+  assert.match(source, /\.task\.pending, \.calendar-task\.pending \{ opacity: 1; \}/);
+  assert.match(source, /\.task\.pending::after \{ display: none; \}/);
+  assert.doesNotMatch(source, /clockoli-entry-saving|clockoli-compact-saving|clockoli-saving/);
+  assert.doesNotMatch(source, /Saving…|aria-busy/);
+  assert.match(source, /timeline\.pendingKeys = new Set/);
+  assert.match(source, /!pending && !item\?\.isDeleteDisabled/);
+});
+
+test('Clockoli graphic Timeline edits use a five-minute grid while Calendar keeps its one-minute precision', () => {
+  assert.match(source, /magnetStepsMinutes: \[5\]/);
+  assert.match(source, /calendarMagnetStepMinutes: 1/);
+  assert.match(vendor, /_calendarMagnetStepMs\(rawTime, state\)[\s\S]*?this\.options\.calendarMagnetStepMinutes/);
+  assert.doesNotMatch(source, /magnetStepsMinutes: \[1 \/ 60\]/);
 });
 
 test('adapter keeps atomic Clockoli switching and action permissions', () => {

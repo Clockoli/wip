@@ -441,8 +441,9 @@ async function loadTimes(message, sender) {
         maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000,
       });
       const tracker = await trackerForDestination(destination.id, { localOnly: true });
-      recoveries.set(destination.id, await tracker.getRecoveryState());
-      return recent;
+      const projected = await tracker.projectActivityRecords(recent, message.payload || {});
+      recoveries.set(destination.id, projected.recovery);
+      return projected.records;
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
     const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || []).map(operation => safePendingProjection(operation, destinationId)));
@@ -1138,7 +1139,7 @@ async function handle(message, sender) {
     case 'START': {
       const taskUrl = taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
       const destinationId = await resolveStartDestinationId(store, taskUrl);
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.start(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
       if (result._pending) requestPendingSync();
       return { ...result, destinationId };
@@ -1150,13 +1151,13 @@ async function handle(message, sender) {
       const targetDestinationId = await resolveStartDestinationId(store, taskUrl);
       const sourceDestinationId = await activeDestinationId(store);
       if (!sourceDestinationId || sourceDestinationId === targetDestinationId) {
-        const tracker = await trackerForDestination(targetDestinationId);
+        const tracker = await trackerForDestination(targetDestinationId, { localOnly: true });
         const result = await tracker.switchTask(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
         if (result.pending) requestPendingSync();
         return { ...result, destinationId: targetDestinationId };
       }
-      const sourceTracker = await trackerForDestination(sourceDestinationId);
-      const targetTracker = await trackerForDestination(targetDestinationId);
+      const sourceTracker = await trackerForDestination(sourceDestinationId, { localOnly: true });
+      const targetTracker = await trackerForDestination(targetDestinationId, { localOnly: true });
       const sourceState = await sourceTracker.getState();
       const current = sourceState.active;
       if (!current) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
@@ -1184,19 +1185,18 @@ async function handle(message, sender) {
     }
     case 'STOP': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.stop(message.description || '', { background: true });
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
     }
     case 'DISCARD_ACTIVE': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.discardActive({ background: true });
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
     }
-    case 'SYNC': return syncPendingAll({ store, trackerForDestination });
     case 'LOAD_RECENT': return loadRecentAcrossDestinations(message, sender, extensionOrigin);
     case 'EDIT_ENTRIES': {
       const destinationId = await requireConfiguredDestinationId(store,
@@ -1212,7 +1212,7 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntryEdit(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntryEdit(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
@@ -1220,7 +1220,7 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntryDelete(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntryDelete(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
@@ -1228,13 +1228,13 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      const result = await (await trackerForDestination(destinationId)).queueEntriesEdit(payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueEntriesEdit(payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
     case 'QUEUE_ACTIVE_START_EDIT': {
       const destinationId = await activeDestinationId(store, { required: true });
-      const result = await (await trackerForDestination(destinationId)).queueActiveStartEdit(message.payload);
+      const result = await (await trackerForDestination(destinationId, { localOnly: true })).queueActiveStartEdit(message.payload);
       requestPendingSync();
       return { ...result, destinationId };
     }
@@ -1340,6 +1340,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+let pendingPull = null;
+let pendingSyncWakeTimer = null;
+let pendingSyncWakeRevision = 0;
+const PENDING_SYNC_IDLE_MS = 15_000;
+const PENDING_SYNC_ALARM_FLOOR_MS = 30_000;
+
+function pendingSyncQuietUntil(snapshot) {
+  let latest = null;
+  for (const state of Object.values(snapshot?.destinationStates?.entries ?? {})) {
+    for (const operation of state?.pendingWrites ?? []) {
+      const timestamp = Date.parse(operation.lastLocalEditAt || operation.queuedAt);
+      if (Number.isFinite(timestamp)) latest = Math.max(latest ?? timestamp, timestamp);
+    }
+  }
+  return latest === null ? null : latest + PENDING_SYNC_IDLE_MS;
+}
+
+function armPendingSyncWake(when) {
+  const revision = ++pendingSyncWakeRevision;
+  if (pendingSyncWakeTimer !== null) clearTimeout(pendingSyncWakeTimer);
+  const delay = Math.max(0, when - Date.now());
+  // The 15-second timer covers the usual active MV3 service-worker lifetime.
+  // chrome.alarms survives worker termination, but installed Chrome extensions
+  // clamp its earliest firing to 30 seconds. The persisted deadline is checked
+  // again before any GitHub write.
+  pendingSyncWakeTimer = setTimeout(() => {
+    if (revision !== pendingSyncWakeRevision) return;
+    pendingSyncWakeTimer = null;
+    void syncPendingNow().catch(() => {});
+  }, delay);
+  pendingSyncWakeTimer?.unref?.();
+  void scheduleSyncAlarm('sync-pending-idle-fallback', {
+    when: Date.now() + Math.max(PENDING_SYNC_ALARM_FLOOR_MS, delay),
+  });
+}
+
+async function schedulePendingSyncFromStore() {
+  const revision = ++pendingSyncWakeRevision;
+  const snapshot = await store.getTrackingSnapshot();
+  if (revision !== pendingSyncWakeRevision) return;
+  const deadline = pendingSyncQuietUntil(snapshot);
+  if (deadline === null) {
+    if (pendingSyncWakeTimer !== null) clearTimeout(pendingSyncWakeTimer);
+    pendingSyncWakeTimer = null;
+    return;
+  }
+  armPendingSyncWake(deadline);
+}
+function pullRemoteNow() {
+  if (pendingPull) return pendingPull;
+  // No UI messages, spinners or mutation executor: this only updates the
+  // extension-local cache after a complete, conflict-safe GitHub snapshot.
+  pendingPull = (async () => {
+    const snapshot = await configuredSnapshot({ localOnly: true });
+    if (!snapshot.auth) return;
+    for (const destinationId of Object.keys(snapshot.registry?.destinations ?? {})) {
+      try {
+        const tracker = await trackerForDestination(destinationId, { localOnly: true });
+        await tracker.pullRemoteSilently();
+      } catch { /* Passive refresh must never interrupt tracking or surface an error. */ }
+    }
+  })().finally(() => { pendingPull = null; });
+  return pendingPull;
+}
 function scheduleSyncAlarm(name, options) {
   return Promise.resolve(chrome.alarms.create(name, options))
     .catch(error => { if (error?.message !== 'No SW') console.warn('Could not schedule pending sync alarm.'); });
@@ -1365,28 +1429,29 @@ function syncPendingNow() {
   if (pendingSync) return pendingSync;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     if (!(await store.getPendingDestinationIds()).length) return;
+    const deadline = pendingSyncQuietUntil(await store.getTrackingSnapshot());
+    if (deadline !== null && Date.now() < deadline) {
+      // A newer local acceptance moved the deadline. This check also protects
+      // against early alarms after the service worker has been restarted.
+      requestPendingSync();
+      return;
+    }
     await syncPendingAll({ store, trackerForDestination });
-    if (await shouldContinuePendingSync()) {
-      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
-    }
-  })).catch(async error => {
-    if (await shouldContinuePendingSync().catch(() => false)) {
-      void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 5_000 });
-    }
-    throw error;
-  }).finally(() => { pendingSync = null; });
+  })).finally(() => { pendingSync = null; });
   return pendingSync;
 }
 
 function requestPendingSync() {
-  void scheduleSyncAlarm('sync-pending-now', { when: Date.now() + 250 });
+  // Every local mutation was committed to IndexedDB before this is called.
+  // Older asynchronous scheduling requests must not re-arm a stale deadline.
+  void schedulePendingSyncFromStore().catch(() => {});
 }
 
 function scheduleSync() {
   const alarm = scheduleSyncAlarm('sync-pending', { periodInMinutes: 1 });
   void scheduleSyncAlarm('clockify-migration-resume', { periodInMinutes: 1 });
-  void store.migrateLegacyPatAuth().catch(() => {});
-  void syncPendingNow().catch(() => {});
+  void store.migrateLegacyPatAuth().then(() => requestPendingSync()).catch(() => {});
+  void pullRemoteNow().catch(() => {});
   void resumeClockifyMigration().catch(() => {});
   return alarm;
 }
@@ -1437,7 +1502,10 @@ chrome.tabs.onActivated.addListener(info => {
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === 'sync-pending' || alarm.name === 'sync-pending-now') void syncPendingNow().catch(() => {});
+  if (alarm.name === 'sync-pending') {
+    void syncPendingNow().catch(() => {}).finally(() => pullRemoteNow().catch(() => {}));
+  }
+  if (alarm.name === 'sync-pending-idle-fallback') void syncPendingNow().catch(() => {});
   if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 

@@ -224,6 +224,73 @@ test('Today after a one-day period refetches the expanded week even when its fir
   expect(result.calls[1][2]).toBe(new Date(2026, 9, 12).getTime());
 });
 
+test('reconciliation keeps the viewport anchored even when virtual segments are temporarily empty', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport;
+    timeline._setScrollLeft(Math.max(0, timeline.totalWidth - viewport.clientWidth) / 2);
+    viewport.dispatchEvent(new Event('scroll'));
+    const before = timeline.xToTime(timeline._scrollLeftNow() + viewport.clientWidth / 2);
+    timeline.segments = [];
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+    const after = timeline.xToTime(timeline._scrollLeftNow() + viewport.clientWidth / 2);
+    return { before, after, scroll: timeline._scrollLeftNow() };
+  });
+  expect(Math.abs(result.after - result.before)).toBeLessThan(2 * 60_000);
+  expect(result.scroll).toBeGreaterThan(0);
+});
+
+test('repeated background reconciliation never resets manually scrolled Timeline to the far left', async ({ page }) => {
+  await mount(page);
+  const before = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline._setScrollLeft(Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) * 0.65);
+    const scroll = timeline._scrollLeftNow();
+    const time = timeline.xToTime(scroll + timeline._viewportWidthNow() / 2);
+    return { scroll, time };
+  });
+  expect(before.scroll).toBeGreaterThan(1);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const state = await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      window.__timeline.update({ items: window.__items, now: Date.now() });
+      return {
+        scroll: timeline._scrollLeftNow(),
+        time: timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2),
+      };
+    });
+    expect(state.scroll).toBeGreaterThan(1);
+    expect(Math.abs(state.time - before.time)).toBeLessThan(120_000);
+  }
+});
+
+test('Timeline restores remembered viewport after Chromium temporarily clamps scrollLeft to zero', async ({ page }) => {
+  await mount(page);
+  const before = await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const timeline = window.__timeline.__timeline;
+    const desired = Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) * 0.65;
+    timeline._setScrollLeft(desired);
+    timeline.viewport.dispatchEvent(new Event('scroll'));
+    return timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
+  });
+  const after = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    // Simulate Chrome temporarily resetting scroll during a virtual layout pass.
+    timeline.viewport.scrollLeft = 0;
+    timeline._scrollLeft = 0;
+    window.__timeline.update({ items: window.__items, now: Date.now() });
+    return {
+      scroll: timeline._scrollLeftNow(),
+      centeredAt: timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2),
+    };
+  });
+  expect(after.scroll).toBeGreaterThan(0);
+  expect(Math.abs(after.centeredAt - before)).toBeLessThan(120_000);
+});
+
 test('reconcile preserves selection, mode, pending, and running identity', async ({ page }) => {
   const now = await mount(page);
   await page.evaluate(() => {
@@ -267,6 +334,82 @@ test('cancelled Stop restores the running timer', async ({ page }) => {
   });
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getRunningTask()?.instanceId)).toBe('active:c');
   expect(await page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
+});
+
+test('Timeline drags and arrow edits snap to five minutes at every zoom level', async ({ page }) => {
+  await mount(page);
+  const grid = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const midnight = new Date(2026, 9, 13, 0, 0, 0).getTime();
+    const minute = 60_000;
+    const samples = () => [7, 8, 12, 13].map(value =>
+      (timeline._magnetizeTime(midnight + value * minute, midnight, midnight + 60 * minute, null) - midnight) / minute);
+    const normal = { step: timeline._magnetStepMs(), snapped: samples() };
+    timeline.setVisibleDays(1 / 24);
+    const zoomedIn = { step: timeline._magnetStepMs(), snapped: samples() };
+    timeline.setVisibleDays(7);
+    const zoomedOut = { step: timeline._magnetStepMs(), snapped: samples() };
+    return { normal, zoomedIn, zoomedOut };
+  });
+  for (const view of Object.values(grid)) {
+    expect(view.step).toBe(5 * 60_000);
+    expect(view.snapped).toEqual([5, 10, 10, 15]);
+  }
+
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.click();
+  await page.keyboard.press('ArrowLeft');
+  const afterFirst = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  await page.keyboard.press('ArrowLeft');
+  const afterSecond = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  expect(afterFirst - afterSecond).toBe(5 * 60_000);
+
+  await page.keyboard.press('Alt+ArrowLeft');
+  const afterStartResize = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
+  expect(afterSecond - afterStartResize).toBe(5 * 60_000);
+});
+
+test('dragging a Timeline start edge advances on the five-minute grid', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.setVisibleDays(1 / 24);
+    const task = timeline._findTask('entry:a');
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const clientY = viewport.top + 30;
+    const clientX = viewport.left + timeline.timeToX(task.start) - timeline._scrollLeftNow();
+    const pointerId = 451;
+    timeline._beginTaskEdit({ button: 0, pointerId, clientX, clientY, stopPropagation() {} }, task, 'resize-left');
+    const state = timeline.editState;
+    const dragEarlier = minutes => {
+      const contentX = timeline._timeToXFromSnapshot(
+        state.pointerTime - minutes * 60_000, state.snapshot, state.snapshotWidth);
+      const x = viewport.left + contentX - timeline._scrollLeftNow();
+      timeline._onWindowPointerMove({ pointerId, clientX: x, clientY, preventDefault() {} });
+      return timeline._findTask('entry:a').start;
+    };
+    const first = dragEarlier(8);
+    const second = dragEarlier(13);
+    const wasDragging = state.didMutate;
+    timeline._onWindowPointerUp({ pointerId });
+    return { first, second, wasDragging, completed: !timeline.editState };
+  });
+  expect(result.wasDragging).toBe(true);
+  expect(result.completed).toBe(true);
+  expect(new Date(result.first).getMinutes() % 5).toBe(0);
+  expect(new Date(result.first).getSeconds()).toBe(0);
+  expect(new Date(result.second).getMinutes() % 5).toBe(0);
+  expect(result.first - result.second).toBe(5 * 60_000);
+});
+
+test('Calendar keeps one-minute edit precision when Timeline changes to five minutes', async ({ page }) => {
+  await mount(page);
+  const steps = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    window.__timeline.setViewMode('calendar');
+    return { calendar: timeline._calendarMagnetStepMs(Date.now()), timeline: timeline._magnetStepMs() };
+  });
+  expect(steps).toEqual({ calendar: 60_000, timeline: 5 * 60_000 });
 });
 
 test('keyboard edit keeps the Clockoli instance ID and pending deletion stays blocked', async ({ page }) => {
@@ -531,78 +674,53 @@ test('Calendar edges show full-width colored grips with paired grip marks', asyn
   expect(grips.map(grip => grip.radius)).toEqual(['6px 6px 0px 0px', '0px 0px 6px 6px']);
 });
 
-test('externally pending edit remains editable while its GitHub write is queued', async ({ page }) => {
+test('background updates cannot cancel a Timeline resize while pointer is held', async ({ page }) => {
+  await mount(page);
+  const start = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const task = timeline._findTask('entry:a');
+    timeline._beginTaskEdit({ button: 0, pointerId: 451, clientX: 250, clientY: 100, stopPropagation() {} }, task, 'resize-right');
+    timeline._onWindowPointerMove({ pointerId: 451, clientX: 268, clientY: 100, preventDefault() {} });
+    return { state: timeline.editState, end: task.end };
+  });
+  expect(start.state).toBeTruthy();
+  await page.evaluate(() => window.__timeline.update({ items: window.__items, now: Date.now() }));
+  const inProgress = await page.evaluate(() => ({
+    state: Boolean(window.__timeline.__timeline.editState),
+    end: window.__timeline.__timeline._findTask('entry:a').end,
+  }));
+  expect(inProgress.state).toBe(true);
+  expect(inProgress.end).toBe(start.end);
+  await page.evaluate(() => window.__timeline.__timeline._onWindowPointerUp({ pointerId: 451 }));
+  await expect.poll(() => page.evaluate(() => Boolean(window.__timeline.__timeline.editState))).toBe(false);
+});
+
+test('pending edits remain editable without saving indicators', async ({ page }) => {
   await mount(page, { persistPending: true });
-  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.click();
   await page.keyboard.press('ArrowLeft');
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getInteractionState().pendingInstanceIds)).toContain('entry:a');
-  expect(await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').classList.contains('pending'))).toBeTruthy();
-  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
-  await expect(block).toHaveAttribute('aria-busy', 'true');
-  await block.click();
-  await page.keyboard.press('ArrowLeft');
-  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
-  await page.evaluate(() => {
-    window.__items = window.__items.map(item => item.id === 'entry:a' ? { ...item, isPending: false } : item);
-    window.__timeline.update({ items: window.__items, now: Date.now() });
-  });
   await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
-});
-
-test('edited block shows left-aligned saving feedback and queues successive edits in order', async ({ page }) => {
-  await mount(page, { deferEdit: true });
-  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
-  await page.keyboard.press('ArrowLeft');
-  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await expect(block.locator('.clockoli-entry-saving')).toContainText('Saving…');
-  await expect(block).toHaveAttribute('aria-busy', 'true');
-  await expect(block).toHaveAttribute('aria-label', /Saving…/);
-  await expect.poll(() => block.evaluate(element => {
-    const entry = element.getBoundingClientRect();
-    const indicator = element.querySelector('.clockoli-entry-saving').getBoundingClientRect();
-    return entry.width > 0 && indicator.left >= entry.left && indicator.right < entry.right;
-  })).toBe(true);
-  const spacing = await block.evaluate(element => {
-    const entry = element.getBoundingClientRect();
-    const spinner = element.querySelector('.clockoli-entry-saving-spinner').getBoundingClientRect();
-    const title = element.querySelector('.task-name').getBoundingClientRect();
-    const grip = getComputedStyle(element.querySelector('.resize-handle.left'), '::after');
-    return {
-      spinnerInset: spinner.left - entry.left,
-      gripEnd: parseFloat(grip.width),
-      titleGap: title.left - element.querySelector('.clockoli-entry-saving').getBoundingClientRect().right,
-    };
-  });
-  expect(spacing.spinnerInset).toBeGreaterThanOrEqual(spacing.gripEnd + 2);
-  expect(spacing.titleGap).toBeGreaterThanOrEqual(4);
-  await block.click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
-  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
-  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
-  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
-  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
-  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
-  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getInteractionState().pendingInstanceIds.includes('entry:a'))).toBe(false);
   await expect(block).not.toHaveAttribute('aria-busy', 'true');
+  await block.click();
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toHaveLength(2);
 });
 
-test('a late failed edit does not undo a newer edit or clear its preloader', async ({ page }) => {
+test('late rejected edit preserves newer edits without a saving overlay', async ({ page }) => {
   await mount(page, { deferEdit: true });
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await block.click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   const newestStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('older save failed')));
   await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'error'))).toBeTruthy();
   expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(newestStart);
-  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
-  await page.evaluate(() => window.__editSettlers[1].resolve(true));
   await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await page.evaluate(() => window.__editSettlers[1].resolve(true));
 });
 
 test('rejected edits restore the prior interval without leaving a false undo entry', async ({ page }) => {
@@ -610,12 +728,12 @@ test('rejected edits restore the prior interval without leaving a false undo ent
   const block = page.locator('#timeline .task[data-task-key="entry:a"]');
   await block.click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(false));
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
   expect(await page.evaluate(() => window.__timeline.__timeline.canUndo())).toBe(false);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().reject(new Error('save failed')));
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(original);
@@ -626,8 +744,8 @@ test('consecutive rejected edits restore the last accepted interval', async ({ p
   await mount(page, { deferEdit: true });
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
   await page.evaluate(() => window.__editSettlers[1].resolve(false));
@@ -642,8 +760,8 @@ test('undo after a late rejected edit does not resurrect the failed interval', a
   ] });
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
   const original = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start);
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -120_000));
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -600_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(2);
   await page.evaluate(() => window.__editSettlers[1].resolve(true));
   await page.evaluate(() => window.__editSettlers[0].reject(new Error('first failed')));
@@ -663,7 +781,7 @@ test('rejected undo restores the accepted interval and preserves undo history', 
   });
   const original = (await timeline()).start;
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(true));
   await expect.poll(() => timeline()).toMatchObject({ undo: true, redo: false });
@@ -690,7 +808,7 @@ test('rejected redo restores the undone interval and preserves redo history', as
   });
   const original = (await timeline()).start;
   await page.locator('#timeline .task[data-task-key="entry:a"]').click();
-  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -60_000));
+  await page.evaluate(() => window.__timeline.__timeline._keyboardEditSelected('move', -300_000));
   await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
   await page.evaluate(() => window.__editSettlers.shift().resolve(true));
   await expect.poll(() => timeline()).toMatchObject({ undo: true });
@@ -709,85 +827,33 @@ test('rejected redo restores the undone interval and preserves redo history', as
   expect((await timeline()).start).not.toBe(original);
 });
 
-test('minimum-width pending entries show the whole spinner inside the block', async ({ page }) => {
-  const now = Date.now();
-  await mount(page, { items: [
-    { id: 'entry:short', url: 'https://example.com/short', title: 'Short', startedAt: now - HOUR, endedAt: now - HOUR + 5_000, rowId: 'one', isEditable: true, isPending: true },
-  ] });
-  const block = page.locator('#timeline .task[data-task-key="entry:short"]');
-  await expect(block.locator('.clockoli-entry-saving-spinner')).toBeVisible();
-  const geometry = await block.evaluate(element => {
-    const task = element.getBoundingClientRect();
-    const spinner = element.querySelector('.clockoli-entry-saving-spinner').getBoundingClientRect();
-    const overlay = element.querySelector('.clockoli-entry-saving').getBoundingClientRect();
-    return { taskWidth: task.width, spinnerWidth: spinner.width, overlayWidth: overlay.width,
-      inside: spinner.left >= task.left && spinner.right <= task.right,
-      compact: getComputedStyle(element.querySelector('.clockoli-entry-saving-label')).display === 'none' };
-  });
-  expect(geometry.taskWidth).toBeLessThan(46);
-  expect(geometry.spinnerWidth).toBeGreaterThanOrEqual(12);
-  expect(geometry.overlayWidth).toBeGreaterThanOrEqual(geometry.spinnerWidth);
-  expect(geometry.inside).toBe(true);
-  expect(geometry.compact).toBe(true);
-  await expect(block).toHaveAttribute('aria-label', /Saving…/);
-});
-
-test('intermediate pending entry widths keep spinner and label inside the block', async ({ page }) => {
-  const now = Date.now();
-  const item = { id: 'entry:medium', url: 'https://example.com/medium', title: 'Medium', startedAt: now - HOUR, endedAt: now - HOUR + 12 * 60_000, rowId: 'one', isEditable: true, isPending: true };
-  await mount(page, { items: [item] });
-  const widths = [];
-  for (const duration of [5, 12, 20, 30]) {
-    const bounds = await page.evaluate(({ item, duration }) => {
-      window.__timeline.update({ items: [{ ...item, endedAt: item.startedAt + duration * 60_000 }], now: Date.now() });
-      const element = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:medium"]');
-      const saving = element.querySelector('.clockoli-entry-saving');
-      const spinner = saving.querySelector('.clockoli-entry-saving-spinner');
-      const label = saving.querySelector('.clockoli-entry-saving-label');
-      const task = element.getBoundingClientRect();
-      const icon = spinner.getBoundingClientRect();
-      const text = label.getBoundingClientRect();
-      return { width: task.width, iconInside: icon.left >= task.left && icon.right <= task.right,
-        textInside: getComputedStyle(label).display === 'none' || text.right <= task.right,
-        labelVisible: getComputedStyle(label).display !== 'none' };
-    }, { item, duration });
-    widths.push(bounds.width);
-    expect(bounds.iconInside, `spinner at ${bounds.width}px`).toBe(true);
-    expect(bounds.textInside, `label at ${bounds.width}px`).toBe(true);
-    expect(bounds.labelVisible, `label at ${bounds.width}px`).toBe(bounds.width >= 110);
-  }
-  expect(widths.some(width => width >= 46 && width < 110)).toBe(true);
-  expect(widths.some(width => width >= 110)).toBe(true);
-});
-
-test('saving feedback clears on rejection and follows the entry into Calendar', async ({ page }) => {
+test('pending blocks have no saving overlay in Timeline or Calendar', async ({ page }) => {
   await mount(page, { deferEdit: true });
-  await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  const pending = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await expect(pending).toHaveCSS('opacity', '1');
+  await expect(pending.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await block.click();
   await page.keyboard.press('ArrowLeft');
-  await expect(page.locator('#timeline .task[data-task-key="entry:a"] .clockoli-entry-saving')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await expect(block).not.toHaveAttribute('aria-busy', 'true');
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  const calendarBlock = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await expect(calendarBlock.locator('.clockoli-entry-saving')).toBeVisible();
-  await page.evaluate(() => window.__editSettlers.shift().reject(new Error('save failed')));
-  await expect(calendarBlock.locator('.clockoli-entry-saving')).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'error'))).toBeTruthy();
+  const calendar = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await expect(calendar.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await expect(calendar).not.toHaveAttribute('aria-busy', 'true');
+  await page.evaluate(() => window.__editSettlers.shift().resolve(true));
 });
 
-test('pending entries show saving feedback, permit edits and still block deletion', async ({ page }) => {
+test('pending entries stay editable and deletion remains blocked', async ({ page }) => {
   await mount(page);
   const block = page.locator('#timeline .task[data-task-key="entry:b"]');
   await block.click();
   await expect(block).toBeFocused();
-  await expect(block).toHaveClass(/selected/);
-  await expect(block.locator('.clockoli-entry-saving')).toBeVisible();
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
   await page.keyboard.press('Delete');
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
-  await page.evaluate(() => {
-    window.__items = window.__items.map(item => item.id === 'entry:b' ? { ...item, isPending: false } : item);
-    window.__timeline.update({ items: window.__items, now: Date.now() });
-  });
   await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
 });
 

@@ -346,6 +346,33 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.description, 'Final edit');
 });
 
+test('coalesced local edits persist the latest acceptance time without resetting the original queue timestamp', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  let now = new Date('2026-08-18T12:00:00.000Z');
+  const tracker = service({ github, store, clock: () => now });
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { startedAt: '2026-08-18T08:10:00.000Z' } });
+  assert.equal(store.value.pendingWrites[0].lastLocalEditAt, now.toISOString());
+  const queuedAt = store.value.pendingWrites[0].queuedAt;
+  now = new Date('2026-08-18T12:00:10.000Z');
+  await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original, edits: { endedAt: '2026-08-18T09:10:00.000Z' } });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].queuedAt, queuedAt);
+  assert.equal(store.value.pendingWrites[0].lastLocalEditAt, now.toISOString(),
+    'the next 15-second countdown begins after the most recent local edit');
+
+  const linked = service({ github, store, clock: () => now });
+  await linked.queueEntriesEdit({ entries: [{ path, originalSha: 'monthly-sha', index: 0,
+    original: store.value.recentCache[0], edits: { description: 'First' } }] });
+  now = new Date('2026-08-18T12:00:14.000Z');
+  await linked.queueEntriesEdit({ entries: [{ path, originalSha: 'monthly-sha', index: 0,
+    original: store.value.recentCache[0], edits: { description: 'Second' } }] });
+  const last = store.value.pendingWrites.at(-1);
+  assert.equal(last.operation, 'editEntries');
+  assert.equal(last.lastLocalEditAt, now.toISOString());
+});
+
 test('successive accepted timeline edits survive a worker restart with the latest interval', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
@@ -2365,4 +2392,113 @@ test('menu refresh applies both sides of an accepted linked boundary edit in one
   assert.equal(menu.weekTrackedMs, 10_800_000);
   const restarted = service({ github, store, clock: () => new Date('2026-08-18T12:00:00Z') });
   assert.equal((await restarted.getCachedSummary()).todayTrackedMs, 10_800_000);
+});
+
+test('reopening immediately after an IndexedDB-queued Timeline edit retains the local interval', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const saved = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([saved]), 'original-sha');
+  const tracker = service({ github, store });
+  const [cached] = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = [cached];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [cached], computedAt: Date.now() };
+  await tracker.queueEntryEdit({
+    path, originalSha: 'original-sha', index: 0,
+    original: { id: cached.id }, edits: {
+      startedAt: '2026-08-18T07:45:00.000Z', endedAt: '2026-08-18T08:15:00.000Z',
+    },
+  });
+  const expected = store.value.recentCache[0];
+  const disconnected = service({ github, store });
+  github.getText = async () => { throw new Error('GitHub is unavailable'); };
+  const reloaded = await disconnected.loadMenuData();
+  assert.equal(reloaded.recent.find(item => item.id === cached.id)?.startedAt, expected.startedAt);
+  assert.equal(reloaded.recent.find(item => item.id === cached.id)?.endedAt, expected.endedAt);
+  assert.equal(store.value.pendingWrites.length, 1, 'the saved local edit must remain queued');
+});
+
+test('an older in-flight GitHub recent load must not overwrite a newer committed local edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  const tracker = service({ github, store });
+  const [cached] = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = [cached];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [cached], computedAt: Date.now() };
+  let reached, release;
+  const started = new Promise(resolve => { reached = resolve; });
+  const allowResponse = new Promise(resolve => { release = resolve; });
+  const originalRead = github.getText.bind(github);
+  github.getText = async requested => {
+    const result = await originalRead(requested).catch(error => error);
+    if (requested === path) { reached(); await allowResponse; }
+    if (result instanceof Error) throw result;
+    return result;
+  };
+  const refreshing = tracker.loadMenuData();
+  await started;
+  const updated = { ...cached, startedAt: '2026-08-18T07:40:00.000Z',
+    endedAt: '2026-08-18T08:10:00.000Z', _sha: 'new-commit-sha' };
+  // The queued edit has completed on GitHub while an older read is still in flight.
+  store.value.recentCache = [updated];
+  store.value.summaryCache = { reportDate: '2026-08-18', weekEntries: [updated], computedAt: Date.now() };
+  release();
+  const result = await refreshing;
+  assert.equal(result.recent[0]?.startedAt, updated.startedAt);
+  assert.equal(store.value.recentCache[0]?.startedAt, updated.startedAt);
+  assert.equal(store.value.recentCache[0]?._sha, 'new-commit-sha');
+});
+
+
+test('minute flush batches distinct locally queued timeline edits into one non-reference Git commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-08/alice.jsonl';
+  const a = entry('2026-08-18T08:00:00.000Z', '2026-08-18T08:30:00.000Z');
+  const b = entry('2026-08-18T10:00:00.000Z', '2026-08-18T10:30:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([a, b]), 'seed-sha');
+  const tracker = service({ github, store });
+  const rows = (await tracker.readMonthly(path)).entries;
+  store.value.recentCache = rows;
+  await tracker.queueEntryEdit({
+    path, originalSha: 'seed-sha', index: 0, original: rows[0],
+    edits: { startedAt: '2026-08-18T08:10:00.000Z' },
+  });
+  await tracker.queueEntryEdit({
+    path, originalSha: 'seed-sha', index: 1, original: rows[1],
+    edits: { endedAt: '2026-08-18T10:40:00.000Z' },
+  });
+  assert.equal(github.atomicWrites.length, 0, 'both edits must remain durable locally until the scheduled flush');
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 1, 'routine entry edits should share one atomic Git commit');
+  assert.match(github.atomicWrites[0].message, /^time: edit linked entries alice$/);
+  assert.doesNotMatch(github.atomicWrites[0].message, /tracked|#[0-9]+/);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].startedAt, '2026-08-18T08:10:00.000Z');
+  assert.equal(saved[1].endedAt, '2026-08-18T10:40:00.000Z');
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('every Stop retains its own GitHub issue-reference tracking commit in a minute flush', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const times = [
+    new Date('2026-08-18T08:00:00.000Z'),
+    new Date('2026-08-18T09:00:00.000Z'),
+    new Date('2026-08-18T10:00:00.000Z'),
+    new Date('2026-08-18T11:00:00.000Z'),
+  ];
+  const tracker = service({ github, store, clock: () => times.shift() ?? new Date('2026-08-18T11:00:00.000Z'), idFactory: deterministicRecordId });
+  await tracker.start(issue.url, 'Issue 123', '', { background: true });
+  await tracker.stop('', { background: true });
+  await tracker.start(pull.url, 'PR 44', '', { background: true });
+  await tracker.stop('', { background: true });
+  assert.equal(github.atomicWrites.length, 0);
+  await tracker.syncPending();
+  const tracked = github.atomicWrites.filter(write => /^time: alice tracked /.test(write.message));
+  assert.equal(tracked.length, 2);
+  assert.match(tracked[0].message, / on acme\/frontend#123$/);
+  assert.match(tracked[1].message, / on acme\/frontend#44$/);
+  assert.notEqual(tracked[0].message, tracked[1].message);
+  assert.equal(store.value.pendingWrites.length, 0);
 });

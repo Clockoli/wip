@@ -622,9 +622,10 @@ export class GitHubClient {
     return (await this.listRepositoryEntries(options)).filter(item => item.type === 'blob').map(item => item.path).sort();
   }
 
-  async listTextFilesSnapshot(prefix = '', { etag = '', signal } = {}) {
+  async listTextFilesSnapshot(prefix = '', { etag = '', signal, includeActive = '' } = {}) {
     if (typeof prefix !== 'string' || prefix.startsWith('/') || prefix.includes('..') || prefix.includes('\\')) throw new Error('Invalid GitHub content prefix');
     if (prefix) encodePath(prefix.endsWith('/') ? prefix.slice(0, -1) : prefix);
+    if (includeActive) encodePath(includeActive);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
     const refResponse = await this.requestDetailed(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`, {
       signal,
@@ -635,7 +636,7 @@ export class GitHubClient {
     const commit = await this.request(`${base}/git/commits/${encodeURIComponent(refResponse.body?.object?.sha)}`, { signal });
     const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
-    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.jsonl'))
+    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && ((item.path.startsWith(prefix) && item.path.endsWith('.jsonl')) || (includeActive && item.path === includeActive)))
       .map(({ path, sha, size }) => ({ path, sha, ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}) })).sort((a, b) => a.path.localeCompare(b.path));
     return { notModified: false, etag: snapshotEtag, headSha: refResponse.body?.object?.sha || '', files };
   }

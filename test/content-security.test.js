@@ -37,7 +37,7 @@ test('time tracker uses one native-style GitHub header button without a floating
 });
 
 test('header menu exposes queued recent-entry management without exposing the token', () => {
-  for (const type of ['LOAD_RECENT', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'SYNC', 'OPEN_REPORTS', 'OPEN_TIMES', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
+  for (const type of ['LOAD_RECENT', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES', 'OPEN_OPTIONS']) assert.match(source, new RegExp(type));
   assert.doesNotMatch(source, /MOVE_BOUNDARY|time-boundary/, 'the main panel no longer exposes between-row drag mutations');
   assert.doesNotMatch(source, /type:\s*['"]GET_STATE['"]/);
   assert.doesNotMatch(source, /token/i);
@@ -52,8 +52,9 @@ test('time inputs are direct text controls without wheel, keyboard stepping, or 
   assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
 });
 
-test('successful Sync and refresh clears a stale boundary conflict message', () => {
-  assert.match(source, /errorText = ''; renderUi\(\); await send\(\{ type: 'SYNC' \}\)[\s\S]*refreshState\(true, true\)/);
+test('Refresh clears stale errors without committing pending changes', () => {
+  assert.match(source, /errorText = ''; renderUi\(\); recentLoaded = false; await refreshState\(true, true\)/);
+  assert.doesNotMatch(source, /type: 'SYNC'/);
 });
 
 

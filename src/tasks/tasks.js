@@ -165,7 +165,7 @@ function updateRefreshControl() {
   const busy = state.loading || hasRunnablePending();
   const refresh = $('refresh-tasks');
   refresh.disabled = busy;
-  refresh.classList.toggle('syncing', busy);
+  refresh.classList.toggle('syncing', state.loading); // Pending background writes do not animate.
 }
 
 function isInteracting() {
@@ -315,7 +315,7 @@ async function load() {
 
 $('refresh-tasks').addEventListener('click', async () => {
   const button = $('refresh-tasks'); button.disabled = true; setError();
-  try { await send({ type: 'SYNC' }); await load(); }
+  try { await load(); }
   catch (error) { setError(error); }
   finally { button.disabled = hasRunnablePending(); }
 });

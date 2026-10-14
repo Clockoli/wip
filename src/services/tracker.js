@@ -435,6 +435,21 @@ export class TrackerService {
     };
   }
 
+  async projectActivityRecords(remoteRecords, { startDate: from, endDate: through } = {}) {
+    // The unsynced IndexedDB state remains authoritative for Activity reloads.
+    // Apply the complete pending queue before filtering: edits can move records
+    // across the requested day boundary.
+    const state = await this.store.getState();
+    const records = overlayPendingEntries(remoteRecords, state.pendingWrites ?? []);
+    return {
+      records: records.filter(entry => (!from || entry.entryDate >= from)
+        && (!through || entry.entryDate <= through)),
+      recovery: recoveryProjection({
+        active: state.activeCache, recent: records, pendingWrites: state.pendingWrites ?? [],
+      }),
+    };
+  }
+
   async getRecoveryState() { return recoveryProjection(await this.getState()); }
 
   async getCachedSummary() {
@@ -848,6 +863,7 @@ export class TrackerService {
   async syncPending() {
     const queue = await this.compactPendingQueue();
     for (const operation of [...queue]) {
+      if (!queue.some(item => item.id === operation.id)) continue;
       if (operation.stage === 'awaitSourceCompletion') break;
       const attemptStartedAt = Date.now();
       this.currentQueueDiagnostic = event => {
@@ -873,6 +889,52 @@ export class TrackerService {
         if (operationType === 'editEntry') assertQueuedEntryIntervals([operation.request]);
         if (operationType === 'editEntries') assertQueuedEntryIntervals(operation.request?.entries);
         if (operation.operation === 'editEntry') {
+          // Batch only consecutive independent edits. Stop/switch operations
+          // stay as FIFO barriers so each completion retains its issue-linked
+          // "time: ... tracked ..." commit.
+          const startIndex = queue.findIndex(item => item.id === operation.id);
+          const batch = [];
+          const targets = new Set();
+          for (const candidate of queue.slice(startIndex)) {
+            if (candidate.operation !== 'editEntry' || candidate.status === 'conflict'
+                || !candidate.request?.original?.id || !candidate.request.path) break;
+            const key = candidate.request.path + '\\u0000' + candidate.request.original.id;
+            if (targets.has(key) || batch.length === 50) break;
+            targets.add(key);
+            batch.push(candidate);
+          }
+          if (batch.length > 1) {
+            try {
+              const saved = await this.editEntries({ entries: batch.map(item => item.request) }, { updateCache: false });
+              const batchIds = new Set(batch.map(item => item.id));
+              const savedById = new Map(saved.map(item => [item.id, item]));
+              await this.mutateState(latest => {
+                const pendingWrites = structuredClone(latest.pendingWrites ?? []);
+                for (const item of batch) {
+                  const index = pendingWrites.findIndex(op => op.id === item.id);
+                  if (index !== -1) retargetLaterEntryEdits(pendingWrites, index, saved);
+                }
+                const remaining = pendingWrites.filter(item => !batchIds.has(item.id));
+                return {
+                  pendingWrites: remaining,
+                  recentCache: (latest.recentCache ?? []).map(entry => {
+                    const persisted = savedById.get(entry.id);
+                    return persisted && !remaining.some(item => item.operation === 'editEntry'
+                      && item.request?.original?.id === entry.id) ? persisted : entry;
+                  }),
+                };
+              });
+              for (const item of batch) {
+                const index = queue.findIndex(candidate => candidate.id === item.id);
+                if (index !== -1) queue.splice(index, 1);
+              }
+              continue;
+            } catch (error) {
+              if (!(error instanceof TrackerConflictError)) throw error;
+              // Preserve existing per-entry rebasing and conflict reporting.
+              // Do not drop a queued operation when a batch cannot be committed.
+            }
+          }
           let saved;
           try { saved = await this.editEntry(operation.request, { updateCache: false }); }
           catch (error) {
@@ -1172,6 +1234,22 @@ export class TrackerService {
     }
   }
 
+  async cachedMenuData(limit = 50, now = this.clock()) {
+    const state = await this.store.getState();
+    const recent = (state.recentCache ?? []).slice(0, limit);
+    const summary = summaryProjection(state, now);
+    return {
+      configured: true,
+      recent,
+      summaries: [],
+      reportDate: localReportDate(now),
+      active: state.activeCache,
+      pendingWrites: state.pendingWrites ?? [],
+      pendingCount: state.pendingWrites?.length ?? 0,
+      ...summary,
+    };
+  }
+
   async loadMenuData(limit = 50, { knownTitles = new Map() } = {}) {
     const now = this.clock(), dateFor = offset => localReportDate(now, offset);
     const today = dateFor(0), mondayOffset = (now.getDay() + 6) % 7;
@@ -1189,8 +1267,13 @@ export class TrackerService {
     for (let cursor = new Date(`${earliest.slice(0, 7)}-01T12:00:00`), end = new Date(`${today.slice(0, 7)}-01T12:00:00`); cursor <= end; cursor.setMonth(cursor.getMonth() + 1)) {
       months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
     }
+    const initial = await this.store.getState();
+    // Keep the local projection available if the GitHub read fails, while
+    // retaining remote reads for complete summary totals and queue rebasing.
     let missingReachability = null;
-    let files = await Promise.all(months.map(async month => {
+    let files;
+    try {
+      files = await Promise.all(months.map(async month => {
       const path = monthlyRecordsPath(this.user, `${month}-01`);
       try {
         const file = await this.github.getText(path);
@@ -1201,10 +1284,20 @@ export class TrackerService {
         await missingReachability;
         return { path, month, sha: null, entries: [] };
       }
-    }));
+      }));
+    } catch (error) {
+      if (initial.pendingWrites?.length || initial.recentCache?.length) return this.cachedMenuData(limit, now);
+      throw error;
+    }
     files = await this.backfillIssueTitles(files, knownTitles);
     const remoteEntries = files.flatMap(file => file.entries).filter(entry => startDate(entry) >= earliest && startDate(entry) <= today);
     const initialState = await this.store.getState();
+    // The remote request was started against an older local generation. Do not
+    // overwrite local edits that were accepted or completed while it ran.
+    if (JSON.stringify([initial.activeCache, initial.recentCache, initial.pendingWrites, initial.summaryCache])
+        !== JSON.stringify([initialState.activeCache, initialState.recentCache, initialState.pendingWrites, initialState.summaryCache])) {
+      return this.cachedMenuData(limit, now);
+    }
     await this.backfillActiveIssueTitle(initialState.activeCache, knownTitles);
     const summaryCache = {
       reportDate: today,
@@ -1212,11 +1305,26 @@ export class TrackerService {
       computedAt: now.getTime(),
     };
     // Apply the queue inside the storage transaction so a concurrent acceptance cannot be overwritten.
-    await this.mutateState(state => ({
-      recentCache: overlayPendingEntries(remoteEntries, state.pendingWrites ?? [])
-        .filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit),
-      summaryCache,
-    }));
+    let staleResponse = false;
+    await this.mutateState(state => {
+      if (JSON.stringify([state.activeCache, state.recentCache, state.pendingWrites, state.summaryCache])
+          !== JSON.stringify([initialState.activeCache, initialState.recentCache, initialState.pendingWrites, initialState.summaryCache])) {
+        staleResponse = true;
+        return null;
+      }
+      return {
+        recentCache: overlayPendingEntries(remoteEntries, state.pendingWrites ?? [])
+          .filter(entry => dateSet.has(startDate(entry))).sort(newestFirst).slice(0, limit),
+        summaryCache,
+      };
+    });
+    if (staleResponse) {
+      // A timer may have been accepted during this read. Retain its local
+      // interval and queue, but populate missing totals from the completed
+      // records we already fetched, overlaying the newer queued mutation.
+      await this.mutateState(state => state.summaryCache ? null : { summaryCache });
+      return this.cachedMenuData(limit, now);
+    }
     const state = await this.store.getState(), pendingWrites = state.pendingWrites ?? [], activeCache = state.activeCache;
     const allEntries = overlayPendingEntries([...remoteEntries, ...(state.recentCache ?? [])], pendingWrites);
     const recent = state.recentCache ?? [];
@@ -1238,6 +1346,74 @@ export class TrackerService {
 
   async loadRecent(limit = 50) { return (await this.loadMenuData(limit)).recent; }
 
+  // This is deliberately separate from loadMenuData(): the one-minute background
+  // pull must never set UI loading state or perform remote writes.
+  async pullRemoteSilently({ signal, maxBytes = 8 * 1024 * 1024 } = {}) {
+    const initial = await this.store.getState();
+    // A pending local mutation is authoritative. Recheck GitHub after it is
+    // committed or explicitly resolved, rather than overwriting its projection.
+    if (initial.pendingWrites?.length) return false;
+
+    const now = this.clock(), today = localReportDate(now);
+    const mondayOffset = (now.getDay() + 6) % 7;
+    const lastWeekStart = localReportDate(now, -mondayOffset - 7);
+    const thisWeekStart = localReportDate(now, -mondayOffset);
+    const earliest = [lastWeekStart, `${today.slice(0, 7)}-01`, localReportDate(now, 1 - this.recentDays)].sort()[0];
+    const days = new Set(Array.from({ length: this.recentDays }, (_, offset) => localReportDate(now, -offset)));
+    const activePath = activeRecordPath(this.user);
+    const repoKey = this.github.repositoryKey;
+    const previous = initial.summaryCache?.silentPull;
+    const etag = previous?.key === repoKey && previous.day === today ? previous.etag : '';
+    const snapshot = await this.github.listTextFilesSnapshot('times/', { etag, signal, includeActive: activePath });
+    if (snapshot.notModified) return false;
+
+    const available = new Map((snapshot.files ?? []).map(file => [file.path, file]));
+    const monthlyPaths = monthsInRange(earliest, today).map(month => monthlyRecordsPath(this.user, `${month}-01`));
+    const needed = [...monthlyPaths, activePath].map(path => available.get(path)).filter(Boolean);
+    if (needed.some(file => !Number.isSafeInteger(file.size) || file.size > maxBytes)
+        || needed.reduce((sum, file) => sum + file.size, 0) > maxBytes) return false;
+
+    // Immutable Git blobs keep every file in this read pinned to one branch
+    // snapshot, even if another browser pushes in the middle of the pull.
+    const fetched = await Promise.all(needed.map(file => this.github.getBlobText(file.path, file.sha, { signal })));
+    if (fetched.reduce((sum, file) => sum + new TextEncoder().encode(file.text).byteLength, 0) > maxBytes) return false;
+    const contents = new Map(fetched.map(file => [file.path, file]));
+    const remoteEntries = monthlyPaths.flatMap(path => {
+      const file = contents.get(path);
+      if (!file) return [];
+      return parseMonthlyRecords(file.text, { user: this.user, month: monthFromPath(path, this.user), path, sha: file.sha });
+    });
+    const activeFile = contents.get(activePath);
+    const remoteActive = activeFile
+      ? parseActiveRecord(activeFile.text, { user: this.user, path: activePath, sha: activeFile.sha })
+      : null;
+    if (remoteActive) validateActiveTimer(remoteActive);
+
+    // An IndexedDB transaction serializes this comparison with local accepts
+    // and queue completions. If anything changed during network I/O, defer
+    // the pull rather than applying an older snapshot over newer local work.
+    const trackingKey = state => JSON.stringify([
+      state.activeCache, state.recentCache, state.summaryCache, state.pendingWrites,
+    ]);
+    const expected = trackingKey(initial);
+    let applied = false;
+    await this.mutateState(state => {
+      if (state.pendingWrites?.length || trackingKey(state) !== expected) return null;
+      applied = true;
+      return {
+        activeCache: remoteActive,
+        recentCache: remoteEntries.filter(entry => days.has(startDate(entry))).sort(newestFirst).slice(0, 50),
+        summaryCache: {
+          reportDate: today,
+          weekEntries: remoteEntries.filter(entry => startDate(entry) >= thisWeekStart),
+          computedAt: now.getTime(),
+          silentPull: { key: repoKey, day: today, etag: snapshot.etag || '' },
+        },
+      };
+    });
+    return applied;
+  }
+
   async queueEntryEdit({ path, originalSha, index, original, edits }) {
     const queuedAt = this.clock();
     return this.mutateState(state => {
@@ -1254,6 +1430,7 @@ export class TrackerService {
         operation: 'editEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
         stage: 'editEntry', request, queuedAt: queuedAt.toISOString(), lastError: '',
       };
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (existing) Object.assign(existing, operation); else pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).map(entry => entry.id === original.id && entry._path === path
         ? { ...updated, _path: entry._path, _sha: entry._sha, _index: entry._index, _pending: true } : entry);
@@ -1318,6 +1495,7 @@ export class TrackerService {
         operation: 'editEntries', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
         stage: 'editEntries', request, queuedAt: queuedAt.toISOString(), lastError: '',
       };
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (!existing) pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).map(entry => {
         const updated = updatedByIdentity.get(`${entry._path}\u0000${entry.id}`);
@@ -1346,6 +1524,7 @@ export class TrackerService {
       };
       operation.startedAt = updated.startedAt;
       operation.description = updated.description;
+      operation.lastLocalEditAt = queuedAt.toISOString();
       if (!existing) pendingWrites.push(operation);
       return { pendingWrites, activeCache: { ...updated, _path: active._path, _sha: active._sha, _pending: true } };
     }).then(state => ({
