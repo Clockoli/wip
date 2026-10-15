@@ -1,0 +1,106 @@
+[
+  {
+    "name": "base64-arraybuffer",
+    "version": "1.0.2",
+    "repo": "niklasvh/base64-arraybuffer",
+    "tag": "v1.0.2",
+    "commit": "5339d8f0abed59c893e87116a785bf52acdc17aa",
+    "source": "src/index.ts"
+  },
+  {
+    "name": "canvg",
+    "version": "3.0.11",
+    "repo": "canvg/canvg",
+    "tag": "v3.0.11",
+    "commit": "d027f526c24577f20a78adbbd88f53f981047b81",
+    "source": "src/Canvg.ts"
+  },
+  {
+    "name": "css-line-break",
+    "version": "2.1.0",
+    "repo": "niklasvh/css-line-break",
+    "tag": "v2.1.0",
+    "commit": "96bcee7ee8eba7de4a0ec9c2733884501f6320de",
+    "source": "src/index.ts"
+  },
+  {
+    "name": "dompurify",
+    "version": "3.3.1",
+    "repo": "cure53/DOMPurify",
+    "tag": "3.3.1",
+    "commit": "6fc446a589ab3d1d72ae2a5b71167ba38dbd3096",
+    "source": "src/purify.ts"
+  },
+  {
+    "name": "fast-png",
+    "version": "6.4.0",
+    "repo": "image-js/fast-png",
+    "tag": "v6.4.0",
+    "commit": "0d0004122836851f1d5483d4792506fda9b77625",
+    "source": "src/PngDecoder.ts"
+  },
+  {
+    "name": "fflate",
+    "version": "0.8.2",
+    "repo": "101arrowz/fflate",
+    "tag": "v0.8.2",
+    "commit": "d3243651cb142e3e04f3e4bc037b9e985878f444",
+    "source": "src/index.ts"
+  },
+  {
+    "name": "html2canvas",
+    "version": "1.4.1",
+    "repo": "niklasvh/html2canvas",
+    "tag": "v1.4.1",
+    "commit": "7c3269bdbeb2097fd9882a3cbda3433d9a4d2476",
+    "source": "src/core/context.ts"
+  },
+  {
+    "name": "iobuffer",
+    "version": "5.4.0",
+    "repo": "image-js/iobuffer",
+    "tag": "v5.4.0",
+    "commit": "b50e7f9990d71d78918ee1ea1198a7ab2a4915b4",
+    "source": "src/IOBuffer.ts"
+  },
+  {
+    "name": "jspdf",
+    "version": "4.0.0",
+    "repo": "parallax/jsPDF",
+    "tag": "v4.0.0",
+    "commit": "e6cf03db2499ef0a9ccc54b2aba45156c5b32b3c",
+    "source": "src/jspdf.js"
+  },
+  {
+    "name": "stackblur-canvas",
+    "version": "2.7.0",
+    "repo": "flozz/StackBlur",
+    "tag": "v2.7.0",
+    "commit": "cf33f3d5f4808dada27d157946e4ca3bb270d3e3",
+    "source": "src/stackblur.js"
+  },
+  {
+    "name": "svg-pathdata",
+    "version": "6.0.3",
+    "repo": "nfroidure/svg-pathdata",
+    "tag": "v6.0.3",
+    "commit": "24e6e7a418781e01467ca4d1b0d50353b1a73268",
+    "source": "src/SVGPathData.ts"
+  },
+  {
+    "name": "text-segmentation",
+    "version": "1.0.3",
+    "repo": "niklasvh/text-segmentation",
+    "tag": "v1.0.3",
+    "commit": "07df57329c2a5ce53a10d7a6e57752f5b59e1c02",
+    "source": "src/index.ts"
+  },
+  {
+    "name": "utrie",
+    "version": "1.0.2",
+    "repo": "niklasvh/utrie",
+    "tag": "v1.0.2",
+    "commit": "83aa0322513b942e8730d71a7916e8da7dbf4bae",
+    "source": "src/index.ts"
+  }
+]

@@ -128,11 +128,12 @@ test('hides the sole project label across Timeline, Calendar and details, restor
   expect(await root.locator('.details-project').count()).toBe(0);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   expect(await root.locator('.calendar-row-name').count()).toBe(0);
-  expect(await root.locator('.calendar-sticky-header').first().evaluate(node => node.getBoundingClientRect().height)).toBe(44);
+  await expect(root.locator('.calendar-sticky-header').first()).toBeVisible();
+  await expect(root.locator('.calendar-sticky-header').first()).toHaveCSS('height', '44px');
 
   await page.evaluate(() => window.__timeline.update({ rows: [{ id: 'other', title: 'Other' }, { id: 'second', title: 'Second' }] }));
   expect(await root.locator('.calendar-row-name').first().textContent()).toBe('Other');
-  expect(await root.locator('.calendar-sticky-header').first().evaluate(node => node.getBoundingClientRect().height)).toBe(68);
+  await expect(root.locator('.calendar-sticky-header').first()).toHaveCSS('height', '68px');
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
   expect(await root.locator('.row-label').allTextContents()).toEqual(['Other', 'Second']);
   await root.locator('.task').first().click();
@@ -1093,6 +1094,8 @@ test('Timeline hover and selection reveal controls without moving or restyling t
 });
 
 test('Calendar resize bars stay visible on selection after the pointer leaves', async ({ page }) => {
+  // Keep entry:a within one local day; near midnight it spans two segments.
+  await page.clock.setFixedTime(new Date(2026, 9, 15, 12));
   await mount(page);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const block = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
@@ -1212,6 +1215,8 @@ test('Timeline shows darker end grips without top or bottom bands', async ({ pag
 });
 
 test('Calendar edges show full-width colored grips with paired grip marks', async ({ page }) => {
+  // Keep entry:a within one local day; near midnight it spans two segments.
+  await page.clock.setFixedTime(new Date(2026, 9, 15, 12));
   await mount(page);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const block = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();

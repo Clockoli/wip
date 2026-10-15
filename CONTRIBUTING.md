@@ -51,7 +51,7 @@ Use a private test repository and test credentials. Never commit tokens, reposit
 | `src/services/` | Tracking, onboarding, reports, metadata, recovery, and exchange-rate workflows |
 | `src/storage/chrome-store.js` | Extension-origin IndexedDB state and migrations |
 | `src/popup/`, `src/options/`, `src/reports/`, `src/tasks/`, `src/times/` | Extension pages and their presentation logic |
-| `packages/task-timeline-component/` | Vendored TaskTimeline, Clockoli adapter, unit tests, Chromium E2E tests, package smoke test, and content-script build |
+| `packages/task-timeline-component/` | Clockoli-owned TaskTimeline, Clockoli adapter, unit tests, Chromium E2E tests, package smoke test, and content-script build |
 | `test/` | Node test suite, behavioral contracts, security checks, and release checks |
 | `scripts/` | Extension validation and deterministic release packaging |
 | `docs/` | User documentation and normative data-format documentation |
@@ -92,6 +92,27 @@ Read `docs/spec-compliance.md` before changing architecture or behavior. Read `d
 - Tracking state is task-URL-specific. A timer for one task must not make another task appear active.
 - Keep the content UI usable in its closed Shadow DOM and do not expose secret state through it.
 - Keep success messages outcome-led. Put actionable failures next to the control that caused them.
+
+## Contributions and licensing
+
+Clockoli-owned source is licensed under GPL-3.0-only; third-party files retain
+their own notices. See [LICENSE](LICENSE), [third-party notices](THIRD_PARTY_NOTICES.md),
+and [licensing information](docs/licensing.md).
+
+The copyright holder for Clockoli-owned source is **Manticore Software LTD**.
+See [COPYRIGHT](COPYRIGHT).
+
+Before merging code **authored by outside contributors**, maintainers must obtain
+an explicit written contributor agreement granting Manticore Software LTD sufficient
+rights to use the contribution under GPLv3 and alternative licenses (including
+commercial licensing). This is necessary to preserve future relicensing options.
+A pull request by itself does not transfer copyright or give these additional
+rights. Contributors can retain their copyright under the agreement. Contact
+the maintainers before starting a substantial external contribution.
+
+Do not strip or replace third-party copyright and license notices; do not add
+new bundled dependencies without checking their license terms and Corresponding
+Source obligations.
 
 ## Make a change
 
@@ -170,7 +191,26 @@ python3 scripts/build-release.py --target firefox /tmp/Clockoli-<version>-firefo
 python3 scripts/build-release.py --target safari /tmp/Clockoli-<version>-safari-extension.zip
 ```
 
-`--target chrome` is optional. `--unpacked OUTPUT_DIRECTORY` writes a new directory for temporary browser loading or native Safari conversion. The packager validates the target, derives a sorted runtime-only inventory, scans for secrets, fixes ZIP timestamps and permissions, and verifies all bytes after writing. Tests, docs, scripts and source maps stay out of browser packages. The separate source archive contains the tagged repository for review.
+`--target chrome` is optional. `--unpacked OUTPUT_DIRECTORY` writes a new directory for temporary browser loading or native Safari conversion. The packager validates the target, derives a sorted runtime-only inventory, scans for secrets, fixes ZIP timestamps and permissions, and verifies all bytes after writing. Tests, docs, scripts and source maps stay out of browser packages. The separate Corresponding Source ZIP is built only from a **clean checkout**
+of the requested tag, with a reviewed path allowlist that excludes internal
+planning documents and scans included source for potential secrets.
+
+For distributable Chrome/Firefox packages and native Safari apps, pass
+`--release-ref X.Y.Z`. This requires a clean working tree at the exact tagged
+commit, so binary packages match the published source archive. Local development
+builds can omit this flag.
+
+To regenerate and check the pinned html2pdf npm notices before a release:
+
+```sh
+python3 scripts/package-source.py HEAD /tmp/clockoli-source.zip
+python3 scripts/generate-pdf-notices.py /tmp/clockoli-source.zip --check
+python3 scripts/verify-pdf-rebuild.py /tmp/clockoli-source.zip
+python3 scripts/test-safari-licenses.py
+```
+
+For Firefox signing, a dirty checkout is rejected. Never submit a source ZIP
+whose commit differs from the packaged extension.
 
 Firefox uses module background scripts instead of a service worker. Its floor is 140 because built-in data consent is required; MAIN-world content scripts and optional host permissions alone require 128. Firefox and Safari omit Chrome's `favicon` permission and virtual `_favicon/*` resource. See [browser compatibility and verification](docs/browser-releases.md) for source links and limitations.
 
@@ -182,7 +222,7 @@ With `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` in the environment:
 npm run sign:firefox -- /tmp/clockoli-signed
 ```
 
-The script builds the Firefox extension, submits to AMO's **unlisted** channel with a `git archive HEAD` source archive, and requires a signed XPI result. Run from the verified release tag with no local changes. Listed AMO submissions remain manual. Version numbers are unique across listed and unlisted channels: after listing the add-on, remove both signing secrets and distribute the AMO-signed listed XPI instead.
+The script builds the Firefox extension, creates a matching Corresponding Source ZIP with `scripts/package-source.py HEAD`, verifies pinned notices and a byte-identical PDF rebuild, and then submits to AMO's **unlisted** channel; it requires a signed XPI result. Run from the verified release tag with no local changes. Listed AMO submissions remain manual. Version numbers are unique across listed and unlisted channels: after listing the add-on, remove both signing secrets and distribute the AMO-signed listed XPI instead.
 
 ### Safari apps
 
@@ -195,7 +235,7 @@ python3 scripts/build-safari.py --build-number 1 /tmp/clockoli-safari
 
 The converter creates a macOS-only Swift application with copied extension resources, app name Clockoli, and bundle ID `com.clockoli.Clockoli`. The script derives a full 16–1024px app icon set from tracked `src/assets/clockoli.svg`; it does not use `store-assets/`. Release builds include both arm64 and x86_64. Manifest version becomes the marketing version, and `--build-number` sets both app and extension build versions.
 
-Without Apple signing variables, this creates `Clockoli-X.Y.Z-safari-unsigned.zip`, ad-hoc signed for **Allow Unsigned Extensions**. Set all six Apple variables listed in [publishing.md](publishing.md#9-mac-app-store-and-direct-safari-distribution) to also archive with automatic signing, export Developer ID, notarize and staple `Clockoli-X.Y.Z-safari.zip`, and export `Clockoli-X.Y.Z-safari.pkg` for Transporter. Partial configuration fails. Signing material and the temporary keychain are cleaned up; nothing is uploaded to App Store Connect by the script. Notarization submits the Developer ID app to Apple.
+Without Apple signing variables, this creates `Clockoli-X.Y.Z-safari-unsigned.zip`, ad-hoc signed for **Allow Unsigned Extensions**. To also sign with Developer ID, notarize and staple `Clockoli-X.Y.Z-safari.zip`, provide all six variables: `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_CERTIFICATES_P12_BASE64`, and `APPLE_CERTIFICATES_PASSWORD`. Signed builds require `--release-ref X.Y.Z` from a clean tagged checkout. Partial signing configuration fails. Signing material and the temporary keychain are cleaned up. Notarization submits the Developer ID app to Apple's notarization service. Signed builds also export `Clockoli-X.Y.Z-safari.pkg` for optional manual submission through Transporter. No build is automatically uploaded or submitted to App Store Connect.
 
 Only the extension ZIP/XPI files are byte-reproducible. Native builds, signing and notarization introduce toolchain and signing data; app ZIP entry order, timestamps, modes and symlinks are preserved and verified.
 
@@ -206,10 +246,31 @@ Tags are `X.Y.Z` with no `v` prefix. Before tagging, update the version and matc
 `.github/workflows/release.yml`:
 
 - checks that tag and manifest version match, runs tests, validation and Firefox lint on Ubuntu;
-- builds Chrome ZIP, Firefox XPI, Safari web-extension ZIP (`Clockoli-X.Y.Z-safari-extension.zip`, for Safari's Add Temporary Extension) and `Clockoli-X.Y.Z-source.zip` (`git archive` of the tag);
+- builds Chrome ZIP, Firefox XPI and Safari web-extension ZIP for temporary loading, plus a curated `Clockoli-X.Y.Z-source.zip` with matching source and pinned PDF dependencies;
 - signs Firefox only when AMO signing secrets are configured; partial credentials fail;
-- builds Safari on macOS with `github.run_number` as the build number, always producing the unsigned app and adding signed artifacts when all Apple secrets exist;
-- collects all files into the existing `release-zip` Actions artifact, then passes that artifact to `Muvon/ci-workflow` for the GitHub release and changelog notes.
+- builds Safari from the same clean tagged ref with `github.run_number` as the build number, always producing the unsigned app and adding signed artifacts when all Apple secrets exist;
+- rebuilds html2pdf.js from the tagged source ZIP and verifies the exact distributed PDF code and upstream notices;
+- collects all files into the `release-zip` Actions artifact, verifies the final packages and release notes, and publishes with an in-repository release job.
+
+Preview a complete release before merging by updating `.github/workflows/release.yml`
+(the PR automatically runs a safe read-only preview), or dispatch manually from
+a branch:
+
+```sh
+gh workflow run release.yml --ref YOUR_BRANCH -f dry_run=true
+```
+
+The preview creates and validates Chrome, Firefox, unsigned Safari, and
+Corresponding Source archives; it also verifies the final `release-zip` and
+release notes. It does not create a GitHub Release or contact the browser
+stores. To test signed Safari and `.pkg` export, add `-f sign_safari=true` with
+Apple signing secrets configured. This optional test contacts Apple's
+notarization service, but does not submit to the Mac App Store.
+
+For an actual manual release, use `dry_run=false` and `tag=X.Y.Z` pointing to
+an existing version-matching tag; pushing a matching tag still releases
+normally. Publishing from a private repository is supported, but for public
+store distribution the matching source ZIP must be accessible to recipients.
 
 Store uploads are manual. Before publishing, inspect archive inventories and exercise the packaged extension in each browser, including background restart, message rejection, Settings, GitHub and arbitrary-task tracking, optional Clockify access, and favicon behavior. Inspect the page and background consoles. Successful packaging or lint does not prove browser or store acceptance.
 

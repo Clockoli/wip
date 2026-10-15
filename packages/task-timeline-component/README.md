@@ -1,16 +1,16 @@
 # TaskTimeline for Clockoli
 
-This workspace vendors the dependency-free `TaskTimeline` component and adds the Clockoli integration adapter.
+This workspace contains the **Clockoli-owned**, dependency-free `TaskTimeline` component and its integration adapter. The historical `vendor/` directory name refers to an imported standalone Clockoli prototype, not a third-party library.
 
 ## Layout
 
-- `vendor/timeline-component.js` — reviewed upstream component with the local-midnight day-band fix and physical Calendar click selection required by Clockoli.
+- `vendor/timeline-component.js` — Clockoli-owned component, maintained here with local-midnight day-band and Calendar selection behavior.
 - `src/clockoli-adapter.js` — Clockoli data/callback/state/theme adapter.
 - `scripts/build.mjs` — deterministically creates `src/content/task-timeline-component.js`.
 - `tests/` — source/API contract tests.
 - `e2e/` — Chromium tests for running/pending hydration, styling, reconcile, Timeline/Calendar mode, atomic switching, and overlap rejection.
 
-The vendored source was copied from `/Volumes/SD/Downloads/task-timeline-component/timeline-component.js`; its SHA-256 at import was:
+The initial Clockoli prototype was imported from a local working copy. Its SHA-256 at import was:
 
 ```text
 53ada0a8efff547af3009d8ddbf56d73ed1fd6da40f1520f8ef6bc4571d1727f

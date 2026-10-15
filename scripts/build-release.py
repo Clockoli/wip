@@ -10,6 +10,22 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
+def require_release_ref(ref, checkout=ROOT):
+    """Reject publishable packages from a dirty or mismatched checkout."""
+    def git(*args):
+        return subprocess.run(
+            ['git', *args], cwd=checkout, check=True,
+            stdout=subprocess.PIPE, text=True,
+        ).stdout.strip()
+
+    head = git('rev-parse', 'HEAD')
+    selected = git('rev-parse', f'{ref}^{{commit}}')
+    if head != selected:
+        raise ValueError('Release ref does not match checked-out HEAD: ' + ref)
+    if git('status', '--porcelain', '--untracked-files=normal'):
+        raise ValueError('Release packaging requires a clean Git working tree')
+
+
 def inventory(target):
     result = subprocess.run(
         ['node', 'scripts/validate-release-inventory.js', '--target', target, '--json'], cwd=ROOT,
@@ -41,8 +57,12 @@ def main():
     parser = argparse.ArgumentParser(description='Build a deterministic Clockoli extension package.')
     parser.add_argument('--target', choices=['chrome', 'firefox', 'safari'], default='chrome')
     parser.add_argument('--unpacked', action='store_true', help='Write a new unpacked directory instead of an archive')
+    parser.add_argument('--release-ref', metavar='REF',
+                        help='For public releases, require a clean checkout at this exact Git ref')
     parser.add_argument('output', nargs='?', default='/tmp/clockoli-release.zip')
     args = parser.parse_args()
+    if args.release_ref:
+        require_release_ref(args.release_ref)
     output = pathlib.Path(args.output).resolve()
     if output == ROOT or ROOT in output.parents:
         parser.error('Build output must be outside the repository')

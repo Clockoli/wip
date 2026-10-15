@@ -12,7 +12,10 @@ test('release manifest does not expose an unused chrome.storage surface', async 
   assert.equal(manifest.permissions.includes('storage'), false);
 });
 
+const LEGAL_FILES = JSON.parse(await readFile(path.join(root, 'scripts/legal-files.json'), 'utf8'));
+
 const EXPECTED_RUNTIME_INVENTORY = [
+  ...LEGAL_FILES,
   'manifest.json',
   'src/addons/clockify/csv-normalizer.js',
   'src/addons/clockify/descriptor.js',
@@ -121,9 +124,9 @@ const EXPECTED_RUNTIME_INVENTORY = [
 test('release inventory is deterministic, runtime-only, and secret-scanned', async () => {
   const first = await releaseInventory(root), second = await releaseInventory(root);
   assert.deepEqual(first, second);
-  assert.equal(first[0], 'manifest.json');
+  assert.equal(first[0], 'COPYRIGHT');
   assert.deepEqual(first, EXPECTED_RUNTIME_INVENTORY);
-  assert.ok(first.every(file => file === 'manifest.json' || file.startsWith('src/')));
+  assert.ok(first.every(file => file === 'manifest.json' || LEGAL_FILES.includes(file) || file.startsWith('src/')));
   assert.ok(first.every(file => !/(?:^|\/)(?:test|tests|docs|scripts|node_modules)(?:\/|$)|\.map$/i.test(file)));
   const summary = await validateReleaseInventory(root, first);
   assert.equal(summary.files, first.length);

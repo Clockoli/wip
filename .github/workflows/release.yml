@@ -3,9 +3,14 @@ name: Release
 on:
   push:
     tags: ['[0-9]+.[0-9]+.[0-9]+*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
   workflow_dispatch:
     inputs:
-      tag: { description: 'Tag to release', required: true, type: string }
+      dry_run: { description: 'Build and check without publishing', type: boolean, default: true }
+      sign_safari: { description: 'Optionally sign/notarize Safari during dry-run', type: boolean, default: false }
+      tag: { description: 'Existing tag to publish when dry_run=false', required: false, type: string }
 
 permissions:
   contents: read
@@ -13,14 +18,48 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
     outputs:
       firefox-signing: ${{ steps.signing.outputs.enabled }}
+      tag: ${{ steps.context.outputs.tag }}
+      release_ref: ${{ steps.context.outputs.release_ref }}
+      dry_run: ${{ steps.context.outputs.dry_run }}
+      sign_safari: ${{ steps.context.outputs.sign_safari }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && inputs.tag || github.ref }}
+      - name: Resolve release version and source ref
+        id: context
+        env:
+          DRY_RUN: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+          SIGN_SAFARI: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && inputs.sign_safari }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
+          if [ "$DRY_RUN" = "true" ]; then
+            TAG="$VERSION"
+            RELEASE_REF="HEAD"
+            echo "::notice::Dry-run for commit $GITHUB_SHA (version $TAG): no release publication"
+          else
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -z "$INPUT_TAG" ]; then
+              echo "::error::Publishing requires an explicit existing version tag"
+              exit 1
+            fi
+            TAG="$REQUESTED_TAG"
+            RELEASE_REF="$TAG"
+            if [ "$TAG" != "$VERSION" ]; then
+              echo "::error::Tag $TAG does not match manifest.json version $VERSION"
+              exit 1
+            fi
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_REF=$RELEASE_REF" >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_ref=$RELEASE_REF" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+          echo "sign_safari=$SIGN_SAFARI" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,26 +68,25 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run check
-      # The archive is uploaded to the Chrome Web Store as-is, so it must carry the tagged version.
-      - name: Check tag matches manifest version
-        run: |
-          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
-          if [ "$TAG" != "$VERSION" ]; then
-            echo "Error: tag $TAG does not match manifest.json version $VERSION"
-            exit 1
-          fi
-      - run: python3 scripts/build-release.py "$RUNNER_TEMP/Clockoli-$TAG.zip"
-      - run: python3 scripts/build-release.py --target firefox "$RUNNER_TEMP/Clockoli-$TAG-firefox.xpi"
-      - run: python3 scripts/build-release.py --target safari "$RUNNER_TEMP/Clockoli-$TAG-safari-extension.zip"
+      - run: python3 scripts/build-release.py --release-ref "$RELEASE_REF" "$RUNNER_TEMP/Clockoli-$TAG.zip"
+      - run: python3 scripts/build-release.py --target firefox --release-ref "$RELEASE_REF" "$RUNNER_TEMP/Clockoli-$TAG-firefox.xpi"
+      - run: python3 scripts/build-release.py --target safari --release-ref "$RELEASE_REF" "$RUNNER_TEMP/Clockoli-$TAG-safari-extension.zip"
       - run: npm run lint:firefox
-      - run: git archive --format=zip --output="$RUNNER_TEMP/Clockoli-$TAG-source.zip" "$TAG"
+      - run: python3 scripts/package-source.py "$RELEASE_REF" "$RUNNER_TEMP/Clockoli-$TAG-source.zip"
+      - name: Verify pinned PDF dependency notices
+        run: python3 scripts/generate-pdf-notices.py "$RUNNER_TEMP/Clockoli-$TAG-source.zip" --check
+      - name: Verify PDF bundle rebuild matches distributed bytes
+        run: python3 scripts/verify-pdf-rebuild.py "$RUNNER_TEMP/Clockoli-$TAG-source.zip"
       - name: Detect Firefox signing configuration
         id: signing
         env:
+          DRY_RUN: ${{ steps.context.outputs.dry_run }}
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
-          if [ -n "$AMO_JWT_ISSUER" ] || [ -n "$AMO_JWT_SECRET" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          elif [ -n "$AMO_JWT_ISSUER" ] || [ -n "$AMO_JWT_SECRET" ]; then
             echo 'enabled=true' >> "$GITHUB_OUTPUT"
           else
             echo 'enabled=false' >> "$GITHUB_OUTPUT"
@@ -61,7 +99,7 @@ jobs:
 
   firefox-sign:
     needs: package
-    if: needs.package.outputs.firefox-signing == 'true'
+    if: needs.package.outputs.firefox-signing == 'true' && needs.package.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,10 +123,13 @@ jobs:
   safari:
     needs: package
     runs-on: macos-latest
+    env:
+      TAG: ${{ needs.package.outputs.tag }}
+      RELEASE_REF: ${{ needs.package.outputs.release_ref }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.package.outputs.release_ref == 'HEAD' && github.ref || needs.package.outputs.release_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -96,14 +137,30 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium
       - name: Build Safari app and configured distribution packages
-        run: python3 scripts/build-safari.py --build-number "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP/safari"
+        run: python3 scripts/build-safari.py --release-ref "$RELEASE_REF" --build-number "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP/safari"
         env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-          APPLE_CERTIFICATES_P12_BASE64: ${{ secrets.APPLE_CERTIFICATES_P12_BASE64 }}
-          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+          # Dry-runs never use signing secrets unless explicitly requested.
+          APPLE_TEAM_ID: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.APPLE_TEAM_ID || '' }}
+          ASC_KEY_ID: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.ASC_KEY_ID || '' }}
+          ASC_ISSUER_ID: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.ASC_ISSUER_ID || '' }}
+          ASC_KEY_P8: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.ASC_KEY_P8 || '' }}
+          APPLE_CERTIFICATES_P12_BASE64: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.APPLE_CERTIFICATES_P12_BASE64 || '' }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.APPLE_CERTIFICATES_PASSWORD || '' }}
+      - name: Verify Safari artifact set
+        env:
+          APPLE_TEAM_ID: ${{ (needs.package.outputs.dry_run != 'true' || needs.package.outputs.sign_safari == 'true') && secrets.APPLE_TEAM_ID || '' }}
+          REQUIRE_SIGNED: ${{ needs.package.outputs.sign_safari == 'true' }}
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
+          test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari-unsigned.zip"
+          if [ "$REQUIRE_SIGNED" = "true" ] && [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::error::sign_safari requested but Apple signing secrets are unavailable"
+            exit 1
+          fi
+          if [ -n "$APPLE_TEAM_ID" ]; then
+            test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari.zip"
+            test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari.pkg"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-safari
@@ -122,19 +179,82 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: ${{ runner.temp }}/release
+      - name: Verify matching source archive is present
+        env:
+          TAG: ${{ needs.package.outputs.tag }}
+        run: |
+          test -f "$RUNNER_TEMP/release/Clockoli-$TAG-source.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: release-zip
           path: ${{ runner.temp }}/release/*
           if-no-files-found: error
 
+  # Read-only complete release preview on PRs and dry_run=true dispatches.
+  preview:
+    needs: [package, collect]
+    if: ${{ !cancelled() && needs.collect.result == 'success' && needs.package.outputs.dry_run == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.package.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ runner.temp }}/release
+      - name: Validate collected release assets and changelog
+        run: python3 scripts/validate-release-assets.py "$RUNNER_TEMP/release" "$TAG" "$RUNNER_TEMP/release-notes.md"
+      - name: Show preview summary
+        run: |
+          {
+            echo "## Dry-run release preview: $TAG"
+            echo ""
+            echo "Commit: $GITHUB_SHA"
+            echo ""
+            echo "All packages validated. No GitHub Release or store submission occurred."
+            echo ""
+            echo "### Collected files"
+            ls -lh "$RUNNER_TEMP/release"
+            echo ""
+            echo "### Release notes"
+            cat "$RUNNER_TEMP/release-notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publication is explicitly disabled for PRs and dry-run dispatches.
   release:
-    needs: collect
-    if: ${{ !cancelled() && needs.collect.result == 'success' }}
+    needs: [package, collect]
+    if: ${{ !cancelled() && needs.collect.result == 'success' && needs.package.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    uses: Muvon/ci-workflow/.github/workflows/release.yml@master
-    with:
-      tag: ${{ inputs.tag }}
-      artifacts: release-zip
-      draft: false
+    env:
+      TAG: ${{ needs.package.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.package.outputs.release_ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ runner.temp }}/release
+      - name: Validate collected release assets and changelog
+        run: python3 scripts/validate-release-assets.py "$RUNNER_TEMP/release" "$TAG" "$RUNNER_TEMP/release-notes.md"
+      - name: Publish GitHub Release with source and browser artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RUNNER_TEMP"/release/* --clobber
+          else
+            gh release create "$TAG" "$RUNNER_TEMP"/release/* \
+              --verify-tag --title "Release $TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" --draft
+          fi
+          gh release edit "$TAG" --draft=false

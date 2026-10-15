@@ -22,5 +22,81 @@ jobs:
       - run: xvfb-run -a npm run test:options:functional
       - run: xvfb-run -a npm run test:activity:functional
       - run: npm run check
-      - run: python3 scripts/build-release.py --target firefox "$RUNNER_TEMP/Clockoli-firefox.xpi"
+      - name: Verify Corresponding Source archive
+        run: |
+          python3 scripts/package-source.py HEAD "$RUNNER_TEMP/Clockoli-source.zip"
+          python3 - "$RUNNER_TEMP/Clockoli-source.zip" <<'PY'
+          import json
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          import zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              files = set(archive.namelist())
+              required = {
+                  'COPYRIGHT',
+                  'LICENSE',
+                  'THIRD_PARTY_NOTICES.md',
+                  'third_party/html2pdf.js-v0.14.0/src/index.js',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/dompurify/package.json',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/jspdf/package.json',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/html2canvas/package.json',
+              }
+              assert required <= files, required - files
+              sources = json.loads(Path('scripts/pdf-upstream-sources.json').read_text())
+              for item in sources:
+                  prefix = ('third_party/pdf-source-repositories/' +
+                            item['name'] + '-' + item['version'] + '/')
+                  assert prefix + item['source'] in files, item['name']
+                  meta = json.loads(archive.read(prefix + 'package.json'))
+                  assert (meta['name'], meta['version']) == (item['name'], item['version'])
+              with tempfile.TemporaryDirectory() as tmp:
+                  upstream = Path(tmp) / 'upstream.js'
+                  patched = Path(tmp) / 'patched.js'
+                  upstream.write_bytes(archive.read(
+                      'third_party/html2pdf.js-v0.14.0/dist/html2pdf.bundle.min.js'))
+                  subprocess.run(['node', 'scripts/apply-html2pdf-mv3.mjs',
+                                  str(upstream), str(patched)], check=True)
+                  assert patched.read_bytes() == Path('src/vendor/html2pdf.bundle.min.js').read_bytes()
+          PY
+      - name: Verify pinned PDF dependency notices
+        run: python3 scripts/generate-pdf-notices.py "$RUNNER_TEMP/Clockoli-source.zip" --check
+      - name: Verify clean-ref Chrome release package
+        run: python3 scripts/build-release.py --release-ref HEAD "$RUNNER_TEMP/Clockoli-chrome.zip"
+      - name: Verify clean-ref Firefox release package
+        run: python3 scripts/build-release.py --target firefox --release-ref HEAD "$RUNNER_TEMP/Clockoli-firefox.xpi"
       - run: npm run lint:firefox
+
+  # Keep the Corresponding Source rebuild independent of the UI/E2E tests.
+  # A flaky browser test must not prevent verification of release compliance.
+  pdf-rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate exact Corresponding Source archive
+        run: python3 scripts/package-source.py HEAD "$RUNNER_TEMP/Clockoli-source.zip"
+      - name: Verify pinned PDF dependency notices
+        run: python3 scripts/generate-pdf-notices.py "$RUNNER_TEMP/Clockoli-source.zip" --check
+      - name: Rebuild PDF and byte-compare the distributed bundle and notices
+        run: python3 scripts/verify-pdf-rebuild.py "$RUNNER_TEMP/Clockoli-source.zip"
+
+  safari-license-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - name: Verify final converted native Safari app and extension legal resources
+        run: python3 scripts/build-safari.py --release-ref HEAD --build-number 1 "$RUNNER_TEMP/safari"
+      - name: Verify unsigned Safari package
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
+          test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari-unsigned.zip"

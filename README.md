@@ -156,6 +156,20 @@ Anyone who can read a time repository can read the URLs, titles, timestamps and 
 - [Troubleshooting](docs/troubleshooting.md)
 - [Browser release support](docs/browser-releases.md)
 
+## License
+
+Copyright (c) 2026 Manticore Software LTD (https://manticoresearch.com).
+See [COPYRIGHT](COPYRIGHT) for the scope of the copyright notice.
+
+Clockoli's original source code is licensed under the [GNU General Public License
+v3.0 only (GPL-3.0-only)](LICENSE). Third-party components retain their
+respective licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and
+[licensing and source releases](docs/licensing.md).
+
+The official browser releases include license notices, and each release is
+accompanied by a corresponding source archive. The Clockoli name and logo
+are not licensed as trademarks for misleading or unauthorized use.
+
 ## Development
 
 Requires Node.js 20.19+ (CI uses Node.js 22) and Python 3 for release packaging. The extension has no runtime package dependencies; the timeline component and test tooling live in this repository as an npm workspace.
