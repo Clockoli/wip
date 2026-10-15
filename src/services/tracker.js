@@ -1112,6 +1112,42 @@ export class TrackerService {
     const state = await this.store.getState();
     const operation = (state.pendingWrites ?? []).find(item => item.id === id);
     if (!operation || operation.status !== 'conflict') throw new Error('Only a pending conflict can be resolved');
+    if (operation.conflictReason === 'add_time_overlap_changed' && operation.stage === 'startNext') {
+      if (action === 'discard_queued_start') {
+        const remoteActive = await this.readRemoteActive();
+        if (remoteActive && sameTimer(remoteActive, operation.nextActive)) {
+          throw new TrackerConflictError('This timer is already running on GitHub. Recheck and retry to adopt it instead of discarding.', 'queued_start_already_running');
+        }
+        await this.mutateState(latest => {
+          const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
+          if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
+          const last = index === pendingWrites.length - 1;
+          pendingWrites.splice(index, 1);
+          return { pendingWrites, ...(last ? { activeCache: remoteActive } : {}) };
+        });
+        return { resolved: true, discarded: true };
+      }
+      const remoteActive = await this.readRemoteActive();
+      if (remoteActive && sameTimer(remoteActive, operation.nextActive)) {
+        await this.persistQueueOperation(operation, { remove: true, patch: { activeCache: remoteActive } });
+        return { resolved: true, alreadyRunning: true };
+      }
+      const files = await Promise.all(operation.overlapGuards.map(guard => this.readMonthly(guard.path)));
+      const startMs = new Date(operation.nextActive.startedAt).getTime(), nowMs = this.clock().getTime();
+      if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < nowMs
+          && new Date(entry.endedAt).getTime() > startMs))) {
+        throw new TrackerConflictError('Added time would overlap existing time. Review Activity or discard the queued start.', 'add_time_overlap_changed');
+      }
+      await this.mutateState(latest => {
+        const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
+        if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
+        pendingWrites[index] = { ...pendingWrites[index], overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
+          status: 'pending', lastError: '', conflictReason: '' };
+        return { pendingWrites };
+      });
+      const remaining = await this.syncPending();
+      return { resolved: !remaining.some(item => item.id === id) };
+    }
     if (['editEntry', 'editEntries', 'deleteEntry'].includes(operation.operation)) {
       if (action === 'discard_queued_edit') {
         await this.mutateState(latest => {

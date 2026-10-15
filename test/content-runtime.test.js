@@ -1030,6 +1030,73 @@ test('missing-active conflicts explicitly warn before discarding an unsaved comp
     { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'discard_unsaved_completion' });
 });
 
+test('changed Add time conflict offers revalidation and explicit queued-start discard', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const messages = []; let confirmed = false;
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext', conflictReason: 'add_time_overlap_changed' };
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      messages.push(structuredClone(message));
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    confirm(message) { confirmed = /discard this queued start/i.test(message); return true; }, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Recheck and retry start').at(-1);
+  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
+  assert.ok(retry?.onclick);
+  assert.ok(discard?.onclick);
+  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(confirmed, true);
+  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
+    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'discard_queued_start' });
+});
+
+test('queued Add time discard reports an unavailable remote check without losing the conflict', async () => {
+  documentNodes.clear(); createdNodes.length = 0;
+  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
+  const { actions } = makeHeader();
+  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext', conflictReason: 'add_time_overlap_changed' };
+  const document = {
+    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
+    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
+  };
+  const context = vm.createContext({
+    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
+      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
+      else if (message.type === 'RESOLVE_PENDING') callback({ ok: false, error: { message: 'Cannot verify whether the timer was saved. Reconnect and retry.' } });
+      else callback({ ok: true, data: {} });
+    } } },
+    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
+    confirm: () => true, alert() {},
+  });
+  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
+  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(createdNodes.some(node => /Cannot verify whether the timer was saved/.test(node.textContent)));
+  assert.ok(createdNodes.some(node => node.textContent === 'Discard queued start'), 'conflict remains actionable');
+});
+
 test('header control mounts before the avatar in GitHub current top-nav-right header', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
@@ -2057,7 +2124,7 @@ test('tracking panel observes background sync completion without manual Sync', (
   assert.match(source, /function schedulePendingRefresh\(\)/);
   assert.match(source, /send\(\{ type: 'GET_PAGE_STATE' \}\)/);
   assert.match(source, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\) \{[\s\S]*?const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
+  assert.match(source, /function hasRunnablePending\(queue = pageState\.pendingWrites\) \{[\s\S]*?first\.conflictReason !== 'add_time_overlap_changed'[\s\S]*?!String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.match(source, /if \(!hasRunnablePending\(\)\) return/,
     'the 500 ms UI polling loop stops only for a missing record or an unsafe conflict, not a safely rebased edit');
   assert.doesNotMatch(source, /Task switch is syncing with GitHub\./);

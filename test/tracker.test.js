@@ -1845,6 +1845,63 @@ test('Add time queued timer cannot sync after a completed interval changes acros
   assert.equal(store.value.pendingWrites[0].status, 'conflict');
 });
 
+test('Add time queued start retries after revalidating a nonoverlapping monthly change', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  const pending = store.value.pendingWrites[0];
+  assert.equal(pending.status, 'conflict');
+  assert.deepEqual(await service({ github, store }).resolvePendingConflict(pending.id), { resolved: true });
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt, '2026-08-18T08:45:00.000Z');
+  assert.deepEqual(github.atomicWrites[0].guards, [{ path, sha: 'raced' }]);
+});
+
+test('Add time queued start cannot revalidate overlap and can be explicitly discarded', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:00:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  const pending = store.value.pendingWrites[0];
+  await assert.rejects(() => service({ github, store }).resolvePendingConflict(pending.id), /overlap/i);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.deepEqual(await service({ github, store }).resolvePendingConflict(pending.id, 'discard_queued_start'), { resolved: true, discarded: true });
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('discard refuses a queued Add time start already committed despite a lost response', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  const queued = store.value.pendingWrites[0];
+  // GitHub accepted the guarded write, but the client never received its response.
+  seedText(github, 'active/alice.json', serializeActiveRecord(queued.nextActive), 'committed');
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:00:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+  await assert.rejects(() => service({ github, store }).resolvePendingConflict(queued.id, 'discard_queued_start'), /already running/i);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.deepEqual(await service({ github, store }).resolvePendingConflict(queued.id), { resolved: true, alreadyRunning: true });
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.id, queued.nextActive.id);
+  assert.equal(github.files.has('active/alice.json'), true);
+});
+
+test('discard keeps a queued Add time start when remote verification is unavailable', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:00:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  const queued = store.value.pendingWrites[0], pendingActive = store.value.activeCache;
+  github.getText = async () => { throw new TypeError('network unavailable'); };
+  await assert.rejects(() => service({ github, store }).resolvePendingConflict(queued.id, 'discard_queued_start'), /network unavailable/);
+  assert.equal(store.value.pendingWrites[0].id, queued.id);
+  assert.deepEqual(store.value.activeCache, pendingActive);
+});
+
 test('Add time checks yesterday across a month boundary before writing', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([

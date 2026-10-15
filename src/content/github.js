@@ -1158,7 +1158,8 @@
     if (!first) return false;
     if (first.status !== 'conflict') return true;
     const operation = first.operation ?? first.stage;
-    const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
+    const retryableConflict = first.conflictReason !== 'add_time_overlap_changed'
+      && !String(first.conflictReason || '').startsWith('queued_write_');
     return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
       || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
   }
@@ -1973,6 +1974,7 @@
     for (const item of conflicts) {
       const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
       const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
+      const changedAddTime = item.stage === 'startNext' && item.conflictReason === 'add_time_overlap_changed';
       // Queues persisted before operation was projected to the page expose only
       // their stage. Keep their recovery actionable after an extension upgrade.
       const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
@@ -1980,6 +1982,7 @@
       const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
       const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
+        : changedAddTime ? 'Add time needs review'
         : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
           : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
       const detail = item.conflictReason === 'active_missing_no_completion'
@@ -1987,11 +1990,13 @@
         : item.conflictReason === 'active_changed_no_completion'
           ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
           : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
+            : changedAddTime ? 'Completed time changed before this timer synced. Recheck for overlap or, while online, verify GitHub and discard the unsaved start.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
                 : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
                   : 'Repair or remove the conflicting entry in GitHub, then retry.';
       const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
+        : changedAddTime ? 'Recheck and retry start'
         : rejectedWrite ? 'Retry queued write' : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
       box.append(button(label, 'secondary wide', async () => {
@@ -2005,6 +2010,14 @@
         await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_edit' });
         recentLoaded = false;
         await refreshState(true, true);
+      }));
+      if (changedAddTime) box.append(button('Discard queued start', 'link-button', async () => {
+        if (!confirm('Discard this queued start? GitHub must confirm the timer is not already running before the local start can be removed.')) return;
+        try {
+          await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_start' });
+          recentLoaded = false;
+          await refreshState(true, true);
+        } catch (error) { setError(error); }
       }));
       container.append(box);
     }
