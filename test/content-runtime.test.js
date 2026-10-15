@@ -3767,6 +3767,44 @@ test('a pending entry suppresses duplicate status, but a simultaneous queued del
 });
 
 
+test('deleting the running timer started from yesterday uses DISCARD_ACTIVE, not completed-record Delete', async () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const yesterday = { ...activityEntry('yesterday', '2026-10-14', '10', 'https://example.com/task'), destinationId: 'github:1' };
+  const today = {
+    id: 'today-active', taskUrl: yesterday.taskUrl, taskTitle: yesterday.taskTitle,
+    startedAt: new Date(now).toISOString(), entryDate: '2026-10-15', timezone: 'UTC',
+    destinationId: 'github:1', _pending: true, _path: 'active/alice.json',
+  };
+  let current = { configured: true, active: null, recent: [yesterday], pendingWrites: [], pendingCount: 0 };
+  const harness = dailyPanelHarness({
+    now, records: [yesterday], state: current, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'SWITCH_TASK') {
+        current = { ...current, active: today, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { active: today, pending: true } });
+      } else if (message.type === 'DISCARD_ACTIVE') {
+        current = { ...current, active: null, pendingWrites: [{ id: 'discard', operation: 'discardActive', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { operationId: 'discard', pending: true } });
+      } else callback({ ok: true, data: current });
+    },
+  });
+  harness.renderActivity();
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.ok(harness.timelineMounts.length);
+  const calendar = harness.timelineMounts[0];
+  await calendar.onStart({ id: 'entry:yesterday' }); // The yesterday block's double-click callback
+  assert.ok(harness.messages.some(message => message.type === 'SWITCH_TASK'));
+  const active = harness.timelineItems(0, now).find(item => item.id === 'active:today-active');
+  assert.ok(active, 'starting yesterday’s task projects a new active timer for today');
+  assert.equal(active.isRunning, true);
+  assert.equal(active.isDeleteDisabled, false);
+  await calendar.onDelete({ id: 'active:today-active' });
+  assert.equal(harness.messages.filter(message => message.type === 'DISCARD_ACTIVE').length, 1);
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 0);
+  assert.equal(harness.messages.filter(message => message.type === 'DELETE_ENTRY').length, 0);
+});
+
 test('Calendar can delete a locally stopped timer before sync without losing its destination', async () => {
   const now = Date.parse('2026-09-05T12:00:00Z');
   const running = { id: 'pending-stop', taskUrl: 'https://example.com/task', taskTitle: 'Task',
