@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { formatClockDuration } from '../src/domain/reporting.js';
-import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/values.js';
+import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
@@ -3825,14 +3825,14 @@ test('queue diagnostics stay hidden unless enabled in Advanced settings', () => 
 
 async function runningStatusHarness(initial) {
   const moduleSource = await readFile(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
-  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [];
-  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, stopError = null, confirmed = true, readError = null;
+  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [];
+  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null;
   const document = {
     hidden: false, createElement: tag => new FakeNode(tag), getElementById: () => null,
     addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
   };
   const context = vm.createContext({
-    document, formatClockDuration, normalizeTaskUrl, localDateParts, entryDateValue,
+    document, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
     Date: class extends Date { static now() { return now; } },
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
     confirm: text => { confirmations.push(text); return confirmed; },
@@ -3846,20 +3846,29 @@ async function runningStatusHarness(initial) {
       if (readError) throw readError;
       return state;
     }
+    if (message.type === 'START') {
+      if (startError) throw startError;
+      state = { ...state, active: {
+        taskUrl: message.taskUrl, taskTitle: message.taskTitle, id: 'started',
+        startedAt: new Date(now).toISOString(), entryDate: '2026-09-05',
+      } };
+      return state.active;
+    }
     if (message.type === 'STOP') {
       if (stopError) throw stopError;
       state = { ...state, active: null }; return { pending: true };
     }
     throw new Error(`Unexpected message ${message.type}`);
   };
-  const destroy = context.mountRunningStatus(container, { send });
+  const destroy = context.mountRunningStatus(container, { send, onChange: () => { changes.push(true); } });
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   await settle();
   return {
-    container, document, events, timers, calls, confirmations, destroy, settle,
+    container, document, events, timers, calls, confirmations, changes, destroy, settle,
     find: className => container.walk().find(node => node.className === className),
     setState: value => { state = value; }, advance: ms => { now += ms; },
     failStop: () => { stopError = new Error('Stop rejected'); },
+    failStart: () => { startError = new Error('Start rejected'); },
     failRead: value => { readError = value ? new Error('Worker restarting') : null; },
     cancelConfirmation: () => { confirmed = false; },
     holdNextRead: () => {
@@ -3878,14 +3887,83 @@ function runningStatusState(hours = 1) {
   } };
 }
 
-test('shared running status renders idle totals and unknown summaries without inventing zero', async () => {
-  const h = await runningStatusHarness({ configured: true, active: null, todayTrackedMs: 7_200_000 });
-  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today 2h 0m');
+test('shared running status shows the idle badge and a fallback when there are no recent tasks', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null, recent: [], todayTrackedMs: null });
+  assert.equal(h.find('running-status-idle').textContent, 'Not tracking');
+  assert.equal(h.container.classList.contains('is-idle'), true);
+  assert.equal(h.find('running-status-quick-start').hidden, false);
+  assert.equal(h.find('running-status-recent-empty').textContent, 'No recent tasks yet');
   assert.equal(h.find('running-status-stop').hidden, true);
-  h.setState({ configured: true, active: null, todayTrackedMs: null });
+  h.setState({ configured: false, active: null, recent: [] });
   await h.events.get('visibilitychange')(); await h.settle();
-  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today …');
+  assert.equal(h.find('running-status-quick-start').hidden, true);
   h.destroy(); assert.equal(h.timers.size, 0); assert.equal(h.events.size, 0);
+});
+
+test('idle quick start shows the three most recently completed distinct tasks', async () => {
+  const recent = [
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', startedAt: '2026-09-05T09:00:00Z', endedAt: '2026-09-05T09:20:00Z' },
+    { taskUrl: 'https://example.com/chat', taskTitle: 'Misc communication', startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T10:05:00Z' },
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', startedAt: '2026-09-05T10:15:00Z', endedAt: '2026-09-05T10:20:00Z' },
+    { taskUrl: 'manticoresoftware/Routines/1-dev-call', taskTitle: 'Dev call', startedAt: '2026-09-05T09:30:00Z', endedAt: '2026-09-05T10:10:00Z' },
+    { taskUrl: 'https://example.com/older', taskTitle: 'Older', startedAt: '2026-09-05T08:00:00Z', endedAt: '2026-09-05T08:05:00Z' },
+    { taskUrl: 'javascript:alert(1)', taskTitle: 'Unsafe task', startedAt: '2026-09-05T11:00:00Z', endedAt: '2026-09-05T11:05:00Z' },
+  ];
+  const h = await runningStatusHarness({ configured: true, active: null, recent, todayTrackedMs: 1_000 });
+  const list = h.find('running-status-recent'), buttons = list.children;
+  assert.deepEqual(buttons.map(button => button.children[1].textContent),
+    ['Google', 'Dev call', 'Misc communication']);
+  assert.equal(buttons.length, 3);
+  assert.deepEqual(buttons.map(button => button.tag), ['button', 'button', 'button']);
+  assert.equal(buttons[0].getAttribute('aria-label'), 'Start tracking Google');
+  assert.equal(buttons[1].title, 'manticoresoftware/Routines/1-dev-call');
+  assert.equal(h.find('running-status-quick-label').textContent, 'Quick start from recent tasks:');
+  assert.equal(h.container.walk().some(node => node.textContent === 'Start tracking from recent tasks'), false);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(list.children[0], buttons[0], 'polling does not replace a focused button');
+  h.destroy();
+});
+
+test('idle quick start starts with one click, blocks repeat clicks, and updates the running strip', async () => {
+  const recent = [{ taskUrl: 'https://example.com/task', taskTitle: 'Demo task',
+    startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z' }];
+  const idle = { configured: true, active: null, recent, todayTrackedMs: 0 };
+  const h = await runningStatusHarness(idle);
+  const button = h.find('running-status-recent-task'), releaseRead = h.holdNextRead();
+  const starting = button.onclick();
+  assert.equal(button.disabled, true);
+  await button.onclick();
+  releaseRead(idle); await starting; await h.settle();
+  const starts = h.calls.filter(call => call.type === 'START');
+  assert.equal(starts.length, 1);
+  assert.deepEqual(starts[0], { type: 'START', taskUrl: recent[0].taskUrl, taskTitle: 'Demo task' });
+  assert.equal(h.find('running-status-task').textContent, 'Demo task');
+  assert.equal(h.find('running-status-live').hidden, false);
+  assert.equal(h.find('running-status-quick-start').hidden, true);
+  assert.equal(h.container.classList.contains('is-active'), true);
+  assert.equal(h.changes.length, 1);
+  h.destroy();
+});
+
+test('idle quick start does not replace another tab timer and recovers from a rejected start', async () => {
+  const recent = [{ taskUrl: 'https://example.com/quick', taskTitle: 'Quick',
+    startedAt: '2026-09-05T08:00:00Z', endedAt: '2026-09-05T09:00:00Z' }];
+  const h = await runningStatusHarness({ configured: true, active: null, recent });
+  const button = h.find('running-status-recent-task');
+  h.setState(runningStatusState());
+  await button.onclick(); await h.settle();
+  assert.equal(h.calls.filter(call => call.type === 'START').length, 0);
+  assert.equal(h.find('running-status-live').hidden, false);
+  h.setState({ configured: true, active: null, recent });
+  await h.events.get('visibilitychange')(); await h.settle();
+  h.failStart();
+  const retry = h.find('running-status-recent-task');
+  await retry.onclick(); await h.settle();
+  assert.equal(h.calls.filter(call => call.type === 'START').length, 1);
+  assert.equal(h.find('running-status-recent-task').disabled, false);
+  assert.equal(h.find('running-status-quick-start').hidden, false);
+  assert.match(h.find('running-status-error').textContent, /Start rejected/);
+  h.destroy();
 });
 
 test('shared running status ticks without replacing controls and rereads after Stop', async () => {
@@ -3932,7 +4010,7 @@ test('shared running status recovers fresh state after a worker restart and reje
   assert.match(h.find('running-status-error').textContent, /Worker restarting/);
   h.failRead(false); h.setState({ configured: true, active: null, todayTrackedMs: 0 });
   await h.events.get('visibilitychange')(); await h.settle();
-  assert.equal(h.find('running-status-idle').textContent, 'Not tracking · Today 0m');
+  assert.equal(h.find('running-status-idle').textContent, 'Not tracking');
   assert.equal(h.find('running-status-error').hidden, true);
   h.setState({ ...runningStatusState(), active: { ...runningStatusState().active, taskUrl: 'javascript:alert(1)' } });
   await h.events.get('visibilitychange')(); await h.settle();
