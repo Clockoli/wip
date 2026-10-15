@@ -2025,10 +2025,8 @@
 
   async function loadSelectedTimes(onFailure = null) {
     const loadId = ++timesLoadId;
-    if (activityViewMode === 'calendar') {
-      selectedTimesCalendarLoadingId = loadId;
-      updateCalendarWeekLoading();
-    }
+    selectedTimesCalendarLoadingId = loadId;
+    updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
     try {
@@ -3768,7 +3766,7 @@
   });
 
   if (timesMode) {
-    mountInHeader(); renderUi();
+    mountInHeader();
     void restoreActivityViewMode();
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {
