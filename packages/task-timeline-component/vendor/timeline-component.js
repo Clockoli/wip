@@ -4037,14 +4037,6 @@
         for (const item of this.calendarCanvas.querySelectorAll('.calendar-task.selected')) item.classList.remove('selected');
         for (const item of this.calendarCanvas.querySelectorAll(`[data-task-key="${task._key}"]`)) item.classList.add('selected');
       });
-      this.calendarCanvas.addEventListener('dblclick', e => {
-        const [, task] = taskFromEvent(e);
-        if (!task) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (task.running && this.runningKey === task._key) this.stop({ source: 'double-click' });
-        else this.start({ id: task.id, name: task.name, url: task.url, row: task.row, data: task.data }, { source: 'double-click' });
-      });
       this.calendarCanvas.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
         const [el, task] = taskFromEvent(e);
@@ -4292,18 +4284,6 @@
         e.stopPropagation();
         el.focus({ preventScroll: true });
         this._selectTask(task, true);
-      });
-
-      this.taskRow.addEventListener('dblclick', e => {
-        const [, task] = taskFromEvent(e);
-        if (!task) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (task.running && this.runningKey === task._key) {
-          this.stop({ source: 'double-click' });
-        } else {
-          this.start({ id: task.id, name: task.name, url: task.url, row: task.row, data: task.data }, { source: 'double-click' });
-        }
       });
 
       this.taskRow.addEventListener('pointerdown', e => {

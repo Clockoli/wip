@@ -876,34 +876,45 @@ test('reconcile preserves selection, mode, pending, and running identity', async
   expect(now).toBeGreaterThan(0);
 });
 
-test('double-click switch invokes one Start and suppresses the component auto-Stop callback', async ({ page }) => {
-  await mount(page);
-  await page.evaluate(() => {
-    const block = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]');
-    block.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }));
-  });
-  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
-});
+for (const mode of ['timeline', 'calendar']) {
+  const blockSelector = mode === 'calendar' ? '.calendar-task' : '.task';
 
-test('cancelled double-click Start restores the external running timer', async ({ page }) => {
-  await mount(page, { startResult: false });
-  await page.evaluate(() => {
-    const block = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]');
-    block.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }));
+  test('double-clicking a completed entry in ' + mode + ' only selects it', async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();
+    await block.dblclick();
+    const state = await page.evaluate(() => ({
+      interaction: window.__timeline.__timeline.getInteractionState(),
+      calls: window.__calls,
+    }));
+    expect(state.interaction.selectedInstanceId).toBe('entry:a');
+    expect(state.interaction.runningInstanceId).toBe('active:c');
+    expect(state.calls).toEqual([]);
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Start tracking');
+    await action.click();
+    await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
   });
-  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getRunningTask()?.instanceId)).toBe('active:c');
-  expect(await page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
-});
 
-test('cancelled Stop restores the running timer', async ({ page }) => {
-  await mount(page, { stopResult: false });
-  await page.evaluate(() => {
-    const block = document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="active:c"]');
-    block.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }));
+  test('double-clicking the running entry in ' + mode + ' does not stop it', async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const block = page.locator('#timeline ' + blockSelector + '[data-task-key="active:c"]').first();
+    await block.dblclick();
+    const state = await page.evaluate(() => ({
+      interaction: window.__timeline.__timeline.getInteractionState(),
+      calls: window.__calls,
+    }));
+    expect(state.interaction.selectedInstanceId).toBe('active:c');
+    expect(state.interaction.runningInstanceId).toBe('active:c');
+    expect(state.calls).toEqual([]);
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Stop and save');
+    await action.click();
+    await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
-  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getRunningTask()?.instanceId)).toBe('active:c');
-  expect(await page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
-});
+}
 
 test('Timeline drags and arrow edits snap to five minutes at every zoom level', async ({ page }) => {
   await mount(page);
