@@ -3163,7 +3163,7 @@
 
       this._renderCalendarTasks(metrics);
       this._renderCalendarNowLine(metrics);
-      if (!this.calendarScrollInitialized) {
+      if (!this.calendarScrollInitialized && this.calendarViewport.clientHeight > 0) {
         const starts = this._calendarSegments().map(segment =>
           this._calendarMinutesOfDay(segment.segmentStart, segment.dayStart, segment.dayEnd)
         ).sort((a, b) => a - b);
@@ -3180,14 +3180,10 @@
           && starts[bestStart + 2] - starts[bestStart + 1] <= 90) bestStart++;
         const startMinutes = starts.length ? starts[bestStart] : 8 * 60;
         const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, startMinutes - 90)));
-        // A detached viewport clamps scrollTop to zero; let the host resize
-        // render apply this position after the host is connected again.
-        if (this.host.isConnected) {
-          this.calendarViewport.scrollTop = top;
-          this.calendarAutoScrollTop = this.calendarViewport.scrollTop;
-          if (!starts.length) this.calendarAutoFocusPending = true;
-          this.calendarScrollInitialized = true;
-        }
+        this.calendarViewport.scrollTop = top;
+        this.calendarAutoScrollTop = this.calendarViewport.scrollTop;
+        if (!starts.length) this.calendarAutoFocusPending = true;
+        this.calendarScrollInitialized = true;
       }
       this._updateTimelineMeta();
     }
