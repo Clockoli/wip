@@ -2,12 +2,78 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from '../src/background/message-policy.js';
+import { assertMessageAllowed, addTimeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
+
+test('Add time accepts only the two extension pages and a bounded canonical URL payload', () => {
+  const request = { taskUrl: issue.url + '?view=1', taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' };
+  for (const page of ['src/tasks/tasks.html', 'src/times/times.html']) {
+    assert.equal(addTimeForSender(request, { url: origin + page }, origin).taskUrl, issue.url);
+  }
+  for (const sender of [content, extension, { url: origin + 'src/reports/reports.html' }, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 2 } }]) {
+    assert.throws(() => addTimeForSender(request, sender, origin), /not allowed/i);
+  }
+  for (const invalid of [{ ...request, taskUrl: 'javascript:alert(1)' }, { ...request, description: 'a'.repeat(2001) },
+    { ...request, startedAt: 'yesterday' }, { ...request, destinationId: 'github:1' }]) {
+    assert.throws(() => addTimeForSender(invalid, { url: origin + 'src/tasks/tasks.html' }, origin), /invalid|too long/i);
+  }
+});
+
+test('Add time permits an imported identity only with a scoped destination for server-side existence verification', () => {
+  const sender = { url: origin + 'src/times/times.html' };
+  const request = { taskUrl: 'acme/project/imported-task', taskTitle: 'Imported', destinationId: 'github:2', startedAt: null, endedAt: null, description: '' };
+  assert.deepEqual(addTimeForSender(request, sender, origin), request);
+  assert.throws(() => addTimeForSender({ ...request, destinationId: undefined }, sender, origin), /destination|invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, destinationId: 'github:0' }, sender, origin), /destination|invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, taskUrl: issue.url }, sender, origin), /invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, taskUrl: 'acme/project/not valid' }, sender, origin), /task URL|identity/i);
+});
+
+test('Add time dispatcher validates before destination selection and schedules a queued timer sync', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ addTimeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    resolveStartDestinationId: async (_store, url) => { calls.push(['route', url]); return 'github:1'; },
+    activeDestinationId: async () => null,
+    trackerForDestination: async () => ({ addTime: async payload => { calls.push(['add', payload]); return { active: { _pending: true } }; } }),
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_TIME', taskUrl: issue.url, taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' };
+  await assert.rejects(context.handle(message, extension), /not allowed/i);
+  await assert.rejects(context.handle({ ...message, destinationId: 'github:2' }, { url: origin + 'src/tasks/tasks.html' }), /Invalid/i);
+  assert.equal(calls.length, 0);
+  const result = await context.handle(message, { url: origin + 'src/tasks/tasks.html' });
+  assert.equal(result.destinationId, 'github:1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['route', issue.url], ['add', { taskUrl: issue.url, taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' }], ['sync']]);
+});
+
+test('Add time routes a selected imported task only to its configured source destination', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ addTimeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    requireConfiguredDestinationId: async (_store, id) => { calls.push(['check', id]); if (id !== 'github:2') throw new Error('Not configured'); return id; },
+    resolveStartDestinationId: async () => { throw new Error('Imported tasks must not use URL routing'); },
+    activeDestinationId: async () => null,
+    trackerForDestination: async id => { calls.push(['tracker', id]); return { addTime: async payload => { calls.push(['add', payload]); return { entry: {} }; } }; },
+    requestPendingSync: () => { throw new Error('Completed records do not queue a timer'); },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_TIME', taskUrl: 'acme/project/imported-task', taskTitle: 'Imported',
+    destinationId: 'github:2', startedAt: null, endedAt: null, description: '' };
+  await assert.rejects(context.handle({ ...message, destinationId: 'github:1' }, { url: origin + 'src/times/times.html' }), /Not configured/);
+  assert.deepEqual(calls, [['check', 'github:1']]);
+  const result = await context.handle(message, { url: origin + 'src/times/times.html' });
+  assert.equal(result.destinationId, 'github:2');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(1))), [['check', 'github:2'], ['tracker', 'github:2'],
+    ['add', { taskUrl: message.taskUrl, taskTitle: 'Imported', startedAt: null, endedAt: null, description: '' }]]);
+});
 
 test('week reads accept only a Monday–Sunday range from the extension or a GitHub tab', () => {
   const week = { startDate: '2026-10-05', endDate: '2026-10-11' };

@@ -124,7 +124,7 @@ function service(options = {}) {
   return new TrackerService({ github, store: options.store ?? new MemoryStore(), reports: options.reports, user: 'alice',
     actorId: options.actorId ?? 'github:123', actorName: 'alice',
     clock: options.clock ?? (() => new Date('2026-08-18T09:00:00Z')), idFactory: options.idFactory ?? (() => fixedId),
-    recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'] });
+    recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'], ...(options.timezone ? { timezone: options.timezone } : {}) });
 }
 
 test('queued start/stop preparation is side-effect free and keeps destination metadata out of work JSON', async () => {
@@ -1768,6 +1768,132 @@ test('linked time edits remain atomic when an adjusted Start moves across monthl
   assert.equal(github.files.has(september), false);
 });
 
+
+test('Add time writes an exact completed interval and task index atomically', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const result = await tracker.addTime({ taskUrl: issue.url + '?noise=1', taskTitle: 'Fix frontend',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z', description: 'Investigation' });
+  assert.equal(result.entry.taskUrl, issue.url);
+  assert.equal(result.entry.durationSeconds, 3600);
+  assert.equal(result.entry.description, 'Investigation');
+  assert.equal(result.entry.taskTitle, 'Fix frontend');
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
+  assert.equal(github.atomicWrites[0].guards.find(guard => guard.path === 'active/alice.json')?.sha, null);
+});
+
+test('Add time reuses only an existing imported task identity and keeps writes atomic', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const imported = 'acme/project/imported-task';
+  const request = { taskUrl: imported, taskTitle: 'Imported task',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  await assert.rejects(() => tracker.addTime(request), /existing imported task/i);
+  assert.equal(github.atomicWrites.length, 0);
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [{ id: '01K3X7Q8N8F4J7R2JQZ5AKP1MD', taskUrl: imported, durationSeconds: 60 }],
+  })));
+  const result = await tracker.addTime(request);
+  assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
+});
+
+test('Add time rejects overlap and invalid bounds before writing', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([entry('2026-08-18T07:30:00.000Z', '2026-08-18T08:30:00.000Z')]));
+  for (const [start, end] of [
+    ['2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z'],
+    ['2026-08-18T08:30:00.000Z', '2026-08-18T08:30:00.000Z'],
+    ['2026-08-18T08:30:00.000Z', '2026-08-18T10:00:00.000Z'],
+  ]) await assert.rejects(() => tracker.addTime({ taskUrl: issue.url, startedAt: start, endedAt: end }), /overlap|after|future/i);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('Add time with no end queues one timer at the selected start and preserves an existing timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const result = await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z', endedAt: null, description: 'Review' });
+  assert.equal(result.active.startedAt, '2026-08-18T08:45:00.000Z');
+  assert.equal(store.value.pendingWrites[0].nextActive.description, 'Review');
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:50:00.000Z', endedAt: null }), /already tracking/i);
+  assert.equal(store.value.pendingWrites.length, 1);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(store.value.activeCache.startedAt, result.active.startedAt);
+  assert.deepEqual(github.atomicWrites[0].guards.map(guard => guard.path), ['times/2026-08/alice.jsonl']);
+});
+
+test('Add time starts with only the current month even when older months exist', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'times/2026-06/alice.jsonl', serializeMonthlyRecords([entry('2026-06-18T07:00:00.000Z', '2026-06-18T08:00:00.000Z')]));
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([entry('2026-08-17T07:00:00.000Z', '2026-08-17T08:00:00.000Z')]));
+  github.listTextFilesSnapshot = () => { throw new Error('Add time must not list all history'); };
+  const tracker = service({ github, store });
+  const result = await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  assert.equal(result.active._pending, true);
+  assert.deepEqual(github.reads.filter(path => path.startsWith('times/')), ['times/2026-08/alice.jsonl']);
+  assert.equal(store.value.pendingWrites.length, 1);
+});
+
+test('Add time queued timer cannot sync after a completed interval changes across a restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:00:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  await service({ github, store }).syncPending();
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('Add time checks yesterday across a month boundary before writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-08-31T23:45:00.000Z', '2026-09-01T00:45:00.000Z'),
+  ]));
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-09-01T01:00:00.000Z') });
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url,
+    startedAt: '2026-09-01T00:30:00.000Z', endedAt: '2026-09-01T00:50:00.000Z' }), /overlap/i);
+  assert.deepEqual(github.reads.filter(path => path.startsWith('times/')).sort(),
+    ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl']);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('Add time refuses a concurrent change to yesterday at a month boundary', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry('2026-08-31T20:00:00.000Z', '2026-08-31T21:00:00.000Z')]));
+  const tracker = service({ github, timezone: 'UTC', clock: () => new Date('2026-09-01T01:00:00.000Z') });
+  const original = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, path, serializeMonthlyRecords([entry('2026-08-31T23:50:00.000Z', '2026-09-01T00:40:00.000Z')]), 'changed');
+    return original(...args);
+  };
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url,
+    startedAt: '2026-09-01T00:20:00.000Z', endedAt: '2026-09-01T00:50:00.000Z' }), /changed while adding/i);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('Add time rejects a start outside today before reading or writing', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url,
+    startedAt: '2026-08-17T07:00:00.000Z', endedAt: '2026-08-17T08:00:00.000Z' }), /today/i);
+  assert.equal(github.reads.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('Add time preserves pending writes and rejects a remote race without losing time', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  store.value.pendingWrites = [{ id: 'unresolved' }];
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' }), /Pending time writes/i);
+  assert.equal(store.value.pendingWrites.length, 1);
+  store.value.pendingWrites = [];
+  const original = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (...args) => {
+    seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([entry('2026-08-18T07:30:00.000Z', '2026-08-18T08:30:00.000Z')]));
+    return original(...args);
+  };
+  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' }), /changed while adding/i);
+  assert.equal(github.atomicWrites.length, 0);
+});
 
 test('bulk import appends entries after existing same-day time and stages same-day lines sequentially', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';

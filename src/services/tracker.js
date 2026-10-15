@@ -1,5 +1,5 @@
 import { activeRecordPath, assertUserMonthlyRecordsPath, localTimestamp, monthlyRecordsPath, normalizePlainTitle, parseActiveRecord, parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../domain/work-records.js';
-import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, validateActiveTimer, validateEntry } from '../domain/records.js';
+import { applyActiveEdits, applyActiveStartEdit, applyEntryEdits, buildActiveTimer, buildEntry, localDateInTimezone, validateActiveTimer, validateEntry } from '../domain/records.js';
 import { parseBulkTimeText } from '../domain/bulk-time.js';
 import { applyTaskIndexChanges, parseTaskIndex, serializeTaskIndex, TASK_INDEX_PATH } from '../domain/task-index.js';
 import { createUlid } from '../domain/ulid.js';
@@ -482,10 +482,10 @@ export class TrackerService {
     }
   }
 
-  async queueStart(taskUrl, taskTitle = '', description = '') {
+  async queueStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), overlapGuards = null } = {}) {
     const state = await this.store.getState();
     if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
-    const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description);
+    const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description, { startedAt, overlapGuards });
     await this.mutateState(current => {
       if (current.activeCache) throw new Error(`A timer is already tracking ${taskLabel(current.activeCache)}`);
       return { pendingWrites: [...(current.pendingWrites ?? []), operation], activeCache: pendingActive };
@@ -493,7 +493,7 @@ export class TrackerService {
     return pendingActive;
   }
 
-  prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null } = {}) {
+  prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null, overlapGuards = null } = {}) {
     const start = new Date(startedAt), activeId = id || this.idFactory(start.getTime());
     const active = this.buildActive({ id: activeId, taskUrl: normalizeStoredTaskIdentity(taskUrl), startedAt: start, description, taskTitle });
     const operation = {
@@ -501,6 +501,7 @@ export class TrackerService {
       stage: blockedBy ? 'awaitSourceCompletion' : 'startNext',
       nextActive: stripInternal(active), queuedAt: start.toISOString(), lastError: '',
       ...(blockedBy ? { blockedBy: structuredClone(blockedBy) } : {}),
+      ...(overlapGuards ? { overlapGuards: structuredClone(overlapGuards) } : {}),
     };
     return {
       operation,
@@ -825,10 +826,22 @@ export class TrackerService {
     let sha = undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
+        if (operation.overlapGuards) {
+          const result = await this.github.updateTextsAtomic([
+            { path, sha: sha ?? null, text: serializeActiveRecord(target) },
+          ], `timer: start ${this.user}`, { guards: operation.overlapGuards });
+          return { ...target, _path: path, _sha: result.blobShas[path] };
+        }
         const result = await this.github.putText(path, serializeActiveRecord(target), `timer: start ${this.user}`, sha);
         return { ...target, _path: path, _sha: result.sha };
       } catch (error) {
         if (!isRejectedCreate(error)) throw error;
+        if (operation.overlapGuards) {
+          const files = await Promise.all(operation.overlapGuards.map(guard => this.readMonthly(guard.path)));
+          if (files.some((file, index) => file.sha !== operation.overlapGuards[index].sha)) {
+            throw new TrackerConflictError('Completed time changed while starting this timer. Review Activity before retrying.', 'add_time_overlap_changed');
+          }
+        }
         let file;
         try { file = await this.github.getText(path); }
         catch (readError) { throw error; }
@@ -880,7 +893,8 @@ export class TrackerService {
         const operationType = operation.operation ?? operation.stage;
         if (operation.status === 'conflict') {
           if (String(operation.conflictReason || '').startsWith('queued_write_')) break;
-          const retryQueuedStart = operation.stage === 'startNext' && operation.nextActive;
+          const retryQueuedStart = operation.stage === 'startNext' && operation.nextActive
+            && operation.conflictReason !== 'add_time_overlap_changed';
           if (retryQueuedStart) {
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
             await this.persistQueueOperation(operation);
@@ -1751,6 +1765,62 @@ export class TrackerService {
       return { mergedEntries: removed.length, mergedActive: mergeActive };
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('Time data changed while tasks were being merged. Reload and try again.');
+      throw error;
+    }
+  }
+
+  async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }) {
+    const canonical = normalizeStoredTaskIdentity(taskUrl);
+    const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
+    const startMs = start.getTime(), end = endedAt == null ? null : new Date(endedAt), endMs = end?.getTime();
+    if (!Number.isFinite(startMs) || startMs > now.getTime()) throw new Error('Start time must be valid and not in the future.');
+    if (end && (!Number.isFinite(endMs) || endMs <= startMs || endMs > now.getTime())) throw new Error('End time must be after Start and not in the future.');
+    const today = localDateInTimezone(now, this.timezone);
+    if (localDateInTimezone(start, this.timezone) !== today || (end && localDateInTimezone(end, this.timezone) !== today)) {
+      throw new Error('Add time is available only for today.');
+    }
+    if (typeof taskTitle !== 'string' || taskTitle.length > 500 || typeof description !== 'string' || description.length > 2000) {
+      throw new Error('Task title or description is too long.');
+    }
+    const state = await this.store.getState();
+    if (state.activeCache && !end) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
+    if (state.pendingWrites?.length) throw new Error('Pending time writes must sync before adding time.');
+    const indexFile = /^https?:\/\//.test(canonical) ? null : await this.readTaskIndex();
+    if (indexFile && !Object.hasOwn(indexFile.index.tasks, canonical)) {
+      throw new Error('Select an existing imported task. New tasks require an HTTP(S) URL.');
+    }
+    const active = await this.refreshActive();
+    if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
+    const yesterday = new Date(`${today}T12:00:00.000Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const paths = [...new Set([today, yesterday.toISOString().slice(0, 10)]
+      .map(date => monthlyRecordsPath(this.user, date)))];
+    const files = await Promise.all(paths.map(path => this.readMonthly(path)));
+    if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < (endMs ?? now.getTime())
+        && new Date(entry.endedAt).getTime() > startMs))) throw new Error('Added time would overlap existing time.');
+    if (!end) return { active: await this.queueStart(canonical, taskTitle, description, {
+      startedAt: start, overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
+    }) };
+    const record = this.buildActive({ id: this.uniqueRecordId(startMs, new Set(files.flatMap(file => file.entries.map(entry => entry.id)))),
+      taskUrl: canonical, taskTitle, startedAt: start, description });
+    const entry = buildEntry({ active: record, endedAt: end, now, description });
+    const path = monthlyRecordsPath(this.user, entry.entryDate);
+    const file = files.find(item => item.path === path) ?? await this.readMonthly(path);
+    const entries = [...file.entries, entry].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+    const text = serializeMonthlyRecords(entries);
+    parseMonthlyRecords(text, { user: this.user, month: file.month, path });
+    try {
+      const { blobShas } = await this.updateCompletedRecords([{ path, sha: file.sha, text }], `time: add ${this.user}`, {
+        add: [entry], guards: [
+          ...files.filter(item => item.path !== path).map(item => ({ path: item.path, sha: item.sha })),
+          { path: activeRecordPath(this.user), sha: active?._sha ?? null },
+        ], ...(indexFile ? { indexFile } : {}),
+      });
+      const saved = parseMonthlyRecords(text, { user: this.user, month: file.month, path, sha: blobShas[path] });
+      await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
+      return { entry };
+    } catch (error) {
+      if (isConflict(error)) throw new TrackerConflictError('Time changed while adding this entry. Reload and try again.');
       throw error;
     }
   }

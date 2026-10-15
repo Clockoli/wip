@@ -1,4 +1,5 @@
 import { mountRunningStatus } from '../ui/running-status.js';
+import { mountAddTime } from '../ui/add-time.js';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../domain/tasks.js';
 import { formatClockDuration } from '../domain/reporting.js';
 
@@ -349,3 +350,4 @@ $('period').value = PERIODS.has(savedPeriod) ? savedPeriod : 'two-weeks';
 void load();
 
 mountRunningStatus($('running-status'), { send, onChange: load });
+mountAddTime($('add-time-button'), { send, onAdded: load });

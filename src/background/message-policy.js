@@ -15,7 +15,7 @@ const EXTENSION_MESSAGES = new Set([
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'SET_INTERFACE_WIDTH', 'GET_LOCAL_PREFERENCES',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
   'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
-  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'BULK_ADD_TIMES', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
+  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'BULK_ADD_TIMES', 'ADD_TIME', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
   'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
   'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS', 'GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED',
@@ -90,6 +90,32 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
     if (pageTaskUrl !== requested) throw new Error('Requested task URL must match the current page');
   }
   return requested;
+}
+
+export function addTimeForSender(payload, sender, extensionOrigin) {
+  assertMessageAllowed('ADD_TIME', sender, extensionOrigin);
+  if (![`${extensionOrigin}src/tasks/tasks.html`, `${extensionOrigin}src/times/times.html`].includes(sender?.url)) {
+    throw new Error('Add time is not allowed from this page');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || !['description,endedAt,startedAt,taskTitle,taskUrl', 'description,destinationId,endedAt,startedAt,taskTitle,taskUrl'].includes(Object.keys(payload).sort().join(','))) {
+    throw new Error('Invalid Add time payload');
+  }
+  const { taskTitle, description, startedAt, endedAt } = payload;
+  if (typeof taskTitle !== 'string' || taskTitle.length > 500 || typeof description !== 'string' || description.length > 2000) {
+    throw new Error('Invalid or too long Add time text');
+  }
+  for (const value of [startedAt, endedAt]) {
+    if (value !== null && (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)
+        || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value)) throw new Error('Invalid Add time timestamp');
+  }
+  if (Object.hasOwn(payload, 'destinationId')) {
+    if (typeof payload.destinationId !== 'string' || !DESTINATION_ID_RE.test(payload.destinationId)) throw new Error('Invalid Add time destination');
+    const taskUrl = normalizeStoredTaskIdentity(payload.taskUrl);
+    if (/^https?:\/\//i.test(taskUrl)) throw new Error('Invalid Add time payload');
+    return { taskUrl, taskTitle, description, startedAt, endedAt, destinationId: payload.destinationId };
+  }
+  return { taskUrl: normalizeTaskUrl(payload.taskUrl), taskTitle, description, startedAt, endedAt };
 }
 
 export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin, sourceEntry, storedRecords = []) {

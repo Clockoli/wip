@@ -37,7 +37,7 @@ import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -578,7 +578,7 @@ const READ_RETRY_MESSAGES = new Set([
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
-  'LOAD_RECENT', 'BULK_ADD_TIMES', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -1181,6 +1181,22 @@ async function handle(message, sender) {
     };
   }
   switch (message.type) {
+    case 'ADD_TIME': {
+      const { type, ...fields } = message;
+      const payload = addTimeForSender(fields, sender, extensionOrigin);
+      const destinationId = payload.destinationId
+        ? await requireConfiguredDestinationId(store, payload.destinationId)
+        : await resolveStartDestinationId(store, payload.taskUrl);
+      const currentDestinationId = await activeDestinationId(store);
+      if (currentDestinationId && currentDestinationId !== destinationId) {
+        throw new Error('A timer is running in another time repository. Stop it before adding time.');
+      }
+      const tracker = await trackerForDestination(destinationId);
+      const { destinationId: _requestedDestination, ...entry } = payload;
+      const result = await tracker.addTime(entry);
+      if (result.active?._pending) requestPendingSync();
+      return { ...result, destinationId };
+    }
     case 'START': {
       const taskUrl = taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
       const destinationId = await resolveStartDestinationId(store, taskUrl);
