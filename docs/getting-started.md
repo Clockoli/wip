@@ -76,7 +76,7 @@ Normal setup has two guided steps: sign in with GitHub, then check a time reposi
 3. Paste the one-time code and approve the request.
 4. Return to Clockoli. It checks the result automatically; **Done on GitHub—check now** is also available.
 
-Device activation signs this browser in without asking you to create or paste a personal access token. GitHub authorization and GitHub App repository access are separate steps.
+Device activation uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow). It signs this browser in without asking you to create or paste a personal access token. GitHub authorization and GitHub App repository access are separate steps.
 
 ### Step 2: connect time repositories
 
