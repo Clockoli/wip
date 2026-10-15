@@ -2567,7 +2567,8 @@ test('Activity and popup mount the same seven-day Timeline and Calendar with wee
 });
 
 test('Timeline rows include only projects visible in the selected week', () => {
-  const now = new Date(2026, 9, 14, 12).getTime();
+  // activityEntry times are UTC, so `now` must be a UTC instant too.
+  const now = new Date('2026-10-14T12:00:00Z').getTime();
   const state = { configured: true, active: null, pendingWrites: [],
     projects: [{ name: 'One', substrings: ['/one'] }, { name: 'Two', substrings: ['/two'] }] };
   const one = activityEntry('one', '2026-10-14', '08');
