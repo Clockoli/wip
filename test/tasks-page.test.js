@@ -251,7 +251,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
-    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue, mountRunningStatus() {},
+    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue, mountRunningStatus() {}, mountAddTime() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; }, clearInterval: id => intervals.delete(id),
