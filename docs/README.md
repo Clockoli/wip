@@ -10,6 +10,7 @@ Clockoli tracks time against HTTP(S) task URLs and routes records to private per
 - [Feature guide](features.md): tracking, multi-repository routing, correction, aggregated reads, Reports, billable rates, settings backup, and synchronization.
 - [Why Clockoli](why-clockoli.md): how the Git-backed model differs from SaaS trackers, local-only timers, spreadsheets, and issue-only integrations.
 - [Data, privacy, and security](data-and-privacy.md): what is stored, where it is stored, destination permissions, personal branches, and security boundaries.
+- [Licensing and source releases](licensing.md): GPLv3 terms, notices, and Corresponding Source archives.
 - [Packaged add-ons](add-ons.md): first-party integrations, user-granted host access, and provider-data boundaries.
 - [Time-data repository setup](time-data-repository.md): live repository discovery, confirmed setup actions, shared access, repository layout, and routing.
 - [Troubleshooting](troubleshooting.md): common setup, synchronization, Clockify migration, reporting, and data-format problems.

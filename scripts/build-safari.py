@@ -101,6 +101,27 @@ def signing_credentials(directory, environment):
             run(['security', 'delete-keychain', keychain], capture_output=True)
 
 
+def verify_app_licenses(app):
+    """Check legal notices *inside* the final native Safari app, not only input files."""
+    required = json.loads((ROOT / 'scripts/legal-files.json').read_text())
+    extensions = list(app.glob('Contents/PlugIns/*.appex'))
+    if len(extensions) != 1:
+        raise ValueError('Safari app must contain exactly one extension for license verification')
+    resources = extensions[0] / 'Contents' / 'Resources'
+    if not resources.is_dir():
+        raise ValueError('Safari extension is missing its resource directory')
+    # Host-app copies must never conceal missing or modified extension notices.
+    candidates = [file for file in resources.rglob('*') if file.is_file()]
+    for relative in required:
+        expected = (ROOT / relative).read_bytes()
+        matches = [file for file in candidates
+                   if file.as_posix().endswith('/' + relative)]
+        if not matches:
+            raise ValueError(f'Safari app is missing bundled license: {relative}')
+        if not any(file.read_bytes() == expected for file in matches):
+            raise ValueError(f'Safari app has stale or modified license: {relative}')
+
+
 def verify_app(app, version, build_number):
     if not app.is_dir():
         raise ValueError(f'Missing Safari app: {app}')
@@ -112,10 +133,11 @@ def verify_app(app, version, build_number):
             info = plistlib.load(source)
         if info['CFBundleShortVersionString'] != version or info['CFBundleVersion'] != build_number:
             raise ValueError(f'Safari bundle version mismatch: {bundle.name}')
+    verify_app_licenses(app)
     run(['codesign', '--verify', '--deep', '--strict', app])
 
 
-def build(output, build_number, environment):
+def build(output, build_number, environment, release_ref=None):
     version = json.loads((ROOT / 'manifest.json').read_text())['version']
     output.mkdir(parents=True, exist_ok=True)
     artifacts = []
@@ -123,7 +145,10 @@ def build(output, build_number, environment):
         directory = pathlib.Path(temporary).resolve()
         extension = directory / 'extension'
         project_directory = directory / 'project'
-        run(['python3', ROOT / 'scripts/build-release.py', '--target', 'safari', '--unpacked', extension])
+        package_command = ['python3', ROOT / 'scripts/build-release.py', '--target', 'safari']
+        if release_ref:
+            package_command.extend(['--release-ref', release_ref])
+        run([*package_command, '--unpacked', extension])
         run(['xcrun', 'safari-web-extension-converter', extension, '--project-location', project_directory,
              '--app-name', 'Clockoli', '--bundle-identifier', 'com.clockoli.Clockoli', '--macos-only',
              '--swift', '--copy-resources', '--no-prompt', '--no-open'])
@@ -202,6 +227,8 @@ def build(output, build_number, environment):
 def main():
     parser = argparse.ArgumentParser(description='Build macOS Safari apps; sign when the complete Apple environment is present.')
     parser.add_argument('--build-number', required=True)
+    parser.add_argument('--release-ref', metavar='REF',
+                        help='Require an exact clean Git checkout for distributable Safari apps')
     parser.add_argument('output', help='Artifact directory outside the repository')
     args = parser.parse_args()
     if not args.build_number.isascii() or not args.build_number.isdigit() or int(args.build_number) < 1:
@@ -213,8 +240,10 @@ def main():
         environment = signing_environment(os.environ)
     except ValueError as error:
         parser.error(str(error))
+    if environment is not None and not args.release_ref:
+        parser.error('Signed Safari distributions require --release-ref')
     try:
-        build(output, args.build_number, environment)
+        build(output, args.build_number, environment, args.release_ref)
     except subprocess.CalledProcessError as error:
         # Subprocess arguments can contain signing credentials; never print the exception's command.
         raise SystemExit(f'External build tool failed with exit code {error.returncode}') from None

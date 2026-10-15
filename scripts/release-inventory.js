@@ -1,7 +1,10 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const MANIFEST = 'manifest.json';
+const LEGAL_FILES = Object.freeze(JSON.parse(readFileSync(new URL('./legal-files.json', import.meta.url), 'utf8')));
+const LEGAL_FILE_SET = new Set(LEGAL_FILES);
 const VIRTUAL_RESOURCES = new Set(['_favicon/*']);
 const RUNTIME_PAGE_ENTRIES = ['src/clockify-migration/preview.html', 'src/reports/reports.html', 'src/tasks/tasks.html', 'src/times/times.html'];
 const EXCLUDED_SEGMENTS = new Set(['test', 'tests', 'docs', 'scripts', 'node_modules', '.git']);
@@ -48,7 +51,7 @@ function manifestEntries(manifest) {
 
 function assertRuntimePath(file) {
   const parts = file.split('/');
-  if (file !== MANIFEST && parts[0] !== 'src') throw new Error(`Release entry must be manifest.json or under src/: ${file}`);
+  if (file !== MANIFEST && !LEGAL_FILE_SET.has(file) && parts[0] !== 'src') throw new Error(`Release entry must be manifest.json or under src/: ${file}`);
   if (parts.some(part => EXCLUDED_SEGMENTS.has(part))) throw new Error(`Development-only path reached the release inventory: ${file}`);
   if (/\.(?:map|log|tmp|rec|test\.[^.]+)$/i.test(file) || /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)/.test(file)) {
     throw new Error(`Forbidden release entry: ${file}`);
@@ -58,7 +61,7 @@ function assertRuntimePath(file) {
 export async function releaseInventory(root, manifest = null) {
   if (manifest === null) manifest = JSON.parse(await readFile(path.join(root, MANIFEST), 'utf8'));
   const pending = [...manifestEntries(manifest)];
-  const files = new Set([MANIFEST]);
+  const files = new Set([MANIFEST, ...LEGAL_FILES]);
   while (pending.length) {
     const file = pending.shift();
     if (!file || files.has(file)) continue;

@@ -2,8 +2,9 @@
   "name": "task-timeline-component-clockoli",
   "version": "1.0.0-clockoli.1",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
-  "description": "Vendored TaskTimeline with the Clockoli integration adapter",
+  "description": "Clockoli-owned TaskTimeline with the Clockoli integration adapter",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.js",

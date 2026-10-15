@@ -13,6 +13,10 @@ if (command === 'sign') {
   for (const name of ['AMO_JWT_ISSUER', 'AMO_JWT_SECRET']) {
     if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
   }
+  // AMO's binary and source ZIP must come from the same clean Git commit.
+  const changes = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'],
+    { cwd: root, encoding: 'utf8' });
+  if (changes.trim()) throw new Error('Firefox signing requires a clean Git working tree');
   const relative = path.relative(root, path.resolve(output));
   if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) {
     throw new Error('Signing output must be outside the repository');
@@ -28,7 +32,10 @@ try {
     const artifactsDir = path.resolve(output);
     await mkdir(artifactsDir, { recursive: true });
     const sourceArchive = path.join(temporary, 'source.zip');
-    execFileSync('git', ['archive', '--format=zip', `--output=${sourceArchive}`, 'HEAD'], { cwd: root });
+    execFileSync('python3', ['scripts/package-source.py', 'HEAD', sourceArchive], { cwd: root, stdio: 'inherit' });
+    // Verify the exact Corresponding Source and full PDF rebuild before AMO signing.
+    execFileSync('python3', ['scripts/generate-pdf-notices.py', sourceArchive, '--check'], { cwd: root, stdio: 'inherit' });
+    execFileSync('python3', ['scripts/verify-pdf-rebuild.py', sourceArchive], { cwd: root, stdio: 'inherit' });
     execFileSync(process.execPath, [path.join(root, 'node_modules/web-ext/bin/web-ext.js'), 'sign',
       '--source-dir', sourceDir, '--artifacts-dir', temporary, '--channel', 'unlisted',
       '--upload-source-code', sourceArchive,

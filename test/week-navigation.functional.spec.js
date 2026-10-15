@@ -238,11 +238,17 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.task-timeline-host .row-label')).toHaveCount(0);
     await activity.setViewportSize({ width: 1280, height: 520 });
     await expect.poll(() => activity.evaluate(() => document.scrollingElement.scrollHeight - innerHeight)).toBeGreaterThan(30);
-    const timelineBounds = await activityRoot.locator('.task-timeline-host .viewport').boundingBox();
+    const timelineViewport = activityRoot.locator('.task-timeline-host .viewport');
+    await expect(timelineViewport).toBeVisible();
+    const timelineBounds = await timelineViewport.boundingBox();
     expect(timelineBounds.y).toBeLessThan(520);
     await activity.mouse.move(timelineBounds.x + timelineBounds.width / 2, (Math.max(0, timelineBounds.y) + Math.min(520, timelineBounds.y + timelineBounds.height)) / 2);
-    await activity.mouse.wheel(0, 120);
-    await expect.poll(() => activity.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    // A freshly rendered Timeline can consume the first wheel gesture while the
+    // horizontal viewport settles. Require an actual page scroll, not a mock.
+    await expect(async () => {
+      await activity.mouse.wheel(0, 120);
+      await expect.poll(() => activity.evaluate(() => window.scrollY), { timeout: 900 }).toBeGreaterThan(0);
+    }).toPass({ timeout: 7000, intervals: [250, 500, 1000] });
     await activity.evaluate(() => window.scrollTo(0, 0));
     await activity.setViewportSize({ width: 1280, height: 900 });
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
@@ -323,9 +329,14 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activity.mouse.wheel(0, -120);
     await expect.poll(() => activity.evaluate((before) => window.scrollY < before, pageAtBottom)).toBe(true);
     await activity.setViewportSize({ width: 390, height: 520 });
+    // Keep the wheel target fully in view instead of relying on the page's
+    // previous vertical scroll position at this responsive breakpoint.
+    await calendarViewport.scrollIntoViewIfNeeded();
+    await expect.poll(() => calendarViewport.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
     await calendarViewport.evaluate(element => { element.scrollLeft = 0; });
     const narrowCalendar = await calendarViewport.boundingBox();
-    await activity.mouse.move(narrowCalendar.x + narrowCalendar.width / 2, Math.max(0, narrowCalendar.y) + 40);
+    await activity.mouse.move(narrowCalendar.x + narrowCalendar.width / 2,
+      narrowCalendar.y + Math.min(80, narrowCalendar.height / 2));
     await activity.mouse.wheel(120, 0);
     await expect.poll(() => calendarViewport.evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
     expect(await activity.evaluate(() => window.scrollX)).toBe(0);
