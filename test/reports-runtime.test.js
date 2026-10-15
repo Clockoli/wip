@@ -27,7 +27,7 @@ const result = (records = [record('alice'), record('bob', 'other.com')], rates =
   billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
-function harness(preferences = {}) {
+function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
   const classList = owner => ({
     toggle(name, force) { const classes = new Set(owner.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); owner.className = [...classes].join(' '); },
     contains: name => owner.className.split(' ').includes(name),
@@ -93,7 +93,7 @@ function harness(preferences = {}) {
     ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), getComputedStyle: () => ({ fontStyle: 'normal', fontVariant: 'normal', fontWeight: '700', fontSize: '28px', fontFamily: 'sans-serif', lineHeight: '35px', color: '#000' }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
-    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
+    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length && !delayInitialPreferences) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
   });
   vm.runInContext(source.replace(/^import[\s\S]*?from '[^']+';\n/gm, ''), context);
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
@@ -131,6 +131,32 @@ test('period, exports, and chart controls use the compact always-visible layout'
   assert.ok(chart.indexOf('id="stack-by"') < chart.indexOf('id="analytics-chart"'));
   assert.ok(chart.indexOf('id="horizontal-axis"') > chart.indexOf('id="analytics-chart"'));
   assert.match(styles, /@media\(max-width:640px\)[\s\S]*\.chart-top-controls\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
+});
+
+test('initial progress is visible before preferences resolve and while reports load', async () => {
+  const loadingTag = html.match(/<div id="loading"[^>]*>/)?.[0] || '';
+  const progressTag = html.match(/<progress id="loading-progress"[^>]*>/)?.[0] || '';
+  assert.ok(loadingTag);
+  assert.doesNotMatch(loadingTag, /\bhidden\b/);
+  assert.doesNotMatch(progressTag, /\bvalue=/);
+  const page = harness({}, { delayInitialPreferences: true });
+  assert.equal(page.requests[0].message.type, 'GET_LOCAL_PREFERENCES');
+  assert.equal(page.nodes.get('loading').hidden, false);
+  await page.reply({}, page.requests[0]);
+  assert.equal(page.requests.at(-1).message.type, 'LOAD_REPORT');
+  assert.equal(page.nodes.get('loading').hidden, false);
+  assert.equal(page.nodes.get('loading-progress').value, 10);
+  await page.reply(result());
+  assert.equal(page.nodes.get('loading').hidden, true);
+});
+
+test('initial preference failures hide the loading indicator and show the error', async () => {
+  const page = harness({}, { delayInitialPreferences: true });
+  assert.equal(page.nodes.get('loading').hidden, false);
+  await page.reply(new Error('Unable to read preferences'), page.requests[0]);
+  assert.equal(page.nodes.get('loading').hidden, true);
+  assert.equal(page.nodes.get('error').hidden, false);
+  assert.match(page.textOf(page.nodes.get('error')), /Unable to read preferences/);
 });
 
 test('first load defaults to current user, shows one time figure and hides unconfigured billing', async () => {
