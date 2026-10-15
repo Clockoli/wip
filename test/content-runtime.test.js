@@ -3796,6 +3796,7 @@ test('Calendar can delete a locally stopped timer before sync without losing its
   assert.ok(block, 'the locally stopped time remains visible before GitHub sync');
   assert.equal(block.isPending, true);
   assert.equal(block.isDeleteDisabled, false, 'the queued Stop can be deleted');
+  assert.equal(block.isPendingDeleteAllowed, true, 'only durable pending completions may be deleted');
   assert.equal(await harness.timelineMounts[0].onDelete({ id: 'entry:pending-stop' }), true);
   const request = harness.messages.find(message => message.type === 'QUEUE_ENTRY_DELETE');
   assert.equal(request.payload.destinationId, 'github:2');
@@ -3847,6 +3848,7 @@ test('Calendar does not allow deleting a speculative completion without stored o
     records: [optimistic], now, timelineEnabled: true,
   });
   assert.equal(harness.timelineItems(0, now)[0].isDeleteDisabled, true);
+  assert.equal(harness.timelineItems(0, now)[0].isPendingDeleteAllowed, false);
 });
 
 test('deleting a Timeline block keeps saving feedback visible through local queue acceptance', async () => {

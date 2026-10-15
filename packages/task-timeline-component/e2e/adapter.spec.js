@@ -93,6 +93,23 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
 
+
+for (const mode of ['timeline', 'calendar']) test('a durable pending completion has an actionable Delete button in ' + mode, async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { weeklyCalendar: true, items: [
+    { id: 'entry:local-stop', url: 'https://example.com/task', title: 'Locally stopped',
+      startedAt: now - 2 * HOUR, endedAt: now - HOUR, rowId: 'one',
+      isEditable: true, isPending: true, isPendingDeleteAllowed: true },
+  ] });
+  if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const block = page.locator('#timeline .' + (mode === 'calendar' ? 'calendar-task' : 'task') + '[data-task-key="entry:local-stop"]').first();
+  await block.click();
+  const deletion = page.locator('#timeline .clockoli-timeline-action.danger');
+  await expect(deletion).toBeEnabled();
+  await deletion.click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['delete', 'entry:local-stop']);
+});
+
 test('a completed record of the running task offers Stop and save rather than disabled Start', async ({ page }) => {
   const now = Date.now();
   await mount(page, { items: [

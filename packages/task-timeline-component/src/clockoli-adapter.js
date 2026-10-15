@@ -196,7 +196,7 @@
       resizeEnd: editable && !running,
       start: !item?.isStartDisabled,
       stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
-      delete: running ? !item?.isDeleteDisabled : !pending && !item?.isDeleteDisabled,
+      delete: !item?.isDeleteDisabled && (running || !pending || item?.isPendingDeleteAllowed === true),
     };
   }
 

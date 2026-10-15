@@ -2286,6 +2286,8 @@
         isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active,
         isPending: Boolean(entry.isPending),
+        isPendingDeleteAllowed: Boolean(!entry._active && entry.isPending && entry.destinationId
+          && entry._path?.startsWith('times/')),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
         isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
