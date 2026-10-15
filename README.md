@@ -31,10 +31,11 @@
 
 Most time trackers keep your hours in a vendor database. Clockoli writes them to Git instead:
 
-- **Your data stays in your repository.** Records go to a private GitHub repository you choose. Access, retention, backup and deletion follow that repository's rules.
-- **Records are plain text.** Completed entries are JSON Lines files, one per person per month, in a [documented format](docs/data-format-v1.md). You can read them without Clockoli, or clone the repository and query it with any tool.
-- **Every synchronized change is a commit.** Corrections and deletions stay visible in Git history. Several edits to the same entry made before a sync reach GitHub as one commit.
-- **There is no Clockoli backend.** The extension talks directly to the GitHub API. Credentials stay in extension storage.
+- **Your data stays in your repository.** Hours go to a private GitHub repository you choose, so you decide who can read them, how long they are kept and when they are deleted.
+- **Back up everything with one command.** `git clone` copies every entry you have tracked. Each completed entry is one line of JSON in a monthly file, in a [documented format](docs/data-format-v1.md), so the copy stays readable without Clockoli.
+- **Ask an AI where the time went.** Point an AI agent at the clone and ask which tasks ran over or how many hours to bill this month. No export step, no Clockoli API.
+- **See every change, and undo it.** Each synchronized edit or deletion is a Git commit, so `git log` shows what changed and when, and an earlier version can be restored from history. Several edits made before a sync arrive as one commit.
+- **No Clockoli account or server.** The extension talks directly to GitHub. There is nothing to sign up for, and your GitHub credentials stay in the extension.
 - **Any URL is a task.** GitHub issues and pull requests, documents, support tickets, dashboards: the page address is the task identity, and a title is optional.
 
 Clockoli fits teams that already work in GitHub and care more about owning and auditing their data than about one-click SaaS onboarding. [Why Clockoli](docs/why-clockoli.md) explains the tradeoffs, and [clockoli.com](https://clockoli.com/#compare) compares it with Toggl Track, Clockify, Harvest, Kimai and solidtime.
