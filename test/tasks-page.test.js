@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
 import { formatClockDuration } from '../src/domain/reporting.js';
-import { normalizeTaskUrl, localDateParts, entryDateValue } from '../src/domain/values.js';
+import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
 
 const html = fs.readFileSync(new URL('../src/tasks/tasks.html', import.meta.url), 'utf8');
 const js = fs.readFileSync(new URL('../src/tasks/tasks.js', import.meta.url), 'utf8');
@@ -251,7 +251,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
-    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, localDateParts, entryDateValue, mountRunningStatus() {},
+    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue, mountRunningStatus() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; }, clearInterval: id => intervals.delete(id),
