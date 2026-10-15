@@ -73,7 +73,7 @@ Store reviews can make the Chrome Web Store version trail the latest GitHub rele
 
 ## Quick start
 
-1. **Sign in with GitHub.** Open **Settings**; it opens by itself after installation. Clockoli uses GitHub device flow, so you never create or paste a token. If your browser asks for access to GitHub, allow it.
+1. **Sign in with GitHub.** Open **Settings**; it opens by itself after installation. Clockoli uses GitHub [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow): you enter a one-time code on github.com and approve access, so you never create or paste a token. If your browser asks for access to GitHub, allow it.
 2. **Connect a private time repository.** Paste a repository URL or `owner/name`, or create a new one from the Clockoli template, then confirm **Connect repository**.
 3. **Track a task.** On a GitHub issue or pull request, use the stopwatch next to your avatar. On any other page, click the Clockoli toolbar button and choose **Track this task**. Choose **Stop and save** when you finish.
 
