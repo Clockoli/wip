@@ -116,6 +116,8 @@ The shared Timeline/Calendar component leaves vertical Timeline wheel gestures t
 
 Timeline and Calendar show tracked time for each local calendar day, including zero days. Intervals spanning midnight contribute to each affected day. When only one project is shown, Timeline and Calendar omit its redundant label (including in task details); multiple projects retain their labels. Selected task details appear above the week navigation in Calendar, and below the chart in Timeline. Timeline, Calendar, and List show the selected week's **Total** above the view, including running time only on the current week; it updates when browsing weeks. List search filters entries without changing this week-wide total.
 
+Single- and double-clicking a Timeline or Calendar block both select it and show its details. Neither gesture starts or stops a timer; use **Start tracking** or **Stop and save** in the details to change tracking.
+
 Both the running interval and completed intervals of the task currently being tracked show **Stop and save** in Timeline/Calendar details. It stops and saves the current timer, never changes the selected completed interval. The running duration remains visible in the task details and header. Once stopped, a completed interval offers **Start tracking** again.
 Activity hydrates durable local edits before waiting for the GitHub week read, so an edit queued during a previous session is not temporarily replaced by the older remote interval. **Timeline** block moves, edge resizing, and keyboard arrow edits snap to five-minute increments (:00, :05, :10, etc.) at any zoom level; neighbor-boundary magnets still apply. **Calendar** keeps its existing one-minute precision, while direct List time inputs continue to accept exact minutes.
 

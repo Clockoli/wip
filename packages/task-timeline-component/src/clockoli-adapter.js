@@ -671,14 +671,13 @@
       const interactive = path.some(node => node instanceof Element && node.matches?.('input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"])'));
       if (interactive) return;
       const target = path.find(node => node instanceof Element && node.matches?.('[data-task-key]'));
-      if ((event.type === 'pointerdown' || event.type === 'dblclick') && !target) return;
+      if (event.type === 'pointerdown' && !target) return;
       const key = target?.dataset?.taskKey ?? timeline.selectedKey;
       const item = sourceItem(key);
       if (!item) return;
       const permissions = permissionsFor(item);
       let allowed = true;
-      if (event.type === 'dblclick') allowed = item.isRunning ? permissions.stop : permissions.start;
-      else if (event.type === 'pointerdown') {
+      if (event.type === 'pointerdown') {
         const handle = event.composedPath().find(node => node instanceof Element && (node.classList?.contains('resize-handle') || node.classList?.contains('calendar-resize-handle')));
         if (handle?.classList?.contains('left') || handle?.dataset?.resizeMode === 'resize-left') allowed = permissions.resizeStart;
         else if (handle?.classList?.contains('right') || handle?.dataset?.resizeMode === 'resize-right') allowed = permissions.resizeEnd;
@@ -696,7 +695,6 @@
     }
 
     timeline.shadow.addEventListener('pointerdown', permissionEvent, true);
-    timeline.shadow.addEventListener('dblclick', permissionEvent, true);
     timeline.shadow.addEventListener('keydown', permissionEvent, true);
     timeline.viewport.addEventListener('scroll', () => {
       styleTasks();

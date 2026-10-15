@@ -75,10 +75,18 @@ test('Calendar keeps unavailable resources and imported identities without favic
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), '5906afde0afac3efe92f13d59ecfbac6f47bb21fc0397f93c3fa2ac3ac4b5fd8');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), 'dbf80daae699fb445b1c0e9182722c19cb2eae5cc2fa9dc2632d6d4c20c0869f');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
+});
+
+test('Timeline and Calendar double-clicks only select the task', () => {
+  assert.match(vendor, /calendarCanvas\.addEventListener\('click'/);
+  assert.match(vendor, /taskRow\.addEventListener\('click'/);
+  assert.doesNotMatch(vendor, /addEventListener\('dblclick'/);
+  assert.doesNotMatch(source, /addEventListener\('dblclick'/);
+  assert.doesNotMatch(vendor, /source: 'double-click'/);
 });
 
 test('adapter exposes TaskTimeline through the Clockoli runtime API', () => {
