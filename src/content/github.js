@@ -2291,7 +2291,7 @@
         isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
-          || Boolean(!entry._active && entry._pending)
+          || Boolean(!entry._active && (!entry.destinationId || !entry._path?.startsWith('times/')))
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
       };
     });
@@ -2618,7 +2618,9 @@
   }
 
   async function queueTimelineEntryDelete(entry) {
+    if (!entry?.destinationId || !entry._path?.startsWith('times/')) return false;
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
+    const previousCompletion = timelineOptimisticCompletions.get(entry.id);
     const previousRecent = recent;
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
@@ -2636,6 +2638,7 @@
       if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
     } catch (error) {
       recent = previousRecent;
+      if (previousCompletion) timelineOptimisticCompletions.set(entry.id, previousCompletion);
       pageState = { ...pageState, ...previousTotals };
       recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
       throw error;
@@ -2772,10 +2775,7 @@
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
-          if (!entry._active) {
-            if (entry._pending) return false;
-            return queueTimelineEntryDelete(entry);
-          }
+          if (!entry._active) return queueTimelineEntryDelete(entry);
           if (!confirm('Delete this running timer without saving its tracked time?')) return false;
           timelineDeleteInFlight = true;
           const acceptanceId = beginTimelineQueueAcceptance();

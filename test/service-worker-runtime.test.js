@@ -311,6 +311,43 @@ test('extracted service-worker handler pins STOP to the active destination', asy
   assert.equal(calls[0].options?.localOnly, true, 'Stop must not wait for GitHub preflight');
 });
 
+
+test('STOP gives the Calendar a durable pending entry and its origin for immediate Delete', async () => {
+  const store = {
+    getTrackingSnapshot: async () => ({ activeTimer: { destinationId: 'github:2', record: { id: 'running' } } }),
+    getDestinationRegistry: async () => registry,
+  };
+  const calls = [];
+  const pendingEntry = {
+    id: 'running', taskUrl: 'https://example.test/task',
+    _path: 'times/2026-08/alice.jsonl', _sha: null, _index: -1, _pending: true,
+  };
+  const context = handlerContext({
+    store,
+    trackerForDestination: async destinationId => ({
+      stop: async () => ({ pending: true, entry: pendingEntry }),
+      queueEntryDelete: async payload => {
+        calls.push({ destinationId, payload });
+        return { operationId: 'delete-op', pending: true };
+      },
+    }),
+  });
+  const stopped = await context.handle({ type: 'STOP' }, extensionSender);
+  assert.equal(stopped.entry.destinationId, 'github:2');
+  assert.equal(stopped.entry._path, pendingEntry._path);
+  assert.equal(stopped.entry._pending, true);
+  assert.equal(pendingEntry.destinationId, undefined, 'destination metadata is not persisted inside work entries');
+  const deleted = await context.handle({ type: 'QUEUE_ENTRY_DELETE', payload: {
+    destinationId: stopped.entry.destinationId, path: stopped.entry._path,
+    originalSha: stopped.entry._sha, index: stopped.entry._index, original: stopped.entry,
+  } }, extensionSender);
+  assert.equal(deleted.destinationId, 'github:2');
+  assert.equal(deleted.operationId, 'delete-op');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].destinationId, 'github:2');
+  assert.equal(calls[0].payload.destinationId, undefined, 'the destination stays outside the tracker payload');
+});
+
 test('extracted service-worker handler requires and routes a completed edit destination', async () => {
   const calls = [];
   const store = { getDestinationRegistry: async () => registry };
