@@ -696,6 +696,27 @@ test('Calendar refocuses early records when a cached partial week is completed',
   expect(dragTop).toBe(0);
 });
 
+test('Calendar focuses loaded work after its Activity host is reattached', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  const monday = new Date(2026, 9, 12).getTime();
+  await mount(page, { weeklyCalendar: true, items: [] });
+  const detached = await page.evaluate(monday => {
+    const host = document.querySelector('#timeline');
+    const calendar = window.__timeline;
+    calendar.setViewMode('calendar');
+    calendar.setCalendarRange({ start: monday, end: monday + 7 * 24 * 60 * 60 * 1000 });
+    host.remove();
+    calendar.update({ items: [{ id: 'work', url: 'https://example.com/work', title: 'Work',
+      startedAt: monday + 10 * 60 * 60 * 1000, endedAt: monday + 11 * 60 * 60 * 1000, rowId: 'one' }] });
+    const viewport = host.shadowRoot.querySelector('.calendar-viewport');
+    const top = viewport.scrollTop;
+    document.body.append(host);
+    return top;
+  }, monday);
+  expect(detached).toBe(0);
+  await expect.poll(() => page.locator('#timeline .calendar-viewport').evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+});
+
 test('Calendar current-day total follows an active timer within the same wall-clock minute', async ({ page }) => {
   const now = new Date(2026, 9, 14, 12, 0, 5);
   const day = new Date(2026, 9, 14).getTime();

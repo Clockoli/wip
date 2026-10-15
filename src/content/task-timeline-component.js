@@ -3181,10 +3181,14 @@
           && starts[bestStart + 2] - starts[bestStart + 1] <= 90) bestStart++;
         const startMinutes = starts.length ? starts[bestStart] : 8 * 60;
         const top = Math.max(0, metrics.headerHeight + metrics.verticalMap.toY(Math.max(0, startMinutes - 90)));
-        this.calendarViewport.scrollTop = top;
-        this.calendarAutoScrollTop = this.calendarViewport.scrollTop;
-        if (!starts.length) this.calendarAutoFocusPending = true;
-        this.calendarScrollInitialized = true;
+        // A detached viewport clamps scrollTop to zero; let the host resize
+        // render apply this position after the host is connected again.
+        if (this.host.isConnected) {
+          this.calendarViewport.scrollTop = top;
+          this.calendarAutoScrollTop = this.calendarViewport.scrollTop;
+          if (!starts.length) this.calendarAutoFocusPending = true;
+          this.calendarScrollInitialized = true;
+        }
       }
       this._updateTimelineMeta();
     }

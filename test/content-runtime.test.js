@@ -3125,6 +3125,30 @@ test('popup Calendar shows the week spinner until the complete week response arr
   assert.equal(overlay.hidden, true, 'partial data is reported as an error, not an endless spinner');
 });
 
+test('opening GitHub Calendar uses one complete week read without a late spinner', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const cached = activityEntry('cached', '2026-09-05', '08');
+  const earlier = activityEntry('earlier', '2026-09-01', '08');
+  const state = { configured: true, active: null, pendingWrites: [], recent: [cached] };
+  let finishWeek;
+  const h = dailyPanelHarness({ state, records: [cached], now, timelineEnabled: true,
+    respond(message, callback) {
+      if (message.type === 'LOAD_WEEK') finishWeek = callback;
+      else callback({ ok: true, data: message.type === 'GET_ACTIVITY_VIEW_MODE' ? { mode: 'calendar' } : state });
+    },
+  });
+  const opening = h.toggleFullWidthPopup();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.messages.filter(message => message.type === 'LOAD_WEEK').length, 1);
+  assert.equal(h.messages.filter(message => message.type === 'LOAD_RECENT').length, 0,
+    'fresh page state already supplies the bounded recent records');
+  assert.equal(h.popupRoot().querySelector('.calendar-week-loading').hidden, true,
+    'cached entries remain visible without a second opening spinner');
+  finishWeek({ ok: true, data: { ...state, recent: [cached, earlier] } });
+  await opening;
+  assert.ok(h.recentEntry('earlier'), 'the complete week is still loaded');
+});
+
 test('Activity List restores its week and entries when an arrow read fails', async () => {
   const now = new Date(2026, 8, 5, 12).getTime();
   const entry = activityEntry('current-week', '2026-09-03', '08');
