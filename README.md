@@ -81,22 +81,24 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 
 ## Features
 
-<p align="center">
-  <img src="docs/images/top-tasks.png" width="280" alt="Top tasks: recently tracked tasks with totals and Start buttons">
-  <img src="docs/images/calendar.png" width="280" alt="Activity calendar: a day of tracked blocks">
-  <img src="docs/images/reports.png" width="280" alt="Reports: hours per day stacked by person, with CSV, JSON, Print and Create invoice actions">
-</p>
-
 ### Track
 
 - Start a timer on any HTTP(S) page from the toolbar, or from the stopwatch built into GitHub issue and pull-request pages.
 - Keep one running timer: starting another task stops the current one first. Timer changes are queued locally and synchronized with GitHub, so they survive going offline.
 - See live **Today** and **This week** totals, and switch to a recent task from **Top tasks**.
 
+<p align="center">
+  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with totals and Start buttons">
+</p>
+
 ### Correct
 
 - Edit entries in a timeline, calendar or list. Drag and resize blocks; moving an entry into its neighbour adjusts the neighbour in the same commit.
 - Delete entries, add completed entries in bulk on the Activity page, and merge task identities that refer to the same work.
+
+<p align="center">
+  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a day of tracked blocks that can be dragged and resized">
+</p>
 
 ### Report and bill
 
@@ -104,6 +106,10 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - Export CSV or JSON timesheets, or print a report to PDF.
 - Set effective-dated hourly rates per person. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
 - Create numbered, taxed invoices from a filtered report and print them or save them as PDF. Invoices are generated in the browser and never committed.
+
+<p align="center">
+  <img src="docs/images/reports.png" width="600" alt="Reports: hours per day stacked by person, with CSV, JSON, Print and Create invoice actions">
+</p>
 
 ### Work as a team
 
