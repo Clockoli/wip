@@ -3163,7 +3163,7 @@
 
       this._renderCalendarTasks(metrics);
       this._renderCalendarNowLine(metrics);
-      if (!this.calendarScrollInitialized) {
+      if (!this.calendarScrollInitialized && this.calendarViewport.clientHeight > 0) {
         const starts = this._calendarSegments().map(segment =>
           this._calendarMinutesOfDay(segment.segmentStart, segment.dayStart, segment.dayEnd)
         ).sort((a, b) => a - b);

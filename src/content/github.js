@@ -906,7 +906,7 @@
     return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
   }
 
-  async function loadActivityCalendarWeek(range) {
+  async function loadActivityCalendarWeek(range, { showLoading = true } = {}) {
     if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
     if (timesMode && (loadingRecent || selectedTimesCalendarLoadingId !== null)) {
       ++timesLoadId;
@@ -925,7 +925,7 @@
     }
     const loadId = ++activityCalendarLoadId;
     const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
-    calendarWeekLoadingId = loadId;
+    if (showLoading) calendarWeekLoadingId = loadId;
     updateCalendarWeekLoading();
     const setStatus = text => {
       activityCalendarStatusText = text;
@@ -938,7 +938,7 @@
       if (loadId !== activityCalendarLoadId) return;
       if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
       recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
-      if (timesMode) { recentLoaded = true; recentFresh = true; }
+      recentLoaded = true; recentFresh = !data.partial;
       refreshMountedTimeline();
       if (timesMode && activityViewMode === 'list') renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
@@ -2025,10 +2025,8 @@
 
   async function loadSelectedTimes(onFailure = null) {
     const loadId = ++timesLoadId;
-    if (activityViewMode === 'calendar') {
-      selectedTimesCalendarLoadingId = loadId;
-      updateCalendarWeekLoading();
-    }
+    selectedTimesCalendarLoadingId = loadId;
+    updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
     try {
@@ -3308,12 +3306,16 @@
       if (!fullWidthPopupOpen) return false;
       renderUi();
       const refreshedState = send({ type: 'GET_PAGE_STATE', refresh: true });
-      void restoreActivityViewMode();
+      const restoredMode = restoreActivityViewMode();
       applyPageState(await refreshedState);
+      await restoredMode;
       if (!fullWidthPopupOpen) return false;
       if (pageState.configured) {
-        await refreshRecent(true);
-        if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
+        if (timelineViewMode === 'calendar') await loadActivityCalendarWeek(weekWindow(), { showLoading: false });
+        else {
+          await refreshRecent(true);
+          if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
+        }
       }
       else renderUi();
     } catch (error) { setError(error); }
@@ -3764,7 +3766,7 @@
   });
 
   if (timesMode) {
-    mountInHeader(); renderUi();
+    mountInHeader();
     void restoreActivityViewMode();
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {
