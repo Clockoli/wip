@@ -1037,7 +1037,7 @@ async function initializePeriod() {
     const initial = { ...periodRange('last-week', reportToday()), preset: 'last-week' };
     $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
     await loadRange(initial);
-  } catch (error) { setError(error); }
+  } catch (error) { setError(error); hideProgress(); }
 }
 void initializePeriod();
 
