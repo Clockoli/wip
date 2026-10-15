@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/timeline.png" width="860" alt="The Clockoli panel over a web page: a running timer for a GitHub issue above a timeline of the day's tracked tasks">
+  <img src="docs/images/timeline.png" width="860" alt="The Clockoli panel: a running timer for a GitHub issue above a timeline of the day's tracked tasks">
 </p>
 
 ## Why Clockoli
