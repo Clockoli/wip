@@ -433,6 +433,26 @@ test('historical edit after cache eviction coalesces with an accepted pending ed
 });
 
 
+test('Start, Stop, and Delete all accepted offline synchronize in order without an orphaned timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  await tracker.start('https://example.com/queued', 'Queued task', '', { background: true });
+  const stopped = await tracker.stop('Not needed', { background: true });
+  await tracker.queueEntryDelete({
+    path: stopped.entry._path, originalSha: stopped.entry._sha,
+    index: stopped.entry._index, original: stopped.entry,
+  });
+  assert.deepEqual(store.value.pendingWrites.map(op => op.operation), ['startTimer', 'completeTimer', 'deleteEntry']);
+  assert.deepEqual((await tracker.projectActivityRecords([])).records, []);
+  const restarted = service({ github, store });
+  await restarted.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.activeCache, null);
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.files.has('times/2026-08/alice.jsonl'), false);
+});
+
 test('a locally accepted Stop can be deleted before GitHub sync and stays deleted across restart', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const running = active('2026-08-18T08:00:00.000Z');

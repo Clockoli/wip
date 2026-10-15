@@ -1056,8 +1056,7 @@ export class TrackerService {
           remove: true, savedEntries: operation.entry ? [operation.entry] : [],
           patch: latest => {
             const deletedAfterCompletion = (latest.pendingWrites ?? []).some(item =>
-              item.operation === 'deleteEntry' && item.request?.path === operation.monthlyPath
-                && item.request?.original?.id === operation.entry?.id);
+              item.operation === 'deleteEntry' && item.request?.original?.id === operation.entry?.id);
             const retained = (latest.recentCache ?? []).filter(item =>
               !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)));
             return {

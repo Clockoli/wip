@@ -2641,6 +2641,7 @@
       if (previousCompletion) timelineOptimisticCompletions.set(entry.id, previousCompletion);
       pageState = { ...pageState, ...previousTotals };
       recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
+      setError(error);
       throw error;
     } finally {
       finishTimelineQueueAcceptance(acceptanceId);
