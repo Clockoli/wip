@@ -121,6 +121,46 @@ for (const mode of ['timeline', 'calendar']) {
   });
 }
 
+test('dragging a short Timeline entry does not push stationary entries or the viewport right', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  const second = now - 6 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: second } });
+  const source = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const before = await page.evaluate(targetStart => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const source = timeline._taskElementByKey('entry:b').getBoundingClientRect();
+    const task = timeline.tasks.find(item => item._key === 'entry:b');
+    const x = source.left + source.width / 2;
+    const pointerOffset = timeline.xToTime(timeline._scrollLeftNow() + x - viewport.left) - task.start;
+    return { x, y: source.top + source.height / 2,
+      targetX: viewport.left + timeline.timeToX(targetStart + pointerOffset) - timeline._scrollLeftNow(),
+      firstX: timeline._taskElementByKey('entry:a').getBoundingClientRect().left,
+      scroll: timeline._scrollLeftNow() };
+  }, first - 4 * HOUR);
+  await page.mouse.move(before.x, before.y);
+  await page.mouse.down();
+  await page.mouse.move(before.targetX, before.y, { steps: 8 });
+  const during = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { firstX: timeline._taskElementByKey('entry:a').getBoundingClientRect().left,
+      scroll: timeline._scrollLeftNow(),
+      movedRight: timeline._taskElementByKey('entry:b').getBoundingClientRect().right,
+      movedBefore: timeline.tasks[0]._key === 'entry:b' };
+  });
+  expect(during.movedBefore).toBe(true);
+  expect(during.movedRight).toBeLessThanOrEqual(during.firstX + 1);
+  expect(Math.abs(during.firstX - before.firstX)).toBeLessThan(2);
+  expect(Math.abs(during.scroll - before.scroll)).toBeLessThan(2);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__timeline.__timeline._scrollLeftNow())).toBeCloseTo(before.scroll, 0);
+});
+
 test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);

@@ -856,6 +856,7 @@
 
       this.options = {
         minTaskWidth: 30,
+        minCanvasWidth: 0,
         trailingGutterRatio: 0,
         visibleDays: 3,
         minVisibleDays: 1 / 6,
@@ -2066,7 +2067,7 @@
       // requirements must NEVER clamp this value; otherwise dense labels make
       // 1, 2, 3... days look almost identical. The ruler adapts to the scale
       // instead (1h -> 2h -> 4h -> 12h -> 24h), while task geometry stays smooth.
-      const nominalScale = viewportWidth / (this.visibleDays * DAY);
+      const nominalScale = Math.max(viewportWidth, Number(this.options.minCanvasWidth) || 0) / (this.visibleDays * DAY);
       const rulerScales = this._getRulerScales();
       this.scalePxPerMs = nominalScale;
       this.tickHours = this._chooseTickHoursForScale(this.scalePxPerMs, rulerScales);
@@ -2075,7 +2076,8 @@
       let tCursor = this.domainStart;
       let xCursor = 0;
 
-      for (const task of this.tasks) {
+      for (let index = 0; index < this.tasks.length; index++) {
+        const task = this.tasks[index];
         if (task.start > tCursor) {
           const width = (task.start - tCursor) * this.scalePxPerMs;
           out.push({ kind: 'gap', t0: tCursor, t1: task.start, x0: xCursor, x1: xCursor + width });
@@ -2083,13 +2085,22 @@
         }
 
         const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
-        const displayWidth = Math.max(realWidth, this.minTaskWidth);
+        // Second-long records need a usable hit target even in a wide view.
+        // Longer records use the time scale, so moving one cannot shift the
+        // positions of unrelated records or the ruler.
+        const tiny = task.end - task.start <= 10 * SECOND;
+        const axisWidth = tiny ? Math.max(realWidth, this.minTaskWidth) : realWidth;
+        const nextStart = this.tasks[index + 1]?.start ?? this.domainEnd;
+        const availableWidth = Math.max(1, (nextStart - task.start) * this.scalePxPerMs - 2);
+        const displayWidth = tiny
+          ? axisWidth
+          : Math.min(Math.max(realWidth, this.minTaskWidth), availableWidth);
         task.x0 = xCursor;
-        task.x1 = xCursor + displayWidth;
+        task.x1 = xCursor + axisWidth;
         task.realWidth = realWidth;
         task.displayWidth = displayWidth;
-        out.push({ kind: 'task', task, t0: task.start, t1: task.end, x0: xCursor, x1: xCursor + displayWidth });
-        xCursor += displayWidth;
+        out.push({ kind: 'task', task, t0: task.start, t1: task.end, x0: xCursor, x1: task.x1 });
+        xCursor += axisWidth;
         tCursor = task.end;
       }
 
@@ -2101,7 +2112,7 @@
 
       this.segments = out;
       const trailingGutter = viewportWidth * clamp(Number(this.options.trailingGutterRatio) || 0, 0, 0.5);
-      this.totalWidth = Math.max(viewportWidth, xCursor + trailingGutter);
+      this.totalWidth = Math.max(viewportWidth, xCursor + trailingGutter, this.editCanvasWidth || 0);
       this.content.style.width = `${this.totalWidth}px`;
     }
 
@@ -2470,7 +2481,7 @@
         // Never leave a rendered element at stale coordinates during zoom.
         // Stale off-screen nodes were the source of blocks visibly "driving"
         // through the background when zooming out.
-        const width = Math.max(1, task.x1 - task.x0);
+        const width = Math.max(1, task.displayWidth);
         el.style.transform = `translate3d(${task.x0}px,0,0)`;
         el.style.width = `${width}px`;
         el.classList.toggle('short', width < 46);
@@ -2692,7 +2703,7 @@
     }
 
     _createTaskElement(task) {
-      const width = Math.max(1, task.x1 - task.x0);
+      const width = Math.max(1, task.displayWidth);
       const el = document.createElement('div');
       const editing = Boolean(this.editState && this.editState.key === task._key);
       const editMode = editing ? this.editState.mode : '';
@@ -2829,7 +2840,7 @@
       }
       if (this.options.calendarWeekStartMonday) {
         this.calendarDayCount = 7;
-        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay(Math.max(visibleStart, visibleEnd - 1))));
+        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay((visibleStart + visibleEnd) / 2)));
         this.calendarWindowInitialized = true;
         this.calendarScrollInitialized = false;
         return;
@@ -3739,6 +3750,9 @@
       const rect = this.viewport.getBoundingClientRect();
       const contentX = this._scrollLeftNow() + (e.clientX - rect.left);
       const snapshot = this.segments.map(seg => ({ t0:seg.t0, t1:seg.t1, x0:seg.x0, x1:seg.x1 }));
+      // Hidden edit badges and short hit targets can extend the scroll range.
+      // Preserve its initial width when a task moves away from the right edge.
+      this.editCanvasWidth = Math.max(this.editCanvasWidth || 0, this.viewport.scrollWidth);
       this.editState = {
         pointerId: e.pointerId,
         key: task._key,
@@ -3988,10 +4002,11 @@
 
       const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
       const displayWidth = Math.max(realWidth, this.minTaskWidth);
+      const axisWidth = task.end - task.start <= 10 * SECOND ? displayWidth : realWidth;
       task.realWidth = realWidth;
       task.displayWidth = displayWidth;
       task.x0 = seg.x0;
-      task.x1 = seg.x0 + displayWidth;
+      task.x1 = seg.x0 + axisWidth;
       seg.t1 = task.end;
       seg.x1 = task.x1;
       const viewportWidth = this._viewportWidthNow();
@@ -4002,7 +4017,7 @@
 
       const el = this._taskElementByKey(task._key);
       if (el) {
-        const width = Math.max(1, task.x1 - task.x0);
+        const width = Math.max(1, task.displayWidth);
         el.style.width = `${width}px`;
         el.style.height = `${this._taskHeight(task)}px`;
         el.style.top = `${this._taskTop(task)}px`;
@@ -4910,6 +4925,7 @@
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
       minTaskWidth: MINIMUM_ITEM_WIDTH,
+      minCanvasWidth: initialProps.weeklyCalendar ? 1000 : 0,
       trailingGutterRatio: 0,
       currentTime: now,
       nominalTaskHeight: 40,
