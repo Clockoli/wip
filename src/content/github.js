@@ -3630,7 +3630,7 @@
       :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
       :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
       :host(.times-surface) .bulk-time-feedback { position:fixed; z-index:1000; right:24px; bottom:24px; display:flex; align-items:center; gap:12px; box-sizing:border-box; width:max-content; max-width:calc(100vw - 32px); padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-left:4px solid var(--ck-success); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)); font-weight:600; overflow-wrap:anywhere }
-      :host(.times-surface) .bulk-time-feedback-error { border-left-color:var(--fgColor-danger,#d1242f) }
+      :host(.times-surface) .bulk-time-feedback-error { border-left-color:var(--ck-danger) }
       :host(.times-surface) .bulk-time-feedback-dismiss { flex:none; min-width:28px; min-height:28px; margin-left:auto; padding:0 6px; border:0; border-radius:5px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:20px; line-height:1; cursor:pointer }
       :host(.times-surface) .bulk-time-feedback-dismiss:hover { background:var(--bgColor-muted,var(--ck-bg-muted)) }
       @media(max-width:480px) { :host(.times-surface) .bulk-time-feedback { right:16px; bottom:16px; left:16px; width:auto } }
