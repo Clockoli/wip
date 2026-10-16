@@ -681,7 +681,7 @@ function renderDeviceHandoff(attempt) {
   const status = $('device-copy-status');
   status.dataset.state = clipboard;
   status.textContent = clipboard === 'copied' ? '✓ Code copied to your clipboard.'
-    : clipboard === 'selection' ? `Automatic copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
+    : clipboard === 'selection' ? `Clipboard copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
       : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
         : 'Code ready. Select Copy to put it on your clipboard.';
   const paste = `press ${deviceKeyboardShortcut('V')} to paste the code, then authorize Clockoli.`;
