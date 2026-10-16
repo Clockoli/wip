@@ -57,7 +57,7 @@ Discovery and inspection never write to GitHub or connect new repositories local
 
 ### Check an edited repository target before connecting
 
-Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Then resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
+Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
 
 ### Suggestions do not appear, or Finish setup is unavailable
 
