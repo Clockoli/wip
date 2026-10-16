@@ -2216,7 +2216,7 @@
     placeCalendarWeekNavigation(body, activityViewMode);
     const bulk = el('details', undefined, 'bulk-time');
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
-    const summary = el('summary', 'Add time'); bulk.append(summary);
+    const summary = el('summary', 'Bulk time adding'); bulk.append(summary);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
     const examples = el('div', undefined, 'bulk-time-examples');
     examples.append(el('strong', 'Examples'), el('pre', `2026/08/21 https://example.com/task Search relevance 6:00
