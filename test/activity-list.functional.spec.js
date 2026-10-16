@@ -239,8 +239,8 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
     const neighbor = root.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
     await expect.poll(() => worker.evaluate(() => globalThis.weekReplies?.length ?? 0)).toBe(1);
-    await expect.poll(() => source.boundingBox()).not.toBeNull();
-    const preliminary = await source.boundingBox();
+    await expect(source).toBeVisible();
+    const preliminary = await source.evaluate(element => element.getBoundingClientRect().toJSON());
     await page.mouse.move(preliminary.x + preliminary.width / 2, preliminary.y + preliminary.height / 2);
     await page.mouse.down();
     await page.mouse.move(preliminary.x - 40, preliminary.y + preliminary.height / 2, { steps: 8 });
@@ -287,6 +287,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     });
     const github = await context.newPage();
     github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 600, height: 650 });
     await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
       status: 200, contentType: 'text/html',
       body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
@@ -304,10 +305,18 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await expect(panelSource).toBeVisible();
     await expect(panelNeighbor).toBeVisible();
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
-    const panelFrom = await panelSource.boundingBox();
+    const { panelFrom, panelTo, panelViewport } = await panelSource.evaluate(element => {
+      const root = element.getRootNode();
+      const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
+      return { panelFrom: element.getBoundingClientRect().toJSON(),
+        panelTo: neighbor.getBoundingClientRect().toJSON(),
+        panelViewport: root.querySelector('.viewport').getBoundingClientRect().toJSON() };
+    });
+    const destinationX = Math.max(panelViewport.x + 8, panelTo.x + 6);
+    expect(destinationX).toBeLessThan(panelTo.x + panelTo.width / 2);
     await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
     await github.mouse.down();
-    await github.mouse.move(panelFrom.x + panelFrom.width / 2 - 90, panelFrom.y + panelFrom.height / 2, { steps: 8 });
+    await github.mouse.move(destinationX, panelFrom.y + panelFrom.height / 2, { steps: 8 });
     await github.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
