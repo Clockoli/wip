@@ -31,6 +31,7 @@ const history = [...recent, { id: 'archived', taskUrl: 'https://example.com/arch
 let active = null;
 globalThis.trackingMessages = [];
 globalThis.searchMode = 'ok';
+globalThis.bulkAddFailure = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
   const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
@@ -40,6 +41,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     else respond({ ok: true, data: { ...state(), recent: history, partial: globalThis.searchMode === 'partial' } });
   }
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });
+  else if (message.type === 'BULK_ADD_TIMES') respond(globalThis.bulkAddFailure
+    ? { ok: false, error: { message: 'Line 1: Invalid time entry' } }
+    : { ok: true, data: { added: 4 } });
   else if (message.type === 'SWITCH_TASK') {
     active = { id: 'running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
       startedAt: new Date().toISOString(), entryDate: date, timezone: 'UTC' };
@@ -53,7 +57,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 `;
 
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
-  test.setTimeout(25000);
+  test.setTimeout(60000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-profile-'));
   let context;
@@ -76,6 +80,46 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await expect(page.locator('.times-view-button').first()).toBeVisible({ timeout: 5000 });
+
+    const bulk = page.locator('.bulk-time');
+    await expect(bulk.locator('summary')).toHaveText('Bulk time adding');
+    await bulk.locator('summary').click();
+    const examples = bulk.locator('.bulk-time-examples');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('2026/08/21 https://example.com/task Search relevance 6:00');
+    await expect(examples).toContainText('2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5');
+    const bulkInput = bulk.getByRole('textbox', { name: 'Bulk time entries' });
+    await bulkInput.fill('2026-08-25 https://example.com/work Work 1:30');
+    await expect(bulkInput).toHaveValue('2026-08-25 https://example.com/work Work 1:30');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('23.08.2026 https://example.com/call Customer call 1:30');
+    await expect(examples).toContainText('24/08/2026 https://example.com/release Release preparation 0.25');
+    expect(await bulkInput.getAttribute('placeholder')).not.toContain('Search relevance');
+    expect((await worker.evaluate(() => globalThis.trackingMessages))).not.toContain('BULK_ADD_TIMES');
+    await bulk.getByRole('button', { name: 'Add time', exact: true }).click();
+    const feedback = page.locator('.bulk-time-feedback');
+    await expect(feedback).toContainText('4 entries were added.');
+    await expect(feedback).toHaveAttribute('role', 'status');
+    await expect(feedback).toBeInViewport();
+    expect(await feedback.evaluate(node => getComputedStyle(node).position)).toBe('fixed');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(feedback).toBeInViewport();
+    await expect(bulkInput).toHaveValue('');
+    expect((await page.locator('.times-body > .notice').allTextContents()).join(' ')).not.toContain('entries were added');
+
+    await bulkInput.fill('invalid entry');
+    await expect(feedback).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.bulkAddFailure = true; });
+    await bulk.getByRole('button', { name: 'Add time', exact: true }).click();
+    await expect(feedback).toContainText('Line 1: Invalid time entry');
+    await expect(feedback).toHaveAttribute('role', 'alert');
+    await expect(feedback).toBeInViewport();
+    await expect(bulkInput).toHaveValue('invalid entry');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(feedback).toBeInViewport();
+    await feedback.getByRole('button', { name: 'Dismiss bulk time message' }).click();
+    await expect(feedback).toHaveCount(0);
+    await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
     expect(await tabs.evaluate(element => element.nextElementSibling?.classList.contains('times-toolbar'))).toBe(true);
     const status = page.locator('.running-status');
