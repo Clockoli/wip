@@ -76,6 +76,22 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await expect(page.locator('.times-view-button').first()).toBeVisible({ timeout: 5000 });
+
+    const bulk = page.locator('.bulk-time');
+    await bulk.locator('summary').click();
+    const examples = bulk.locator('.bulk-time-examples');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('2026/08/21 https://example.com/task Search relevance 6:00');
+    await expect(examples).toContainText('2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5');
+    const bulkInput = bulk.getByRole('textbox', { name: 'Bulk time entries' });
+    await bulkInput.fill('2026-08-25 https://example.com/work Work 1:30');
+    await expect(bulkInput).toHaveValue('2026-08-25 https://example.com/work Work 1:30');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('23.08.2026 https://example.com/call Customer call 1:30');
+    await expect(examples).toContainText('24/08/2026 https://example.com/release Release preparation 0.25');
+    expect(await bulkInput.getAttribute('placeholder')).not.toContain('Search relevance');
+    expect((await worker.evaluate(() => globalThis.trackingMessages))).not.toContain('BULK_ADD_TIMES');
+    await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
     expect(await tabs.evaluate(element => element.nextElementSibling?.classList.contains('times-toolbar'))).toBe(true);
     const status = page.locator('.running-status');
