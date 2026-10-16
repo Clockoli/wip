@@ -147,7 +147,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     expect(bounds.buttonLeft).toBeGreaterThan(bounds.fieldLeft + 30);
     expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
     await check.click();
-    await expect(status).toContainText('Checked acme/check-example');
+    await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     await expect(page.locator('#connect-checked-repository')).toBeVisible();
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
     await input.fill('acme/');
@@ -159,7 +159,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
     await input.fill('acme/check-example');
     await input.press('Enter');
-    await expect(status).toContainText('Checked acme/check-example');
+    await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(2);
     expect(errors).toEqual([]);
   } finally { await closeOptions(fixture); }
