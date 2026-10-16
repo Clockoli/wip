@@ -927,7 +927,7 @@ test('repository check hides target status during repository discovery and resto
   releaseDiscovery({ repositories: [repository], installations: [] });
   await check;
   assert.equal(status.hidden, false);
-  assert.match(status.textContent, /Checked acme\/time-data/);
+  assert.equal(status.textContent, 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
 });
 
 test('repository list loader clears on failure and silent refresh leaves existing rows visible', async () => {
