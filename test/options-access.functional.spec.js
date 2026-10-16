@@ -22,6 +22,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
     GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
     GET_ADDON_SETTINGS: {},
+    DISCOVER_REPOSITORIES: { repositories: [{
+      installationId: 10, repoId: 22, owner: 'acme', repo: 'check-example',
+      fullName: 'acme/check-example', eligible: true,
+    }], installations: [] },
+    INSPECT_REPOSITORY: { repository: {
+      installationId: 10, repoId: 22, owner: 'acme', repo: 'check-example',
+      fullName: 'acme/check-example', eligible: true, ready: true,
+      state: 'initialized_member', canAdd: true,
+    } },
     LOAD_TASKS: {
       tasks: [
         { taskUrl: 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1', title: 'clockoli-issues — #6 Polish the Clockoli GitHub project page for Launch 1', destinationIds: ['github:20'] },
@@ -106,6 +115,53 @@ test('repository disclosures rotate in Chromium and remain usable at narrow widt
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});
+
+test('repository field checks only on explicit Check or Enter, with visible action on narrow screens', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.locator('#add-time-repository').click();
+    const input = page.locator('#repository-target');
+    const check = page.getByRole('button', { name: 'Check repository', exact: true });
+    const status = page.locator('#repository-target-status');
+    await expect(check).toBeVisible();
+    await expect(check).toHaveText('Check');
+    await expect(check).toBeDisabled();
+    await input.fill('acme/check-example');
+    await expect(check).toBeEnabled();
+    await page.locator('#repository-step-title').click();
+    await expect(status).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'DISCOVER_REPOSITORIES' || type === 'INSPECT_REPOSITORY'))).toEqual([]);
+    const bounds = await page.evaluate(() => {
+      const field = document.getElementById('repository-target').getBoundingClientRect();
+      const action = document.getElementById('check-repository-target').getBoundingClientRect();
+      return { fieldRight: field.right, buttonRight: action.right, buttonLeft: action.left,
+        fieldLeft: field.left, documentWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth };
+    });
+    expect(bounds.buttonRight).toBeLessThanOrEqual(bounds.fieldRight + 1);
+    expect(bounds.buttonLeft).toBeGreaterThan(bounds.fieldLeft + 30);
+    expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
+    await check.click();
+    await expect(status).toContainText('Checked acme/check-example');
+    await expect(page.locator('#connect-checked-repository')).toBeVisible();
+    expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
+    await input.fill('acme/');
+    await page.locator('#repository-step-title').click();
+    await expect(status).toBeHidden();
+    await check.click();
+    await expect(status).toContainText('Enter a valid GitHub repository URL or owner/name.');
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
+    await input.fill('acme/check-example');
+    await input.press('Enter');
+    await expect(status).toContainText('Checked acme/check-example');
+    expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(2);
+    expect(errors).toEqual([]);
   } finally { await closeOptions(fixture); }
 });
 
