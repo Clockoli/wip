@@ -1799,6 +1799,7 @@ $('authorize').addEventListener('click', async () => {
     if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
     state.deviceAttempt = attempt;
+    message('');
     deviceClipboardAttemptId = attempt.attemptId;
     deviceClipboardState = 'unknown';
     deviceOpeningGitHubAutomatically = false;
