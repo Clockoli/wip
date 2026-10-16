@@ -830,7 +830,7 @@ test('typing a repository name loads suggestions once, while a pasted URL waits 
 
 test('repository input uses an explicit Check button without checking or showing a prompt on blur', async () => {
   assert.match(html, /id="check-repository-target"[^>]*>Check<\/button>/);
-  assert.doesNotMatch(html, /id="check-repository-target"/);
+  assert.doesNotMatch(html, /id="refresh-repository-target"/);
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
     ? { repository: { ...repository, state: 'initialized_member', canAdd: true, ready: true } }
