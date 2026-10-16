@@ -772,7 +772,8 @@ function renderDeviceAttempt(attempt) {
     schedulePoll(attempt);
     return;
   }
-  $('device-code').value = attempt.userCode;
+  // Keep the user's selection intact when polling refreshes the same code.
+  if ($('device-code').value !== attempt.userCode) $('device-code').value = attempt.userCode;
   $('copy-code').disabled = false;
   $('device-done').hidden = false;
   $('device-done').disabled = false;
