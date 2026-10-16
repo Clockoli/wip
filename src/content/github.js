@@ -3789,6 +3789,7 @@
       try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
       catch (error) { setError(error); return; }
       renderUi();
+      if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
   } else if (actionSurfaceMode) {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

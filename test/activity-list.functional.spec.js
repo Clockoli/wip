@@ -33,15 +33,18 @@ let active = null;
 globalThis.trackingMessages = [];
 globalThis.editPayloads = [];
 globalThis.searchMode = 'ok';
+let viewMode = 'timeline';
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
   const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
-  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent } });
+  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
     else respond({ ok: true, data: { ...state(), recent: history, partial: globalThis.searchMode === 'partial' } });
   }
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });
+  else if (message.type === 'GET_ACTIVITY_VIEW_MODE') respond({ ok: true, data: { mode: viewMode } });
+  else if (message.type === 'SET_ACTIVITY_VIEW_MODE') { viewMode = message.mode; respond({ ok: true, data: { mode: viewMode } }); }
   else if (message.type === 'QUEUE_ENTRY_EDIT') {
     globalThis.editPayloads.push(message.payload);
     for (const entry of recent) if (entry.id === message.payload.original.id) Object.assign(entry, message.payload.edits);
@@ -108,6 +111,96 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
     expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
     expect(await worker.evaluate(() => globalThis.editPayloads[1].edits.endedAt <= recent[0].startedAt)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('toolbar popup loads the full week before moving an entry past its neighbor', async () => {
+  test.setTimeout(30000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-reorder-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-popup-reorder-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    const popupWorkerSource = workerSource
+      .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
+        'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
+      .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
+      .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: recent.filter(entry => entry.id === 'record') } });\n  else if (message.type === 'SEARCH_ACTIVITY')");
+    await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: false,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.setViewportSize({ width: 420, height: 650 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const root = page.locator('#clockoli-popup-root');
+    const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
+    const neighbor = root.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    await expect(source).toBeVisible();
+    await expect(neighbor).toBeVisible();
+    await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    const from = await source.boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].edits.endedAt <= recent[1].startedAt)).toBe(true);
+    await root.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const calendarSource = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
+    const calendarNeighbor = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
+    await calendarSource.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    const calendarFrom = await calendarSource.boundingBox(), calendarBefore = await calendarNeighbor.boundingBox();
+    await page.mouse.move(calendarFrom.x + calendarFrom.width / 2, calendarFrom.y + calendarFrom.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(calendarBefore.x + calendarBefore.width / 2, calendarBefore.y - 20, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
+    expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
+    await page.close();
+    await worker.evaluate(() => {
+      const first = recent.find(entry => entry.id === 'record');
+      first.startedAt = date + 'T08:00:00Z'; first.endedAt = date + 'T08:30:00Z';
+      globalThis.editPayloads = [];
+    });
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const panelSource = panel.locator('.task-timeline-host .task[data-task-key="entry:record"]');
+    const panelNeighbor = panel.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    await expect(panelSource).toBeVisible();
+    await expect(panelNeighbor).toBeVisible();
+    await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    const panelFrom = await panelSource.boundingBox();
+    await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
+    await github.mouse.down();
+    await github.mouse.move(panelFrom.x + panelFrom.width / 2 - 90, panelFrom.y + panelFrom.height / 2, { steps: 8 });
+    await github.mouse.up();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
