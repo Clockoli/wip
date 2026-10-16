@@ -2218,11 +2218,13 @@
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
     const summary = el('summary', 'Add time'); bulk.append(summary);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
-    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
-    input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
+    const examples = el('div', undefined, 'bulk-time-examples');
+    examples.append(el('strong', 'Examples'), el('pre', `2026/08/21 https://example.com/task Search relevance 6:00
 2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5
 23.08.2026 https://example.com/call Customer call 1:30
-24/08/2026 https://example.com/release Release preparation 0.25`;
+24/08/2026 https://example.com/release Release preparation 0.25`));
+    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
+    input.placeholder = 'Enter one entry per line';
     input.addEventListener('input', () => { bulkDraft = input.value; });
     const add = button('Add time', 'primary', async () => {
       if (bulkMutation) return;
@@ -2232,7 +2234,7 @@
         bulkDraft = ''; bulkMutation = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
       } catch (error) { bulkMutation = false; setError(error); }
     }); add.disabled = bulkMutation;
-    bulk.append(help, input, add); body.append(bulk);
+    bulk.append(help, examples, input, add); body.append(bulk);
     if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
     page.append(body); return page;
   }
@@ -3605,6 +3607,9 @@
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
       :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
+      :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
+      :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
       @media(hover:none) { .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } .activity-list .entry-record { padding-right:14px } }
       @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
