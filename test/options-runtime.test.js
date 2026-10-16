@@ -930,6 +930,12 @@ test('repository check hides target status during repository discovery and resto
   assert.equal(status.textContent, 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
 });
 
+
+test('repository checks do not duplicate button progress in the large status message', () => {
+  assert.doesNotMatch(source, /Checking \$\\{target\\}… Repository files will not be changed/);
+  assert.doesNotMatch(source, /Checking access and storage… No changes will be made/);
+});
+
 test('repository list loader clears on failure and silent refresh leaves existing rows visible', async () => {
   let release;
   const page = harness({ reply: () => new Promise(resolve => { release = resolve; }) });
@@ -1093,7 +1099,9 @@ test('choosing an autocomplete suggestion checks access without connecting', asy
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(page.nodes.get('repository-list').hidden, true);
   assert.equal(input.value, repository.fullName);
-  assert.match(page.nodes.get('repository-target-status').textContent, /Checking acme\/time-data/);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
+  assert.equal(page.nodes.get('repository-target-status').textContent, '');
+  assert.equal(page.nodes.get('check-repository-target').textContent, 'Checking…');
   release({ repository: { ...repository, state: 'incompatible', eligible: false } });
   await click;
   assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
@@ -1176,7 +1184,7 @@ test('Check button checks a manual target once without an extra blur check', asy
   assert.equal(refresh.disabled, false);
 });
 
-test('Check button gives visible pending and completed feedback even when the target is listed', async () => {
+test('Check button alone shows progress before the completed inspection feedback', async () => {
   let release;
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
@@ -1190,8 +1198,8 @@ test('Check button gives visible pending and completed feedback even when the ta
   input.value = repository.fullName; input.listeners.input();
   const click = refresh.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert.match(status.textContent, /Checking acme\/time-data/);
-  assert.match(status.textContent, /Repository files will not be changed/);
+  assert.equal(status.hidden, true, 'do not show a separate message while the Check button is busy');
+  assert.equal(status.textContent, '', 'avoid displaying redundant progress text beside the Check button');
   assert.equal(refresh.disabled, true);
   assert.equal(refresh.attributes['aria-busy'], 'true', 'the Check button signals the pending inspection');
   assert.equal(refresh.textContent, 'Checking…');
@@ -1225,9 +1233,11 @@ test('automatic grant-return check keeps the Check button busy through discovery
   delayed.callback();
   const refresh = page.nodes.get('check-repository-target');
   assert.equal(refresh.attributes['aria-busy'], 'true', 'show activity during discovery');
+  assert.equal(page.nodes.get('repository-target-status').hidden, true, 'do not duplicate the automatic check progress');
   releaseDiscovery({ repositories: [target], installations: [] });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(refresh.attributes['aria-busy'], 'true', 'keep showing activity during inspection');
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
   releaseInspection({ repository: { ...target, state: 'uninitialized', canInitialize: true } });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(refresh.attributes['aria-busy'], 'false', 'stop after the read-only check settles');
