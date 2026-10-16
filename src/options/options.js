@@ -1820,7 +1820,7 @@ $('authorize').addEventListener('click', async () => {
     if (deviceClipboardState !== 'copied') return;
     $('device-handoff-status').textContent = `GitHub opens in four seconds. When it asks for the code, press ${deviceKeyboardShortcut('V')} to paste it, then authorize Clockoli.`;
     await new Promise(resolve => setTimeout(resolve, 4000));
-    if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    if (state.deviceAttempt?.attemptId !== attempt.attemptId || deviceGitHubOpened || deviceClipboardState !== 'copied') return;
     githubHandoff = true;
     try {
       await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
@@ -1835,6 +1835,16 @@ $('authorize').addEventListener('click', async () => {
     message(error.message, 'error');
   }
   finally { $('authorize').disabled = !state?.appConfigured; }
+});
+
+$('open-device-page').addEventListener('click', () => {
+  const attempt = state?.deviceAttempt;
+  if (!attempt?.verificationUri) return;
+  // A manually opened GitHub tab must not be followed by the scheduled automatic one.
+  deviceGitHubOpened = true;
+  deviceOpeningGitHubAutomatically = false;
+  $('open-device-page').textContent = 'Open GitHub again';
+  renderDeviceHandoff(attempt);
 });
 
 $('copy-code').addEventListener('click', async () => {
