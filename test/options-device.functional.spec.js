@@ -58,7 +58,16 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await expect(page.locator('#device-initial-paste-shortcut')).toHaveText('Ctrl+V');
     await page.locator('#authorize').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toContainText('Ctrl+V');
+    const instruction = page.locator('#device-handoff-status');
+    await expect(instruction).toHaveText('Next: When GitHub opens, press Ctrl+V to paste the code.');
+    const style = await instruction.evaluate(node => {
+      const css = getComputedStyle(node);
+      return { fontWeight: Number(css.fontWeight), leftBorder: parseFloat(css.borderLeftWidth),
+        background: css.backgroundColor, color: css.color };
+    });
+    expect(style.fontWeight).toBeGreaterThanOrEqual(700);
+    expect(style.leftBorder).toBeGreaterThanOrEqual(3);
+    expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
     expect(await page.evaluate(() => window.testCopiedCode)).toBe('ABCD-1234');
     const code = page.locator('#device-code');
     await expect.poll(() => code.inputValue(), { timeout: 1000 }).toMatch(/^A.{0,5}$/);
@@ -75,6 +84,7 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6000 }).toBeGreaterThan(0);
+    await expect(instruction).toHaveText('Next: On GitHub, press Ctrl+V to paste the code.');
     expect((await worker.evaluate(() => globalThis.openedAt)) - visibleAt).toBeGreaterThanOrEqual(3900);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     expect(await code.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
@@ -92,18 +102,19 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await page.locator('#authorize').click();
     await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
     await expect(page.locator('#device-copy-status')).toContainText('Code not copied yet');
-    await expect(page.locator('#device-handoff-status')).toContainText('Open GitHub to enter code');
+    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Copy the code, then open GitHub.');
     await page.waitForTimeout(4400);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     await expect(page.locator('#open-device-page')).toBeVisible();
     await page.locator('#copy-code').click();
     await expect(page.locator('#device-copy-status')).toContainText('Ctrl+C');
+    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Copy the selected code, then open GitHub.');
     const selection = await page.locator('#device-code').evaluate(node => ({ value: node.value, start: node.selectionStart, end: node.selectionEnd }));
     expect(selection.end - selection.start).toBe(selection.value.length);
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.testCopiedCode = text; }; });
     await page.locator('#copy-code').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toContainText('Select Open GitHub');
+    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Open GitHub, then press Ctrl+V to paste the code.');
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.rejectOpen = true; });
@@ -121,7 +132,7 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await expect(page.locator('#device-initial-paste-shortcut')).toHaveText('⌘V');
     await page.locator('#authorize').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toContainText('⌘V');
+    await expect(page.locator('#device-handoff-status')).toHaveText('Next: When GitHub opens, press ⌘V to paste the code.');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
