@@ -835,11 +835,12 @@ function closeRepositoryAccess() {
   dialog.hidden = true;
 }
 
-function renderRepositoryRefresh() {
-  const refresh = $('refresh-repository-target');
+function renderRepositoryCheckButton() {
+  const refresh = $('check-repository-target');
   const busy = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget
     || (discoveryStatus === 'loading' && repositoryTarget && !repositoryInputDirty));
   refresh.disabled = !$('repository-target').value.trim() || busy;
+  refresh.textContent = busy ? 'Checking…' : 'Check';
   refresh.setAttribute('aria-busy', String(busy));
 }
 
@@ -866,7 +867,7 @@ function renderRepositoryAccess() {
     : 'Clockoli needs Contents: Read and write permission for this repository.';
   const targetStatus = $('repository-target-status');
   const input = $('repository-target');
-  renderRepositoryRefresh();
+  renderRepositoryCheckButton();
   const action = repositoryActionKey(selectedRepository);
   const actionButton = $('connect-checked-repository');
   actionButton.textContent = repositoryAction(selectedRepository);
@@ -881,9 +882,9 @@ function renderRepositoryAccess() {
   const attention = !error && !repositoryInputDirty && Boolean(action) && repositoryCanBeSelected(selectedRepository);
   targetStatus.className = `repository-check-status${error ? ' repository-target-error' : ''}`;
   targetStatus.dataset.kind = error ? 'error' : attention ? 'attention' : selectedRepository?.ready ? 'ready' : 'neutral';
-  targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? 'Checking when you leave this field.'
+  targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? ''
     : checkingRepositoryTarget === repositoryTarget ? 'Checking access and storage… No changes will be made.'
-    : failed ? 'Check failed. Edit the name or press Enter to retry.' : unavailable
+    : failed ? 'Check failed. Edit the name or select Check to retry.' : unavailable
     ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
     : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
   targetStatus.hidden = discoveryStatus === 'loading' || !targetStatus.textContent;
@@ -1007,7 +1008,7 @@ function renderRepositoryList() {
 
 function renderRepositoryLoading() {
   renderRepositoryList();
-  renderRepositoryRefresh();
+  renderRepositoryCheckButton();
   $('repository-target-status').hidden = discoveryStatus === 'loading' || !$('repository-target-status').textContent;
 }
 
@@ -1186,7 +1187,7 @@ async function inspectNewlyGrantedTarget(revision, account) {
   } catch (error) {
     if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount()
         || repositoryInputDirty || repositoryTarget !== inspectedTarget) return;
-    repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`;
+    repositoryCheckFeedback = `Check failed: ${error.message}. Press Check to retry.`;
     repositoryCheckFeedbackError = true;
   } finally {
     if (autoCheckingRepositoryTarget === inspectedTarget) autoCheckingRepositoryTarget = '';
@@ -1942,7 +1943,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
   } catch (error) {
     if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled && !repositoryInputDirty) {
       repositoryCheckError = checkingRepositoryTarget;
-      if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`; repositoryCheckFeedbackError = true; }
+      if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press Check to retry.`; repositoryCheckFeedbackError = true; }
       message(error.message, 'error');
     }
   } finally {
@@ -1965,31 +1966,31 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     }
   }
 }
+function checkEnteredRepositoryTarget() {
+  const input = $('repository-target');
+  try { parseRepositoryTarget(input.value); }
+  catch {
+    repositoryCheckFeedback = 'Enter a valid GitHub repository URL or owner/name.';
+    repositoryCheckFeedbackError = true;
+    repositoryCheckError = '';
+    renderRepositoryAccess();
+    input.focus();
+    return;
+  }
+  return checkRepositoryTarget(input.value, false, true);
+}
 $('repository-target-form').addEventListener('submit', event => {
   event.preventDefault();
   repositorySuggestionsOpen = false;
   renderRepositoryList();
-  return checkRepositoryTarget($('repository-target').value, false, true);
+  return checkEnteredRepositoryTarget();
 });
 $('repository-target').addEventListener('blur', event => {
-  const input = $('repository-target');
   if (event?.relatedTarget?.dataset?.repositoryAction) return;
   repositorySuggestionsOpen = false;
   renderRepositoryList();
-  if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id)
-      || !input.value.trim() || !repositoryInputDirty) return;
-  try { parseRepositoryTarget(input.value); }
-  catch {
-    input.setAttribute('aria-invalid', 'true');
-    $('repository-target-status').className = 'repository-check-status repository-target-error';
-    $('repository-target-status').dataset.kind = 'error';
-    $('repository-target-status').textContent = 'Enter a valid GitHub repository URL or owner/name.';
-    $('repository-target-status').hidden = false;
-    return;
-  }
-  return checkRepositoryTarget(input.value, false, true);
 });
-$('refresh-repository-target').addEventListener('click', () => checkRepositoryTarget($('repository-target').value, false, true));
+$('check-repository-target').addEventListener('click', () => checkEnteredRepositoryTarget());
 $('connect-checked-repository').addEventListener('click', () => reviewSelectedRepository());
 $('repository-target').addEventListener('input', () => {
   clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
