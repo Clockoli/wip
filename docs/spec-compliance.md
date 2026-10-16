@@ -27,6 +27,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 - `src/content/github.js` inserts the tracking UI and sends only validated page-safe work-item data.
 - Activity List and the popup List share the grouped record renderer and list styles in `src/content/github.js`; only their surrounding navigation and totals differ.
 - `src/background/service-worker.js` owns credentials, GitHub API access, bounded multi-destination reads, durable local acceptance, synchronization, routing dispatch, and all mutations.
+- The shared Timeline in Activity and the popup keeps the current time at the right edge after a drag of another entry. Moving a completed entry across a neighbor into free space preserves its duration, full visual width, and viewport scroll position; stationary entries remain fixed during the gesture.
 - `src/api/github-client.js` provides SHA-guarded reads/writes/deletes, atomic multi-file commits, immutable blob reads, and bounded metadata hydration.
 - `src/domain/records.js` owns runtime work-record construction, stable ID invariants, timezone-aware local dates, edits, and validation.
 - `src/domain/work-records.js` is the sole persistent v1 codec and path contract. It accepts JSON/JSONL only and preserves unknown fields when rewriting supported records.

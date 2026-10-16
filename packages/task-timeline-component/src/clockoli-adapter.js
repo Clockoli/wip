@@ -389,7 +389,8 @@
     const tasks = initialMapping.mapped;
     originalItems = initialMapping.sources;
     const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, Number(initialProps.domainStart ?? now - 7 * DAY_MS), ...tasks.map(task => task.start));
-    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now, domainStart + 1_000, ...tasks.map(task => task.end));
+    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now,
+      Number(initialProps.totalRange?.end) || 0, domainStart + 1_000, ...tasks.map(task => task.end));
     const timeline = new global.TaskTimeline(host, {
       tasks,
       rows: normalizedRows(initialProps.rows),
@@ -760,7 +761,8 @@
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
       const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
-      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
+      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0,
+        Number(nextProps.totalRange?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
       timeline.currentTime = Number(nextProps.now);
       if (applyExternalView && nextProps.view) {
         timeline.options.totalRange = nextProps.totalRange ?? nextProps.view;
