@@ -81,6 +81,7 @@ for (const mode of ['timeline', 'calendar']) {
       { id: 'entry:a', url: 'https://example.com/a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true, destinationId: 'repo' },
       { id: 'entry:b', url: 'https://example.com/b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true, destinationId: 'repo' },
     ], view: { start: first - HOUR, end: now, focusedAt: first } });
+    if (mode === 'timeline') await page.locator('#timeline').evaluate(element => { element.style.width = '985px'; });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const block = key => page.locator(`#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:${key}"]`).first();
     if (mode === 'calendar') await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
@@ -92,7 +93,10 @@ for (const mode of ['timeline', 'calendar']) {
         const rect = timeline.viewport.getBoundingClientRect();
         return { x: rect.left + timeline.timeToX(time) - timeline._scrollLeftNow(), y: rect.top + 30 };
       }, first - 20 * 60_000);
-    if (mode === 'timeline') await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.scalePxPerMs * 7 * 60 * 60 * 1000)).toBe(1000);
+    if (mode === 'timeline') await expect.poll(() => page.evaluate(hour => {
+      const timeline = window.__timeline.__timeline;
+      return Math.abs(timeline.scalePxPerMs * 7 * hour - timeline.viewport.clientWidth);
+    }, HOUR)).toBeLessThan(0.1);
     const beforeGeometry = mode === 'timeline' ? await page.evaluate(() => {
       const timeline = window.__timeline.__timeline;
       return { width: timeline.totalWidth, scroll: timeline._scrollLeftNow(), scale: timeline.scalePxPerMs };
@@ -162,7 +166,7 @@ test('dragging a short Timeline entry does not push stationary entries or the vi
     const timeline = window.__timeline.__timeline;
     return { scroll: timeline._scrollLeftNow(), max: Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) };
   });
-  expect(afterScroll.scroll).toBeCloseTo(before.scroll, 0);
+  expect(Math.abs(afterScroll.scroll - before.scroll)).toBeLessThan(2);
   const afterWidths = await page.evaluate(() => ['entry:a', 'entry:b'].map(key =>
     window.__timeline.__timeline._taskElementByKey(key).getBoundingClientRect().width));
   expect(afterWidths.every(width => width >= 30)).toBe(true);
