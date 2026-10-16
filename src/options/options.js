@@ -1952,7 +1952,9 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled) {
       if (completed && keepInput && !repositoryInputDirty) {
         const status = selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Unavailable — Clockoli cannot access this repository; check its name and App grant';
-        repositoryCheckFeedback = `Checked ${repositoryTarget}: ${status}.${status === 'Ready — not connected' ? ' Select Connect repository below to add it to this browser.' : ''} Repository files were not changed.`;
+        repositoryCheckFeedback = status === 'Ready — not connected'
+          ? 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.'
+          : `Checked ${repositoryTarget}: ${status}. Repository files were not changed.`;
         repositoryCheckFeedbackError = status.startsWith('Unavailable');
       }
       renderRepositoryAccess();
