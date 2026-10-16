@@ -1099,6 +1099,7 @@
       this.runningKey = null;
       this.interactionPausedRunning = false;
       this.editState = null;
+      this._calendarPinnedVerticalMap = null;
       this.selectedKey = null;
       this.focusedKey = null;
       this.hoveredKey = null;
@@ -1117,6 +1118,7 @@
       this.tasks.sort((a, b) => a.start - b.start || a.end - b.end || String(a._key).localeCompare(String(b._key)));
       this._validateNoOverlap(this.tasks);
       this._rebuildRows();
+      if (this.tasks.some(task => task.running)) this.editCanvasWidth = 0;
 
       const minTaskStart = this.tasks.length ? this.tasks[0].start : Date.now() - DAY;
       const maxTaskEnd = this.tasks.length ? this.tasks[this.tasks.length - 1].end : Date.now();
@@ -1242,6 +1244,7 @@
       if (this.options.calendarWeekStartMonday) { this.calendarExactRange = false; this.calendarDayCount = 7; }
       const day = this._floorDay(time);
       this.calendarStartDay = this._clampCalendarStart(this.options.calendarWeekStartMonday ? this._calendarWeekStart(day) : day);
+      if (previousStart !== this.calendarStartDay || previousCount !== this.calendarDayCount) this._calendarPinnedVerticalMap = null;
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
       this.calendarAutoFocusPending = true;
@@ -1262,6 +1265,7 @@
       this.calendarExactRange = true;
       this.calendarDayCount = count;
       this.calendarStartDay = startDay;
+      if (changed) this._calendarPinnedVerticalMap = null;
       this.calendarWindowInitialized = true;
       this.calendarScrollInitialized = false;
       this.calendarAutoFocusPending = true;
@@ -1279,6 +1283,7 @@
       const previousStart = this.calendarStartDay;
       const amount = Math.max(1, this.calendarDayCount) * (Number(direction) < 0 ? -1 : 1);
       this.calendarStartDay = this._clampCalendarStart(this._addDaysLocal(this.calendarStartDay, amount));
+      if (previousStart !== this.calendarStartDay) this._calendarPinnedVerticalMap = null;
       this.calendarScrollInitialized = false;
       this.calendarAutoFocusPending = true;
       this.calendarManualScroll = false;
@@ -1483,6 +1488,7 @@
         throw new RangeError(`TaskTimeline.start(): duplicate instanceId "${task.instanceId}"`);
       }
       task.running = true;
+      this.editCanvasWidth = 0;
 
       if (task.start < this.domainStart) this.domainStart = task.start;
       this.tasks.push(task);
@@ -1530,7 +1536,7 @@
       this.interactionPausedRunning = false;
       this._updateRunningTaskIncremental(Date.now());
       task.running = false;
-      this.domainEnd = task.end;
+      this.domainEnd = Math.max(this.baseDomainEnd, task.end);
       this.runningKey = null;
 
       if (render) {
@@ -2098,7 +2104,7 @@
 
       this.segments = out;
       const trailingGutter = viewportWidth * clamp(Number(this.options.trailingGutterRatio) || 0, 0, 0.5);
-      this.totalWidth = Math.max(viewportWidth, xCursor + trailingGutter);
+      this.totalWidth = Math.max(viewportWidth, xCursor + trailingGutter, this.editCanvasWidth || 0);
       this.content.style.width = `${this.totalWidth}px`;
     }
 
@@ -2990,7 +2996,10 @@
       const dayWidth = Math.max(this.options.calendarDayMinWidth, projectWidthFloor, available / this.calendarDayCount);
       const laneWidth = dayWidth / rowCount;
       const width = timeAxisWidth + dayWidth * this.calendarDayCount;
-      const verticalMap = this._buildCalendarVerticalMap(hourHeight);
+      const pinned = this._calendarPinnedVerticalMap;
+      const verticalMap = pinned && pinned.startDay === this.calendarStartDay
+        && pinned.dayCount === this.calendarDayCount && pinned.hourHeight === hourHeight
+        ? pinned.map : this._buildCalendarVerticalMap(hourHeight);
       const height = headerHeight + verticalMap.totalHeight;
       const metrics = { timeAxisWidth, dateHeaderHeight, projectHeaderHeight, headerHeight, hourHeight, dayWidth, rowCount, laneWidth, width, height, verticalMap };
       this._calendarMetrics = metrics;
@@ -3703,7 +3712,7 @@
       if (task) {
         const before = this._publicTask(task);
         task.running = false;
-        this.domainEnd = task.end;
+        this.domainEnd = Math.max(this.baseDomainEnd, task.end);
         this.runningKey = null;
         const event = this._makeEvent('stop', { task, before, after: this._publicTask(task), source: 'edit' });
         try {
@@ -3729,10 +3738,20 @@
       if (index < 0) return;
 
       this._cancelZoomAnimation();
+      const hadRunningTask = Boolean(this._runningTask());
       this._pauseRunningTimerForInteraction();
       const rect = this.viewport.getBoundingClientRect();
-      const contentX = this._scrollLeftNow() + (e.clientX - rect.left);
+      const startScroll = this._scrollLeftNow();
+      const contentX = startScroll + (e.clientX - rect.left);
       const snapshot = this.segments.map(seg => ({ t0:seg.t0, t1:seg.t1, x0:seg.x0, x1:seg.x1 }));
+      const initialTotalWidth = this.totalWidth;
+      const initialScrollWidth = this.viewport.scrollWidth;
+      const wasRightPinned = Math.max(0, initialTotalWidth - this._viewportWidthNow()) - this._scrollLeftNow() <= 1;
+      // Hidden edit badges and short hit targets can extend the scroll range.
+      // Preserve its initial width when a task moves away from the right edge.
+      this.editCanvasWidth = Math.max(this.editCanvasWidth || 0, initialScrollWidth);
+      this.totalWidth = Math.max(this.totalWidth, this.editCanvasWidth);
+      this.content.style.width = `${this.totalWidth}px`;
       this.editState = {
         pointerId: e.pointerId,
         key: task._key,
@@ -3743,6 +3762,11 @@
         pointerTime: this._xToTimeFromSnapshot(contentX, snapshot, this.totalWidth),
         snapshot,
         snapshotWidth: this.totalWidth,
+        initialTotalWidth,
+        initialScrollWidth,
+        startScroll,
+        hadRunningTask,
+        wasRightPinned,
         startClientX: e.clientX,
         startClientY: e.clientY,
         didMutate: false,
@@ -3757,6 +3781,69 @@
     _contentXFromPointer(e) {
       const rect = this.viewport.getBoundingClientRect();
       return this._scrollLeftNow() + (e.clientX - rect.left);
+    }
+
+    _freeMoveRange(task, rawStart, duration) {
+      const others = this.tasks.filter(candidate => candidate !== task);
+      let best = null;
+      for (let index = 0; index <= others.length; index++) {
+        const prev = others[index - 1] || null;
+        const next = others[index] || null;
+        let earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
+        let latest = next ? next.start - DIRECT_GAP - duration : this.domainEnd - duration;
+        if (latest < earliest) {
+          earliest = prev ? prev.end : this.domainStart;
+          latest = next ? next.start - duration : this.domainEnd - duration;
+        }
+        const map = this.viewMode === 'calendar' ? this._calendarPinnedVerticalMap?.map : null;
+        if (map && prev && this._floorDay(earliest) === this._floorDay(prev.end - 1)) {
+          const day = this._floorDay(prev.end - 1);
+          const segmentStart = Math.max(prev.start, day);
+          const startY = map.toY(this._calendarMinutesOfDay(segmentStart, day));
+          const endY = map.toY(this._calendarMinutesOfDay(prev.end, day));
+          const bottomY = Math.max(endY, startY + this.options.calendarMinTaskHeight);
+          earliest = Math.max(earliest, this._calendarTimeFromDayAndMinutes(day, map.fromY(bottomY)));
+        }
+        if (map && next && this._floorDay(latest) === this._floorDay(next.start)) {
+          const day = this._floorDay(next.start);
+          const nextY = map.toY(this._calendarMinutesOfDay(next.start, day));
+          const maxStartY = nextY - this.options.calendarMinTaskHeight;
+          latest = Math.min(latest, this._calendarTimeFromDayAndMinutes(day, map.fromY(maxStartY)));
+        }
+        const inTimeSlot = rawStart >= earliest && rawStart <= latest;
+        if (latest < earliest) continue;
+        const candidate = clamp(rawStart, earliest, latest);
+        const distance = Math.abs(candidate - rawStart);
+        const closer = !best || distance < best.distance || (distance === best.distance
+          && (rawStart < task.start ? candidate < best.candidate : candidate > best.candidate));
+        if (!best || (inTimeSlot && !best.inTimeSlot) || (inTimeSlot === best.inTimeSlot && closer)) {
+          best = { earliest, latest, prev, next, candidate, distance, inTimeSlot };
+        }
+      }
+      return best || { earliest: task.start, latest: task.start, prev: null, next: null };
+    }
+
+    _renderTimelineMovePreview(task, state) {
+      const element = this._taskElementByKey(task._key);
+      if (!element) return;
+      const preferredX = this._timeToXFromSnapshot(task.start, state.snapshot, state.snapshotWidth);
+      const index = this.tasks.indexOf(task);
+      const prev = this.tasks[index - 1];
+      const next = this.tasks[index + 1];
+      const width = task.displayWidth;
+      const earliestX = prev ? prev.x1 + 1 : -Infinity;
+      const latestX = next ? next.x0 - width - 1 : Infinity;
+      const x = Math.max(earliestX, Math.min(preferredX, latestX));
+      element.style.transform = `translate3d(${x}px,0,0)`;
+      element.style.width = `${width}px`;
+      element.classList.add('editing', 'move');
+      element.classList.toggle('narrow-edit', width < 150);
+      element.classList.toggle('short', width < 46);
+      element.querySelector('.edit-clock.start').innerHTML = `<span class="kind">Start</span>${this._formatClockMinute(task.start)}`;
+      element.querySelector('.edit-clock.end').innerHTML = `<span class="kind">End</span>${this._formatClockMinute(task.end)}`;
+      this._renderDays();
+      this._renderEditGuides();
+      this._updatePeriodTotal();
     }
 
     _applyTaskEdit(e) {
@@ -3781,16 +3868,15 @@
       const next = this.tasks[index + 1] || null;
 
       if (state.mode === 'move') {
-        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
-        const latestEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
-        const latestStart = Math.max(earliest, latestEnd - state.duration);
         const rawStart = state.originalStart + delta;
-        const start = this._magnetizeTime(rawStart, earliest, latestStart, state, [
-          prev ? { time: earliest, guideTime: earliest, side: 'prev' } : null,
-          next ? { time: latestStart, guideTime: latestEnd, side: 'next' } : null
+        const range = this._freeMoveRange(task, rawStart, state.duration);
+        const start = this._magnetizeTime(rawStart, range.earliest, range.latest, state, [
+          range.prev ? { time: range.earliest, guideTime: range.earliest, side: 'prev' } : null,
+          range.next ? { time: range.latest, guideTime: range.next.start - DIRECT_GAP, side: 'next' } : null
         ]);
         task.start = start;
         task.end = start + state.duration;
+        this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
       } else if (state.mode === 'resize-left') {
         const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
         const latest = task.end - MIN_TASK_DURATION;
@@ -3803,7 +3889,8 @@
           next ? [{ time: latest, side: 'next' }] : []);
       }
 
-      this._renderAll();
+      if (state.mode === 'move' && this.viewMode === 'timeline') this._renderTimelineMovePreview(task, state);
+      else this._renderAll();
       this._showTaskDetails(task);
       return true;
     }
@@ -3814,10 +3901,14 @@
       const task = this._findTask(state.key);
 
       if (state.didMutate && task) {
+        if (state.mode === 'move') this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
         const afterTask = this._publicTask(task);
         const afterState = this._captureState();
         this.editState = null;
+        this.editCanvasWidth = state.hadRunningTask ? 0 : state.initialScrollWidth;
         this._renderAll();
+        if (state.hadRunningTask && state.wasRightPinned && this.viewMode === 'timeline') this.scrollToEnd();
+        else this._setScrollLeft(state.startScroll);
         this._showTaskDetails(task);
         const action = state.mode === 'move' ? 'move' : state.mode === 'resize-left' ? 'resize-start' : 'resize-end';
         const edge = state.mode === 'resize-left' ? 'start' : state.mode === 'resize-right' ? 'end' : null;
@@ -3833,6 +3924,9 @@
         });
       } else {
         this.editState = null;
+        this.editCanvasWidth = state.hadRunningTask ? 0 : state.initialScrollWidth;
+        this.totalWidth = state.initialTotalWidth;
+        this.content.style.width = `${this.totalWidth}px`;
         this._resumeRunningTimerAfterInteraction();
         this._renderEditGuides();
         if (task) this._showTaskDetails(task);
@@ -4134,6 +4228,10 @@
       this._cancelZoomAnimation();
       this._pauseRunningTimerForInteraction();
       const verticalMapSnapshot = this._calendarMetrics?.verticalMap || this._buildCalendarVerticalMap(this.options.calendarHourHeight);
+      this._calendarPinnedVerticalMap = {
+        startDay: this.calendarStartDay, dayCount: this.calendarDayCount,
+        hourHeight: this.options.calendarHourHeight, map: verticalMapSnapshot
+      };
       const pointerTime = this._calendarPointerToTime(e.clientX, e.clientY, verticalMapSnapshot);
       const startPointerDayIndex = this._calendarPointerDayIndex(e.clientX);
       this.calendarEditState = {
@@ -4187,16 +4285,15 @@
       );
 
       if (state.mode === 'move') {
-        const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
-        const latestEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
-        const latestStart = Math.max(earliest, latestEnd - state.duration);
         const rawStart = shiftedBoundary(state.originalStart);
-        const start = this._calendarMagnetizeTime(rawStart, earliest, latestStart, state, [
-          prev ? { time: earliest, guideTime: earliest, side: 'prev' } : null,
-          next ? { time: latestStart, guideTime: latestEnd, side: 'next' } : null
+        const range = this._freeMoveRange(task, rawStart, state.duration);
+        const start = this._calendarMagnetizeTime(rawStart, range.earliest, range.latest, state, [
+          range.prev ? { time: range.earliest, guideTime: range.earliest, side: 'prev' } : null,
+          range.next ? { time: range.latest, guideTime: range.next.start - DIRECT_GAP, side: 'next' } : null
         ]);
         task.start = start;
         task.end = start + state.duration;
+        this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
       } else if (state.mode === 'resize-left') {
         const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
         const rawStart = shiftedBoundary(state.originalStart);
@@ -4218,7 +4315,9 @@
       if (!state || (e && e.pointerId !== state.pointerId)) return false;
       const task = this._findTask(state.key);
       this.calendarEditState = null;
+      this._calendarPinnedVerticalMap = null;
       if (state.didMutate && task) {
+        if (state.mode === 'move') this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
         const afterTask = this._publicTask(task);
         const afterState = this._captureState();
         this._renderAll();
@@ -4851,7 +4950,8 @@
     const tasks = initialMapping.mapped;
     originalItems = initialMapping.sources;
     const domainStart = Math.min(Number(initialProps.view?.start) || now - DAY_MS, Number(initialProps.domainStart ?? now - 7 * DAY_MS), ...tasks.map(task => task.start));
-    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now, domainStart + 1_000, ...tasks.map(task => task.end));
+    const domainEnd = Math.max(now, Number(initialProps.view?.end) || now,
+      Number(initialProps.totalRange?.end) || 0, domainStart + 1_000, ...tasks.map(task => task.end));
     const timeline = new global.TaskTimeline(host, {
       tasks,
       rows: normalizedRows(initialProps.rows),
@@ -5222,7 +5322,8 @@
       const mapping = mapItems(nextProps.items, nextProps.now);
       const mapped = mapping.mapped;
       const nextDomainStart = Math.min(Number(nextProps.view?.start) || Number(nextProps.now) - DAY_MS, Number(nextProps.domainStart ?? Number(nextProps.now) - 7 * DAY_MS), ...mapped.map(task => task.start));
-      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
+      const nextDomainEnd = Math.max(Number(nextProps.now), Number(nextProps.view?.end) || 0,
+        Number(nextProps.totalRange?.end) || 0, nextDomainStart + 1_000, ...mapped.map(task => task.end));
       timeline.currentTime = Number(nextProps.now);
       if (applyExternalView && nextProps.view) {
         timeline.options.totalRange = nextProps.totalRange ?? nextProps.view;

@@ -36,6 +36,8 @@
   let timelineWindowTimer = null;
   let timelineView = null;
   let activityTimelineView = null;
+  let activityInitialFocusPending = false;
+  let activityInitialFocusMounted = false;
   let activityViewMode = 'timeline';
   const ACTIVITY_VIEW_KEY = 'clockoli:activity-view';
   if (timesMode) {
@@ -113,6 +115,7 @@
   let activityCalendarLoadId = 0;
   let activityCalendarStatusText = '';
   let calendarWeekLoadingId = null, selectedTimesCalendarLoadingId = null;
+  let completeVisualWeekStart = null;
   let selectedWeekStart = null;
   let suppressCalendarNavigate = false;
   let activeInlineKey = null;
@@ -739,6 +742,8 @@
   function resetWeekForViewSwitch() {
     selectedWeekStart = null;
     activityTimelineView = null;
+    activityInitialFocusPending = false;
+    activityInitialFocusMounted = false;
     timelineView = null;
     ++activityCalendarLoadId;
     calendarWeekLoadingId = null;
@@ -812,8 +817,12 @@
     if (current.getTime() > weekWindow(Date.now()).start) return;
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
+    const previousInitialFocusPending = activityInitialFocusPending;
+    const previousInitialFocusMounted = activityInitialFocusMounted;
     selectedWeekStart = current.getTime();
     activityTimelineView = null;
+    activityInitialFocusPending = false;
+    activityInitialFocusMounted = false;
     timelineView = null;
     const range = weekWindow();
     if (timelineInstance?.setCalendarRange) {
@@ -825,6 +834,8 @@
       if (selectedWeekStart !== current.getTime()) return;
       selectedWeekStart = previousWeek;
       activityTimelineView = previousActivityView;
+      activityInitialFocusPending = previousInitialFocusPending;
+      activityInitialFocusMounted = previousInitialFocusMounted;
       timelineView = previousTimelineView;
       recentLoaded = previousLoaded;
       suppressCalendarNavigate = true;
@@ -925,6 +936,10 @@
       timelineView = null;
     }
     const loadId = ++activityCalendarLoadId;
+    if (!timesMode) {
+      completeVisualWeekStart = null;
+      refreshMountedTimeline();
+    }
     const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
     if (showLoading) calendarWeekLoadingId = loadId;
     updateCalendarWeekLoading();
@@ -939,9 +954,10 @@
       if (loadId !== activityCalendarLoadId) return;
       if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
       recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
+      if (!timesMode && !data.partial) completeVisualWeekStart = nextWeek;
       recentLoaded = true; recentFresh = !data.partial;
-      refreshMountedTimeline();
-      if (timesMode && activityViewMode === 'list') renderUi();
+      const refreshed = refreshMountedTimeline();
+      if (!refreshed || (timesMode && activityViewMode === 'list')) renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
       if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
       return true;
@@ -956,7 +972,8 @@
           finally { suppressCalendarNavigate = false; }
         }
         refreshMountedTimeline();
-        setStatus('Could not load this week.'); setError(error);
+        if (error?.name === 'AbortError' || error?.code === 'aborted') setStatus('');
+        else { setStatus('Could not load this week.'); setError(error); }
         return false;
       }
     } finally {
@@ -1375,7 +1392,7 @@
     return save;
   }
 
-  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
@@ -2047,7 +2064,7 @@
     catch (error) {
       if (loadId !== timesLoadId) return;
       onFailure?.(previousLoaded);
-      if (error?.name !== 'AbortError') setError(error);
+      if (error?.name !== 'AbortError' && error?.code !== 'aborted') setError(error);
       else renderUi();
     } finally {
       if (selectedTimesCalendarLoadingId === loadId) {
@@ -2188,6 +2205,7 @@
         saveActivityViewMode(mode);
         if (switched) {
           resetWeekForViewSwitch();
+          if (mode === 'timeline') activityInitialFocusPending = true;
           if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
           return loadSelectedTimes();
         }
@@ -2316,7 +2334,7 @@
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
         isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
-        isEditable: !entry._active,
+        isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
@@ -2385,6 +2403,12 @@
       domainStart: periodStart, totalRange: activityTotalRange(),
       ...(refocus && timelineInstance.getViewMode?.() !== 'calendar'
         ? { view: timesMode ? activityTimelineView : timelineView } : {}) });
+    if (timesMode && activityInitialFocusPending && recentFresh
+        && periodStart === weekWindow(Date.now()).start && timelineInstance.getViewMode?.() === 'timeline') {
+      timelineInstance.scrollToEnd();
+      activityInitialFocusPending = false;
+      activityInitialFocusMounted = true;
+    }
     updateListWeekTotal();
     refreshCompactSurface();
     refreshTimelineQueueIndicator();
@@ -2764,6 +2788,10 @@
       return section;
     }
     const now = Math.min(timelineNow(), weekWindow().end - 1), periodStart = weekWindow().start;
+    const focusCurrentActivityWeek = timesMode && activityViewMode === 'timeline'
+      && periodStart === weekWindow(Date.now()).start
+      && (!activityInitialFocusMounted || (activityInitialFocusPending && recentFresh));
+    if (focusCurrentActivityWeek && !recentFresh) activityInitialFocusPending = true;
     const historyStart = activityHistoryStart(periodStart);
     timelineWindow = { historyStart, now };
     if (timesMode) activityTimelineView ||= activityPeriodTimelineView(now);
@@ -2771,6 +2799,12 @@
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     const host = el('div', undefined, 'task-timeline-host'); timelineShell.prepend(host);
+    if (timesMode && activityInitialFocusPending) {
+      const cancelInitialFocus = () => { activityInitialFocusPending = false; activityInitialFocusMounted = true; };
+      host.addEventListener('wheel', cancelInitialFocus, { passive: true });
+      host.addEventListener('pointerdown', cancelInitialFocus);
+      host.addEventListener('keydown', cancelInitialFocus);
+    }
     if (compactSurface) compactSurface.host = host;
     section.append(timelineShell, timelineQueueIndicator);
     placeCalendarWeekNavigation(section, timelineViewMode);
@@ -2849,6 +2883,7 @@
           return true;
         },
         onEditCommit: async edit => {
+          if (!timesMode && completeVisualWeekStart !== weekWindow().start) return false;
           const entry = timelineEntriesById.get(edit.id);
           if (!entry) return;
           if (entry._active) {
@@ -2867,7 +2902,11 @@
           catch (error) { setError(error); throw error; }
         },
         });
-        if (!timesMode && weekWindow().start === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();
+        if ((!timesMode || focusCurrentActivityWeek) && periodStart === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();
+        if (focusCurrentActivityWeek && timelineInstance.getViewMode?.() === 'timeline') {
+          activityInitialFocusMounted = true;
+          if (recentFresh) activityInitialFocusPending = false;
+        }
         if (timesMode && activityViewMode === 'calendar') {
           focusActivityCalendarPeriod();
           void loadActivityCalendarWeek(timelineInstance.getCalendarRange());
@@ -3819,6 +3858,7 @@
       try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
       catch (error) { setError(error); return; }
       renderUi();
+      if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
   } else if (actionSurfaceMode) {
     if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

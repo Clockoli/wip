@@ -51,7 +51,7 @@ test('time inputs are direct text controls without wheel, keyboard stepping, or 
   assert.doesNotMatch(timePicker, /addEventListener\('wheel'|passive: false/);
   assert.doesNotMatch(source, /wheelRemainder|WHEEL_THRESHOLD/);
   assert.doesNotMatch(source, /ArrowUp|ArrowDown|PageUp|PageDown|time-step|time-unit/);
-  assert.doesNotMatch(source, /pointerdown|pointermove|pointerup|time-drag/);
+  assert.doesNotMatch(timePicker, /pointerdown|pointermove|pointerup|time-drag/);
 });
 
 test('Refresh clears stale errors without committing pending changes', () => {

@@ -29,6 +29,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 - The GitHub popup can render cached recent entries immediately. Opening a saved Calendar view refreshes its complete Monday–Sunday week without a second loading overlay; week navigation still shows loading feedback. The bounded recent snapshot is not treated as a complete week.
 - Activity keeps the initial Calendar loading state visible while restoring the saved view and hydrating cached records, then reveals the complete selected week after its read finishes.
 - `src/background/service-worker.js` owns credentials, GitHub API access, bounded multi-destination reads, durable local acceptance, synchronization, routing dispatch, and all mutations.
+- The shared Timeline in Activity and the popup keeps the current time at the right edge after a drag of another entry. Moving a completed entry across a neighbor into free space preserves its duration, full visual width, and viewport scroll position; stationary entries remain fixed during the gesture.
 - `src/api/github-client.js` provides SHA-guarded reads/writes/deletes, atomic multi-file commits, immutable blob reads, and bounded metadata hydration.
 - `src/domain/records.js` owns runtime work-record construction, stable ID invariants, timezone-aware local dates, edits, and validation.
 - `src/domain/work-records.js` is the sole persistent v1 codec and path contract. It accepts JSON/JSONL only and preserves unknown fields when rewriting supported records.
