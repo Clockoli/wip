@@ -13,6 +13,10 @@ let state = null;
 let repositories = [];
 let selectedRepository = null;
 let pollTimer = null;
+let deviceClipboardAttemptId = '';
+let deviceClipboardState = 'unknown';
+let deviceOpeningGitHubAutomatically = false;
+let deviceGitHubOpened = false;
 let showOnboarding = false;
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
@@ -667,6 +671,27 @@ function renderDestinationCards() {
   }
 }
 
+function deviceKeyboardShortcut(key) {
+  const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
+  return /mac|iphone|ipad|ipod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+function renderDeviceHandoff(attempt) {
+  const clipboard = deviceClipboardAttemptId === attempt.attemptId ? deviceClipboardState : 'unknown';
+  const status = $('device-copy-status');
+  status.dataset.state = clipboard;
+  status.textContent = clipboard === 'copied' ? '✓ Code copied to your clipboard.'
+    : clipboard === 'selection' ? `Automatic copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
+      : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
+        : 'Code ready. Select Copy to put it on your clipboard.';
+  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code, then authorize Clockoli.`;
+  $('device-handoff-status').textContent = clipboard === 'copied'
+    ? deviceOpeningGitHubAutomatically ? `GitHub will open shortly. When it asks for the code, ${paste}`
+      : deviceGitHubOpened ? `On GitHub, ${paste}`
+        : `Select Open GitHub to enter code. When it asks for the code, ${paste}`
+    : `After copying, select Open GitHub to enter code. On GitHub, ${paste}`;
+}
+
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
   const step = onboardingStep({ authorized });
@@ -703,6 +728,7 @@ function renderState() {
   $('setup-cancelled').hidden = !setupCancelled;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
+  $('device-initial-paste-shortcut').textContent = deviceKeyboardShortcut('V');
   $('connection-status').textContent = accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${accountConnected ? ' ready' : ''}`;
   $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
@@ -739,6 +765,9 @@ function renderDeviceAttempt(attempt) {
     $('copy-code').disabled = true;
     $('device-done').hidden = true;
     setLink('open-device-page', '');
+    $('device-copy-status').textContent = 'Getting your one-time code…';
+    $('device-copy-status').dataset.state = 'unknown';
+    $('device-handoff-status').textContent = '';
     $('device-wait').textContent = 'Starting secure GitHub authorization…';
     schedulePoll(attempt);
     return;
@@ -748,6 +777,8 @@ function renderDeviceAttempt(attempt) {
   $('device-done').hidden = false;
   $('device-done').disabled = false;
   setLink('open-device-page', attempt.verificationUri);
+  $('open-device-page').textContent = deviceGitHubOpened ? 'Open GitHub again' : 'Open GitHub to enter code';
+  renderDeviceHandoff(attempt);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
   $('device-wait').textContent = `Clockoli checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
   schedulePoll(attempt);
@@ -1768,38 +1799,60 @@ $('authorize').addEventListener('click', async () => {
     if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
     state.deviceAttempt = attempt;
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'unknown';
+    deviceOpeningGitHubAutomatically = false;
+    deviceGitHubOpened = false;
     renderDeviceAttempt(attempt);
     $('device-panel').scrollIntoView({ block: 'center' });
     $('device-code').classList.add('code-reveal');
-    let copied = false;
     try {
       await navigator.clipboard.writeText(attempt.userCode);
-      copied = true;
+      deviceClipboardState = 'copied';
+      deviceOpeningGitHubAutomatically = true;
     } catch {
-      // Clipboard access is optional; a denied copy must not block the GitHub tab.
+      // A denied clipboard write must not send the user to GitHub without a pasteable code.
+      deviceClipboardState = 'failed';
     }
+    if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    renderDeviceHandoff(attempt);
     if (!await revealDeviceCode(attempt)) return;
-    $('device-handoff-status').textContent = copied
-      ? 'Code copied. GitHub will open in four seconds.'
-      : 'Copy the code here before entering it on GitHub. GitHub will open in four seconds.';
+    if (deviceClipboardState !== 'copied') return;
+    $('device-handoff-status').textContent = `GitHub opens in four seconds. When it asks for the code, press ${deviceKeyboardShortcut('V')} to paste it, then authorize Clockoli.`;
     await new Promise(resolve => setTimeout(resolve, 4000));
     if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
     githubHandoff = true;
-    await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-    $('device-handoff-status').textContent = copied
-      ? 'Paste the copied code on GitHub.'
-      : 'Copy the code above and paste it on GitHub.';
-    message('Authorize Clockoli on GitHub, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
+    try {
+      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
+      deviceGitHubOpened = true;
+      $('open-device-page').textContent = 'Open GitHub again';
+    } finally {
+      deviceOpeningGitHubAutomatically = false;
+      renderDeviceHandoff(attempt);
+    }
   } catch (error) {
-    if (!$('device-panel').hidden) $('device-handoff-status').textContent = 'Could not open GitHub automatically. Select Open GitHub again.';
+    if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
     message(error.message, 'error');
   }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
 
 $('copy-code').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('device-code').value); message('Device code copied.', 'success'); }
-  catch { $('device-code').focus(); $('device-code').select(); message('Could not copy automatically. The code is selected; copy it with your keyboard.', 'error'); }
+  const attempt = state?.deviceAttempt;
+  if (!attempt?.userCode) return;
+  try {
+    await navigator.clipboard.writeText(attempt.userCode);
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'copied';
+    renderDeviceHandoff(attempt);
+  } catch {
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    $('device-code').focus(); $('device-code').select();
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'selection';
+    renderDeviceHandoff(attempt);
+  }
 });
 
 $('device-done').addEventListener('click', async () => {
