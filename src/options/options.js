@@ -836,12 +836,12 @@ function closeRepositoryAccess() {
 }
 
 function renderRepositoryCheckButton() {
-  const refresh = $('check-repository-target');
+  const button = $('check-repository-target');
   const busy = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget
     || (discoveryStatus === 'loading' && repositoryTarget && !repositoryInputDirty));
-  refresh.disabled = !$('repository-target').value.trim() || busy;
-  refresh.textContent = busy ? 'Checking…' : 'Check';
-  refresh.setAttribute('aria-busy', String(busy));
+  button.disabled = !$('repository-target').value.trim() || busy;
+  button.textContent = busy ? 'Checking…' : 'Check';
+  button.setAttribute('aria-busy', String(busy));
 }
 
 function renderRepositoryAccess() {
