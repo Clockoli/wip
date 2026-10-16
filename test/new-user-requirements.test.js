@@ -42,11 +42,11 @@ test('repository discovery honors an explicit dirty target and never confirms wr
   assert.match(close, /pendingConfirmation = null/);
 });
 
-test('repository controls offer autocomplete and manual recheck, default and Finish', () => {
+test('repository controls offer autocomplete and explicit Check, default and Finish', () => {
   assert.match(optionsHtml, /id="repository-target-form"/);
   assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>/);
-  assert.match(optionsHtml, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
-  assert.doesNotMatch(optionsHtml, /id="check-repository-target"/);
+  assert.match(optionsHtml, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
+  assert.doesNotMatch(optionsHtml, /id="refresh-repository-target"/);
   assert.doesNotMatch(optionsHtml, /id="refresh-repositories"|id="connect-repository"/);
   assert.doesNotMatch(optionsJs, /radio\.type = 'radio'/);
   assert.match(optionsCss, /\.repository-suggestion/);
