@@ -684,12 +684,13 @@ function renderDeviceHandoff(attempt) {
     : clipboard === 'selection' ? `Clipboard copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
       : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
         : 'Code ready. Select Copy to put it on your clipboard.';
-  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code, then authorize Clockoli.`;
+  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code.`;
   $('device-handoff-status').textContent = clipboard === 'copied'
-    ? deviceOpeningGitHubAutomatically ? `GitHub will open shortly. When it asks for the code, ${paste}`
-      : deviceGitHubOpened ? `On GitHub, ${paste}`
-        : `Select Open GitHub to enter code. When it asks for the code, ${paste}`
-    : `After copying, select Open GitHub to enter code. On GitHub, ${paste}`;
+    ? deviceOpeningGitHubAutomatically ? `Next: When GitHub opens, ${paste}`
+      : deviceGitHubOpened ? `Next: On GitHub, ${paste}`
+        : `Next: Open GitHub, then ${paste}`
+    : clipboard === 'selection' ? 'Next: Copy the selected code, then open GitHub.'
+      : 'Next: Copy the code, then open GitHub.';
 }
 
 function renderOnboardingProgress() {
@@ -1820,7 +1821,7 @@ $('authorize').addEventListener('click', async () => {
     renderDeviceHandoff(attempt);
     if (!await revealDeviceCode(attempt)) return;
     if (deviceClipboardState !== 'copied') return;
-    $('device-handoff-status').textContent = `GitHub opens in four seconds. When it asks for the code, press ${deviceKeyboardShortcut('V')} to paste it, then authorize Clockoli.`;
+    renderDeviceHandoff(attempt);
     await new Promise(resolve => setTimeout(resolve, 4000));
     if (state.deviceAttempt?.attemptId !== attempt.attemptId || deviceGitHubOpened || deviceClipboardState !== 'copied') return;
     githubHandoff = true;
