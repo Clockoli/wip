@@ -222,7 +222,7 @@ test('storage recovery returns to selection under the universal explicit-confirm
 test('direct repository selection is accessible and exposes check progress and focused review', () => {
   assert.match(html, /<label for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(html, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
+  assert.match(html, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
   assert.match(html, /id="confirm-repository-action"[^>]*type="button"/);
   assert.doesNotMatch(html, /Unavailable repositories include the reason/);

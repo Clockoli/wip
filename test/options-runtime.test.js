@@ -198,8 +198,8 @@ test('automatic inspection clears its busy state when GitHub returns canonical m
   await page.context.rememberRepositoryTarget('acme/time-data');
   await page.context.discoverRepositories();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
-  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'false');
-  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
+  assert.equal(page.nodes.get('check-repository-target').attributes['aria-busy'], 'false');
+  assert.equal(page.nodes.get('check-repository-target').disabled, false);
   assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
 });
 
@@ -619,7 +619,7 @@ test('silent discovery revokes inspected Ready on semantic changes without re-in
   }
 });
 
-test('blurred B is checked after an in-flight A inspection without applying stale A', async () => {
+test('a second explicit Check is queued after an in-flight inspection without applying stale A', async () => {
   const first = { installationId: 10, repoId: 20, fullName: 'acme/first', owner: 'acme', repo: 'first', eligible: true };
   const second = { installationId: 10, repoId: 21, fullName: 'acme/second', owner: 'acme', repo: 'second', eligible: true };
   let releaseFirst, firstStarted;
@@ -637,8 +637,10 @@ test('blurred B is checked after an in-flight A inspection without applying stal
   input.value = second.fullName;
   input.listeners.input();
   await input.listeners.blur({ relatedTarget: null });
+  assert.deepEqual(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').map(request => request.payload.repoId), [20]);
+  const checkingSecond = page.submit('repository-target-form');
   releaseFirst();
-  await checkingFirst;
+  await Promise.all([checkingFirst, checkingSecond]);
   assert.deepEqual(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').map(request => request.payload.repoId), [20, 21]);
   assert.equal(vm.runInContext('selectedRepository.fullName', page.context), second.fullName);
   assert.equal(page.context.reviewSelectedRepository(), true);
@@ -826,6 +828,34 @@ test('typing a repository name loads suggestions once, while a pasted URL waits 
   assert.equal(page.nodes.get('repository-list').hidden, true);
 });
 
+test('repository input uses an explicit Check button without checking or showing a prompt on blur', async () => {
+  assert.match(html, /id="check-repository-target"[^>]*>Check<\/button>/);
+  assert.doesNotMatch(html, /id="refresh-repository-target"/);
+  const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
+    ? { repository: { ...repository, state: 'initialized_member', canAdd: true, ready: true } }
+    : { repositories: [repository], installations: [] } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  const check = page.nodes.get('check-repository-target');
+  const status = page.nodes.get('repository-target-status');
+  assert.equal(check.disabled, true);
+  input.value = repository.fullName;
+  input.listeners.input();
+  assert.equal(check.disabled, false);
+  assert.equal(status.hidden, true);
+  await input.listeners.blur({ relatedTarget: null });
+  assert.equal(status.hidden, true);
+  assert.equal(input.attributes['aria-invalid'], undefined);
+  assert.equal(page.requests.some(request => ['DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY'].includes(request.type)), false);
+  await check.listeners.click();
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(status.textContent, 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
+  assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
+  assert.equal(page.nodes.get('connect-checked-repository').textContent, 'Connect repository');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
 test('reopening completed setup refreshes the granted catalog before showing suggestions', async () => {
   const old = { installationId: 10, repoId: 20, fullName: 'acme/time-old', eligible: true };
   const added = { installationId: 10, repoId: 21, fullName: 'acme/time-new', eligible: true };
@@ -889,15 +919,21 @@ test('repository check hides target status during repository discovery and resto
   page.render({ appConfigured: true, auth: connectedState.auth });
   const input = page.nodes.get('repository-target');
   input.value = repository.fullName; input.listeners.input();
-  const check = page.nodes.get('refresh-repository-target').listeners.click();
+  const check = page.nodes.get('check-repository-target').listeners.click();
   const status = page.nodes.get('repository-target-status');
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'true');
+  assert.equal(page.nodes.get('check-repository-target').attributes['aria-busy'], 'true');
   assert.equal(status.hidden, true, 'the target status must not compete with discovery loading');
   releaseDiscovery({ repositories: [repository], installations: [] });
   await check;
   assert.equal(status.hidden, false);
-  assert.match(status.textContent, /Checked acme\/time-data/);
+  assert.equal(status.textContent, 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
+});
+
+
+test('repository checks do not duplicate button progress in the large status message', () => {
+  assert.equal(source.includes('Checking ${target}… Repository files will not be changed.'), false);
+  assert.doesNotMatch(source, /Checking access and storage… No changes will be made/);
 });
 
 test('repository list loader clears on failure and silent refresh leaves existing rows visible', async () => {
@@ -1063,7 +1099,9 @@ test('choosing an autocomplete suggestion checks access without connecting', asy
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(page.nodes.get('repository-list').hidden, true);
   assert.equal(input.value, repository.fullName);
-  assert.match(page.nodes.get('repository-target-status').textContent, /Checking acme\/time-data/);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
+  assert.equal(page.nodes.get('repository-target-status').textContent, '');
+  assert.equal(page.nodes.get('check-repository-target').textContent, 'Checking…');
   release({ repository: { ...repository, state: 'incompatible', eligible: false } });
   await click;
   assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
@@ -1071,7 +1109,7 @@ test('choosing an autocomplete suggestion checks access without connecting', asy
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
-test('finishing a manual repository name checks it without a second button', async () => {
+test('leaving a manual repository name waits for Check without inspecting it', async () => {
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/typed', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
     ? { repository: { ...repository, state: 'incompatible', eligible: false } }
@@ -1082,6 +1120,9 @@ test('finishing a manual repository name checks it without a second button', asy
   input.value = 'acme/typed'; input.listeners.input();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 0);
   await input.listeners.blur();
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 0);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
+  await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
   assert.equal(input.value, 'acme/typed');
   assert.match(page.nodes.get('repository-target-status').textContent, /Unavailable/);
@@ -1094,6 +1135,8 @@ test('unknown manual target retains its name and displays a red access error', a
   const input = page.nodes.get('repository-target');
   input.value = 'acme/unknown'; input.listeners.input();
   await input.listeners.blur();
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
+  await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(input.value, 'acme/unknown');
   assert.match(page.nodes.get('repository-target-status').textContent, /cannot access/);
   assert.match(page.nodes.get('repository-target-status').className, /repository-target-error/);
@@ -1101,7 +1144,7 @@ test('unknown manual target retains its name and displays a red access error', a
   assert.equal(page.nodes.get('repository-access-panel').open, true);
 });
 
-test('unfinished manual names do not trigger discovery on blur', async () => {
+test('unfinished repository names validate on Check, never on blur', async () => {
   const page = harness();
   page.render({ appConfigured: true, auth: connectedState.auth });
   const input = page.nodes.get('repository-target');
@@ -1109,13 +1152,19 @@ test('unfinished manual names do not trigger discovery on blur', async () => {
   await input.listeners.blur();
   assert.equal(page.requests.length, 0);
   assert.equal(input.value, 'acme/');
+  assert.equal(input.attributes['aria-invalid'], undefined);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
+  await page.nodes.get('check-repository-target').listeners.click();
+  assert.equal(page.requests.length, 0);
   assert.equal(input.attributes['aria-invalid'], 'true');
+  assert.match(page.nodes.get('repository-target-status').textContent, /Enter a valid GitHub repository URL/);
   input.value = ''; input.listeners.input();
   await input.listeners.blur();
   assert.equal(input.attributes['aria-invalid'], undefined);
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
 });
 
-test('refresh icon rechecks a manual target once without an extra blur check', async () => {
+test('Check button checks a manual target once without an extra blur check', async () => {
   let discoveries = 0;
   const page = harness({ reply: request => {
     if (request.type === 'DISCOVER_REPOSITORIES') discoveries += 1;
@@ -1123,18 +1172,19 @@ test('refresh icon rechecks a manual target once without an extra blur check', a
   } });
   page.render({ appConfigured: true, auth: connectedState.auth });
   const input = page.nodes.get('repository-target');
-  const refresh = page.nodes.get('refresh-repository-target');
+  const refresh = page.nodes.get('check-repository-target');
   assert.equal(refresh.disabled, true);
   input.value = 'acme/unknown'; input.listeners.input();
   assert.equal(refresh.disabled, false);
-  await input.listeners.blur({ relatedTarget: { id: 'refresh-repository-target' } });
+  assert.equal(refresh.textContent, 'Check');
+  await input.listeners.blur({ relatedTarget: { id: 'check-repository-target' } });
   assert.equal(discoveries, 0);
   await refresh.listeners.click();
   assert.equal(discoveries, 1);
   assert.equal(refresh.disabled, false);
 });
 
-test('manual refresh gives visible pending and completed feedback even when the target is listed', async () => {
+test('Check button alone shows progress before the completed inspection feedback', async () => {
   let release;
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
@@ -1144,14 +1194,15 @@ test('manual refresh gives visible pending and completed feedback even when the 
   await page.context.discoverRepositories();
   const input = page.nodes.get('repository-target');
   const status = page.nodes.get('repository-target-status');
-  const refresh = page.nodes.get('refresh-repository-target');
+  const refresh = page.nodes.get('check-repository-target');
   input.value = repository.fullName; input.listeners.input();
   const click = refresh.listeners.click();
   await new Promise(resolve => setImmediate(resolve));
-  assert.match(status.textContent, /Checking acme\/time-data/);
-  assert.match(status.textContent, /Repository files will not be changed/);
+  assert.equal(status.hidden, true, 'do not show a separate message while the Check button is busy');
+  assert.equal(status.textContent, '', 'avoid displaying redundant progress text beside the Check button');
   assert.equal(refresh.disabled, true);
-  assert.equal(refresh.attributes['aria-busy'], 'true', 'the reload icon signals the pending inspection');
+  assert.equal(refresh.attributes['aria-busy'], 'true', 'the Check button signals the pending inspection');
+  assert.equal(refresh.textContent, 'Checking…');
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
   release({ repository: { ...repository, state: 'incompatible', eligible: false } });
   await click;
@@ -1160,10 +1211,11 @@ test('manual refresh gives visible pending and completed feedback even when the 
   assert.match(status.textContent, /Repository files were not changed/);
   assert.equal(refresh.disabled, false);
   assert.equal(refresh.attributes['aria-busy'], 'false');
+  assert.equal(refresh.textContent, 'Check');
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
-test('automatic grant-return check keeps the reload icon busy through discovery and inspection', async () => {
+test('automatic grant-return check keeps the Check button busy through discovery and inspection', async () => {
   const target = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
   let releaseDiscovery, releaseInspection;
   const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
@@ -1179,18 +1231,20 @@ test('automatic grant-return check keeps the reload icon busy through discovery 
   const delayed = page.timers.find(timer => timer.delay === 1000 && !timer.cleared);
   assert.ok(delayed);
   delayed.callback();
-  const refresh = page.nodes.get('refresh-repository-target');
+  const refresh = page.nodes.get('check-repository-target');
   assert.equal(refresh.attributes['aria-busy'], 'true', 'show activity during discovery');
+  assert.equal(page.nodes.get('repository-target-status').hidden, true, 'do not duplicate the automatic check progress');
   releaseDiscovery({ repositories: [target], installations: [] });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(refresh.attributes['aria-busy'], 'true', 'keep showing activity during inspection');
+  assert.equal(page.nodes.get('repository-target-status').hidden, true);
   releaseInspection({ repository: { ...target, state: 'uninitialized', canInitialize: true } });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(refresh.attributes['aria-busy'], 'false', 'stop after the read-only check settles');
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
-test('manual refresh exposes a retryable local failure when the listed target inspection fails', async () => {
+test('manual Check exposes a retryable local failure when the listed target inspection fails', async () => {
   const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', owner: 'acme', repo: 'time-data', eligible: true };
   const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
     ? new Error('GitHub unavailable') : { repositories: [repository], installations: [] } });
@@ -1198,22 +1252,22 @@ test('manual refresh exposes a retryable local failure when the listed target in
   await page.context.discoverRepositories();
   const input = page.nodes.get('repository-target');
   input.value = repository.fullName; input.listeners.input();
-  await page.nodes.get('refresh-repository-target').listeners.click();
+  await page.nodes.get('check-repository-target').listeners.click();
   const status = page.nodes.get('repository-target-status');
   assert.match(status.textContent, /Check failed.*GitHub unavailable/);
   assert.match(status.className, /repository-target-error/);
-  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
-  assert.equal(page.nodes.get('refresh-repository-target').attributes['aria-busy'], 'false');
+  assert.equal(page.nodes.get('check-repository-target').disabled, false);
+  assert.equal(page.nodes.get('check-repository-target').attributes['aria-busy'], 'false');
 });
 
-test('manual refresh reports authorization blocks beside the field without inspecting', async () => {
+test('manual Check reports authorization blocks beside the field without inspecting', async () => {
   const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
     ? { blocked: { message: 'GitHub authorization expired.' }, repositories: [], installations: [] }
     : {} });
   page.render({ appConfigured: true, auth: connectedState.auth });
   const input = page.nodes.get('repository-target');
   input.value = 'acme/time-data'; input.listeners.input();
-  await page.nodes.get('refresh-repository-target').listeners.click();
+  await page.nodes.get('check-repository-target').listeners.click();
   assert.match(page.nodes.get('repository-target-status').textContent, /Check blocked: GitHub authorization expired/);
   assert.match(page.nodes.get('repository-target-status').className, /repository-target-error/);
   assert.equal(page.requests.some(request => request.type === 'INSPECT_REPOSITORY'), false);
@@ -1243,9 +1297,9 @@ test('inspection failure clears checking state and keeps a retryable row', async
   page.render({ appConfigured: true, auth: connectedState.auth });
   await page.context.discoverRepositories();
   page.nodes.get('repository-target').value = 'acme/time-data';
-  await page.nodes.get('refresh-repository-target').listeners.click();
+  await page.nodes.get('check-repository-target').listeners.click();
   assert.match(page.nodes.get('repository-target-status').textContent, /Check failed/);
-  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
+  assert.equal(page.nodes.get('check-repository-target').disabled, false);
 });
 
 test('checking a ready repository offers a separate connect confirmation without connecting it', async () => {
@@ -1258,7 +1312,7 @@ test('checking a ready repository offers a separate connect confirmation without
   page.render({ appConfigured: true, auth: connectedState.auth });
   const input = page.nodes.get('repository-target');
   input.value = 'acme/time-data';
-  await page.nodes.get('refresh-repository-target').listeners.click();
+  await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
   assert.equal(page.nodes.get('repository-confirmation').open, false, 'Check alone cannot open the connect confirmation');
   assert.match(page.nodes.get('repository-target-status').textContent, /Ready.*Connect repository/);
@@ -1301,10 +1355,10 @@ test('manual check of a repository outside the list prevents competing row check
   const check = page.submit('repository-target-form');
   for (let i = 0; i < 10 && !release; i += 1) await new Promise(resolve => setImmediate(resolve));
   assert.equal(typeof release, 'function');
-  assert.equal(page.nodes.get('refresh-repository-target').disabled, true);
+  assert.equal(page.nodes.get('check-repository-target').disabled, true);
   release({ repositories: [repository], installations: [] });
   await check;
-  assert.equal(page.nodes.get('refresh-repository-target').disabled, false);
+  assert.equal(page.nodes.get('check-repository-target').disabled, false);
 });
 
 test('access create link uses the checked target and preserves private template defaults', async () => {

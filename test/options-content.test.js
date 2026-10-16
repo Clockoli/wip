@@ -355,6 +355,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
 
   const gettingStarted = await readFile(new URL('../docs/getting-started.md', import.meta.url), 'utf8');
   const troubleshooting = await readFile(new URL('../docs/troubleshooting.md', import.meta.url), 'utf8');
+  const repositoryGuide = await readFile(new URL('../docs/time-data-repository.md', import.meta.url), 'utf8');
   assert.match(source, /Step <span id="current-step">1<\/span> of 2:/);
   assert.doesNotMatch(source, /id="repository-setup-step"|id="repository-access-step"/);
   for (const label of ['Sign in with GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
@@ -365,7 +366,12 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   for (const label of ['Check repository']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
-  assert.match(gettingStarted, /repository field and leave the field or press Enter/);
+  assert.match(gettingStarted, /repository field and click \*\*Check\*\* \(or press Enter\)/);
+  assert.match(repositoryGuide, /select \*\*Check\*\* \(or press Enter\)/);
+  assert.match(troubleshooting, /Use the same \*\*Check\*\* button to retry/);
+  for (const doc of [gettingStarted, troubleshooting, repositoryGuide]) {
+    assert.doesNotMatch(doc, /leave the field or press Enter|refresh icon|reload icon/i);
+  }
   assert.match(gettingStarted, /Discovery and inspection never write to GitHub/i);
   assert.match(gettingStarted, /then explicitly confirm the offered action/i);
   assert.match(gettingStarted, /requires fresh GitHub repository-admin permission/i);
