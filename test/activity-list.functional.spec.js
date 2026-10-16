@@ -78,6 +78,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(page.locator('.times-view-button').first()).toBeVisible({ timeout: 5000 });
 
     const bulk = page.locator('.bulk-time');
+    await expect(bulk.locator('summary')).toHaveText('Bulk time adding');
     await bulk.locator('summary').click();
     const examples = bulk.locator('.bulk-time-examples');
     await expect(examples).toBeVisible();
