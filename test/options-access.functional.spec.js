@@ -148,7 +148,18 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
     await check.click();
     await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
-    await expect(page.locator('#connect-checked-repository')).toBeVisible();
+    const connect = page.locator('#connect-checked-repository');
+    await expect(connect).toBeVisible();
+    const appearance = locator => locator.evaluate(button => {
+      const style = getComputedStyle(button);
+      return { background: style.backgroundColor, color: style.color, border: style.borderTopColor };
+    });
+    await page.mouse.move(0, 0);
+    expect(await appearance(check)).toEqual(await appearance(connect));
+    await check.hover();
+    const checkHover = await appearance(check);
+    await connect.hover();
+    expect(checkHover).toEqual(await appearance(connect));
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
     await input.fill('acme/');
     await page.locator('#repository-step-title').click();
