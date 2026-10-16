@@ -133,6 +133,7 @@
   let bulkDraft = '';
   let bulkMutation = false;
   let bulkOpen = false;
+  let bulkFeedback = null;
   const ACTIVITY_HISTORY_RANGE = { startDate: '0001-01-01', endDate: '9999-12-31' };
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
@@ -917,7 +918,7 @@
     return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
   }
 
-  async function loadActivityCalendarWeek(range) {
+  async function loadActivityCalendarWeek(range, { showLoading = true } = {}) {
     if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
     if (timesMode && (loadingRecent || selectedTimesCalendarLoadingId !== null)) {
       ++timesLoadId;
@@ -940,7 +941,7 @@
       refreshMountedTimeline();
     }
     const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
-    calendarWeekLoadingId = loadId;
+    if (showLoading) calendarWeekLoadingId = loadId;
     updateCalendarWeekLoading();
     const setStatus = text => {
       activityCalendarStatusText = text;
@@ -954,9 +955,9 @@
       if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
       recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
       if (!timesMode && !data.partial) completeVisualWeekStart = nextWeek;
-      if (timesMode) { recentLoaded = true; recentFresh = true; }
-      refreshMountedTimeline();
-      if (timesMode && activityViewMode === 'list') renderUi();
+      recentLoaded = true; recentFresh = !data.partial;
+      const refreshed = refreshMountedTimeline();
+      if (!refreshed || (timesMode && activityViewMode === 'list')) renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
       if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
       return true;
@@ -2042,10 +2043,8 @@
 
   async function loadSelectedTimes(onFailure = null) {
     const loadId = ++timesLoadId;
-    if (activityViewMode === 'calendar') {
-      selectedTimesCalendarLoadingId = loadId;
-      updateCalendarWeekLoading();
-    }
+    selectedTimesCalendarLoadingId = loadId;
+    updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
     try {
@@ -2236,23 +2235,43 @@
     placeCalendarWeekNavigation(body, activityViewMode);
     const bulk = el('details', undefined, 'bulk-time');
     bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
-    const summary = el('summary', 'Add time'); bulk.append(summary);
+    const summary = el('summary', 'Bulk time adding'); bulk.append(summary);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
-    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
-    input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
+    const examples = el('div', undefined, 'bulk-time-examples');
+    examples.append(el('strong', 'Examples'), el('pre', `2026/08/21 https://example.com/task Search relevance 6:00
 2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5
 23.08.2026 https://example.com/call Customer call 1:30
-24/08/2026 https://example.com/release Release preparation 0.25`;
-    input.addEventListener('input', () => { bulkDraft = input.value; });
+24/08/2026 https://example.com/release Release preparation 0.25`));
+    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
+    input.placeholder = 'Enter one entry per line';
+    input.addEventListener('input', () => { bulkDraft = input.value; bulkFeedback = null; shadow?.querySelector('.bulk-time-feedback')?.remove(); });
     const add = button('Add time', 'primary', async () => {
       if (bulkMutation) return;
-      bulkDraft = input.value; bulkMutation = true; errorText = ''; renderUi();
+      bulkDraft = input.value; bulkOpen = true; bulkMutation = true; bulkFeedback = null; errorText = ''; renderUi();
+      let added = null;
       try {
         const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
-        bulkDraft = ''; bulkMutation = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
-      } catch (error) { bulkMutation = false; setError(error); }
+        added = result.added;
+        bulkDraft = ''; bulkMutation = false; recentLoaded = false;
+        await refreshRecent(true);
+        bulkFeedback = { kind: 'success', message: `${added} ${added === 1 ? 'entry was' : 'entries were'} added.` };
+      } catch (error) {
+        bulkMutation = false;
+        if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; }
+        const message = error?.message || 'Could not add time.';
+        bulkFeedback = { kind: 'error', message: added === null ? message : `Time was added, but Activity could not be refreshed: ${message}` };
+      }
+      renderUi();
     }); add.disabled = bulkMutation;
-    bulk.append(help, input, add); body.append(bulk);
+    bulk.append(help, examples, input, add); body.append(bulk);
+    if (bulkFeedback) {
+      const feedback = el('div', undefined, `bulk-time-feedback bulk-time-feedback-${bulkFeedback.kind}`);
+      feedback.setAttribute('role', bulkFeedback.kind === 'error' ? 'alert' : 'status');
+      const dismiss = button('×', 'bulk-time-feedback-dismiss', () => { bulkFeedback = null; feedback.remove(); });
+      dismiss.setAttribute('aria-label', 'Dismiss bulk time message');
+      feedback.append(el('span', bulkFeedback.message), dismiss);
+      body.append(feedback);
+    }
     if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
     page.append(body); return page;
   }
@@ -3347,12 +3366,16 @@
       if (!fullWidthPopupOpen) return false;
       renderUi();
       const refreshedState = send({ type: 'GET_PAGE_STATE', refresh: true });
-      void restoreActivityViewMode();
+      const restoredMode = restoreActivityViewMode();
       applyPageState(await refreshedState);
+      await restoredMode;
       if (!fullWidthPopupOpen) return false;
       if (pageState.configured) {
-        await refreshRecent(true);
-        if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
+        if (timelineViewMode === 'calendar') await loadActivityCalendarWeek(weekWindow(), { showLoading: false });
+        else {
+          await refreshRecent(true);
+          if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
+        }
       }
       else renderUi();
     } catch (error) { setError(error); }
@@ -3642,6 +3665,14 @@
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
       :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
+      :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
+      :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
+      :host(.times-surface) .bulk-time-feedback { position:fixed; z-index:1000; right:24px; bottom:24px; display:flex; align-items:center; gap:12px; box-sizing:border-box; width:max-content; max-width:calc(100vw - 32px); padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-left:4px solid var(--ck-success); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)); font-weight:600; overflow-wrap:anywhere }
+      :host(.times-surface) .bulk-time-feedback-error { border-left-color:var(--ck-danger) }
+      :host(.times-surface) .bulk-time-feedback-dismiss { flex:none; min-width:28px; min-height:28px; margin-left:auto; padding:0 6px; border:0; border-radius:5px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:20px; line-height:1; cursor:pointer }
+      :host(.times-surface) .bulk-time-feedback-dismiss:hover { background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      @media(max-width:480px) { :host(.times-surface) .bulk-time-feedback { right:16px; bottom:16px; left:16px; width:auto } }
       @media(hover:none) { .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } .activity-list .entry-record { padding-right:14px } }
       @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
@@ -3803,7 +3834,7 @@
   });
 
   if (timesMode) {
-    mountInHeader(); renderUi();
+    mountInHeader();
     void restoreActivityViewMode();
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {

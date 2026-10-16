@@ -34,6 +34,7 @@ globalThis.trackingMessages = [];
 globalThis.editPayloads = [];
 globalThis.searchMode = 'ok';
 let viewMode = 'timeline';
+globalThis.bulkAddFailure = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
   const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
@@ -50,6 +51,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     for (const entry of recent) if (entry.id === message.payload.original.id) Object.assign(entry, message.payload.edits);
     respond({ ok: true, data: { operationId: 'edit-' + globalThis.editPayloads.length, pending: true } });
   }
+  else if (message.type === 'BULK_ADD_TIMES') respond(globalThis.bulkAddFailure
+    ? { ok: false, error: { message: 'Line 1: Invalid time entry' } }
+    : { ok: true, data: { added: 4 } });
   else if (message.type === 'SWITCH_TASK') {
     active = { id: 'running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
       startedAt: new Date().toISOString(), entryDate: date, timezone: 'UTC' };
@@ -221,7 +225,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent } });",
-        "if (message.type === 'LOAD_WEEK') { (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
+        "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
       .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: recent.filter(entry => entry.id === 'record') } });\n  else if (message.type === 'SEARCH_ACTIVITY')");
     await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
     context = await chromium.launchPersistentContext(profile, {
@@ -247,6 +251,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.mouse.up();
     expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
     await worker.evaluate(() => {
+      globalThis.autoReplyWeeks = true;
       for (const respond of globalThis.weekReplies.splice(0)) respond({ ok: true, data: { configured: true, active, recent, pendingWrites: [], pendingCount: 0 } });
     });
     await expect(neighbor).toBeVisible();
@@ -265,12 +270,9 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
       return Date.parse(edit.endedAt) - Date.parse(edit.startedAt);
     })).toBe(30 * 60_000);
     await root.getByRole('button', { name: 'Calendar', exact: true }).click();
-    await expect.poll(() => worker.evaluate(() => globalThis.weekReplies?.length ?? 0)).toBeGreaterThan(0);
-    await worker.evaluate(() => {
-      for (const respond of globalThis.weekReplies.splice(0)) respond({ ok: true, data: { configured: true, active, recent, pendingWrites: [], pendingCount: 0 } });
-    });
     const calendarSource = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
     const calendarNeighbor = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
+    await expect(calendarSource).toBeVisible();
     await calendarSource.evaluate(element => element.scrollIntoView({ block: 'center' }));
     const calendarFrom = await calendarSource.boundingBox(), calendarBefore = await calendarNeighbor.boundingBox();
     await page.mouse.move(calendarFrom.x + calendarFrom.width / 2, calendarFrom.y + calendarFrom.height / 2);
@@ -296,15 +298,12 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await github.locator('#clockoli-root .trigger-main').click();
     const panel = github.locator('#clockoli-full-width-popup-root');
     await panel.getByRole('button', { name: 'Timeline', exact: true }).click();
-    await expect.poll(() => worker.evaluate(() => globalThis.weekReplies?.length ?? 0)).toBeGreaterThan(0);
-    await worker.evaluate(() => {
-      for (const respond of globalThis.weekReplies.splice(0)) respond({ ok: true, data: { configured: true, active, recent, pendingWrites: [], pendingCount: 0 } });
-    });
     const panelSource = panel.locator('.task-timeline-host .task[data-task-key="entry:record"]');
     const panelNeighbor = panel.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
     await expect(panelSource).toBeVisible();
     await expect(panelNeighbor).toBeVisible();
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    await panelNeighbor.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
     const { panelFrom, panelTo, panelViewport } = await panelSource.evaluate(element => {
       const root = element.getRootNode();
       const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
@@ -329,7 +328,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
 });
 
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
-  test.setTimeout(25000);
+  test.setTimeout(60000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-profile-'));
   let context;
@@ -352,6 +351,46 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await expect(page.locator('.times-view-button').first()).toBeVisible({ timeout: 5000 });
+
+    const bulk = page.locator('.bulk-time');
+    await expect(bulk.locator('summary')).toHaveText('Bulk time adding');
+    await bulk.locator('summary').click();
+    const examples = bulk.locator('.bulk-time-examples');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('2026/08/21 https://example.com/task Search relevance 6:00');
+    await expect(examples).toContainText('2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5');
+    const bulkInput = bulk.getByRole('textbox', { name: 'Bulk time entries' });
+    await bulkInput.fill('2026-08-25 https://example.com/work Work 1:30');
+    await expect(bulkInput).toHaveValue('2026-08-25 https://example.com/work Work 1:30');
+    await expect(examples).toBeVisible();
+    await expect(examples).toContainText('23.08.2026 https://example.com/call Customer call 1:30');
+    await expect(examples).toContainText('24/08/2026 https://example.com/release Release preparation 0.25');
+    expect(await bulkInput.getAttribute('placeholder')).not.toContain('Search relevance');
+    expect((await worker.evaluate(() => globalThis.trackingMessages))).not.toContain('BULK_ADD_TIMES');
+    await bulk.getByRole('button', { name: 'Add time', exact: true }).click();
+    const feedback = page.locator('.bulk-time-feedback');
+    await expect(feedback).toContainText('4 entries were added.');
+    await expect(feedback).toHaveAttribute('role', 'status');
+    await expect(feedback).toBeInViewport();
+    expect(await feedback.evaluate(node => getComputedStyle(node).position)).toBe('fixed');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(feedback).toBeInViewport();
+    await expect(bulkInput).toHaveValue('');
+    expect((await page.locator('.times-body > .notice').allTextContents()).join(' ')).not.toContain('entries were added');
+
+    await bulkInput.fill('invalid entry');
+    await expect(feedback).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.bulkAddFailure = true; });
+    await bulk.getByRole('button', { name: 'Add time', exact: true }).click();
+    await expect(feedback).toContainText('Line 1: Invalid time entry');
+    await expect(feedback).toHaveAttribute('role', 'alert');
+    await expect(feedback).toBeInViewport();
+    await expect(bulkInput).toHaveValue('invalid entry');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect(feedback).toBeInViewport();
+    await feedback.getByRole('button', { name: 'Dismiss bulk time message' }).click();
+    await expect(feedback).toHaveCount(0);
+    await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
     expect(await tabs.evaluate(element => element.nextElementSibling?.classList.contains('times-toolbar'))).toBe(true);
     const status = page.locator('.running-status');

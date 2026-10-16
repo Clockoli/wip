@@ -22,7 +22,7 @@ const current = { id: 'current-week', taskUrl: 'https://github.com/acme/app/issu
   endedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 1).toISOString(),
   durationSeconds: 3600, _path: 'times/' + day(today).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 1 };
 const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/42',
-  taskTitle: 'Running task', startedAt: new Date(Date.now() - 60000).toISOString() };
+  taskTitle: 'Running task', startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 59).toISOString() };
 const mondayStart = new Date(monday); mondayStart.setHours(0, 0, 0, 0);
 const saturday = new Date(mondayStart); saturday.setDate(saturday.getDate() - 2); saturday.setHours(23, 0, 0, 0);
 const mondayEnd = new Date(monday); mondayEnd.setHours(1, 0, 0, 0);
@@ -207,6 +207,7 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 
 test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week navigation', async () => {
   test.setTimeout(45000);
+  const fixedNow = new Date(); fixedNow.setHours(12, 0, 0, 0);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-week-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-week-profile-'));
   let context;
@@ -227,6 +228,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     const id = new URL(worker.url()).host;
     let activity = await context.newPage();
+    await activity.clock.setFixedTime(fixedNow);
     activity.on('pageerror', error => errors.push(error.message));
     await activity.goto(`chrome-extension://${id}/src/times/times.html`);
     let activityRoot = activity.locator('#clockoli-times-root').locator('> *');
@@ -381,6 +383,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
     await activity.close();
     activity = await context.newPage();
+    await activity.clock.setFixedTime(fixedNow);
     activity.on('pageerror', error => errors.push(error.message));
     await activity.goto(`chrome-extension://${id}/src/times/times.html`);
     activityRoot = activity.locator('#clockoli-times-root').locator('> *');
@@ -393,6 +396,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
     const page = await context.newPage();
+    await page.clock.setFixedTime(fixedNow);
     page.on('pageerror', error => errors.push(error.message));
     await page.route('https://github.com/acme/app/issues/42', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>' }));
     await page.goto('https://github.com/acme/app/issues/42');
@@ -514,6 +518,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     });
     expect(await listRow(popupRoot)).toEqual(await listRow(activityRoot));
     const toolbar = await context.newPage();
+    await toolbar.clock.setFixedTime(fixedNow);
     toolbar.on('pageerror', error => errors.push(error.message));
     await toolbar.setViewportSize({ width: 420, height: 650 });
     await toolbar.goto(`chrome-extension://${id}/src/popup/popup.html`);
@@ -543,6 +548,67 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const reads = await worker.evaluate(() => globalThis.weekReads);
     expect(reads.some(read => read.type === 'LOAD_TIMES')).toBe(true);
     expect(reads.some(read => read.type === 'LOAD_WEEK')).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity Calendar focuses daytime records after disabling and re-enabling the extension', async () => {
+  test.setTimeout(45000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-calendar-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-calendar-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    const daytimeWorker = workerSource
+      .replace('today.getDate(), 0).toISOString()', 'today.getDate(), 10).toISOString()')
+      .replace('today.getDate(), 1).toISOString()', 'today.getDate(), 11).toISOString()')
+      .replace('active, recent: [current]', 'active: null, recent: [current]')
+      .replace('active, pendingWrites: []', 'active: null, pendingWrites: []');
+    await writeFile(join(extension, 'test-worker.js'), daytimeWorker);
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: false,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const id = new URL(worker.url()).host;
+    const errors = [];
+    const watchWorker = observed => observed.on('console', message => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    watchWorker(worker);
+    context.on('serviceworker', watchWorker);
+    const activity = await context.newPage();
+    activity.on('pageerror', error => errors.push(error.message));
+    await activity.goto(`chrome-extension://${id}/src/times/times.html`);
+    await activity.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const calendar = activity.locator('#clockoli-times-root .calendar-viewport');
+    await expect.poll(() => calendar.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+    await activity.close();
+
+    const extensions = await context.newPage();
+    await extensions.goto(`chrome://extensions/?id=${id}`);
+    const toggle = extensions.locator('extensions-detail-view #enableToggle');
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+    const reopened = await context.newPage();
+    reopened.on('pageerror', error => errors.push(error.message));
+    await reopened.goto(`chrome-extension://${id}/src/times/times.html`);
+    await expect(reopened.getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const reopenedCalendar = reopened.locator('#clockoli-times-root .calendar-viewport');
+    await expect.poll(() => reopenedCalendar.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
