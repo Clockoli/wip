@@ -2143,7 +2143,7 @@ test('repository-first empty discovery asks for a concrete target before offerin
   assert.equal(page.nodes.get('repository-choice-fieldset').hidden, true);
   assert.equal(page.nodes.get('setup-default-destination-label').hidden, true);
   assert.equal(page.nodes.get('default-destination-label').hidden, true);
-  assert.match(page.nodes.get('message').textContent, /Enter a repository URL or owner\/name/);
+  assert.equal(page.nodes.get('message').textContent, '', 'the main repository form replaces redundant top-of-page instructions');
   assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
