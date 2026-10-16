@@ -74,7 +74,8 @@ async function mount(page, overrides = {}) {
 
 for (const mode of ['timeline', 'calendar']) {
   test(`drags a completed entry through its neighbor into free space in ${mode}`, async ({ page }) => {
-    const now = Date.now();
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
     const first = now - 6 * HOUR;
     const second = first + 2 * HOUR;
     await mount(page, { items: [
@@ -82,10 +83,31 @@ for (const mode of ['timeline', 'calendar']) {
       { id: 'entry:b', url: 'https://example.com/b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true, destinationId: 'repo' },
     ], view: { start: first - HOUR, end: now, focusedAt: first } });
     if (mode === 'timeline') await page.locator('#timeline').evaluate(element => { element.style.width = '985px'; });
-    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    if (mode === 'calendar') await page.evaluate(firstTime => {
+      const timeline = window.__timeline.__timeline;
+      timeline.setViewMode('calendar');
+      const start = new Date(firstTime);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 2);
+      timeline.setCalendarRange({ start: start.getTime(), end: end.getTime() });
+    }, first);
     const block = key => page.locator(`#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:${key}"]`).first();
-    if (mode === 'calendar') await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
-    const source = await block('b').boundingBox(), target = await block('a').boundingBox();
+    if (mode === 'calendar') {
+      await expect(block('a')).toBeVisible();
+      await expect(block('b')).toBeVisible();
+      await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
+    }
+    const { source, target } = mode === 'calendar' ? await page.evaluate(() => {
+      const canvas = window.__timeline.__timeline.calendarCanvas;
+      const source = canvas.querySelector('.calendar-task[data-task-key="entry:b"]');
+      const target = canvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+      return { source: source?.getBoundingClientRect().toJSON(), target: target?.getBoundingClientRect().toJSON() };
+    }) : { source: await block('b').boundingBox(), target: await block('a').boundingBox() };
+    expect(source, 'drag source must be visible in the selected Calendar range').toBeTruthy();
+    expect(target, 'drag target must be visible in the selected Calendar range').toBeTruthy();
+    expect(source.width).toBeGreaterThan(0);
+    expect(target.width).toBeGreaterThan(0);
     const destination = mode === 'calendar'
       ? { x: target.x + target.width / 2, y: target.y - 20 }
       : await page.evaluate(time => {
