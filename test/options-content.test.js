@@ -90,7 +90,7 @@ test('Sign in requests the manifest host permissions in its click gesture before
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
   assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
-  assert.match(script, /Enter a repository URL or owner\/name/i);
+  assert.match(source, /Connect an existing repository[\s\S]*Enter a repository URL or owner\/name/i);
 });
 
 test('repository-first choice has no scenario or owner preselection', () => {
