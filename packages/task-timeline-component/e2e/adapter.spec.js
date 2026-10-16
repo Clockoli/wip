@@ -142,7 +142,7 @@ test('dragging a short Timeline entry does not push stationary entries or the vi
       targetX: viewport.left + timeline.timeToX(targetStart + pointerOffset) - timeline._scrollLeftNow(),
       firstX: timeline._taskElementByKey('entry:a').getBoundingClientRect().left,
       scroll: timeline._scrollLeftNow() };
-  }, first - 4 * HOUR);
+  }, first - 6 * HOUR);
   await page.mouse.move(before.x, before.y);
   await page.mouse.down();
   await page.mouse.move(before.targetX, before.y, { steps: 8 });
@@ -159,6 +159,27 @@ test('dragging a short Timeline entry does not push stationary entries or the vi
   expect(Math.abs(during.scroll - before.scroll)).toBeLessThan(2);
   await page.mouse.up();
   expect(await page.evaluate(() => window.__timeline.__timeline._scrollLeftNow())).toBeCloseTo(before.scroll, 0);
+  const afterWidths = await page.evaluate(() => ['entry:a', 'entry:b'].map(key =>
+    window.__timeline.__timeline._taskElementByKey(key).getBoundingClientRect().width));
+  expect(afterWidths.every(width => width >= 30)).toBe(true);
+});
+
+test('Timeline keeps the original minimum widths and task spacing in a weekly view', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: first + 2 * HOUR, endedAt: first + 2.5 * HOUR, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: first } });
+  const geometry = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return timeline.tasks.map(task => ({ width: timeline._taskElementByKey(task._key).getBoundingClientRect().width,
+      axisWidth: task.x1 - task.x0 }));
+  });
+  expect(geometry[0].width).toBeGreaterThanOrEqual(30);
+  expect(geometry[1].width).toBeGreaterThanOrEqual(30);
+  expect(geometry[0].axisWidth).toBeCloseTo(geometry[0].width, 1);
+  expect(geometry[1].axisWidth).toBeCloseTo(geometry[1].width, 1);
 });
 
 test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {

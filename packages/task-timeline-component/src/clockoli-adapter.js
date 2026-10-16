@@ -400,7 +400,6 @@
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
       minTaskWidth: MINIMUM_ITEM_WIDTH,
-      minCanvasWidth: initialProps.weeklyCalendar ? 1000 : 0,
       trailingGutterRatio: 0,
       currentTime: now,
       nominalTaskHeight: 40,

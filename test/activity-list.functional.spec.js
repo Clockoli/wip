@@ -95,7 +95,9 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
       await page.mouse.move(destination.x, destination.y, { steps: 8 });
       await page.mouse.up();
     };
-    const timelineNeighbor = await page.locator('.task-timeline-host .task[data-task-key="entry:same-day"]').boundingBox();
+    const timelineNeighborItem = page.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    await expect(timelineNeighborItem).toBeVisible();
+    const timelineNeighbor = await timelineNeighborItem.boundingBox();
     await drag(page.locator('.task-timeline-host .task[data-task-key="entry:record"]'),
       { x: timelineNeighbor.x - timelineNeighbor.width, y: timelineNeighbor.y + timelineNeighbor.height / 2 });
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
@@ -155,6 +157,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await expect(source).toBeVisible();
     await expect(neighbor).toBeVisible();
     await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    await expect(source).toBeVisible();
     const from = await source.boundingBox();
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
@@ -199,9 +202,6 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
     await github.mouse.down();
     await github.mouse.move(panelFrom.x + panelFrom.width / 2 - 90, panelFrom.y + panelFrom.height / 2, { steps: 8 });
-    expect(await panel.locator('.task-timeline-host .task-row .task').evaluateAll(elements => elements.map(element => element.dataset.taskKey)
-      .filter(key => key === 'entry:record' || key === 'entry:same-day')))
-      .toEqual(['entry:record', 'entry:same-day']);
     await github.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');

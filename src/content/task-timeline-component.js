@@ -856,7 +856,6 @@
 
       this.options = {
         minTaskWidth: 30,
-        minCanvasWidth: 0,
         trailingGutterRatio: 0,
         visibleDays: 3,
         minVisibleDays: 1 / 6,
@@ -2067,7 +2066,7 @@
       // requirements must NEVER clamp this value; otherwise dense labels make
       // 1, 2, 3... days look almost identical. The ruler adapts to the scale
       // instead (1h -> 2h -> 4h -> 12h -> 24h), while task geometry stays smooth.
-      const nominalScale = Math.max(viewportWidth, Number(this.options.minCanvasWidth) || 0) / (this.visibleDays * DAY);
+      const nominalScale = viewportWidth / (this.visibleDays * DAY);
       const rulerScales = this._getRulerScales();
       this.scalePxPerMs = nominalScale;
       this.tickHours = this._chooseTickHoursForScale(this.scalePxPerMs, rulerScales);
@@ -2076,8 +2075,7 @@
       let tCursor = this.domainStart;
       let xCursor = 0;
 
-      for (let index = 0; index < this.tasks.length; index++) {
-        const task = this.tasks[index];
+      for (const task of this.tasks) {
         if (task.start > tCursor) {
           const width = (task.start - tCursor) * this.scalePxPerMs;
           out.push({ kind: 'gap', t0: tCursor, t1: task.start, x0: xCursor, x1: xCursor + width });
@@ -2085,22 +2083,13 @@
         }
 
         const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
-        // Second-long records need a usable hit target even in a wide view.
-        // Longer records use the time scale, so moving one cannot shift the
-        // positions of unrelated records or the ruler.
-        const tiny = task.end - task.start <= 10 * SECOND;
-        const axisWidth = tiny ? Math.max(realWidth, this.minTaskWidth) : realWidth;
-        const nextStart = this.tasks[index + 1]?.start ?? this.domainEnd;
-        const availableWidth = Math.max(1, (nextStart - task.start) * this.scalePxPerMs - 2);
-        const displayWidth = tiny
-          ? axisWidth
-          : Math.min(Math.max(realWidth, this.minTaskWidth), availableWidth);
+        const displayWidth = Math.max(realWidth, this.minTaskWidth);
         task.x0 = xCursor;
-        task.x1 = xCursor + axisWidth;
+        task.x1 = xCursor + displayWidth;
         task.realWidth = realWidth;
         task.displayWidth = displayWidth;
-        out.push({ kind: 'task', task, t0: task.start, t1: task.end, x0: xCursor, x1: task.x1 });
-        xCursor += axisWidth;
+        out.push({ kind: 'task', task, t0: task.start, t1: task.end, x0: xCursor, x1: xCursor + displayWidth });
+        xCursor += displayWidth;
         tCursor = task.end;
       }
 
@@ -2481,7 +2470,7 @@
         // Never leave a rendered element at stale coordinates during zoom.
         // Stale off-screen nodes were the source of blocks visibly "driving"
         // through the background when zooming out.
-        const width = Math.max(1, task.displayWidth);
+        const width = Math.max(1, task.x1 - task.x0);
         el.style.transform = `translate3d(${task.x0}px,0,0)`;
         el.style.width = `${width}px`;
         el.classList.toggle('short', width < 46);
@@ -2703,7 +2692,7 @@
     }
 
     _createTaskElement(task) {
-      const width = Math.max(1, task.displayWidth);
+      const width = Math.max(1, task.x1 - task.x0);
       const el = document.createElement('div');
       const editing = Boolean(this.editState && this.editState.key === task._key);
       const editMode = editing ? this.editState.mode : '';
@@ -2840,7 +2829,7 @@
       }
       if (this.options.calendarWeekStartMonday) {
         this.calendarDayCount = 7;
-        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay((visibleStart + visibleEnd) / 2)));
+        this.calendarStartDay = this._clampCalendarStart(this._calendarWeekStart(this._floorDay(Math.max(visibleStart, visibleEnd - 1))));
         this.calendarWindowInitialized = true;
         this.calendarScrollInitialized = false;
         return;
@@ -3753,6 +3742,8 @@
       // Hidden edit badges and short hit targets can extend the scroll range.
       // Preserve its initial width when a task moves away from the right edge.
       this.editCanvasWidth = Math.max(this.editCanvasWidth || 0, this.viewport.scrollWidth);
+      this.totalWidth = Math.max(this.totalWidth, this.editCanvasWidth);
+      this.content.style.width = `${this.totalWidth}px`;
       this.editState = {
         pointerId: e.pointerId,
         key: task._key,
@@ -3817,6 +3808,25 @@
       return best || { earliest: task.start, latest: task.start, prev: null, next: null };
     }
 
+    _renderTimelineMovePreview(task, state) {
+      const element = this._taskElementByKey(task._key);
+      if (!element) return;
+      const x = this._timeToXFromSnapshot(task.start, state.snapshot, state.snapshotWidth);
+      const next = this.tasks[this.tasks.indexOf(task) + 1];
+      const available = next ? next.x0 - x - 1 : Infinity;
+      const width = Math.max(1, Math.min(task.displayWidth, available));
+      element.style.transform = `translate3d(${x}px,0,0)`;
+      element.style.width = `${width}px`;
+      element.classList.add('editing', 'move');
+      element.classList.toggle('narrow-edit', width < 150);
+      element.classList.toggle('short', width < 46);
+      element.querySelector('.edit-clock.start').innerHTML = `<span class="kind">Start</span>${this._formatClockMinute(task.start)}`;
+      element.querySelector('.edit-clock.end').innerHTML = `<span class="kind">End</span>${this._formatClockMinute(task.end)}`;
+      this._renderDays();
+      this._renderEditGuides();
+      this._updatePeriodTotal();
+    }
+
     _applyTaskEdit(e) {
       const state = this.editState;
       if (!state || e.pointerId !== state.pointerId) return false;
@@ -3860,7 +3870,8 @@
           next ? [{ time: latest, side: 'next' }] : []);
       }
 
-      this._renderAll();
+      if (state.mode === 'move' && this.viewMode === 'timeline') this._renderTimelineMovePreview(task, state);
+      else this._renderAll();
       this._showTaskDetails(task);
       return true;
     }
@@ -4002,11 +4013,10 @@
 
       const realWidth = Math.max(0, (task.end - task.start) * this.scalePxPerMs);
       const displayWidth = Math.max(realWidth, this.minTaskWidth);
-      const axisWidth = task.end - task.start <= 10 * SECOND ? displayWidth : realWidth;
       task.realWidth = realWidth;
       task.displayWidth = displayWidth;
       task.x0 = seg.x0;
-      task.x1 = seg.x0 + axisWidth;
+      task.x1 = seg.x0 + displayWidth;
       seg.t1 = task.end;
       seg.x1 = task.x1;
       const viewportWidth = this._viewportWidthNow();
@@ -4017,7 +4027,7 @@
 
       const el = this._taskElementByKey(task._key);
       if (el) {
-        const width = Math.max(1, task.displayWidth);
+        const width = Math.max(1, task.x1 - task.x0);
         el.style.width = `${width}px`;
         el.style.height = `${this._taskHeight(task)}px`;
         el.style.top = `${this._taskTop(task)}px`;
@@ -4925,7 +4935,6 @@
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
       minTaskWidth: MINIMUM_ITEM_WIDTH,
-      minCanvasWidth: initialProps.weeklyCalendar ? 1000 : 0,
       trailingGutterRatio: 0,
       currentTime: now,
       nominalTaskHeight: 40,
