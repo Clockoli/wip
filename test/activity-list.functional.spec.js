@@ -21,6 +21,7 @@ const recent = [{ id: 'record', taskUrl, taskTitle: 'Activity test task', entryD
   { id: 'earlier', taskUrl: 'https://example.com/earlier', taskTitle: 'Earlier day task', entryDate: earlierDate,
     timezone: 'UTC', startedAt: earlierDate + 'T09:00:00Z', endedAt: earlierDate + 'T09:30:00Z',
     durationSeconds: 1800, description: '', _path: 'times/' + earlierDate.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 2 }];
+for (const entry of recent) entry.destinationId = 'github:1';
 const history = [...recent, { id: 'archived', taskUrl: 'https://example.com/archived', taskTitle: 'Archived task', entryDate: archivedDate,
   timezone: 'UTC', startedAt: archivedDate + 'T09:00:00Z', endedAt: archivedDate + 'T10:00:00Z',
   durationSeconds: 3600, description: '', _path: 'times/' + archivedDate.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 0 },
@@ -30,16 +31,22 @@ const history = [...recent, { id: 'archived', taskUrl: 'https://example.com/arch
     durationSeconds: 1800, description: '', _path: 'times/' + archivedDate.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: index + 1 }))];
 let active = null;
 globalThis.trackingMessages = [];
+globalThis.editPayloads = [];
 globalThis.searchMode = 'ok';
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
   const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
-  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });
+  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent } });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
     else respond({ ok: true, data: { ...state(), recent: history, partial: globalThis.searchMode === 'partial' } });
   }
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });
+  else if (message.type === 'QUEUE_ENTRY_EDIT') {
+    globalThis.editPayloads.push(message.payload);
+    for (const entry of recent) if (entry.id === message.payload.original.id) Object.assign(entry, message.payload.edits);
+    respond({ ok: true, data: { operationId: 'edit-' + globalThis.editPayloads.length, pending: true } });
+  }
   else if (message.type === 'SWITCH_TASK') {
     active = { id: 'running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
       startedAt: new Date().toISOString(), entryDate: date, timezone: 'UTC' };
@@ -51,6 +58,63 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   } else respond({ ok: false, error: { message: 'Unexpected test request: ' + message.type } });
 });
 `;
+
+test('Activity moves completed entries before a neighbor in Timeline and Calendar', async () => {
+  test.setTimeout(60000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-reorder-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-reorder-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: false,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    const drag = async (source, destination) => {
+      const from = await source.boundingBox();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(destination.x, destination.y, { steps: 8 });
+      await page.mouse.up();
+    };
+    const timelineNeighbor = await page.locator('.task-timeline-host .task[data-task-key="entry:same-day"]').boundingBox();
+    await drag(page.locator('.task-timeline-host .task[data-task-key="entry:record"]'),
+      { x: timelineNeighbor.x - timelineNeighbor.width, y: timelineNeighbor.y + timelineNeighbor.height / 2 });
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].edits.endedAt <= recent[1].startedAt)).toBe(true);
+    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    const calendarRecord = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
+    const calendarNeighbor = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
+    await calendarRecord.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    const neighbor = await calendarNeighbor.boundingBox();
+    await drag(calendarRecord, { x: neighbor.x + neighbor.width / 2, y: neighbor.y - 20 });
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
+    expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
+    expect(await worker.evaluate(() => globalThis.editPayloads[1].edits.endedAt <= recent[0].startedAt)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
   test.setTimeout(25000);

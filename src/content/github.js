@@ -955,7 +955,8 @@
           finally { suppressCalendarNavigate = false; }
         }
         refreshMountedTimeline();
-        setStatus('Could not load this week.'); setError(error);
+        if (error?.name === 'AbortError' || error?.code === 'aborted') setStatus('');
+        else { setStatus('Could not load this week.'); setError(error); }
         return false;
       }
     } finally {
@@ -1374,7 +1375,7 @@
     return save;
   }
 
-  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
@@ -2048,7 +2049,7 @@
     catch (error) {
       if (loadId !== timesLoadId) return;
       onFailure?.(previousLoaded);
-      if (error?.name !== 'AbortError') setError(error);
+      if (error?.name !== 'AbortError' && error?.code !== 'aborted') setError(error);
       else renderUi();
     } finally {
       if (selectedTimesCalendarLoadingId === loadId) {

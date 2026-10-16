@@ -72,6 +72,77 @@ async function mount(page, overrides = {}) {
   }, { hour: HOUR, overrides });
 }
 
+for (const mode of ['timeline', 'calendar']) {
+  test(`drags a completed entry through its neighbor into free space in ${mode}`, async ({ page }) => {
+    const now = Date.now();
+    const first = now - 6 * HOUR;
+    const second = first + 2 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true, destinationId: 'repo' },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true, destinationId: 'repo' },
+    ], view: { start: first - HOUR, end: now, focusedAt: first } });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const block = key => page.locator(`#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:${key}"]`).first();
+    if (mode === 'calendar') await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
+    const source = await block('b').boundingBox(), target = await block('a').boundingBox();
+    const destination = mode === 'calendar'
+      ? { x: target.x + target.width / 2, y: target.y - 20 }
+      : await page.evaluate(time => {
+        const timeline = window.__timeline.__timeline;
+        const rect = timeline.viewport.getBoundingClientRect();
+        return { x: rect.left + timeline.timeToX(time) - timeline._scrollLeftNow(), y: rect.top + 30 };
+      }, first - 20 * 60_000);
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(destination.x, destination.y, { steps: 8 });
+    const duringDrag = await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => ({ id: task.instanceId, start: task.start, end: task.end })));
+    expect(duringDrag.find(item => item.id === 'entry:b').end).toBeLessThanOrEqual(duringDrag.find(item => item.id === 'entry:a').start);
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__calls[0]?.[0])).toBe('edit');
+    expect(await page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
+    const positions = await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => ({ id: task.instanceId, start: task.start, end: task.end })));
+    expect(positions.find(item => item.id === 'entry:a')).toEqual({ id: 'entry:a', start: first, end: first + HOUR });
+    expect(positions.find(item => item.id === 'entry:b').end).toBeLessThan(first);
+    expect(await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => task.instanceId))).toEqual(['entry:b', 'entry:a']);
+  });
+}
+
+test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const base = today.getTime();
+  await mount(page, { items: [
+    { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 10 * HOUR, endedAt: base + 11 * HOUR, isEditable: true },
+    { id: 'entry:b', url: 'https://example.com/b', startedAt: base + 13 * HOUR, endedAt: base + 13 * HOUR + 5 * 60_000, isEditable: true },
+    { id: 'entry:c', url: 'https://example.com/c', startedAt: base + 11 * HOUR + 40 * 60_000, endedAt: base + 12 * HOUR, isEditable: true },
+  ], view: { start: base, end: base + 24 * HOUR, focusedAt: base + 11 * HOUR } });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first();
+  await source.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  const geometry = () => page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const fixed = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+    return { hour: timeline._calendarMetrics.verticalMap.toY(12 * 60), fixedTop: Number.parseFloat(fixed.style.top) };
+  });
+  const before = await geometry();
+  const from = await source.boundingBox();
+  const destination = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const rect = timeline.calendarCanvas.getBoundingClientRect();
+    const day = timeline._calendarDayIndexForTime(timeline._findTask('entry:b').start);
+    return { x: rect.left + timeline._calendarMetrics.timeAxisWidth + (day + 0.5) * timeline._calendarMetrics.dayWidth,
+      y: rect.top + timeline._calendarMetrics.headerHeight + timeline._calendarMetrics.verticalMap.toY(11 * 60 + 30) };
+  });
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(destination.x, destination.y, { steps: 8 });
+  expect(await geometry()).toEqual(before);
+  const boxes = await Promise.all(['b', 'c'].map(async key => page.locator(`#timeline .calendar-task[data-task-key="entry:${key}"]`).first().boundingBox()));
+  expect(boxes[0].y + boxes[0].height).toBeLessThanOrEqual(boxes[1].y);
+  await page.mouse.up();
+  expect(await geometry()).toEqual(before);
+});
+
 test('hydrates running and pending entries with Clockoli block styling', async ({ page }) => {
   await mount(page);
   const state = await page.evaluate(() => ({

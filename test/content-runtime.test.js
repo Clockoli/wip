@@ -3078,6 +3078,26 @@ test('Activity Calendar leaves the mounted week intact and reports a failed hist
   assert.equal(activity.querySelector('.times-calendar-status').textContent, 'Could not load this week.');
 });
 
+test('Activity Calendar ignores an intentionally aborted week read', async () => {
+  const now = new Date(2026, 8, 5, 12).getTime();
+  const entry = activityEntry('current-week', '2026-09-03', '08');
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+    timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'LOAD_TIMES' && message.payload.startDate === '2026-08-24') {
+        callback({ ok: false, error: { code: 'aborted', message: 'signal is aborted without reason' } });
+      } else callback({ ok: true, data: { configured: true, recent: [entry] } });
+    },
+  });
+  const activity = harness.renderActivity();
+  harness.frames.splice(0).forEach(frame => frame());
+  await activity.walk().find(node => node.tag === 'button' && node.textContent === 'Calendar').onclick({ isTrusted: true });
+  await harness.timelineMounts[0].onCalendarNavigate({ start: new Date(2026, 7, 24).getTime(), end: new Date(2026, 7, 31).getTime() });
+  assert.equal(harness.debugWeek().errorText, '');
+  assert.equal(activity.querySelector('.times-calendar-status').textContent, '');
+  assert.equal(activity.querySelector('.calendar-week-loading').hidden, true);
+});
+
 test('pending-write polling does not replace a loaded Calendar week with bounded recent cache', async () => {
   const now = new Date(2026, 9, 8, 12).getTime();
   const records = ['05', '06', '07', '08', '09'].map(day => activityEntry(day, `2026-10-${day}`, '10'));
