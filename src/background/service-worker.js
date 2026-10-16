@@ -1267,7 +1267,7 @@ async function handle(message, sender) {
       const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.stop(message.description || '', { background: true });
       if (result.pending) requestPendingSync();
-      return { ...result, destinationId };
+      return { ...result, entry: result.entry ? { ...result.entry, destinationId } : result.entry, destinationId };
     }
     case 'DISCARD_ACTIVE': {
       const destinationId = await activeDestinationId(store, { required: true });

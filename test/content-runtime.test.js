@@ -3886,9 +3886,132 @@ test('a pending entry suppresses duplicate status, but a simultaneous queued del
   assert.equal(status().textContent, 'Saving…');
 });
 
+
+test('deleting the running timer started from yesterday uses DISCARD_ACTIVE, not completed-record Delete', async () => {
+  const now = Date.parse('2026-10-15T12:00:00Z');
+  const yesterday = { ...activityEntry('yesterday', '2026-10-14', '10', 'https://example.com/task'), destinationId: 'github:1' };
+  const today = {
+    id: 'today-active', taskUrl: yesterday.taskUrl, taskTitle: yesterday.taskTitle,
+    startedAt: new Date(now).toISOString(), entryDate: '2026-10-15', timezone: 'UTC',
+    destinationId: 'github:1', _pending: true, _path: 'active/alice.json',
+  };
+  let current = { configured: true, active: null, recent: [yesterday], pendingWrites: [], pendingCount: 0 };
+  const harness = dailyPanelHarness({
+    now, records: [yesterday], state: current, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'SWITCH_TASK') {
+        current = { ...current, active: today, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { active: today, pending: true } });
+      } else if (message.type === 'DISCARD_ACTIVE') {
+        current = { ...current, active: null, pendingWrites: [{ id: 'discard', operation: 'discardActive', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { operationId: 'discard', pending: true } });
+      } else callback({ ok: true, data: current });
+    },
+  });
+  harness.renderActivity();
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.ok(harness.timelineMounts.length);
+  const calendar = harness.timelineMounts[0];
+  await calendar.onStart({ id: 'entry:yesterday' }); // The yesterday block's double-click callback
+  assert.ok(harness.messages.some(message => message.type === 'SWITCH_TASK'));
+  const active = harness.timelineItems(0, now).find(item => item.id === 'active:today-active');
+  assert.ok(active, 'starting yesterday’s task projects a new active timer for today');
+  assert.equal(active.isRunning, true);
+  assert.equal(active.isDeleteDisabled, false);
+  await calendar.onDelete({ id: 'active:today-active' });
+  assert.equal(harness.messages.filter(message => message.type === 'DISCARD_ACTIVE').length, 1);
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 0);
+  assert.equal(harness.messages.filter(message => message.type === 'DELETE_ENTRY').length, 0);
+});
+
+test('Calendar can delete a locally stopped timer before sync without losing its destination', async () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const running = { id: 'pending-stop', taskUrl: 'https://example.com/task', taskTitle: 'Task',
+    startedAt: '2026-09-05T10:00:00Z', entryDate: '2026-09-05', timezone: 'UTC',
+    destinationId: 'github:2' };
+  const stopped = { ...running, endedAt: '2026-09-05T12:00:00Z', durationSeconds: 7200,
+    _path: 'times/2026-09/alice.jsonl', _sha: null, _index: -1, _pending: true };
+  let current = { configured: true, active: running, pendingWrites: [], pendingCount: 0, recent: [] };
+  const harness = dailyPanelHarness({
+    state: current, now, timelineEnabled: true,
+    pageUrl: 'chrome-extension://clockoli/src/times/times.html',
+    respond(message, callback) {
+      if (message.type === 'STOP') {
+        current = { ...current, active: null, recent: [stopped], pendingWrites: [{ id: running.id, operation: 'completeTimer', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { entry: stopped, destinationId: 'github:2', pending: true } });
+      } else if (message.type === 'QUEUE_ENTRY_DELETE') {
+        current = { ...current, recent: [], pendingWrites: [{ ...current.pendingWrites[0] }, { id: 'delete-op', operation: 'deleteEntry', status: 'pending' }], pendingCount: 2 };
+        callback({ ok: true, data: { operationId: 'delete-op', pending: true } });
+      } else callback({ ok: true, data: current });
+    },
+  });
+  const menu = harness.renderMenu({ compact: true }); harness.attach(menu);
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.equal(harness.timelineMounts.length, 1);
+  assert.equal(await harness.timelineMounts[0].onStop({ id: 'active:pending-stop' }), true);
+  const block = harness.timelineItems(0, now).find(item => item.id === 'entry:pending-stop');
+  assert.ok(block, 'the locally stopped time remains visible before GitHub sync');
+  assert.equal(block.isPending, true);
+  assert.equal(block.isDeleteDisabled, false, 'the queued Stop can be deleted');
+  assert.equal(block.isPendingDeleteAllowed, true, 'only durable pending completions may be deleted');
+  assert.equal(await harness.timelineMounts[0].onDelete({ id: 'entry:pending-stop' }), true);
+  const request = harness.messages.find(message => message.type === 'QUEUE_ENTRY_DELETE');
+  assert.equal(request.payload.destinationId, 'github:2');
+  assert.equal(request.payload.path, stopped._path);
+  assert.equal(request.payload.original.id, running.id);
+  assert.equal(request.payload.index, -1);
+  assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:pending-stop'), false);
+  assert.equal(harness.optimisticCompletion(running.id), undefined);
+});
+
+test('Calendar restores a pending completion if its local Delete cannot be queued', async () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = { id: 'pending', taskUrl: 'https://example.com/task', taskTitle: 'Pending',
+    destinationId: 'github:1', entryDate: '2026-09-05', timezone: 'UTC',
+    startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z', durationSeconds: 3600,
+    _path: 'times/2026-09/alice.jsonl', _sha: null, _index: -1, _pending: true };
+  const active = { id: 'pending', taskUrl: entry.taskUrl, taskTitle: entry.taskTitle,
+    startedAt: entry.startedAt, entryDate: entry.entryDate, timezone: 'UTC', destinationId: 'github:1' };
+  let current = { configured: true, active, recent: [], pendingWrites: [], pendingCount: 0 };
+  const harness = dailyPanelHarness({
+    state: current, now, timelineEnabled: true,
+    respond(message, callback) {
+      if (message.type === 'STOP') {
+        current = { ...current, active: null, recent: [entry],
+          pendingWrites: [{ id: 'stop', operation: 'completeTimer', status: 'pending' }], pendingCount: 1 };
+        callback({ ok: true, data: { entry, destinationId: 'github:1', pending: true } });
+      } else if (message.type === 'QUEUE_ENTRY_DELETE') callback({ ok: false, error: { message: 'Local delete rejected' } });
+      else callback({ ok: true, data: current });
+    },
+  });
+  const menu = harness.renderMenu({ compact: true }); harness.attach(menu);
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.equal(await harness.timelineMounts[0].onStop({ id: 'active:pending' }), true);
+  assert.ok(harness.optimisticCompletion('pending'));
+  assert.equal(harness.timelineItems(0, now)[0].isDeleteDisabled, false);
+  await assert.rejects(harness.timelineMounts[0].onDelete({ id: 'entry:pending' }), /Local delete rejected/);
+  assert.ok(harness.timelineItems(0, now).some(item => item.id === 'entry:pending'));
+  assert.ok(harness.optimisticCompletion('pending'), 'a failed deletion restores the optimistic Stop');
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
+});
+
+test('Calendar does not allow deleting a speculative completion without stored origin metadata', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const optimistic = { id: 'speculative', taskUrl: 'https://example.com/task', taskTitle: 'Speculative',
+    startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z', durationSeconds: 3600,
+    _path: 'active/alice.json', _pending: true };
+  const harness = dailyPanelHarness({
+    state: { configured: true, active: null, pendingWrites: [], pendingCount: 0 },
+    records: [optimistic], now, timelineEnabled: true,
+  });
+  assert.equal(harness.timelineItems(0, now)[0].isDeleteDisabled, true);
+  assert.equal(harness.timelineItems(0, now)[0].isPendingDeleteAllowed, false);
+});
+
 test('deleting a Timeline block keeps saving feedback visible through local queue acceptance', async () => {
   const now = Date.now();
-  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', destinationId: 'github:1', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
   const pending = { ...initial, pendingCount: 1, pendingWrites: [{ id: 'queued-delete', operation: 'deleteEntry', status: 'pending' }] };
   let current = initial;

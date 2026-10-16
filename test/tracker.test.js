@@ -432,6 +432,99 @@ test('historical edit after cache eviction coalesces with an accepted pending ed
   assert.equal(saved.endedAt, '2026-07-18T09:15:00.000Z');
 });
 
+
+test('Start, Stop, and Delete all accepted offline synchronize in order without an orphaned timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  await tracker.start('https://example.com/queued', 'Queued task', '', { background: true });
+  const stopped = await tracker.stop('Not needed', { background: true });
+  await tracker.queueEntryDelete({
+    path: stopped.entry._path, originalSha: stopped.entry._sha,
+    index: stopped.entry._index, original: stopped.entry,
+  });
+  assert.deepEqual(store.value.pendingWrites.map(op => op.operation), ['startTimer', 'completeTimer', 'deleteEntry']);
+  assert.deepEqual((await tracker.projectActivityRecords([])).records, []);
+  const restarted = service({ github, store });
+  await restarted.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.activeCache, null);
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.files.has('times/2026-08/alice.jsonl'), false);
+});
+
+test('a locally accepted Stop can be deleted before GitHub sync and stays deleted across restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const running = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  await tracker.refreshActive();
+  const stopped = await tracker.stop('Discard this completion', { background: true });
+  const completed = stopped.entry;
+  const path = 'times/2026-08/alice.jsonl';
+  assert.equal(completed._path, path);
+  assert.equal(completed._sha, null);
+  assert.equal(completed._index, -1);
+  assert.equal(completed._pending, true);
+  assert.equal(completed.id, running.id);
+  const removal = await tracker.queueEntryDelete({
+    path: completed._path, originalSha: completed._sha, index: completed._index, original: completed,
+  });
+  assert.ok(removal.operationId);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['completeTimer', 'deleteEntry']);
+  assert.deepEqual(store.value.recentCache, [], 'locally accepted deletion removes the pending Stop immediately');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), true, 'remote writes have not begun');
+  const restarted = service({ github, store, clock: () => new Date('2026-08-18T09:01:00.000Z') });
+  assert.deepEqual((await restarted.projectActivityRecords([])).records, [], 'a reload cannot resurrect the queued Stop');
+  await restarted.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.files.has(path), false, 'the completed entry is not left on GitHub');
+  assert.deepEqual((await restarted.projectActivityRecords([])).records, []);
+});
+
+test('deleting a pending Stop during its remote completion write does not resurrect cached time', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const running = active('2026-08-18T08:00:00.000Z');
+  const sibling = entry('2026-08-18T06:00:00.000Z', '2026-08-18T07:00:00.000Z');
+  const path = 'times/2026-08/alice.jsonl';
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  seedText(github, path, serializeMonthlyRecords([sibling]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  await tracker.refreshActive();
+  const stopped = await tracker.stop('', { background: true });
+  const atomic = github.updateTextsAtomic.bind(github);
+  let releaseWrite, markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const resume = new Promise(resolve => { releaseWrite = resolve; });
+  let delayed = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!delayed && args[1].startsWith('time:')) {
+      delayed = true; markStarted(); await resume;
+    }
+    return atomic(...args);
+  };
+  const firstSync = tracker.syncPending();
+  await started;
+  await tracker.queueEntryDelete({
+    path: stopped.entry._path, originalSha: stopped.entry._sha,
+    index: stopped.entry._index, original: stopped.entry,
+  });
+  assert.equal(store.value.recentCache.length, 0);
+  releaseWrite(); await firstSync;
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry']);
+  assert.deepEqual(store.value.recentCache, [], 'the completed Stop must not overwrite an accepted deletion');
+  assert.deepEqual((await tracker.projectActivityRecords([sibling])).records.map(item => item.id), [sibling.id]);
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.map(item => item.id), [sibling.id], 'unrelated time in the same month is preserved');
+  assert.equal(store.value.recentCache.some(item => item.id === running.id), false);
+});
+
 test('queued completed-entry deletion disappears locally immediately and syncs later', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');

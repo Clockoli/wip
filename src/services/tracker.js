@@ -202,7 +202,7 @@ function retargetLaterEntryEdits(queue, currentIndex, savedEntries) {
   };
   for (let index = currentIndex + 1; index < queue.length; index += 1) {
     const operation = queue[index], type = operation.operation ?? operation.stage;
-    if (type === 'editEntry') operation.request = retarget(operation.request);
+    if (type === 'editEntry' || type === 'deleteEntry') operation.request = retarget(operation.request);
     else if (type === 'editEntries') operation.request = {
       ...operation.request,
       entries: (operation.request?.entries ?? []).map(retarget),
@@ -566,7 +566,7 @@ export class TrackerService {
         recentCache: [pendingEntry, ...(latest.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
       };
     });
-    return { entry, pending: true };
+    return { entry: pendingEntry, pending: true };
   }
 
   prepareQueuedStop(active, description = '', { endedAt = this.clock() } = {}) {
@@ -1066,14 +1066,23 @@ export class TrackerService {
         if (operation.stage === 'startNext') nextActive = await this.startQueuedActive(operation);
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
-        await this.persistQueueOperation(operation, { remove: true, patch: latest => ({
-          activeCache: nextActive,
-          recentCache: operation.entry
-            ? [operation.entry, ...(latest.recentCache ?? []).filter(item =>
-              !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
-              .sort(newestFirst).slice(0, 50)
-            : latest.recentCache ?? [],
-        }) });
+        await this.persistQueueOperation(operation, {
+          remove: true, savedEntries: operation.entry ? [operation.entry] : [],
+          patch: latest => {
+            const deletedAfterCompletion = (latest.pendingWrites ?? []).some(item =>
+              item.operation === 'deleteEntry' && item.request?.original?.id === operation.entry?.id);
+            const retained = (latest.recentCache ?? []).filter(item =>
+              !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)));
+            return {
+              activeCache: nextActive,
+              // A later locally accepted Delete must win even when this Stop
+              // finishes syncing after the Delete removed its cached entry.
+              recentCache: operation.entry && !deletedAfterCompletion
+                ? [operation.entry, ...retained].sort(newestFirst).slice(0, 50)
+                : retained,
+            };
+          },
+        });
       } catch (caughtError) {
         const rejectionDetail = String(caughtError?.message || '').trim();
         const detail = rejectionDetail && rejectionDetail !== 'GitHub rejected the request' ? ` GitHub said: ${rejectionDetail}` : '';
