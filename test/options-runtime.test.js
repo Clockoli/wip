@@ -932,7 +932,7 @@ test('repository check hides target status during repository discovery and resto
 
 
 test('repository checks do not duplicate button progress in the large status message', () => {
-  assert.doesNotMatch(source, /Checking \$\\{target\\}… Repository files will not be changed/);
+  assert.equal(source.includes('Checking ${target}… Repository files will not be changed.'), false);
   assert.doesNotMatch(source, /Checking access and storage… No changes will be made/);
 });
 
