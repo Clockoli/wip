@@ -1243,7 +1243,7 @@ async function discoverRepositories({ silent = false } = {}) {
     discoveryStatus = 'loading'; selectedRepository = null;
     renderRepositoryLoading();
     updateRepositoryConfirmation(); closeRepositoryAccess();
-    message('Checking accessible repositories…'); showRecovery();
+    message(''); showRecovery();
   }
   const request = send({ type: 'DISCOVER_REPOSITORIES' });
   discoveryPromise = request;
@@ -1288,7 +1288,7 @@ async function discoverRepositories({ silent = false } = {}) {
       $('finish-setup').disabled = !canFinishRepositorySetup();
     } else {
       discoveryStatus = 'ready'; repositoryDiscoveryKnown = true; renderRepositories(result); renderDestinationCards();
-      message(repositoryTarget && !selectedRepository ? $('repository-target-status').textContent : 'Enter a repository URL or owner/name, review a repository action, or finish setup with a ready default.');
+      message('');
     }
     await inspectNewlyGrantedTarget(revision, account);
     return result;
