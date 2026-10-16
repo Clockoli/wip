@@ -365,7 +365,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   for (const label of ['Check repository']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
-  assert.match(gettingStarted, /repository field and leave the field or press Enter/);
+  assert.match(gettingStarted, /repository field and click \*\*Check\*\* \(or press Enter\)/);
   assert.match(gettingStarted, /Discovery and inspection never write to GitHub/i);
   assert.match(gettingStarted, /then explicitly confirm the offered action/i);
   assert.match(gettingStarted, /requires fresh GitHub repository-admin permission/i);
