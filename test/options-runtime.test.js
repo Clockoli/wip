@@ -826,6 +826,32 @@ test('typing a repository name loads suggestions once, while a pasted URL waits 
   assert.equal(page.nodes.get('repository-list').hidden, true);
 });
 
+test('repository input uses an explicit Check button without checking or showing a prompt on blur', async () => {
+  assert.match(html, /id="check-repository-target"[^>]*>Check<\/button>/);
+  assert.doesNotMatch(html, /id="refresh-repository-target"/);
+  const repository = { installationId: 10, repoId: 20, fullName: 'acme/time-data', eligible: true };
+  const page = harness({ reply: request => request.type === 'INSPECT_REPOSITORY'
+    ? { repository: { ...repository, state: 'initialized_member', canAdd: true, ready: true } }
+    : { repositories: [repository], installations: [] } });
+  page.render({ appConfigured: true, auth: connectedState.auth });
+  const input = page.nodes.get('repository-target');
+  const check = page.nodes.get('check-repository-target');
+  const status = page.nodes.get('repository-target-status');
+  assert.equal(check.disabled, true);
+  input.value = repository.fullName;
+  input.listeners.input();
+  assert.equal(check.disabled, false);
+  assert.equal(status.hidden, true);
+  await input.listeners.blur({ relatedTarget: null });
+  assert.equal(status.hidden, true);
+  assert.equal(input.attributes['aria-invalid'], undefined);
+  assert.equal(page.requests.some(request => ['DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY'].includes(request.type)), false);
+  await check.listeners.click();
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.match(status.textContent, /Checked acme\/time-data/);
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
 test('reopening completed setup refreshes the granted catalog before showing suggestions', async () => {
   const old = { installationId: 10, repoId: 20, fullName: 'acme/time-old', eligible: true };
   const added = { installationId: 10, repoId: 21, fullName: 'acme/time-new', eligible: true };
