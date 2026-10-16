@@ -70,7 +70,7 @@
           </ul>
           <div id="authorize-panel" class="primary-action-block">
             <button id="authorize" type="button">Sign in with GitHub</button>
-            <p class="help">Clockoli copies the one-time code before opening GitHub so you can paste it.</p>
+            <p class="help">Clockoli will get a one-time code and try to copy it before opening GitHub. When GitHub asks for the code, paste it with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>. You'll see whether copying succeeded.</p>
           </div>
           <details id="connection-details" class="inline-details">
             <summary>How it works</summary>
@@ -86,33 +86,24 @@
             </div>
           </details>
 
-          <div id="device-panel" class="notice" hidden>
-            <p><strong>This is the code to enter on GitHub when it opens:</strong></p>
+          <div id="device-panel" class="notice device-activation-panel" hidden>
+            <p class="device-panel-heading"><strong>Your one-time GitHub sign-in code</strong></p>
             <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
-            <p id="device-handoff-status" class="help" aria-live="polite"></p>
-            <p id="device-wait" class="help" aria-live="polite">Clockoli checks automatically every few seconds.</p>
+            <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
+            <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
+            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
             <div class="actions">
-              <button id="device-done" type="button">Done on GitHub—check now</button>
-              <a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a>
+              <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
+              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
             </div>
           </div>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
-          <a id="new-time-repository" class="button-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
-          <dialog id="new-repository-guidance" class="repository-access-dialog" aria-labelledby="new-repository-guidance-title" aria-describedby="new-repository-guidance-body" hidden>
-            <header class="repository-access-header"><h3 id="new-repository-guidance-title">After creating your repository</h3></header>
-            <div class="repository-access-content">
-              <p id="new-repository-guidance-body">Create your private repository on GitHub, then copy its URL from the address bar and paste it here. Checking access does not connect or initialize it; review and confirm the offered setup action afterward.</p>
-              <form id="new-repository-target-form">
-                <label for="new-repository-target">New repository URL</label>
-                <input id="new-repository-target" type="text" inputmode="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste GitHub repository URL" aria-describedby="new-repository-target-error">
-                <p id="new-repository-target-error" class="help repository-target-error" role="status" aria-live="polite"></p>
-                <div class="actions"><button type="submit">Check repository</button><button id="close-new-repository-guidance" type="button" class="secondary">Not now</button></div>
-              </form>
-            </div>
-          </dialog>
+          <div class="existing-repository-option">
+            <h4>Connect an existing repository</h4>
+            <p class="help">Paste its GitHub URL or search by name, then select Check.</p>
           <form id="repository-target-form">
             <label for="repository-target">Enter a repository URL or owner/name</label>
             <div class="repository-target-control">
@@ -126,6 +117,23 @@
           </form>
           <p id="repository-target-status" class="repository-check-status" role="status" aria-live="polite" hidden></p>
           <button id="connect-checked-repository" type="button" hidden>Connect repository</button>
+          </div>
+          <div class="new-repository-option">
+            <span>Don't have a time repository yet?</span>
+          <a id="new-time-repository" class="button-link secondary-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
+          </div>
+          <dialog id="new-repository-guidance" class="repository-access-dialog" aria-labelledby="new-repository-guidance-title" aria-describedby="new-repository-guidance-body" hidden>
+            <header class="repository-access-header"><h3 id="new-repository-guidance-title">After creating your repository</h3></header>
+            <div class="repository-access-content">
+              <p id="new-repository-guidance-body">Create your private repository on GitHub, then copy its URL from the address bar and paste it here. Checking access does not connect or initialize it; review and confirm the offered setup action afterward.</p>
+              <form id="new-repository-target-form">
+                <label for="new-repository-target">New repository URL</label>
+                <input id="new-repository-target" type="text" inputmode="url" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste GitHub repository URL" aria-describedby="new-repository-target-error">
+                <p id="new-repository-target-error" class="help repository-target-error" role="status" aria-live="polite"></p>
+                <div class="actions"><button type="submit">Check repository</button><button id="close-new-repository-guidance" type="button" class="secondary">Not now</button></div>
+              </form>
+            </div>
+          </dialog>
           <dialog id="repository-access-panel" class="repository-access-dialog" aria-labelledby="repository-access-title" aria-describedby="repository-access-instruction" hidden>
             <header class="repository-access-header"><h3 id="repository-access-title">Grant repository access</h3><button id="close-repository-access" type="button" class="secondary" aria-label="Close repository access dialog">×</button></header>
             <div class="repository-access-content">
