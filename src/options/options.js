@@ -880,14 +880,14 @@ function renderRepositoryAccess() {
   const unavailable = manual && missing && !checkingRepositoryTarget;
   const error = repositoryCheckFeedbackError || failed || (unavailable && !repositoryGrantAwaitingDeparture);
   const attention = !error && !repositoryInputDirty && Boolean(action) && repositoryCanBeSelected(selectedRepository);
+  const checking = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget);
   targetStatus.className = `repository-check-status${error ? ' repository-target-error' : ''}`;
   targetStatus.dataset.kind = error ? 'error' : attention ? 'attention' : selectedRepository?.ready ? 'ready' : 'neutral';
-  targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? ''
-    : checkingRepositoryTarget === repositoryTarget ? 'Checking access and storage… No changes will be made.'
+  targetStatus.textContent = checking ? '' : repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? ''
     : failed ? 'Check failed. Edit the name or select Check to retry.' : unavailable
     ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
-    : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
-  targetStatus.hidden = discoveryStatus === 'loading' || !targetStatus.textContent;
+    : selectedRepository ? repositoryInspectionStatus(selectedRepository) : '');
+  targetStatus.hidden = checking || discoveryStatus === 'loading' || !targetStatus.textContent;
   if (error) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
 }
@@ -1166,7 +1166,7 @@ async function inspectNewlyGrantedTarget(revision, account) {
       || repositoryInputDirty || selectedRepository?.state || checkingRepositoryTarget || autoInspectedGrantKey === grantKey) return;
   autoCheckingRepositoryTarget = inspectedTarget;
   repositoryCheckError = '';
-  repositoryCheckFeedback = `Checking ${repositoryTarget} after GitHub access changed…`;
+  repositoryCheckFeedback = '';
   repositoryCheckFeedbackError = false;
   renderRepositoryAccess();
   try {
@@ -1911,7 +1911,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     checkingRepositoryTarget = target;
     repositorySuggestionsOpen = false;
     repositoryCheckError = '';
-    repositoryCheckFeedback = keepInput ? `Checking ${target}… Repository files will not be changed.` : '';
+    repositoryCheckFeedback = '';
     repositoryCheckFeedbackError = false;
     selectedRepository = null;
     updateRepositoryConfirmation();
