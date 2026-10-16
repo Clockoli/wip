@@ -850,7 +850,9 @@ test('repository input uses an explicit Check button without checking or showing
   assert.equal(page.requests.some(request => ['DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY'].includes(request.type)), false);
   await check.listeners.click();
   assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
-  assert.match(status.textContent, /Checked acme\/time-data/);
+  assert.equal(status.textContent, 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
+  assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
+  assert.equal(page.nodes.get('connect-checked-repository').textContent, 'Connect repository');
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
