@@ -63,15 +63,26 @@
 
         <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
           <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
+          <div id="authorize-panel" class="primary-action-block">
+            <button id="authorize" type="button">Sign in with GitHub</button>
+            <p class="help">Clockoli will get a one-time code and try to copy it before opening GitHub. When GitHub asks for the code, paste it with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>. You'll see whether copying succeeded.</p>
+          </div>
+          <div id="device-panel" class="notice device-activation-panel" hidden>
+            <p class="device-panel-heading"><strong>Your one-time GitHub sign-in code</strong></p>
+            <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
+            <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
+            <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
+            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
+            <div class="actions">
+              <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
+              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
+            </div>
+          </div>
           <ul class="trust-list">
             <li>Clockoli requests only the repository access needed to read and write your data.</li>
             <li>Your GitHub password is never shared with Clockoli.</li>
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
-          <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Sign in with GitHub</button>
-            <p class="help">Clockoli will get a one-time code and try to copy it before opening GitHub. When GitHub asks for the code, paste it with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>. You'll see whether copying succeeded.</p>
-          </div>
           <details id="connection-details" class="inline-details">
             <summary>How it works</summary>
             <p>Clockoli uses GitHub Device activation, so you never need to create or paste a personal access token.</p>
@@ -86,17 +97,6 @@
             </div>
           </details>
 
-          <div id="device-panel" class="notice device-activation-panel" hidden>
-            <p class="device-panel-heading"><strong>Your one-time GitHub sign-in code</strong></p>
-            <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
-            <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
-            <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
-            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
-            <div class="actions">
-              <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
-              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
-            </div>
-          </div>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
