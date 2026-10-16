@@ -151,6 +151,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const root = page.locator('#clockoli-popup-root');
     const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
     const neighbor = root.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.includes('LOAD_WEEK'))).toBe(true);
     await expect(source).toBeVisible();
     await expect(neighbor).toBeVisible();
     await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
@@ -198,6 +199,9 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
     await github.mouse.down();
     await github.mouse.move(panelFrom.x + panelFrom.width / 2 - 90, panelFrom.y + panelFrom.height / 2, { steps: 8 });
+    expect(await panel.locator('.task-timeline-host .task-row .task').evaluateAll(elements => elements.map(element => element.dataset.taskKey)
+      .filter(key => key === 'entry:record' || key === 'entry:same-day')))
+      .toEqual(['entry:record', 'entry:same-day']);
     await github.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');

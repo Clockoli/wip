@@ -92,11 +92,25 @@ for (const mode of ['timeline', 'calendar']) {
         const rect = timeline.viewport.getBoundingClientRect();
         return { x: rect.left + timeline.timeToX(time) - timeline._scrollLeftNow(), y: rect.top + 30 };
       }, first - 20 * 60_000);
+    if (mode === 'timeline') await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.scalePxPerMs * 7 * 60 * 60 * 1000)).toBe(1000);
+    const beforeGeometry = mode === 'timeline' ? await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      return { width: timeline.totalWidth, scroll: timeline._scrollLeftNow(), scale: timeline.scalePxPerMs };
+    }) : null;
     await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
     await page.mouse.down();
     await page.mouse.move(destination.x, destination.y, { steps: 8 });
     const duringDrag = await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => ({ id: task.instanceId, start: task.start, end: task.end })));
     expect(duringDrag.find(item => item.id === 'entry:b').end).toBeLessThanOrEqual(duringDrag.find(item => item.id === 'entry:a').start);
+    expect(duringDrag.map(item => item.id)).toEqual(['entry:b', 'entry:a']);
+    if (mode === 'timeline') {
+      const geometry = await page.evaluate(() => {
+        const timeline = window.__timeline.__timeline;
+        return { width: timeline.totalWidth, scroll: timeline._scrollLeftNow(), scale: timeline.scalePxPerMs };
+      });
+      expect(Math.abs(geometry.width - beforeGeometry.width)).toBeLessThan(5);
+      expect(geometry.scale).toBe(beforeGeometry.scale);
+    }
     await page.mouse.up();
     await expect.poll(() => page.evaluate(() => window.__calls[0]?.[0])).toBe('edit');
     expect(await page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);

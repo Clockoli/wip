@@ -3832,6 +3832,7 @@
         ]);
         task.start = start;
         task.end = start + state.duration;
+        this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
       } else if (state.mode === 'resize-left') {
         const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
         const latest = task.end - MIN_TASK_DURATION;
@@ -4241,6 +4242,7 @@
         ]);
         task.start = start;
         task.end = start + state.duration;
+        this.tasks.sort((a, b) => a.start - b.start || a.end - b.end);
       } else if (state.mode === 'resize-left') {
         const earliest = prev ? prev.end + DIRECT_GAP : this.domainStart;
         const rawStart = shiftedBoundary(state.originalStart);
