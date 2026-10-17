@@ -2120,10 +2120,13 @@
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
       const draftKeys = new Set(drafts.map(activityRecordKey));
       const range = timesRange();
-      const entries = query
+      // Use the same optimistic completions as Timeline and Calendar while
+      // the shared background queue waits for GitHub synchronization.
+      const entries = mergeTimelineCompletedEntries(query
         ? [...(activitySearchEntries || []).filter(entry => !draftKeys.has(activityRecordKey(entry))),
           ...recent.filter(entry => entry._pending && !draftKeys.has(activityRecordKey(entry))), ...drafts]
-        : recordsWithDrafts().filter(entry => (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
+        : recordsWithDrafts(), timelineOptimisticCompletions.values())
+        .filter(entry => query || (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
           || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
       const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
       if (query) {
@@ -2694,6 +2697,7 @@
       });
       pageState = { ...pageState, active: null };
       refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
       await refreshState(false, false);
       return true;
     } catch (error) { setError(error); throw error; }
