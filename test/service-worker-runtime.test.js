@@ -536,6 +536,9 @@ test('extracted service-worker handler submits one atomic cross-destination SWIT
   });
   const result = await context.handle({ type: 'SWITCH_TASK', taskUrl: 'https://example.test/team/2', taskTitle: 'New' }, extensionSender);
   assert.equal(result.destinationId, 'github:2');
+  assert.equal(result.stopped.localEntry.destinationId, 'github:1', 'completion stays in its original repository');
+  assert.equal(result.stopped.localEntry._pending, true);
+  assert.equal(result.stopped.localEntry.id, current.id);
   assert.equal(acceptedPlans.length, 1);
   const plan = acceptedPlans[0];
   assert.deepEqual(plan.expectedActive, { destinationId: 'github:1', recordId: current.id });
