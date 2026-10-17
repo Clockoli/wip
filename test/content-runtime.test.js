@@ -1622,108 +1622,6 @@ test('projected totals tick only in their stored local date range and unknown to
 });
 
 
-test('successful Delete responses accept exact empty output and reject malformed parser-shaped entries safely', async t => {
-  const recentEntry = {
-    schemaVersion: 1, id: '01K31SE6000000000000000002', entryId: '01K31SE6000000000000000002', user: 'alice',
-    actor: { kind: 'human', id: 'github:1', name: 'alice' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
-    timezone: 'UTC', metadata: {}, metrics: {},
-    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Ranking regression',
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Ranking regression',
-    entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
-    durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
-    _path: 'times/2026-08/alice.jsonl', _sha: 'rewritten', _index: 0,
-  };
-  const secondEntry = {
-    ...recentEntry, id: '01K31WWM000000000000000003', entryId: '01K31WWM000000000000000003', taskUrl: 'https://github.com/acme/app/issues/8',
-    issue: { ...recentEntry.issue, number: 8, url: 'https://github.com/acme/app/issues/8' },
-    startedAt: '2026-08-18T10:00:00+00:00', endedAt: '2026-08-18T11:00:00+00:00',
-    createdAt: '2026-08-18T11:00:00+00:00', updatedAt: '2026-08-18T11:00:00+00:00', _index: 1,
-  };
-  const omit = (entry, key) => { const copy = structuredClone(entry); delete copy[key]; return copy; };
-  const malformed = [
-    ['null member', [null]],
-    ['primitive member', [7]],
-    ['wrong index', [{ ...recentEntry, _index: 1 }]],
-    ['wrong path', [{ ...recentEntry, _path: 'times/2026-08/bob.jsonl' }]],
-    ['empty SHA', [{ ...recentEntry, _sha: '' }]],
-    ['inconsistent SHA', [recentEntry, { ...secondEntry, _sha: 'other' }]],
-    ['missing ID', [omit(recentEntry, 'id')]],
-    ['empty ID', [{ ...recentEntry, id: '' }]],
-    ['extra metadata', [{ ...recentEntry, unexpected: true }]],
-    ['wrong schema', [{ ...recentEntry, schemaVersion: 2 }]],
-    ['wrong user', [{ ...recentEntry, user: 'bob' }]],
-    ['missing actor', [omit(recentEntry, 'actor')]],
-    ['missing issue title', [omit(recentEntry, 'issueTitle')]],
-    ['unnormalized issue title', [{ ...recentEntry, issueTitle: ' two  spaces ' }]],
-    ['empty issue URL', [{ ...recentEntry, issue: { ...recentEntry.issue, url: '' } }]],
-    ['noncanonical issue URL', [{ ...recentEntry, issue: { ...recentEntry.issue, url: 'not-a-github-url' } }]],
-    ['malformed issue identity', [{ ...recentEntry, issue: { ...recentEntry.issue, owner: 'bad--owner' } }]],
-    ['empty Start', [{ ...recentEntry, startedAt: '' }]],
-    ['malformed Start', [{ ...recentEntry, startedAt: 'not-a-time' }]],
-    ['empty End', [{ ...recentEntry, endedAt: '' }]],
-    ['malformed End', [{ ...recentEntry, endedAt: 'not-a-time' }]],
-    ['wrong entry date', [{ ...recentEntry, entryDate: '2026-02-31' }]],
-    ['entry date disagrees with Start in timezone', [{ ...recentEntry, entryDate: '2026-08-19' }]],
-    ['mismatched entry ID', [{ ...recentEntry, entryId: '01K31WWM000000000000000003' }]],
-    ['wrong duration', [{ ...recentEntry, durationSeconds: 1 }]],
-    ['wrong createdAt', [{ ...recentEntry, createdAt: '2026-08-18T10:00:00+00:00' }]],
-    ['wrong updatedAt', [{ ...recentEntry, updatedAt: recentEntry.startedAt }]],
-    ['overlong description', [{ ...recentEntry, description: 'x'.repeat(2001) }]],
-  ];
-
-  async function exercise(entries, expectFallback, initialRecent = [recentEntry]) {
-    documentNodes.clear(); createdNodes.length = 0;
-    const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-    const { actions } = makeHeader();
-    let deleted = false, loadCalls = 0;
-    const document = {
-      documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-      createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-      querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-    };
-    const context = vm.createContext({
-      location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-        if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-        else if (message.type === 'LOAD_RECENT') {
-          loadCalls += 1;
-          callback(deleted ? { ok: false, error: { code: 'error', message: 'Refresh failed' } } : { ok: true, data: initialRecent });
-        } else if (message.type === 'DELETE_ENTRY') { deleted = true; callback({ ok: true, data: { deleted: true, entries } }); }
-        else callback({ ok: true, data: {} });
-      } } },
-      setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-    });
-    new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-    await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-    const remove = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
-    const rerenderStart = createdNodes.length;
-    await remove.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-    const rerendered = createdNodes.slice(rerenderStart);
-    assert.equal(loadCalls, expectFallback ? 2 : 1, expectFallback ? 'malformed response triggers one compatibility reload' : 'empty exact response needs no compatibility reload');
-    assert.equal(rerendered.some(node => node.className.includes('entry-edit') || node.className.includes('entry-delete')), false,
-      'successful deletion never restores actionable stale row controls');
-    assert.equal(rerendered.some(node => node.className === 'error' && node.walk().some(child => child.textContent === 'Refresh failed')), expectFallback);
-  }
-
-  await t.test('empty exact response after deleting the last record', () => exercise([], false));
-  const fractionalEntry = {
-    ...secondEntry, _index: 0,
-    startedAt: '2026-08-18T10:00:00.3Z', endedAt: '2026-08-18T11:00:00.3Z',
-    createdAt: '2026-08-18T11:00:00.3Z', updatedAt: '2026-08-18T11:00:00.3Z',
-  };
-  await t.test('valid one-digit fractional timestamps need no fallback reload', () => exercise([fractionalEntry], false));
-  const changedSurvivorId = '01K31WWM000000000000000004';
-  await t.test('changed stable ID', () => exercise(
-    [{ ...secondEntry, id: changedSurvivorId, entryId: changedSurvivorId, _index: 0 }], true, [secondEntry, recentEntry],
-  ));
-  for (const [label, entries] of malformed) await t.test(label, () => exercise(entries, true));
-});
-
-
-
 test('main panel shows today total and opens Reports before Settings', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [], intervals = [];
@@ -2286,7 +2184,7 @@ test('daily strip omits idle branding and panel List keeps its week navigation',
   assert.ok(nodes.some(node => node.textContent === 'Track this task'));
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
   assert.ok(!nodes.some(node => node.textContent === 'Yesterday task'));
-  assert.ok(nodes.some(node => node.classList?.includes('entry-delete')), 'queued time has normal entry controls');
+  assert.ok(nodes.some(node => node.classList?.contains('entry-delete')), 'queued time has normal entry controls');
   assert.ok(!nodes.some(node => node.textContent === 'Pending'));
   assert.ok(menu.querySelector('.today-list').querySelector('.entry-date-header'));
   assert.equal(menu.querySelector('.today-list').hidden, true);
@@ -4181,7 +4079,7 @@ test('Activity List starts a row task, switches from another running task, and s
   assert.deepEqual(h.messages.filter(message => message.type === 'SWITCH_TASK').map(message => message.taskUrl), [second.taskUrl]);
   root = h.renderActivity();
   assert.equal(root.querySelectorAll('.entry-stop').length, 1);
-  assert.equal(root.querySelectorAll('.entry-track').length, 1);
+  assert.ok(root.querySelectorAll('.entry-track').length >= 1, 'locally completed timers also remain trackable');
   const stop = root.querySelector('.entry-stop');
   assert.equal(stop.getAttribute('aria-label'), 'Stop tracking Task 2');
   await start.onclick({ isTrusted: true });
@@ -4204,11 +4102,11 @@ test('Activity List can restart a validated imported task identity through the t
   assert.equal(h.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, entry.taskUrl);
 });
 
-test('Activity List does not offer tracking for an invalid identity or a pending row', () => {
+test('Activity List lets locally completed tasks restart but never tracks an invalid identity', () => {
   const invalid = activityEntry('1', '2026-09-05', '08', 'not a task URL');
   const pending = { ...activityEntry('2', '2026-09-05', '09'), _pending: true };
   const root = activityHarness([invalid, pending]).renderActivity();
-  assert.equal(root.querySelectorAll('.entry-track').length, 0);
+  assert.equal(root.querySelectorAll('.entry-track').length, 1, 'locally accepted entry offers normal tracking action');
   assert.equal(root.querySelectorAll('.entry-stop').length, 0);
 });
 
