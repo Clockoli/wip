@@ -460,6 +460,68 @@ test('queued completed-entry deletion disappears locally immediately and syncs l
   assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
 })
 
+test('delete acknowledgement must preserve a newer local edit to another record in the same file', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const deleted = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const survivor = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([deleted, survivor]), 'seed-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [deleted, survivor].map((row, index) => ({ ...row, _path: path, _sha: 'seed-sha', _index: index }));
+  const tracker = service({ github, store });
+  await tracker.queueEntryDelete({ path, originalSha: 'seed-sha', index: 0, original: deleted });
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; entered(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntryEdit({ path, originalSha: 'seed-sha', index: 1, original: survivor,
+      edits: { description: 'last accepted local version' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache.find(row => row.id === survivor.id)?.description, 'last accepted local version');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.description, 'last accepted local version');
+});
+
+test('delete acknowledgement must preserve a newly stopped timer queued during the same GitHub write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const old = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([old]), 'seed-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...old, _path: path, _sha: 'seed-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  await tracker.queueEntryDelete({ path, originalSha: 'seed-sha', index: 0, original: old });
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; entered(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  let stopped;
+  try {
+    await tracker.queueStart('https://example.com/new', 'New task');
+    stopped = await tracker.stop('', { background: true });
+  } finally { release(); }
+  await syncing;
+  assert.ok(store.value.recentCache.some(row => row.id === stopped.entry.id),
+    'an unsynced Stop must not vanish when an earlier deletion finishes');
+  assert.ok(store.value.pendingWrites.some(item => item.operation === 'completeTimer'));
+});
+
 test('sync compacts superseded queued edits for the same completed entry into one remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
