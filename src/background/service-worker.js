@@ -1419,6 +1419,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+let pendingSyncFollowupRequested = false;
 let pendingPull = null;
 let pendingSyncWakeTimer = null;
 let pendingSyncWakeRevision = 0;
@@ -1506,6 +1507,7 @@ async function shouldContinuePendingSync() {
 }
 function syncPendingNow() {
   if (pendingSync) return pendingSync;
+  pendingSyncFollowupRequested = false;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     if (!(await store.getPendingDestinationIds()).length) return;
     const deadline = pendingSyncQuietUntil(await store.getTrackingSnapshot());
@@ -1516,12 +1518,22 @@ function syncPendingNow() {
       return;
     }
     await syncPendingAll({ store, trackerForDestination });
-  })).finally(() => { pendingSync = null; });
+  })).finally(() => {
+    pendingSync = null;
+    // A 15-second wakeup may have fired while a previous GitHub write was
+    // still running. Do not drop the new local edit until the minute alarm.
+    if (pendingSyncFollowupRequested) {
+      pendingSyncFollowupRequested = false;
+      requestPendingSync();
+    }
+  });
   return pendingSync;
 }
 
 function requestPendingSync() {
   // Every local mutation was committed to IndexedDB before this is called.
+  // Preserve a follow-up wakeup if an earlier GitHub flush is still in flight.
+  if (pendingSync) pendingSyncFollowupRequested = true;
   // Older asynchronous scheduling requests must not re-arm a stale deadline.
   void schedulePendingSyncFromStore().catch(() => {});
 }
