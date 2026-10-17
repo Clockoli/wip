@@ -460,6 +460,49 @@ test('queued completed-entry deletion disappears locally immediately and syncs l
   assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
 })
 
+test('retrying an already committed linked edit does not create a second GitHub commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const first = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const second = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  const rows = (await service({ github, store }).readMonthly(path)).entries;
+  store.value.recentCache = rows;
+  const requests = rows.map((original, index) => ({
+    path, originalSha: 'monthly-sha', index, original, edits: { description: `Already saved ${index}` },
+  }));
+  const tracker = service({ github, store });
+  await tracker.queueEntriesEdit({ entries: requests });
+  await tracker.editEntries({ entries: structuredClone(requests) }, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.map(row => row.description), ['Already saved 0', 'Already saved 1']);
+});
+
+test('retry of a committed entry move across months does not conflict or duplicate the move', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), oldPath = 'times/2026-08/alice.jsonl',
+    newPath = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-08-31T08:00:00.000Z', '2026-08-31T09:00:00.000Z');
+  seedText(github, oldPath, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: oldPath, _sha: 'monthly-sha', _index: 0 }];
+  const clock = () => new Date('2026-09-02T12:00:00.000Z');
+  const tracker = service({ github, store, clock });
+  const request = { path: oldPath, originalSha: 'monthly-sha', index: 0, original,
+    edits: { startedAt: '2026-09-01T08:00:00.000Z', endedAt: '2026-09-01T09:00:00.000Z' } };
+  await tracker.queueEntryEdit(request);
+  await tracker.editEntry(request, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store, clock }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits);
+  assert.equal(github.files.has(oldPath), false);
+  assert.equal(parseMonthlyRecords(github.files.get(newPath).text, { user: 'alice', month: '2026-09' })[0].id, original.id);
+});
+
 test('retrying an entry edit already committed by GitHub is idempotent', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
