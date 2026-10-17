@@ -2164,8 +2164,14 @@
       else anonymous.push(entry);
     }
     for (const entry of optimisticCompletions) {
-      if (entry?.id) byId.set(entry.id, entry);
-      else anonymous.push(entry);
+      if (!entry?.id) { anonymous.push(entry); continue; }
+      const local = byId.get(entry.id);
+      const localUpdated = Date.parse(local?.updatedAt), optimisticUpdated = Date.parse(entry.updatedAt);
+      // Stop can be followed immediately by another edit. Once its newer
+      // IndexedDB projection has arrived, never reapply an older Stop snapshot.
+      if (local?._pending && Number.isFinite(localUpdated) && Number.isFinite(optimisticUpdated)
+          && localUpdated >= optimisticUpdated) continue;
+      byId.set(entry.id, entry);
     }
     return [...byId.values(), ...anonymous];
   }
