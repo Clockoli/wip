@@ -492,6 +492,96 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.description, 'Final edit');
 });
 
+test('edit accepted during an in-flight GitHub commit is not deleted with the older queue item', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'original-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const request = { path, originalSha: 'original-sha', index: 0, original };
+  await tracker.queueEntryEdit({ ...request, edits: { description: 'first edit' } });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntryEdit({ ...request, edits: { description: 'second edit' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'second edit', 'a stale GitHub result must not overwrite a newer local edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'the edit accepted during sync still needs a GitHub write');
+  await tracker.syncPending();
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.description, 'second edit');
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('linked edits accepted during remote sync are not erased when that sync finishes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'original-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const request = { path, originalSha: 'original-sha', index: 0, original };
+  await tracker.queueEntriesEdit({ entries: [{ ...request, edits: { description: 'first edit' } }] });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntriesEdit({ entries: [{ ...request, edits: { description: 'second edit' } }] });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'second edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'a newer linked edit remains queued');
+  await tracker.syncPending();
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].description, 'second edit');
+});
+
+test('active timer edit accepted during GitHub sync remains queued and locally authoritative', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.putText.bind(github);
+  let blocked = false;
+  github.putText = async (...args) => {
+    if (args[0] === 'active/alice.json' && !blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const originalIdentity = { id: original.id, startedAt: original.startedAt };
+  await tracker.queueActiveStartEdit({ original: originalIdentity, description: 'first edit' });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueActiveStartEdit({ original: originalIdentity, description: 'second edit' });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.activeCache.description, 'second edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'newer timer edit must survive the first commit');
+  await tracker.syncPending();
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).description, 'second edit');
+});
+
 test('coalesced local edits persist the latest acceptance time without resetting the original queue timestamp', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
