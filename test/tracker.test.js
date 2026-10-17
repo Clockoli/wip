@@ -460,6 +460,24 @@ test('queued completed-entry deletion disappears locally immediately and syncs l
   assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
 })
 
+test('retrying an entry edit already committed by GitHub is idempotent', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original, edits: { description: 'Accepted locally' } };
+  await tracker.queueEntryEdit(request);
+  await tracker.editEntry(request, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits,
+    'replayed acknowledgement should not produce another commit for the same already-saved change');
+  assert.equal(store.value.recentCache[0].description, 'Accepted locally');
+});
+
 test('retrying a Delete already committed on GitHub adopts the result without conflict or a second commit', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
