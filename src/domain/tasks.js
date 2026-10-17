@@ -16,7 +16,8 @@ function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitl
 function sameTimer(left, right) {
   if (left?.id && right?.id && left.id === right.id) return true;
   if (right?.id && Array.isArray(left?.recordIds) && left.recordIds.includes(right.id)) return true;
-  return left?.user === right?.user && taskUrlOf(left) === taskUrlOf(right)
+  return typeof left?.startedAt === 'string' && typeof right?.startedAt === 'string'
+    && left.user === right.user && taskUrlOf(left) === taskUrlOf(right)
     && left.startedAt === right.startedAt;
 }
 
