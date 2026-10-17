@@ -554,6 +554,38 @@ test('linked edits accepted during remote sync are not erased when that sync fin
   assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].description, 'second edit');
 });
 
+test('in-flight batch of independent edits cannot roll back a newer linked local edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const one = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const two = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([one, two]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [one, two].map((row, index) => ({ ...row, _path: path, _sha: 'original-sha', _index: index }));
+  const tracker = service({ github, store });
+  const request = (original, index, description) => ({ path, originalSha: 'original-sha', index, original, edits: { description } });
+  await tracker.queueEntryEdit(request(one, 0, 'first'));
+  await tracker.queueEntryEdit(request(two, 1, 'other'));
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntriesEdit({ entries: [request(one, 0, 'final')] });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache.find(row => row.id === one.id).description, 'final');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].description, 'final');
+});
+
 test('active timer edit accepted during GitHub sync remains queued and locally authoritative', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), original = active('2026-08-18T08:00:00.000Z');
   seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
