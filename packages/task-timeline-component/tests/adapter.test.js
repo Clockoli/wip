@@ -111,7 +111,8 @@ test('pending timeline and calendar entries never display background saving feed
   assert.doesNotMatch(source, /clockoli-entry-saving|clockoli-compact-saving|clockoli-saving/);
   assert.doesNotMatch(source, /Saving…|aria-busy/);
   assert.match(source, /timeline\.pendingKeys = new Set/);
-  assert.match(source, /!pending && !item\?\.isDeleteDisabled/);
+  assert.match(source, /delete: !item\?\.isDeleteDisabled/);
+  assert.doesNotMatch(source, /delete:.*!pending/, 'local-only entries can be deleted like synced entries');
 });
 
 test('Clockoli graphic Timeline edits use a five-minute grid while Calendar keeps its one-minute precision', () => {
