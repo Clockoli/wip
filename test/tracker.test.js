@@ -2247,6 +2247,68 @@ test('Bulk add is durable on remote validation failure and never partially write
   assert.equal(store.value.pendingWrites[0].status, 'conflict');
 });
 
+test('queued completed Add time does not duplicate a GitHub commit after a service-worker crash', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  const accepted = await tracker.addTime(request, { background: true });
+  await tracker.addTime(request, { fixedId: accepted.entry.id, updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits, 'replaying a completed local addition never duplicates time');
+  assert.equal(store.value.recentCache[0]._pending, undefined);
+});
+
+test('queued Bulk add survives restart without duplicating already committed records', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const text = '2026-08-21 https://example.com/one First 1\n2026-09-01 https://example.com/two Second 2';
+  await service({ github, store }).bulkAddTimes(text, { background: true });
+  const operation = structuredClone(store.value.pendingWrites[0]);
+  await service({ github, store }).bulkAddTimes('', { requested: operation.requested, ids: operation.entries.map(row => row.id),
+    updateCache: false, includeEntries: true });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, commits);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' }).length, 1);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-09/alice.jsonl').text, { user: 'alice', month: '2026-09' }).length, 1);
+});
+
+test('historical Bulk add entry outside the 50-row local cache can be edited before sync without GitHub reads', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const lines = Array.from({ length: 55 }, (_, i) =>
+    `2026-08-21 https://example.com/task/${i} Row ${i} 0.25`).join('\n');
+  await tracker.bulkAddTimes(lines, { background: true });
+  const queued = store.value.pendingWrites[0].entries[0];
+  assert.equal(store.value.recentCache.some(entry => entry.id === queued.id), false, 'oldest preview is evicted');
+  const reads = github.reads.length;
+  const local = { ...queued, _path: 'times/2026-08/alice.jsonl', _index: -1, _sha: null, _pending: true };
+  await tracker.queueEntryEdit({
+    path: local._path, originalSha: null, index: -1, original: local, edits: { description: 'Revised locally' },
+  });
+  assert.equal(github.reads.length, reads, 'editing an unsynced bulk entry uses the IndexedDB queue');
+  assert.equal((await tracker.projectActivityRecords([])).records.find(entry => entry.id === queued.id).description, 'Revised locally');
+  await service({ github, store }).syncPending();
+  const saved = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(entry => entry.id === queued.id).description, 'Revised locally');
+});
+
+test('a remote overlap prevents queued Add time from writing and verified discard clears only its local record', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z' };
+  await tracker.addTime(request, { background: true });
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:30:00.000Z')]), 'raced');
+  await tracker.syncPending();
+  const id = store.value.pendingWrites[0].id;
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  const resolved = await tracker.resolvePendingConflict(id, 'discard_queued_addition');
+  assert.deepEqual(resolved, { resolved: true, discarded: true });
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('Add time writes an exact completed interval and task index atomically', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   const result = await tracker.addTime({ taskUrl: issue.url + '?noise=1', taskTitle: 'Fix frontend',
