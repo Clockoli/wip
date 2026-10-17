@@ -2132,14 +2132,22 @@
       try {
         const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
         added = result.added;
-        bulkDraft = ''; bulkMutation = false; recentLoaded = false;
-        await refreshRecent(true);
+        bulkDraft = ''; bulkMutation = false;
+        // Accepted records are already durable in IndexedDB. Show them now,
+        // without waiting for a GitHub history read or the 15-second flush.
+        if (Array.isArray(result.entries)) {
+          const accepted = result.entries.map(entry => ({ ...entry, destinationId: result.destinationId }));
+          recent = mergeActivityRecords(accepted, timesRange(), true);
+          recentLoaded = true;
+          recentFresh = true;
+        }
+        void refreshActivityState().catch(setError);
         bulkFeedback = { kind: 'success', message: `${added} ${added === 1 ? 'entry was' : 'entries were'} added.` };
       } catch (error) {
         bulkMutation = false;
         if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; }
         const message = error?.message || 'Could not add time.';
-        bulkFeedback = { kind: 'error', message: added === null ? message : `Time was added, but Activity could not be refreshed: ${message}` };
+        bulkFeedback = { kind: 'error', message };
       }
       renderUi();
     }); add.disabled = bulkMutation;
