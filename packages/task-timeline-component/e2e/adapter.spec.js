@@ -1673,10 +1673,13 @@ for (const colorScheme of ['light', 'dark']) {
 }
 
 test('Calendar task cards show description only when the card has room', async ({ page }) => {
-  const now = Date.now();
+  // Anchor to local midnight so the initial segment stays two hours tall on CI.
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const startOfDay = dayStart.getTime();
   await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [
-    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: now - 4 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
-    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: now - HOUR, endedAt: now - HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
+    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: startOfDay - 2 * HOUR, endedAt: startOfDay + 2 * HOUR, rowId: 'one', isEditable: true },
+    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: startOfDay + 3 * HOUR, endedAt: startOfDay + 3 * HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   // A task crossing local midnight has one Calendar segment per day; geometry

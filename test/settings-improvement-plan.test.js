@@ -22,7 +22,7 @@ test('first run has two steps: GitHub sign-in then repository selection regardle
   assert.match(html, /Step <span id="current-step">1<\/span> of 2/);
   assert.match(html, /Set up Clockoli[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
   assert.match(html, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
-  assert.match(html, /Clockoli copies the one-time code before opening GitHub so you can paste it/);
+  assert.match(html, /try to copy it before opening GitHub[\s\S]*id="device-initial-paste-shortcut"/);
   assert.match(html, /<details[^>]*id="connection-details"[\s\S]*<summary>How it works<\/summary>/i);
   assert.doesNotMatch(html, /of [34]|Step [34]/i);
   assert.equal(onboardingStep({ authorized: false }), 1);

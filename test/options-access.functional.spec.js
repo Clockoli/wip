@@ -126,6 +126,14 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     page.on('pageerror', error => errors.push(error.message));
     await page.setViewportSize({ width: 320, height: 700 });
     await page.locator('#add-time-repository').click();
+    const existing = page.locator('.existing-repository-option');
+    const create = page.locator('.new-repository-option');
+    await expect(existing).toBeVisible();
+    await expect(create).toBeVisible();
+    const [existingBox, createBox] = await Promise.all([existing.boundingBox(), create.boundingBox()]);
+    expect(createBox.y).toBeGreaterThanOrEqual(existingBox.y + existingBox.height);
+    await expect(create.getByRole('link', { name: 'Create a new time repository' })).toBeVisible();
+    expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
     const input = page.locator('#repository-target');
     const check = page.getByRole('button', { name: 'Check repository', exact: true });
     const status = page.locator('#repository-target-status');
@@ -150,6 +158,8 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     const connect = page.locator('#connect-checked-repository');
     await expect(connect).toBeVisible();
+    expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).backgroundColor))
+      .not.toBe(await connect.evaluate(node => getComputedStyle(node).backgroundColor));
     const appearance = locator => locator.evaluate(button => {
       const style = getComputedStyle(button);
       return { background: style.backgroundColor, color: style.color, border: style.borderTopColor };

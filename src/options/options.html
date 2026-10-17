@@ -63,15 +63,26 @@
 
         <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
           <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
+          <div id="authorize-panel" class="primary-action-block">
+            <button id="authorize" type="button">Sign in with GitHub</button>
+            <p class="help">Clockoli will get a one-time code and try to copy it before opening GitHub. When GitHub asks for the code, paste it with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>. You'll see whether copying succeeded.</p>
+          </div>
+          <div id="device-panel" class="notice device-activation-panel" hidden>
+            <p class="device-panel-heading"><strong>Your one-time GitHub sign-in code</strong></p>
+            <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
+            <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
+            <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
+            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
+            <div class="actions">
+              <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
+              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
+            </div>
+          </div>
           <ul class="trust-list">
             <li>Clockoli requests only the repository access needed to read and write your data.</li>
             <li>Your GitHub password is never shared with Clockoli.</li>
             <li>You can disconnect this browser or revoke access at any time.</li>
           </ul>
-          <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Sign in with GitHub</button>
-            <p class="help">Clockoli copies the one-time code before opening GitHub so you can paste it.</p>
-          </div>
           <details id="connection-details" class="inline-details">
             <summary>How it works</summary>
             <p>Clockoli uses GitHub Device activation, so you never need to create or paste a personal access token.</p>
@@ -86,21 +97,31 @@
             </div>
           </details>
 
-          <div id="device-panel" class="notice" hidden>
-            <p><strong>This is the code to enter on GitHub when it opens:</strong></p>
-            <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
-            <p id="device-handoff-status" class="help" aria-live="polite"></p>
-            <p id="device-wait" class="help" aria-live="polite">Clockoli checks automatically every few seconds.</p>
-            <div class="actions">
-              <button id="device-done" type="button">Done on GitHub—check now</button>
-              <a id="open-device-page" target="_blank" rel="noreferrer">Open GitHub again</a>
-            </div>
-          </div>
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
-          <a id="new-time-repository" class="button-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
+          <div class="existing-repository-option">
+            <h4>Connect an existing repository</h4>
+            <p class="help">Paste its GitHub URL or search by name, then select Check.</p>
+            <form id="repository-target-form">
+              <label for="repository-target">Enter a repository URL or owner/name</label>
+              <div class="repository-target-control">
+                <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste URL or type a repository name" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="repository-list" aria-describedby="repository-target-status">
+                <button id="check-repository-target" type="button" class="repository-target-check" aria-label="Check repository" title="Check repository access and storage" disabled>Check</button>
+                <div id="repository-choice-fieldset" class="repository-suggestions" hidden>
+                  <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Finding granted repositories…</div>
+                  <div id="repository-list" class="repository-list" role="listbox" aria-label="Granted repository suggestions" hidden></div>
+                </div>
+              </div>
+            </form>
+            <p id="repository-target-status" class="repository-check-status" role="status" aria-live="polite" hidden></p>
+            <button id="connect-checked-repository" type="button" hidden>Connect repository</button>
+          </div>
+          <div class="new-repository-option">
+            <span>Don't have a time repository yet?</span>
+            <a id="new-time-repository" class="button-link secondary-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
+          </div>
           <dialog id="new-repository-guidance" class="repository-access-dialog" aria-labelledby="new-repository-guidance-title" aria-describedby="new-repository-guidance-body" hidden>
             <header class="repository-access-header"><h3 id="new-repository-guidance-title">After creating your repository</h3></header>
             <div class="repository-access-content">
@@ -113,19 +134,6 @@
               </form>
             </div>
           </dialog>
-          <form id="repository-target-form">
-            <label for="repository-target">Enter a repository URL or owner/name</label>
-            <div class="repository-target-control">
-              <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste URL or type a repository name" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="repository-list" aria-describedby="repository-target-status">
-              <button id="check-repository-target" type="button" class="repository-target-check" aria-label="Check repository" title="Check repository access and storage" disabled>Check</button>
-              <div id="repository-choice-fieldset" class="repository-suggestions" hidden>
-                <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Finding granted repositories…</div>
-                <div id="repository-list" class="repository-list" role="listbox" aria-label="Granted repository suggestions" hidden></div>
-              </div>
-            </div>
-          </form>
-          <p id="repository-target-status" class="repository-check-status" role="status" aria-live="polite" hidden></p>
-          <button id="connect-checked-repository" type="button" hidden>Connect repository</button>
           <dialog id="repository-access-panel" class="repository-access-dialog" aria-labelledby="repository-access-title" aria-describedby="repository-access-instruction" hidden>
             <header class="repository-access-header"><h3 id="repository-access-title">Grant repository access</h3><button id="close-repository-access" type="button" class="secondary" aria-label="Close repository access dialog">×</button></header>
             <div class="repository-access-content">

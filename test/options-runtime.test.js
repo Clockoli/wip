@@ -1208,7 +1208,8 @@ test('Check button alone shows progress before the completed inspection feedback
   await click;
   assert.match(status.textContent, /Checked acme\/time-data/);
   assert.match(status.textContent, /Unavailable/);
-  assert.match(status.textContent, /Repository files were not changed/);
+  assert.doesNotMatch(status.textContent, /Repository files were not changed/,
+    'the check result should report repository status only, without redundant file-change reassurance');
   assert.equal(refresh.disabled, false);
   assert.equal(refresh.attributes['aria-busy'], 'false');
   assert.equal(refresh.textContent, 'Check');
@@ -1319,6 +1320,8 @@ test('checking a ready repository offers a separate connect confirmation without
   assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
   await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.nodes.get('repository-confirmation-body').textContent,
+    'Connect this repository to Clockoli in this browser for future time tracking. No repository files will be changed. Anyone with read access can see tracked URLs, titles, times, and descriptions.');
   await page.nodes.get('back-to-repository-selection').listeners.click();
   await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
@@ -2143,7 +2146,7 @@ test('repository-first empty discovery asks for a concrete target before offerin
   assert.equal(page.nodes.get('repository-choice-fieldset').hidden, true);
   assert.equal(page.nodes.get('setup-default-destination-label').hidden, true);
   assert.equal(page.nodes.get('default-destination-label').hidden, true);
-  assert.match(page.nodes.get('message').textContent, /Enter a repository URL or owner\/name/);
+  assert.equal(page.nodes.get('message').textContent, '', 'the main repository form replaces redundant top-of-page instructions');
   assert.equal(page.requests.filter(request => request.type === 'DISCOVER_REPOSITORIES').length, 1);
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
