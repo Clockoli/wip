@@ -2025,26 +2025,10 @@ export class TrackerService {
     }
   }
 
-  async bulkAddTimes(text) {
-    const requested = parseBulkTimeText(text);
-    const activeTimer = await this.refreshActive();
+  planBulkRows(requested, files, activeTimer, fixedIds = null) {
     const activeStartMs = activeTimer ? new Date(activeTimer.startedAt).getTime() : Infinity;
-    const touchedMonths = new Set(requested.map(item => item.date.slice(0, 7)));
-    const validationMonths = new Set(touchedMonths), latestTouchedMonth = [...touchedMonths].sort().at(-1);
-    const snapshot = await this.github.listTextFilesSnapshot('times/');
-    for (const file of snapshot.files ?? []) {
-      try {
-        const month = monthFromPath(file.path, this.user);
-        if (month <= latestTouchedMonth) validationMonths.add(month);
-      } catch { /* Another user's or unrelated text file. */ }
-    }
-    const files = new Map();
-    for (const month of [...validationMonths].sort()) {
-      const path = monthlyRecordsPath(this.user, `${month}-01`);
-      files.set(path, await this.readMonthly(path));
-    }
     const added = [], usedIds = new Set([...files.values()].flatMap(file => file.entries.map(record => record.id)));
-    for (const item of requested) {
+    for (const [offset, item] of requested.entries()) {
       const dayStart = localMidnight(item.date), dayEnd = nextLocalMidnight(item.date);
       const dayStartMs = new Date(dayStart).getTime(), dayEndMs = new Date(dayEnd).getTime();
       const existing = [...files.values()].flatMap(file => file.entries).filter(entry => {
@@ -2061,13 +2045,84 @@ export class TrackerService {
       const endedAt = localTimestamp(new Date(latestEnd + item.durationSeconds * 1000)), endedAtMs = new Date(endedAt).getTime();
       if (endedAtMs > dayEndMs) throw new Error(`Line ${item.line}: ${item.durationSeconds / 3600} hours do not fit after existing time on ${item.date}. No entries were added.`);
       if (endedAtMs > activeStartMs) throw new Error(`Line ${item.line}: imported time would overlap the running timer that started at ${activeTimer.startedAt}. No entries were added.`);
-      const active = this.buildActive({ id: this.uniqueRecordId(latestEnd, usedIds), taskUrl: item.taskUrl, startedAt, entryDate: item.date, description: item.description });
+      const id = fixedIds?.[offset] || this.uniqueRecordId(latestEnd, usedIds);
+      if (fixedIds && (usedIds.has(id) || !id)) throw new TrackerConflictError('A bulk time entry ID already exists. Review Activity before retrying.', 'bulk_add_id_conflict');
+      usedIds.add(id);
+      const active = this.buildActive({ id, taskUrl: item.taskUrl, startedAt, entryDate: item.date, description: item.description });
       const entry = buildEntry({ active, endedAt, now: endedAt, description: item.description });
       entry.entryDate = item.date;
       const path = monthlyRecordsPath(this.user, item.date), file = files.get(path);
       file.entries.push(entry); file.entries.sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
       added.push(entry);
     }
+    return added;
+  }
+
+  async queueBulkAddTimes(text) {
+    const requested = parseBulkTimeText(text), queuedAt = this.clock();
+    let accepted;
+    await this.mutateState(state => {
+      const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])],
+        state.pendingWrites ?? []);
+      const files = new Map();
+      for (const record of known) {
+        const path = monthlyRecordsPath(this.user, record.entryDate);
+        if (!files.has(path)) files.set(path, { path, month: record.entryDate.slice(0, 7), entries: [] });
+        if (!files.get(path).entries.some(entry => entry.id === record.id)) files.get(path).entries.push(record);
+      }
+      for (const item of requested) {
+        const path = monthlyRecordsPath(this.user, item.date);
+        if (!files.has(path)) files.set(path, { path, month: item.date.slice(0, 7), entries: [] });
+      }
+      const planned = this.planBulkRows(requested, files, state.activeCache);
+      accepted = planned.map(entry => ({
+        ...entry, _path: monthlyRecordsPath(this.user, entry.entryDate), _sha: null, _index: -1, _pending: true,
+      }));
+      const pendingWrites = [...(state.pendingWrites ?? []), {
+        operation: 'bulkAddTimes', id: createUlid(queuedAt.getTime() + (state.pendingWrites?.length ?? 0)),
+        status: 'pending', stage: 'bulkAddTimes', requested: structuredClone(requested),
+        entries: planned.map(stripInternal), queuedAt: queuedAt.toISOString(), lastError: '',
+      }];
+      const newIds = new Set(accepted.map(entry => entry.id));
+      return {
+        pendingWrites,
+        recentCache: [...accepted, ...(state.recentCache ?? []).filter(entry => !newIds.has(entry.id))]
+          .sort(newestFirst).slice(0, 50),
+      };
+    });
+    return { added: requested.length, pending: true };
+  }
+
+  async bulkAddTimes(text, { background = false, requested = null, ids = null, updateCache = true, includeEntries = false } = {}) {
+    if (background) return this.queueBulkAddTimes(text);
+    requested ||= parseBulkTimeText(text);
+    const activeTimer = ids ? await this.readRemoteActive() : await this.refreshActive();
+    const touchedMonths = new Set(requested.map(item => item.date.slice(0, 7)));
+    const validationMonths = new Set(touchedMonths), latestTouchedMonth = [...touchedMonths].sort().at(-1);
+    const snapshot = await this.github.listTextFilesSnapshot('times/');
+    for (const file of snapshot.files ?? []) {
+      try {
+        const month = monthFromPath(file.path, this.user);
+        if (month <= latestTouchedMonth) validationMonths.add(month);
+      } catch { /* Another user's or unrelated text file. */ }
+    }
+    const files = new Map();
+    for (const month of [...validationMonths].sort()) {
+      const path = monthlyRecordsPath(this.user, `${month}-01`);
+      files.set(path, await this.readMonthly(path));
+    }
+    if (ids) {
+      const found = ids.map(id => [...files.values()].flatMap(file => file.entries).find(entry => entry.id === id));
+      if (found.every(Boolean)) {
+        if (found.some((entry, index) => entry.taskUrl !== requested[index].taskUrl
+            || entry.description !== requested[index].description || entry.durationSeconds !== requested[index].durationSeconds)) {
+          throw new TrackerConflictError('Previously saved bulk time has changed on GitHub.', 'bulk_add_changed');
+        }
+        return { added: found.length, ...(includeEntries ? { savedEntries: found } : {}) };
+      }
+      if (found.some(Boolean)) throw new TrackerConflictError('Bulk time is only partially present on GitHub. No automatic rewrite was attempted.', 'bulk_add_partial');
+    }
+    const added = this.planBulkRows(requested, files, activeTimer, ids);
     const touched = [...touchedMonths].sort().map(month => files.get(monthlyRecordsPath(this.user, `${month}-01`)));
     const staged = touched.map(file => {
       const text = serializeMonthlyRecords(file.entries);
@@ -2083,8 +2138,11 @@ export class TrackerService {
         add: added, guards, expectedHeadSha: snapshot.headSha || null,
       });
       const saved = staged.flatMap(({ file, entries }) => entries.map(entry => ({ ...entry, _sha: blobShas[file.path] })));
-      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, touched.map(file => file.path)) });
-      return { added: added.length };
+      if (updateCache) {
+        const state = await this.store.getState();
+        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, touched.map(file => file.path)) });
+      }
+      return { added: added.length, ...(includeEntries ? { savedEntries: saved.filter(entry => added.some(item => item.id === entry.id)) } : {}) };
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed during bulk import. No entries were added; reload and try again.');
       throw error;
