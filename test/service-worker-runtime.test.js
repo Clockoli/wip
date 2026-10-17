@@ -276,6 +276,57 @@ test('extracted service-worker handler routes START to the first matching destin
   assert.equal(calls[0].options?.localOnly, true, 'Start must not wait for GitHub preflight');
 });
 
+test('single Add time is accepted locally and uses the same delayed scheduler as Stop', async () => {
+  const calls = [], schedules = [];
+  const context = handlerContext({
+    addTimeForSender: payload => ({ taskUrl: payload.taskUrl, taskTitle: payload.taskTitle,
+      startedAt: payload.startedAt, endedAt: payload.endedAt, description: payload.description }),
+    store: {},
+    activeDestinationId: async () => null,
+    resolveStartDestinationId: async () => 'github:1',
+    trackerForDestination: async (id, options) => ({
+      addTime: async (entry, settings) => {
+        calls.push({ id, options, entry, settings });
+        return { pending: true, entry: { id: 'record' } };
+      },
+    }),
+    requestPendingSync: () => schedules.push(true),
+  });
+  const entry = { type: 'ADD_TIME', taskUrl: 'https://example.com/one', taskTitle: 'A',
+    startedAt: '2026-10-17T10:00:00.000Z', endedAt: '2026-10-17T10:30:00.000Z', description: '' };
+  const result = await context.handle(entry, extensionSender);
+  assert.equal(result.pending, true);
+  assert.equal(result.destinationId, 'github:1');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.localOnly, true);
+  assert.equal(calls[0].settings.background, true);
+  assert.deepEqual(schedules, [true]);
+});
+
+test('Bulk add accepts locally and queues a shared idle GitHub flush without blocking on remote writes', async () => {
+  const calls = [], schedules = [];
+  const context = handlerContext({
+    context: async options => ({ tracker: {
+      bulkAddTimes: async (text, settings) => {
+        calls.push({ options, text, settings });
+        return { added: 2, pending: true };
+      },
+    } }),
+    requestPendingSync: () => schedules.push(true),
+  });
+  const input = '2026-08-21 https://example.com/a First 1\\n2026-08-22 https://example.com/b Second 1';
+  const result = await context.handle({ type: 'BULK_ADD_TIMES', text: input }, extensionSender);
+  assert.equal(result.added, 2);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.localOnly, true);
+  assert.equal(calls[0].settings.background, true);
+  assert.deepEqual(schedules, [true]);
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /'ADD_TIME', 'BULK_ADD_TIMES'/);
+  assert.match(worker, /const taskMerge = message\?\.type === 'MERGE_TASKS'/,
+    'Merge tasks must stay outside the local-acceptance scheduler');
+});
+
 test('multi-destination read callbacks use local-only contexts and retain persistent bodies for merging', () => {
   const participants = sourceBetween('async function loadTaskParticipants(', 'async function loadTimes(');
   const tasks = sourceBetween('async function loadTasks(', 'async function cancelReports(');
