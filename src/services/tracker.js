@@ -1024,8 +1024,22 @@ export class TrackerService {
           try { result = await this.deleteEntry(operation.request, { updateCache: false }); }
           catch (error) {
             if (!(error instanceof TrackerConflictError)) throw error;
-            await this.rebaseQueuedEntryEdit(operation);
-            result = await this.deleteEntry(operation.request, { updateCache: false });
+            try { await this.rebaseQueuedEntryEdit(operation); }
+            catch (rebaseError) {
+              if (!(rebaseError instanceof TrackerConflictError) || rebaseError.reason !== 'queued_entry_missing') throw rebaseError;
+              // GitHub may have committed this deletion before the worker
+              // stopped, leaving the original operation unacknowledged locally.
+              // Verify both canonical stores: a moved record still exists in
+              // the task index and must not be silently treated as deleted.
+              const id = operation.request?.original?.id;
+              const index = await this.readTaskIndex();
+              const indexed = Object.values(index.index.tasks).some(task => task.recordIds.includes(id));
+              if (indexed) throw rebaseError;
+              const file = await this.readMonthly(operation.request.path);
+              if (file.entries.some(entry => entry.id === id)) throw rebaseError;
+              result = { deleted: true, entries: file.entries };
+            }
+            if (!result) result = await this.deleteEntry(operation.request, { updateCache: false });
           }
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
