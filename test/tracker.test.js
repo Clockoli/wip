@@ -2213,7 +2213,7 @@ test('completed Add time accepted offline remains recoverable after restart and 
 test('Bulk add persists the entire import locally first and later creates a single atomic GitHub commit', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 9), localTimestamp(2026, 7, 21, 10))]), 'before');
-  const text = '2026-08-21 https://example.com/a First 2:00\\n2026-08-21 https://example.com/b Second 1.5';
+  const text = '2026-08-21 https://example.com/a First 2:00\n2026-08-21 https://example.com/b Second 1.5';
   const added = await service({ github, store }).bulkAddTimes(text, { background: true });
   assert.deepEqual(added, { added: 2, pending: true });
   assert.equal(github.reads.length, 0);
@@ -2234,7 +2234,7 @@ test('Bulk add persists the entire import locally first and later creates a sing
 test('Bulk add is durable on remote validation failure and never partially writes', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const submitted = await service({ github, store }).bulkAddTimes(
-    '2026-08-21 https://example.com/a First 12:00\\n2026-08-21 https://example.com/b Second 12:00',
+    '2026-08-21 https://example.com/a First 12:00\n2026-08-21 https://example.com/b Second 12:00',
     { background: true });
   assert.equal(submitted.added, 2);
   seedText(github, 'times/2026-08/alice.jsonl',
