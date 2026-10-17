@@ -127,6 +127,9 @@ function compactSupersededQueue(pendingWrites, recentCache = []) {
   const queue = structuredClone(pendingWrites ?? []), latestByTarget = new Map(), removed = new Set();
   for (let index = queue.length - 1; index >= 0; index -= 1) {
     const operation = queue[index], type = operation.operation ?? operation.stage;
+    // A previous sync may have written this operation before a worker restart.
+    // Never merge a newer edit into that in-flight snapshot.
+    if (operation.syncInFlight) { latestByTarget.clear(); continue; }
     if (type === 'editEntry') {
       const request = operation.request, targetId = request?.original?.id;
       if (!request?.path || !targetId) { latestByTarget.clear(); continue; }
@@ -170,7 +173,7 @@ function compactSupersededQueue(pendingWrites, recentCache = []) {
 function trailingSupersedable(queue, matches) {
   for (let index = queue.length - 1; index >= 0; index -= 1) {
     const operation = queue[index], type = operation.operation ?? operation.stage;
-    if (!['editEntry', 'editActiveStart'].includes(type)) return null;
+    if (operation.syncInFlight || !['editEntry', 'editActiveStart'].includes(type)) return null;
     if (matches(operation)) return operation;
   }
   return null;
@@ -875,6 +878,9 @@ export class TrackerService {
   async compactPendingQueue() {
     return this.mutateState(state => {
       const pendingWrites = compactSupersededQueue(state.pendingWrites, state.recentCache);
+      // Freeze this batch in IndexedDB before any GitHub I/O. A later local
+      // edit must append a new operation, never mutate an outgoing snapshot.
+      for (const operation of pendingWrites) operation.syncInFlight = true;
       return { pendingWrites };
     }).then(state => state.pendingWrites ?? []);
   }
@@ -939,8 +945,8 @@ export class TrackerService {
                   pendingWrites: remaining,
                   recentCache: (latest.recentCache ?? []).map(entry => {
                     const persisted = savedById.get(entry.id);
-                    return persisted && !remaining.some(item => item.operation === 'editEntry'
-                      && item.request?.original?.id === entry.id) ? persisted : entry;
+                    return persisted && !remaining.some(item => operationEditsEntry(item, entry.id))
+                      ? persisted : entry;
                   }),
                 };
               });
@@ -1578,7 +1584,8 @@ export class TrackerService {
         return updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt ? [updated] : [];
       }), state.activeCache);
       const pendingWrites = [...(state.pendingWrites ?? [])];
-      const existing = pendingWrites.at(-1)?.operation === 'editEntries' ? pendingWrites.at(-1) : null;
+      const existing = pendingWrites.at(-1)?.operation === 'editEntries' && !pendingWrites.at(-1).syncInFlight
+      ? pendingWrites.at(-1) : null;
       const request = existing?.request ?? { entries: [] };
       const existingByIdentity = new Map(request.entries.map(item => [`${item.path}\u0000${item.original.id}`, item]));
       for (const item of requestEntries) {
