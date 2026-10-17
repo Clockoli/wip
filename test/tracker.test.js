@@ -763,6 +763,29 @@ test('queued running start and description edits coalesce and persist together',
   assert.equal(saved.description, 'Saved on blur');
 });
 
+test('restart adopts an active-timer edit already committed to GitHub before local acknowledgement', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'active/alice.json';
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: path, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const newStart = '2026-08-18T08:30:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt },
+    startedAt: newStart, description: 'Updated before crash' });
+  const alreadySaved = { ...original, startedAt: newStart, description: 'Updated before crash', updatedAt: '2026-08-18T12:00:00.000Z' };
+  await github.putText(path, serializeActiveRecord(alreadySaved), 'simulated completed but unacknowledged write', 'active-sha');
+  const writes = github.writes.length;
+
+  // The service worker was stopped after GitHub saved, but before it removed
+  // the durable operation from IndexedDB. The retry must converge harmlessly.
+  const resumed = service({ github, store });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.activeCache.startedAt, newStart);
+  assert.equal(store.value.activeCache.description, 'Updated before crash');
+  assert.equal(github.writes.length, writes, 'idempotent retry must not create another GitHub commit');
+});
+
 test('restart compaction preserves active fields changed by separate persisted edits', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const original = active('2026-08-18T08:00:00.000Z');
