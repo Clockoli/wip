@@ -4064,8 +4064,12 @@ test('Activity List starts a row task, switches from another running task, and s
     state: { configured: true, active, pendingWrites: [] },
     respond(message, callback) {
       if (message.type === 'SWITCH_TASK') {
+        const stopped = { ...active, taskTitle: 'Other task', endedAt: '2026-09-05T12:00:00Z',
+          entryDate: '2026-09-05', timezone: 'UTC', durationSeconds: 3600 };
         active = { id: 'running', taskUrl: message.taskUrl, startedAt: '2026-09-05T12:00:00Z' };
-        callback({ ok: true, data: { active, pending: true } });
+        callback({ ok: true, data: { active, pending: true, destinationId: 'github:1',
+          stopped: { entry: stopped, localEntry: { ...stopped, _path: 'times/2026-09/alice.jsonl',
+            _sha: null, _index: -1, _pending: true }, pending: true } } });
       } else if (message.type === 'STOP') {
         active = null;
         callback({ ok: true, data: { entry: { id: 'running', taskUrl: second.taskUrl, startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T12:01:00Z', durationSeconds: 60 }, pending: true } });
@@ -4079,6 +4083,9 @@ test('Activity List starts a row task, switches from another running task, and s
   assert.deepEqual(h.messages.filter(message => message.type === 'SWITCH_TASK').map(message => message.taskUrl), [second.taskUrl]);
   root = h.renderActivity();
   assert.equal(root.querySelectorAll('.entry-stop').length, 1);
+  assert.equal(root.querySelectorAll('.entry-record').length, 3, 'the stopped task appears without waiting for GitHub');
+  assert.equal(root.querySelectorAll('.entry-delete').length, 3, 'the stopped task is immediately editable and deletable');
+  assert.equal(root.walk().some(node => node.textContent === 'Pending'), false);
   assert.ok(root.querySelectorAll('.entry-track').length >= 1, 'locally completed timers also remain trackable');
   const stop = root.querySelector('.entry-stop');
   assert.equal(stop.getAttribute('aria-label'), 'Stop tracking Task 2');
