@@ -53,7 +53,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const completed = { ...active, endedAt: new Date().toISOString(), durationSeconds: 1 };
     active = null;
     pendingWrites = [{ operation: 'completeTimer', id: completed.id, stage: 'verifyActive', status: 'pending', queuedAt: new Date().toISOString() }];
-    respond({ ok: true, data: { entry: completed, pending: true } });
+    respond({ ok: true, data: { entry: completed, localEntry: { ...completed, _path: 'times/' + completed.entryDate.slice(0, 7) + '/alice.jsonl', _sha: null, _index: -1, _pending: true }, pending: true, destinationId: 'github:1' } });
   } else respond({ ok: false, error: { message: 'Unexpected test request: ' + message.type } });
 });
 `;
@@ -217,7 +217,12 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await page.getByRole('button', { name: 'Next week' }).click();
     await expect(page.locator('.activity-list .entry-record')).toHaveCount(1);
     await expect(page.locator('.activity-list .entry-record')).toContainText('Activity test task');
-    await expect(page.locator('.activity-list .entry-record')).toContainText('Pending');
+    const stoppedRow = page.locator('.activity-list .entry-record');
+    await expect(stoppedRow.getByRole('button', { name: 'Start tracking Activity test task' })).toBeVisible();
+    await expect(stoppedRow.getByRole('button', { name: 'Edit time' })).toBeAttached();
+    await expect(stoppedRow.getByRole('button', { name: 'Delete' })).toBeAttached();
+    await expect(stoppedRow.getByRole('button', { name: 'Pending' })).toHaveCount(0);
+    await expect(page.locator('.timeline-queue-status:visible')).toHaveCount(0);
     await page.getByRole('button', { name: 'Previous week' }).click();
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => ['SWITCH_TASK', 'STOP'].includes(type)))).toEqual(['SWITCH_TASK', 'STOP']);
     const total = await page.locator('.times-list-total').textContent();
