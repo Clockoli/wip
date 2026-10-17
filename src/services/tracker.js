@@ -1673,7 +1673,14 @@ export class TrackerService {
 
   async historicalQueueEntries(requests) {
     const state = await this.store.getState();
-    const missing = requests.filter(request => !(state.recentCache ?? []).some(entry => entry._path === request.path && entry.id === request.original?.id));
+    const isLocallyAdded = request => (state.pendingWrites ?? []).some(operation => {
+      const accepted = operation.operation === 'addTime' ? [operation.entry]
+        : operation.operation === 'bulkAddTimes' ? operation.entries ?? [] : [];
+      return accepted.some(entry => entry?.id === request.original?.id
+        && monthlyRecordsPath(this.user, entry.entryDate) === request.path);
+    });
+    const missing = requests.filter(request => !(state.recentCache ?? []).some(entry =>
+      entry._path === request.path && entry.id === request.original?.id) && !isLocallyAdded(request));
     const files = new Map();
     for (const request of missing) {
       validateEntryId(request.original?.id);
@@ -1692,6 +1699,16 @@ export class TrackerService {
   queuedEntry(state, request, historical) {
     const cached = (state.recentCache ?? []).find(entry => entry.id === request.original?.id && entry._path === request.path);
     if (cached) return cached;
+    const hasLocalAddition = (state.pendingWrites ?? []).some(operation => {
+      const added = operation.operation === 'addTime' ? [operation.entry]
+        : operation.operation === 'bulkAddTimes' ? operation.entries ?? [] : [];
+      return added.some(entry => entry?.id === request.original?.id
+        && monthlyRecordsPath(this.user, entry.entryDate) === request.path);
+    });
+    if (hasLocalAddition) {
+      return overlayPendingEntries([], state.pendingWrites ?? []).find(entry =>
+        entry.id === request.original?.id && entry._path === request.path) ?? null;
+    }
     const key = `${request.path}\u0000${request.original?.id}`;
     const remote = historical.get(key);
     if (!remote) return null;
