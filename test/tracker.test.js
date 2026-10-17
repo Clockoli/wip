@@ -460,6 +460,26 @@ test('queued completed-entry deletion disappears locally immediately and syncs l
   assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
 })
 
+test('retrying a Delete already committed on GitHub adopts the result without conflict or a second commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original };
+  await tracker.queueEntryDelete(request);
+  // Simulate a crash after the Git commit completed, before IndexedDB
+  // could acknowledge the queued operation.
+  await tracker.deleteEntry(request, { updateCache: false });
+  const committed = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, [], 'a completed delete must not remain a conflict');
+  assert.equal(github.atomicWrites.length, committed, 'the retry must not create a duplicate GitHub commit');
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.files.has(path), false);
+});
+
 test('delete acknowledgement must preserve a newer local edit to another record in the same file', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const deleted = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
