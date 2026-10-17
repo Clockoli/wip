@@ -1257,7 +1257,8 @@ async function handle(message, sender) {
       if (!accepted) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
       requestPendingSync();
       return {
-        stopped: { entry: { ...source.entry, destinationId: sourceDestinationId }, pending: true },
+        stopped: { entry: { ...source.entry, destinationId: sourceDestinationId },
+          localEntry: { ...source.pendingEntry, destinationId: sourceDestinationId }, pending: true },
         active: { ...target.pendingActive, destinationId: targetDestinationId }, pending: true,
         destinationId: targetDestinationId,
       };
