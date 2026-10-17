@@ -1191,10 +1191,10 @@ async function handle(message, sender) {
       if (currentDestinationId && currentDestinationId !== destinationId) {
         throw new Error('A timer is running in another time repository. Stop it before adding time.');
       }
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const { destinationId: _requestedDestination, ...entry } = payload;
-      const result = await tracker.addTime(entry);
-      if (result.active?._pending) requestPendingSync();
+      const result = await tracker.addTime(entry, { background: true });
+      if (result.pending || result.active?._pending) requestPendingSync();
       return { ...result, destinationId };
     }
     case 'START': {
@@ -1321,7 +1321,9 @@ async function handle(message, sender) {
     case 'BULK_ADD_TIMES': {
       const text = String(message.text || '');
       if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
-      return (await context()).tracker.bulkAddTimes(text);
+      const result = await (await context({ localOnly: true })).tracker.bulkAddTimes(text, { background: true });
+      if (result.pending) requestPendingSync();
+      return result;
     }
     case 'MERGE_TASKS': {
       const snapshot = await configuredSnapshot({ localOnly: true });
@@ -1405,7 +1407,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
-      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE',
+      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'BULK_ADD_TIMES',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
     ].includes(message?.type);
     const taskMerge = message?.type === 'MERGE_TASKS';
