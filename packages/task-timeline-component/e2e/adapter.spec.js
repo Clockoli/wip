@@ -947,6 +947,8 @@ for (const mode of ['timeline', 'calendar']) {
 
     for (const width of [1600, 420]) {
       await page.setViewportSize({ width, height: 900 });
+      // The fixture's 1000px inline width is fixed unless updated explicitly.
+      await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
       const bounds = await action.evaluate(button => {
         const actions = button.closest('.clockoli-timeline-actions');
         const details = actions.closest('.details');
@@ -1729,19 +1731,18 @@ for (const colorScheme of ['light', 'dark']) {
 }
 
 test('Calendar task cards show description only when the card has room', async ({ page }) => {
-  // Anchor to local midnight so the initial segment stays two hours tall on CI.
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
-  const startOfDay = dayStart.getTime();
+  // Keep the tasks within one local day, and well above/below the card's 48px
+  // description-height threshold (the rendered height excludes borders).
+  const noon = new Date();
+  noon.setHours(12, 0, 0, 0);
+  const midday = noon.getTime();
   await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [
-    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: startOfDay - 2 * HOUR, endedAt: startOfDay + 2 * HOUR, rowId: 'one', isEditable: true },
-    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: startOfDay + 3 * HOUR, endedAt: startOfDay + 3 * HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
+    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: midday - 4 * HOUR, endedAt: midday, rowId: 'one', isEditable: true },
+    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: midday + HOUR, endedAt: midday + HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  // A task crossing local midnight has one Calendar segment per day; geometry
-  // below is defined for its initial card, not the continuation card.
-  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]:not(.segment-continuation)');
-  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]:not(.segment-continuation)');
+  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]');
+  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar description');
   await expect(short.locator('.clockoli-calendar-description')).toHaveCount(0);
   const geometry = await tall.evaluate(element => {
