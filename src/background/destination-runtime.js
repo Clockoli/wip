@@ -85,7 +85,7 @@ export async function syncPendingAll({ store, trackerForDestination, canSync = a
     const snapshot = await store.getTrackingSnapshot();
     const first = pendingEntries(snapshot)[destinationId]?.pendingWrites?.[0];
     if (!first || first.stage === 'awaitSourceCompletion') continue;
-    try { results[destinationId] = await (await trackerForDestination(destinationId)).syncPending(); }
+    try { results[destinationId] = await (await trackerForDestination(destinationId)).syncPending({ canSync }); }
     catch (error) { errors.push(error); }
   }
 
@@ -96,7 +96,7 @@ export async function syncPendingAll({ store, trackerForDestination, canSync = a
     if (first?.stage !== 'awaitSourceCompletion' || dependencyExists(pendingEntries(afterSources), first.blockedBy)) continue;
     try {
       if (!await store.unblockCrossDestinationStart(destinationId, first.id)) continue;
-      results[destinationId] = await (await trackerForDestination(destinationId)).syncPending();
+      results[destinationId] = await (await trackerForDestination(destinationId)).syncPending({ canSync });
     } catch (error) { errors.push(error); }
   }
   if (errors.length) throw errors[0];
