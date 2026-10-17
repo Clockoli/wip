@@ -2324,6 +2324,16 @@
     return true;
   }
 
+  function rememberCompletedLocally(completion, destinationId) {
+    if (!completion?.entry?.id) return;
+    const local = completion.localEntry ?? completion.entry;
+    timelineOptimisticCompletions.set(completion.entry.id, {
+      ...completion.entry, ...local,
+      destinationId: local.destinationId ?? completion.entry.destinationId ?? destinationId,
+      _pending: Boolean(completion.pending), _optimisticCompletion: true,
+    });
+  }
+
   function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '', previousDescription } = {}) {
     const startedAt = new Date().toISOString();
     const previousActive = pageState.active;
@@ -2333,7 +2343,9 @@
     try {
       if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
         timelineOptimisticCompletions.set(previousActive.id, {
-          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt,
+          durationSeconds: Math.max(0, Math.floor((new Date(startedAt) - new Date(previousActive.startedAt)) / 1_000)),
+          _pending: true, _optimisticCompletion: true,
         });
       }
       const acceptedActive = {
@@ -2382,11 +2394,12 @@
       const result = await send(switching
         ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '', description: previousDescription }
         : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
+      if (switching) rememberCompletedLocally(result?.stopped, result?.destinationId);
       const active = switching ? result?.active : result;
       if (active?.id) {
         timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        if (!refreshMountedTimeline()) renderUi();
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
       }
       void refreshMountedTimelineState().catch(setError);
     } catch (error) {
@@ -2585,11 +2598,7 @@
       const result = await send({ type: 'STOP', description: activeDescriptionValue(activeEntry) });
       if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
       if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
-      timelineOptimisticCompletions.set(result.entry.id, {
-        ...result.entry, ...(result.localEntry || {}), destinationId: result.destinationId,
-        _pending: Boolean(result.pending),
-        _optimisticCompletion: true,
-      });
+      rememberCompletedLocally(result, result.destinationId);
       pageState = { ...pageState, active: null };
       refreshMountedTimeline();
       if (timesMode && activityViewMode === 'list') renderUi();
@@ -2610,10 +2619,11 @@
     try {
       const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription,
         sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } });
+      rememberCompletedLocally(result?.stopped, result?.destinationId);
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        if (!refreshMountedTimeline()) renderUi();
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
       }
     } catch (error) {
       rollbackTimelineStart(startContext);
