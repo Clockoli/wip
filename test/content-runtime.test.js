@@ -3759,6 +3759,34 @@ test('pending edits and deletes never display a saving status in Timeline or Cal
   assert.equal(status().hidden, true);
 });
 
+test('Timeline can delete an already locally stored completion before GitHub sync', async () => {
+  const now = Date.now();
+  const entry = {
+    id: 'unsynced-entry', taskUrl: 'https://example.com/local-task', taskTitle: 'Local task',
+    timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
+    endedAt: new Date(now - 60 * 60_000).toISOString(), durationSeconds: 3600,
+    _path: 'times/2026-10/alice.jsonl', _sha: null, _index: -1, _pending: true,
+    destinationId: 'github:1',
+  };
+  const initial = { configured: true, active: null, pendingCount: 1,
+    pendingWrites: [{ id: entry.id, operation: 'completeTimer', status: 'pending', queuedAt: new Date(now).toISOString() }] };
+  const harness = dailyPanelHarness({ state: initial, records: [entry], now, timelineEnabled: true,
+    respond(message, callback) {
+      if (message.type === 'QUEUE_ENTRY_DELETE') {
+        callback({ ok: true, data: { operationId: 'delete-local-entry', pending: true } });
+      } else callback({ ok: true, data: initial });
+    },
+  });
+  const menu = harness.renderMenu({ compact: true }); harness.attach(menu);
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.equal(harness.timelineMounts.length, 1);
+  const result = await harness.timelineMounts[0].onDelete({ id: 'entry:unsynced-entry' });
+  assert.equal(result, true, 'a queued completion should be deletable in Timeline, as in List');
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
+  assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:unsynced-entry'), false);
+  assert.equal(menu.querySelector('.timeline-queue-status').hidden, true);
+});
+
 test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
   const now = Date.now();
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
