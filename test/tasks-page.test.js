@@ -364,7 +364,7 @@ for (const pending of [false, true]) test(`shared strip Stop reconciles Top task
   assert.equal(page.nodes['running-status'].querySelector('.running-status-idle').hidden, false);
   assert.equal(page.rows()[0].querySelector('.timer-button').textContent, 'Start');
   assert.equal(page.rows()[0].classList.contains('running'), false);
-  assert.equal(page.nodes['refresh-tasks'].disabled, pending);
+  assert.equal(page.nodes['refresh-tasks'].disabled, false, 'background GitHub writes never disable manual refresh');
   assert.equal(page.timeouts.size, pending ? 1 : 0, 'only existing pending-write polling is scheduled');
   await page.advance(60);
   assert.equal(page.rows()[0].querySelector('.tracked-time').textContent, '1h 0m', 'completed time must stop counting');
