@@ -1010,7 +1010,7 @@ export class TrackerService {
             saved = (await this.addTime({
               taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: entry.startedAt,
               endedAt: entry.endedAt, description: entry.description,
-            }, { fixedId: entry.id, updateCache: false })).entry;
+            }, { fixedId: entry.id, acceptedEntry: entry, updateCache: false })).entry;
           } catch (error) {
             if (/Select an existing imported task/i.test(error.message || '')) {
               throw new TrackerConflictError(error.message, 'add_time_invalid_identity');
@@ -2083,7 +2083,9 @@ export class TrackerService {
     return { entry: acceptedEntry, pending: true };
   }
 
-  async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }, { background = false, fixedId = null, updateCache = true } = {}) {
+  async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }, {
+    background = false, fixedId = null, acceptedEntry = null, updateCache = true,
+  } = {}) {
     if (background) return this.queueAddTime({ taskUrl, taskTitle, startedAt, endedAt, description });
     const canonical = normalizeStoredTaskIdentity(taskUrl);
     const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
@@ -2091,7 +2093,18 @@ export class TrackerService {
     if (!Number.isFinite(startMs) || startMs > now.getTime()) throw new Error('Start time must be valid and not in the future.');
     if (end && (!Number.isFinite(endMs) || endMs <= startMs || endMs > now.getTime())) throw new Error('End time must be after Start and not in the future.');
     const today = localDateInTimezone(now, this.timezone);
-    if (localDateInTimezone(start, this.timezone) !== today || (end && localDateInTimezone(end, this.timezone) !== today)) {
+    // Admission is today-only. Replaying a *previously accepted* local operation
+    // may happen after midnight, after a timezone change, or days offline.
+    // Its original date and record contents must remain authoritative.
+    const accepted = acceptedEntry ? validateEntry(stripInternal(acceptedEntry)) : null;
+    if (accepted && (accepted.id !== fixedId || accepted.user !== this.user
+        || accepted.taskUrl !== canonical || accepted.startedAt !== start.toISOString()
+        || accepted.endedAt !== end?.toISOString() || accepted.description !== description
+        || accepted.entryDate !== localDateInTimezone(start, accepted.timezone))) {
+      throw new Error('Queued Add time entry does not match its locally accepted record.');
+    }
+    const originalDay = accepted?.entryDate ?? localDateInTimezone(start, this.timezone);
+    if (!fixedId && (originalDay !== today || (end && localDateInTimezone(end, this.timezone) !== today))) {
       throw new Error('Add time is available only for today.');
     }
     if (typeof taskTitle !== 'string' || taskTitle.length > 500 || typeof description !== 'string' || description.length > 2000) {
@@ -2106,9 +2119,9 @@ export class TrackerService {
     }
     const active = fixedId ? await this.readRemoteActive() : await this.refreshActive();
     if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
-    const yesterday = new Date(`${today}T12:00:00.000Z`);
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    const paths = [...new Set([today, yesterday.toISOString().slice(0, 10)]
+    const previousDay = new Date(`${originalDay}T12:00:00.000Z`);
+    previousDay.setUTCDate(previousDay.getUTCDate() - 1);
+    const paths = [...new Set([originalDay, previousDay.toISOString().slice(0, 10)]
       .map(date => monthlyRecordsPath(this.user, date)))];
     const files = await Promise.all(paths.map(path => this.readMonthly(path)));
     if (files.some(file => file.entries.some(entry => entry.id !== fixedId
@@ -2120,9 +2133,13 @@ export class TrackerService {
     if (!end) return { active: await this.queueStart(canonical, taskTitle, description, {
       startedAt: start, overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
     }) };
-    const record = this.buildActive({ id: fixedId || this.uniqueRecordId(startMs, new Set(files.flatMap(file => file.entries.map(entry => entry.id)))),
-      taskUrl: canonical, taskTitle, startedAt: start, description });
-    const entry = buildEntry({ active: record, endedAt: end, now, description });
+    const entry = accepted ?? buildEntry({
+      active: this.buildActive({
+        id: fixedId || this.uniqueRecordId(startMs, new Set(files.flatMap(file => file.entries.map(entry => entry.id)))),
+        taskUrl: canonical, taskTitle, startedAt: start, description,
+      }),
+      endedAt: end, now, description,
+    });
     const path = monthlyRecordsPath(this.user, entry.entryDate);
     const file = files.find(item => item.path === path) ?? await this.readMonthly(path);
     const previouslySaved = fixedId ? file.entries.find(item => item.id === fixedId) : null;
