@@ -935,6 +935,20 @@ for (const mode of ['timeline', 'calendar']) {
     await action.click();
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
+
+  test('Start tracking keeps its background on hover in ' + mode, async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();
+    await block.dblclick();
+
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Start tracking');
+    const restingBackground = await action.evaluate(button => getComputedStyle(button).backgroundColor);
+    await action.hover();
+    await expect(action).toHaveCSS('background-color', restingBackground);
+  });
+
 }
 
 test('Timeline drags and arrow edits snap to five minutes at every zoom level', async ({ page }) => {
