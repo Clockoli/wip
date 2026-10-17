@@ -618,6 +618,50 @@ test('Stop sync cannot resurrect a completion deleted locally while GitHub was w
   assert.equal(github.files.has(pendingEntry._path), false, 'GitHub eventually removes the completed entry');
 });
 
+test('new local edit during an in-flight GitHub write pauses later queued operations in the same repository', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const one = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const two = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([one, two]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [one, two].map((row, index) => ({ ...row, _path: path, _sha: 'monthly-sha', _index: index }));
+  const tracker = service({ github, store });
+  const request = (original, index, description) => ({
+    path, originalSha: 'monthly-sha', index, original, edits: { description },
+  });
+  await tracker.queueEntryEdit(request(one, 0, 'first'));
+  // Different operation types: this second change must not be folded into
+  // the first GitHub commit's independent-edit batch.
+  await tracker.queueEntriesEdit({ entries: [request(two, 1, 'second')] });
+  let startedSignal, release;
+  const started = new Promise(resolve => { startedSignal = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; startedSignal(); await hold; }
+    return write(...args);
+  };
+  let quiet = true;
+  const syncing = tracker.syncPending({ canSync: async () => quiet });
+  await started;
+  try {
+    await tracker.queueEntryEdit(request(one, 0, 'last'));
+    quiet = false;
+  } finally { release(); }
+  await syncing;
+  assert.equal(github.atomicWrites.length, 1,
+    'the second queued operation must not write during the new 15-second idle window');
+  assert.equal(store.value.pendingWrites.length, 2);
+  assert.equal(store.value.recentCache.find(row => row.id === one.id).description, 'last');
+  quiet = true;
+  await tracker.syncPending({ canSync: async () => quiet });
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(row => row.id === one.id).description, 'last');
+  assert.equal(saved.find(row => row.id === two.id).description, 'second');
+});
+
 test('edit accepted during an in-flight GitHub commit is not deleted with the older queue item', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
