@@ -75,10 +75,13 @@ function dependencyExists(entries, blockedBy) {
       && operation?.operation === blockedBy.operation);
 }
 
-export async function syncPendingAll({ store, trackerForDestination }) {
+export async function syncPendingAll({ store, trackerForDestination, canSync = async () => true }) {
   const destinationIds = await store.getPendingDestinationIds();
   const results = {}, errors = [];
   for (const destinationId of destinationIds) {
+    // An edit may arrive while a previous repository is writing to GitHub.
+    // Do not flush subsequent repositories before the new 15-second idle window.
+    if (!(await canSync())) break;
     const snapshot = await store.getTrackingSnapshot();
     const first = pendingEntries(snapshot)[destinationId]?.pendingWrites?.[0];
     if (!first || first.stage === 'awaitSourceCompletion') continue;
@@ -88,6 +91,7 @@ export async function syncPendingAll({ store, trackerForDestination }) {
 
   const afterSources = await store.getTrackingSnapshot();
   for (const destinationId of destinationIds) {
+    if (!(await canSync())) break;
     const first = pendingEntries(afterSources)[destinationId]?.pendingWrites?.[0];
     if (first?.stage !== 'awaitSourceCompletion' || dependencyExists(pendingEntries(afterSources), first.blockedBy)) continue;
     try {
