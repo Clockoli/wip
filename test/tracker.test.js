@@ -492,6 +492,70 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.description, 'Final edit');
 });
 
+test('Stop sync does not roll back a locally edited completion accepted while GitHub is writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), activePath = 'active/alice.json';
+  const running = active('2026-08-18T08:00:00.000Z');
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  ensureTaskIndexFixture(github);
+  store.value.activeCache = { ...running, _path: activePath, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const stopped = await tracker.stop('', { background: true });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  const pendingEntry = stopped.localEntry;
+  try {
+    await tracker.queueEntryEdit({ path: pendingEntry._path, originalSha: pendingEntry._sha,
+      index: pendingEntry._index, original: pendingEntry, edits: { description: 'edited during Stop sync' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'edited during Stop sync',
+    'completion acknowledgement must not put the older record back in the local UI');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  const saved = parseMonthlyRecords(github.files.get(pendingEntry._path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].description, 'edited during Stop sync');
+});
+
+test('Stop sync cannot resurrect a completion deleted locally while GitHub was writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), activePath = 'active/alice.json';
+  const running = active('2026-08-18T08:00:00.000Z');
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  ensureTaskIndexFixture(github);
+  store.value.activeCache = { ...running, _path: activePath, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const stopped = await tracker.stop('', { background: true });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  const pendingEntry = stopped.localEntry;
+  try {
+    await tracker.queueEntryDelete({ path: pendingEntry._path, originalSha: pendingEntry._sha,
+      index: pendingEntry._index, original: pendingEntry });
+  } finally { release(); }
+  await syncing;
+  assert.deepEqual(store.value.recentCache, [], 'an accepted local Delete must remain invisible while the prior Stop commits');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  assert.equal(github.files.has(pendingEntry._path), false, 'GitHub eventually removes the completed entry');
+});
+
 test('edit accepted during an in-flight GitHub commit is not deleted with the older queue item', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
