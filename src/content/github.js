@@ -1874,13 +1874,15 @@
       // Queues persisted before operation was projected to the page expose only
       // their stage. Keep their recovery actionable after an extension upgrade.
       const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
+      const queuedAddition = ['addTime', 'bulkAddTimes'].includes(item.operation ?? item.stage);
       const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
       const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
       const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
         : changedAddTime ? 'Add time needs review'
         : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
-          : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
+          : queuedAddition ? 'Added time needs review'
+            : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
       const detail = item.conflictReason === 'active_missing_no_completion'
         ? 'The active timer is gone and no matching completion exists. Discarding removes this unsaved completion.'
         : item.conflictReason === 'active_changed_no_completion'
@@ -1889,17 +1891,25 @@
             : changedAddTime ? 'Completed time changed before this timer synced. Recheck for overlap or, while online, verify GitHub and discard the unsaved start.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
-                : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
-                  : 'Repair or remove the conflicting entry in GitHub, then retry.';
+                : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
+                  : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
+                    : 'Repair or remove the conflicting entry in GitHub, then retry.';
       const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
         : changedAddTime ? 'Recheck and retry start'
-        : rejectedWrite ? 'Retry queued write' : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
+        : rejectedWrite ? 'Retry queued write' : queuedAddition ? 'Retry added time'
+          : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
       box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
         await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
         recentLoaded = false;
         await refreshState(true, true);
+      }));
+      if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
+        if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;
+        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_addition' });
+        recentLoaded = false;
+        await refreshState(false, true);
       }));
       if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
         if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
