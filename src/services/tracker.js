@@ -216,6 +216,20 @@ function completedCacheAfterSync(state, operation) {
     .sort(newestFirst).slice(0, 50);
 }
 
+function completedCacheAfterAddition(state, operation, savedEntries) {
+  const cache = state.recentCache ?? [], queue = state.pendingWrites ?? [];
+  const index = queue.findIndex(item => item.id === operation.id);
+  const later = index >= 0 ? queue.slice(index + 1) : [];
+  const ids = new Set(savedEntries.map(entry => entry.id));
+  const inCache = new Map(cache.map(entry => [entry.id, entry]));
+  const updated = savedEntries.flatMap(entry => {
+    if (!inCache.has(entry.id) || later.some(item => item.operation === 'deleteEntry'
+        && item.request?.original?.id === entry.id)) return [];
+    return [later.some(item => operationEditsEntry(item, entry.id)) ? inCache.get(entry.id) : entry];
+  });
+  return [...updated, ...cache.filter(entry => !ids.has(entry.id))].sort(newestFirst).slice(0, 50);
+}
+
 function retargetLaterEntryEdits(queue, currentIndex, savedEntries) {
   const savedById = new Map((savedEntries ?? []).map(entry => [entry.id, entry]));
   const retarget = request => {
@@ -265,6 +279,15 @@ function overlayPendingEntries(entries, pendingWrites) {
   for (const operation of pendingWrites) {
     if (['completeTimer', 'completeTimerAndStart'].includes(operation.operation) && operation.entry && !byId.has(operation.entry.id)) {
       byId.set(operation.entry.id, { ...operation.entry, _path: operation.monthlyPath, _sha: null, _index: -1, _pending: true });
+    }
+    if (operation.operation === 'addTime' || operation.operation === 'bulkAddTimes') {
+      const accepted = operation.operation === 'addTime' ? [operation.entry] : operation.entries ?? [];
+      for (const entry of accepted) {
+        if (entry?.id && !byId.has(entry.id)) byId.set(entry.id, {
+          ...entry, _path: monthlyRecordsPath(entry.user, entry.entryDate),
+          _sha: null, _index: -1, _pending: true,
+        });
+      }
     }
     if (operation.operation === 'deleteEntry') byId.delete(operation.request?.original?.id);
     const requests = operation.operation === 'editEntry' ? [operation.request]
@@ -1182,7 +1205,7 @@ export class TrackerService {
         operation.lastError = error.message || 'GitHub is temporarily unreachable';
         operation.status = error instanceof TrackerConflictError ? 'conflict' : 'pending';
         operation.conflictReason = error instanceof TrackerConflictError
-          ? (error.reason || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation.operation) ? 'queued_entry_edit_conflict' : '')) : '';
+          ? (error.reason || (['editEntry', 'editEntries', 'deleteEntry', 'addTime', 'bulkAddTimes'].includes(operation.operation) ? 'queued_entry_edit_conflict' : '')) : '';
         const remoteConflict = error instanceof TrackerConflictError && operation.stage === 'startNext' ? error.remoteActive : null;
         const keepPendingTarget = operation.nextActive && (!remoteConflict && (!(error instanceof TrackerConflictError) || operation.stage === 'startNext'));
         await this.persistQueueOperation(operation, { patch:
