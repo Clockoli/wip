@@ -321,9 +321,12 @@ function replaceCachedFiles(cache, replacements, touchedPaths = replacements.map
     .sort(newestFirst).slice(0, 50);
 }
 
-function replaceCachedDeletedFile(cache, saved, path) {
+function replaceCachedDeletedFile(cache, saved, path, laterWrites = []) {
   const cachedIds = new Set((cache ?? []).filter(entry => entry._path === path).map(entry => entry.id));
-  return replaceCachedFiles(cache, saved.filter(entry => cachedIds.has(entry.id)), [path]);
+  // A GitHub delete rewrites the entire monthly file. Preserve every newer
+  // local edit, Stop and deletion made while that rewrite was in flight.
+  const projected = overlayPendingEntries(saved, laterWrites);
+  return replaceCachedFiles(cache, projected.filter(entry => entry._path === path && cachedIds.has(entry.id)), [path]);
 }
 
 export class TrackerService {
@@ -1023,9 +1026,11 @@ export class TrackerService {
           }
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
-          await this.persistQueueOperation(operation, { remove: true, savedEntries: result.entries, patch: latest => ({
-            recentCache: replaceCachedDeletedFile(latest.recentCache, result.entries, operation.request.path),
-          }) });
+          await this.persistQueueOperation(operation, { remove: true, savedEntries: result.entries, patch: latest => {
+            const at = (latest.pendingWrites ?? []).findIndex(item => item.id === operation.id);
+            const laterWrites = at >= 0 ? latest.pendingWrites.slice(at + 1) : [];
+            return { recentCache: replaceCachedDeletedFile(latest.recentCache, result.entries, operation.request.path, laterWrites) };
+          } });
           continue;
         }
         if (operation.operation === 'discardActive') {
