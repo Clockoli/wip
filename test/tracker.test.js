@@ -2247,6 +2247,43 @@ test('Bulk add is durable on remote validation failure and never partially write
   assert.equal(store.value.pendingWrites[0].status, 'conflict');
 });
 
+test('locally accepted Add time still synchronizes after midnight and several days offline', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const initial = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  const result = await initial.addTime({
+    taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z',
+    description: 'Saved offline',
+  }, { background: true });
+  assert.equal(result.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  const resumed = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-21T12:00:00.000Z') });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const saved = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, {
+    user: 'alice', month: '2026-08',
+  });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, result.entry.id);
+  assert.equal(saved[0].description, 'Saved offline');
+});
+
+test('queued Add time revalidates the original month rather than the current month after month rollover', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-31T23:30:00.000Z') });
+  await original.addTime({
+    taskUrl: issue.url, startedAt: '2026-08-31T21:00:00.000Z', endedAt: '2026-08-31T22:00:00.000Z',
+  }, { background: true });
+  // A remote overlap in August must not be missed just because the retry is in September.
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-08-31T21:30:00.000Z', '2026-08-31T22:30:00.000Z'),
+  ]), 'new-august-record');
+  const resumed = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-09-02T11:00:00.000Z') });
+  await resumed.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
 test('queued completed Add time does not duplicate a GitHub commit after a service-worker crash', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const request = { taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
