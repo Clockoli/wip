@@ -2559,7 +2559,9 @@
   }
 
   async function queueTimelineEntryDelete(entry) {
+    if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
+    timelineDeleteInFlight = true;
     const previousRecent = recent, previousCompletion = timelineOptimisticCompletions.get(entry.id);
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
@@ -2584,6 +2586,7 @@
       throw error;
     } finally {
       finishTimelineQueueAcceptance(acceptanceId);
+      timelineDeleteInFlight = false;
       refreshTimelineQueueIndicator();
       if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
     }
@@ -2713,10 +2716,7 @@
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
-          if (!entry._active) {
-            if (entry._pending) return false;
-            return queueTimelineEntryDelete(entry);
-          }
+          if (!entry._active) return queueTimelineEntryDelete(entry);
           if (!confirm('Delete this running timer without saving its tracked time?')) return false;
           timelineDeleteInFlight = true;
           const acceptanceId = beginTimelineQueueAcceptance();
