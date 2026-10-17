@@ -114,7 +114,7 @@ test('a completed record of the running task offers Stop and save rather than di
     window.__items = window.__items.filter(item => item.id !== 'active:now').map(item => ({ ...item, isCurrentTask: false, isStartDisabled: false }));
     window.__timeline.update({ items: window.__items });
   });
-  await expect(action).toHaveText('Start tracking');
+  await expect(action).toHaveText('Track time');
   await expect(action).toBeEnabled();
 });
 
@@ -913,7 +913,7 @@ for (const mode of ['timeline', 'calendar']) {
     expect(state.interaction.runningInstanceId).toBe('active:c');
     expect(state.calls).toEqual([]);
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Start tracking');
+    await expect(action).toHaveText('Track time');
     await action.click();
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
   });
@@ -936,14 +936,56 @@ for (const mode of ['timeline', 'calendar']) {
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
 
-  test('Start tracking keeps its background on hover in ' + mode, async ({ page }) => {
+  test('Track time stays on one line and description fills the remaining details width in ' + mode, async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    await page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first().click();
+
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Track time');
+    await expect(action).toHaveCSS('white-space', 'nowrap');
+
+    for (const width of [1600, 420]) {
+      await page.setViewportSize({ width, height: 900 });
+      const bounds = await action.evaluate(button => {
+        const actions = button.closest('.clockoli-timeline-actions');
+        const details = actions.closest('.details');
+        const input = actions.querySelector('.clockoli-timeline-description').getBoundingClientRect();
+        const field = actions.querySelector('.clockoli-description-field').getBoundingClientRect();
+        const deletion = actions.querySelector('.clockoli-timeline-action.danger').getBoundingClientRect();
+        const group = actions.getBoundingClientRect();
+        const container = details.getBoundingClientRect();
+        const primary = button.getBoundingClientRect();
+        return {
+          inputWidth: input.width,
+          fieldWidth: field.width,
+          inputRight: input.right,
+          deleteLeft: deletion.left,
+          freeRight: container.right - parseFloat(getComputedStyle(details).paddingRight) - group.right,
+          primaryHeight: primary.height,
+          primaryScrollWidth: button.scrollWidth,
+          primaryClientWidth: button.clientWidth,
+          sameRow: Math.abs(primary.top - field.top) < 12,
+        };
+      });
+      expect(Math.abs(bounds.freeRight)).toBeLessThanOrEqual(2);
+      expect(Math.abs(bounds.fieldWidth - bounds.inputWidth)).toBeLessThanOrEqual(2);
+      expect(Math.abs(bounds.deleteLeft - bounds.inputRight - 8)).toBeLessThanOrEqual(2);
+      expect(bounds.primaryScrollWidth).toBeLessThanOrEqual(bounds.primaryClientWidth);
+      expect(bounds.primaryHeight).toBeLessThan(40);
+      expect(bounds.sameRow).toBe(true);
+      expect(bounds.fieldWidth).toBeGreaterThan(width === 1600 ? 420 : 80);
+    }
+  });
+
+  test('Track time keeps its background on hover in ' + mode, async ({ page }) => {
     await mount(page, { weeklyCalendar: true });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();
     await block.dblclick();
 
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Start tracking');
+    await expect(action).toHaveText('Track time');
     const restingBackground = await action.evaluate(button => getComputedStyle(button).backgroundColor);
     await action.hover();
     await expect(action).toHaveCSS('background-color', restingBackground);
