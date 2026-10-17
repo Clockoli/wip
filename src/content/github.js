@@ -3568,7 +3568,7 @@
       :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
       :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
       :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
-      :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr) 210px; margin-bottom:22px }
+      :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr); margin-bottom:22px }
       :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr; justify-items:end }
       .timeline-shell { position:relative }
       .timeline-shell:has(>.calendar-week-loading:not([hidden])) { min-height:240px }
