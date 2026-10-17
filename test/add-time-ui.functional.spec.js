@@ -59,7 +59,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await add.click();
       const dialog = page.getByRole('dialog', { name: 'Add new time' });
       await expect(dialog).toBeVisible();
-      await expect(dialog.getByRole('progressbar', { name: 'Adding time' })).toBeHidden();
+      await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       const startTime = dialog.getByLabel('Start time');
       expect([beforeOpen, await localTime()]).toContain(await startTime.inputValue());
       const startTimestamp = () => page.evaluate(() => {
@@ -88,12 +88,8 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       const importedStart = await startTimestamp();
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-      const progress = dialog.getByRole('progressbar', { name: 'Adding time' });
-      await expect(progress).toBeVisible();
-      expect(await progress.getAttribute('value')).toBeNull();
-      expect((await progress.boundingBox())?.width).toBeGreaterThan(100);
-      await expect(dialog).toContainText('Starting tracking…');
-      await expect(dialog.getByRole('button', { name: 'Adding…' })).toBeDisabled();
+      await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
       await expect(dialog).toBeVisible();
       await worker.evaluate(() => {
@@ -113,7 +109,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await worker.evaluate(() => { globalThis.failAdd = true; });
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
       await expect(dialog.getByRole('alert')).toContainText('Cannot add time');
-      await expect(dialog.getByRole('progressbar', { name: 'Adding time' })).toBeHidden();
+      await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       await expect(dialog).toBeVisible();
       await worker.evaluate(() => { globalThis.failAdd = false; });
       const urlStart = await startTimestamp();
@@ -137,9 +133,9 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       });
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
-      await expect(dialog.getByRole('progressbar', { name: 'Adding time' })).toBeVisible();
-      await expect(dialog).toContainText('Saving time…');
-      const reloaded = path === 'times/times.html' ? page.waitForEvent('framenavigated') : null;
+      await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
+      await page.evaluate(() => { globalThis.__addTimeNoReload = 'accepted locally'; });
       await worker.evaluate(() => {
         globalThis.deferAdd = false;
         globalThis.pendingAddRespond({ ok: true, data: { accepted: true } });
@@ -149,7 +145,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       const completed = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
       expect(completed).toEqual({ type: 'ADD_TIME', taskUrl, taskTitle: 'Existing task',
         startedAt: expectedTimes[0], endedAt: expectedTimes[1], description: 'Focused work' });
-      if (reloaded) { await reloaded; await page.waitForLoadState('load'); }
+      expect(await page.evaluate(() => globalThis.__addTimeNoReload)).toBe('accepted locally');
       await page.close();
     }
     expect(errors).toEqual([]);

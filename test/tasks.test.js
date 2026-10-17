@@ -129,6 +129,57 @@ test('arbitrary URL tasks aggregate without provider metadata and keep title opt
   assert.deepEqual(tasks, [{ taskUrl, title: 'Optional name', totalSeconds: 300, sessionCount: 2 }]);
 });
 
+test('Top tasks counts locally queued Add time and Bulk add before GitHub commits, with stable destination provenance', () => {
+  const manual = { id: 'manual', user: 'alice', taskUrl: 'https://example.com/manual',
+    entryDate: '2026-08-20', durationSeconds: 600, taskTitle: 'Manual' };
+  const bulk = { id: 'bulk', user: 'alice', taskUrl: 'https://example.com/bulk',
+    entryDate: '2026-08-20', durationSeconds: 1200, taskTitle: 'Bulk' };
+  const pendingWrites = [
+    { operation: 'addTime', destinationId: 'github:1', timeRepository: 'acme/time', entry: manual },
+    { operation: 'bulkAddTimes', destinationId: 'github:2', timeRepository: 'team/time', entries: [bulk] },
+  ];
+  const result = aggregateTrackedTasks([], { user: 'alice', pendingWrites, startDate: '2026-08-01', endDate: '2026-08-31' });
+  assert.deepEqual(result.map(item => ({
+    url: item.taskUrl, seconds: item.totalSeconds, repos: item.timeRepositories,
+  })), [
+    { url: bulk.taskUrl, seconds: 1200, repos: ['team/time'] },
+    { url: manual.taskUrl, seconds: 600, repos: ['acme/time'] },
+  ]);
+  assert.equal(aggregateTrackedTasks([manual, bulk], { user: 'alice', pendingWrites })
+    .reduce((total, task) => total + task.totalSeconds, 0), 1800, 'persisted entries never double count');
+});
+
+test('queued Add and Bulk edits and deletes update Top tasks before remote synchronization', () => {
+  const first = { id: 'local', user: 'alice', taskUrl: 'https://example.com/work',
+    entryDate: '2026-08-20', startedAt: '2026-08-20T08:00:00.000Z', endedAt: '2026-08-20T09:00:00.000Z',
+    durationSeconds: 3600 };
+  const second = { ...first, id: 'removed', startedAt: '2026-08-20T10:00:00.000Z',
+    endedAt: '2026-08-20T11:00:00.000Z' };
+  const pendingWrites = [
+    { operation: 'bulkAddTimes', entries: [first, second] },
+    { operation: 'editEntry', request: { original: first, edits: { endedAt: '2026-08-20T08:30:00.000Z' } } },
+    { operation: 'deleteEntry', request: { original: second } },
+  ];
+  const result = aggregateTrackedTasks([], { user: 'alice', pendingWrites });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].totalSeconds, 1800);
+  assert.equal(result[0].sessionCount, 1);
+});
+
+test('task participants include locally accepted completed additions and avoid double counting the task index', () => {
+  const work = issue(42), manual = { id: 'add1', user: 'alice', taskUrl: work.url, durationSeconds: 900 },
+    bulk = { id: 'add2', user: 'alice', taskUrl: work.url, durationSeconds: 600 };
+  const pendingWrites = [{ operation: 'addTime', entry: manual }, { operation: 'bulkAddTimes', entries: [bulk] }];
+  assert.deepEqual(aggregateTaskParticipants([], { taskUrl: work.url, currentUser: 'alice', pendingWrites }), [
+    { login: 'alice', totalSeconds: 1500 },
+  ]);
+  assert.deepEqual(aggregateTaskParticipants([
+    { user: 'alice', taskUrl: work.url, durationSeconds: 900, recordIds: ['add1'] },
+  ], { taskUrl: work.url, currentUser: 'alice', pendingWrites }), [
+    { login: 'alice', totalSeconds: 1500 },
+  ]);
+});
+
 test('locally accepted pending completions participate in Top tasks without double counting persisted records', () => {
   const taskUrl = 'https://example.com/pending';
   const pendingEntry = {

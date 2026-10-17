@@ -29,12 +29,13 @@ const history = [...recent, { id: 'archived', taskUrl: 'https://example.com/arch
     startedAt: archivedDate + 'T08:00:00Z', endedAt: archivedDate + 'T08:30:00Z',
     durationSeconds: 1800, description: '', _path: 'times/' + archivedDate.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: index + 1 }))];
 let active = null;
+let pendingWrites = [];
 globalThis.trackingMessages = [];
 globalThis.searchMode = 'ok';
 globalThis.bulkAddFailure = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
-  const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
+  const state = () => ({ configured: true, active, pendingWrites, pendingCount: pendingWrites.length });
   if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
@@ -46,12 +47,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     : { ok: true, data: { added: 4 } });
   else if (message.type === 'SWITCH_TASK') {
     active = { id: 'running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
-      startedAt: new Date().toISOString(), entryDate: date, timezone: 'UTC' };
+      startedAt: new Date().toISOString(), entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' };
     respond({ ok: true, data: { active, pending: false } });
   } else if (message.type === 'STOP') {
     const completed = { ...active, endedAt: new Date().toISOString(), durationSeconds: 1 };
     active = null;
-    respond({ ok: true, data: { entry: completed, pending: false } });
+    pendingWrites = [{ operation: 'completeTimer', id: completed.id, stage: 'verifyActive', status: 'pending', queuedAt: new Date().toISOString() }];
+    respond({ ok: true, data: { entry: completed, localEntry: { ...completed, _path: 'times/' + completed.entryDate.slice(0, 7) + '/alice.jsonl', _sha: null, _index: -1, _pending: true }, pending: true, destinationId: 'github:1' } });
   } else respond({ ok: false, error: { message: 'Unexpected test request: ' + message.type } });
 });
 `;
@@ -210,6 +212,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
     await stop.click({ timeout: 5000 });
     await expect(start).toBeVisible();
+    // Stop was accepted locally, but the synthetic worker deliberately keeps
+    // the completion pending and never writes it to the remote history.
+    await page.getByRole('button', { name: 'Next week' }).click();
+    await expect(page.locator('.activity-list .entry-record')).toHaveCount(1);
+    await expect(page.locator('.activity-list .entry-record')).toContainText('Activity test task');
+    const stoppedRow = page.locator('.activity-list .entry-record');
+    await expect(stoppedRow.getByRole('button', { name: 'Start tracking Activity test task' })).toBeVisible();
+    await expect(stoppedRow.locator('.entry-edit')).toBeEnabled();
+    await expect(stoppedRow.locator('.entry-delete')).toBeEnabled();
+    await expect(stoppedRow.getByRole('button', { name: 'Pending' })).toHaveCount(0);
+    await expect(page.locator('.timeline-queue-status:visible')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Previous week' }).click();
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => ['SWITCH_TASK', 'STOP'].includes(type)))).toEqual(['SWITCH_TASK', 'STOP']);
     const total = await page.locator('.times-list-total').textContent();
     await page.getByRole('searchbox', { name: 'Search activity' }).fill('Archived');
