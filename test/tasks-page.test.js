@@ -210,7 +210,7 @@ test('tracking panel gives Top tasks and Reports matching header icons', () => {
 
 test('background reconciliation preserves an already-fresh editable Recent snapshot', () => {
   assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(content, /const disabled = Boolean\(loadingRecent \|\| !recentFresh\)/);
+  assert.match(content, /const disabled = Boolean\(\(loadingRecent \|\| !recentFresh\) && !entry\._pending\)/);
   assert.doesNotMatch(content, /inlineMutation/);
 });
 
