@@ -1078,14 +1078,14 @@ function reviewSelectedRepository() {
     initialize_organization: `Initialize ${fullName}?`,
   };
   const bodies = {
-    connect: 'Clockoli will recheck access and storage, then add this ready repository to this browser. Checking alone does not connect it. This action does not change repository files. Once connected, it can be used for future time records.',
+    connect: 'Connect this repository to Clockoli in this browser for future time tracking. No repository files will be changed.',
     add: 'Clockoli will add this repository to this browser, create or verify your personal storage branch, and make it available for project routing. Existing Clockoli records and other users’ branches will not be changed.',
     join: 'Clockoli will add your GitHub identity to this repository’s Clockoli user list and create your personal storage branch if it does not exist. Other users’ branches and time records will not be changed.',
     initialize_personal: 'Clockoli will initialize this repository for time tracking.',
     initialize_organization: 'Clockoli will initialize this repository for time tracking. Repository administrator confirmation is required.',
   };
   $('repository-confirmation-title').textContent = titles[intent];
-  $('repository-confirmation-body').textContent = `${bodies[intent]} Anyone with read access can see stored task URLs, titles, timestamps, and descriptions.`;
+  $('repository-confirmation-body').textContent = `${bodies[intent]} Anyone with read access can see tracked URLs, titles, times, and descriptions.`;
   $('confirm-repository-action').textContent = repositoryAction(repository);
   const writes = $('repository-write-list'); writes.replaceChildren();
   const writeDescriptions = intent === 'add'
@@ -2020,7 +2020,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
         const status = selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Unavailable — Clockoli cannot access this repository; check its name and App grant';
         repositoryCheckFeedback = status === 'Ready — not connected'
           ? 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.'
-          : `Checked ${repositoryTarget}: ${status}. Repository files were not changed.`;
+          : `Checked ${repositoryTarget}: ${status}.`;
         repositoryCheckFeedbackError = status.startsWith('Unavailable');
       }
       renderRepositoryAccess();
@@ -2226,7 +2226,7 @@ async function rediscoverAfterGitHubHandoff() {
         cancelRepositoryGrantHandoff();
         scheduleRepositoryPolling();
       } else if (discoveryStatus === 'ready') {
-        repositoryCheckFeedback = `GitHub access to ${target} is not available yet. Finish granting access, then return here to check again. Repository files were not changed.`;
+        repositoryCheckFeedback = `GitHub access to ${target} is not available yet. Finish granting access, then return here to check again.`;
         repositoryCheckFeedbackError = false;
         renderRepositoryAccess();
         message('GitHub access is not available yet. Return here after granting access to check again.');
