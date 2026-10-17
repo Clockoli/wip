@@ -1809,10 +1809,10 @@ test('Times bulk import preserves its draft and remains single-flight across rer
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
     querySelector: () => null, addEventListener() {},
   };
-  let bulkCallback = null, bulkCalls = 0;
+  let bulkCallback = null, bulkCalls = 0, historyReads = 0;
   const context = vm.createContext({
     location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [] } });
+      if (message.type === 'LOAD_TIMES') { historyReads += 1; callback({ ok: true, data: { configured: true, recent: [] } }); }
       else if (message.type === 'BULK_ADD_TIMES') { bulkCalls += 1; bulkCallback = callback; }
       else callback({ ok: true, data: { configured: true, active: null, recent: [], pendingWrites: [] } });
     } } },
@@ -1846,6 +1846,26 @@ test('Times bulk import preserves its draft and remains single-flight across rer
   assert.equal(failedInput.disabled, false);
   assert.equal(failedAdd.disabled, false);
   assert.equal(createdNodes.some(node => node.textContent === 'The monthly file changed.'), true);
+
+  const historyBefore = historyReads;
+  const submission = failedAdd.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const now = new Date(), startedAt = new Date(now.getTime() - 30 * 60_000).toISOString(),
+    endedAt = now.toISOString(), day = now.toISOString().slice(0, 10);
+  bulkCallback({ ok: true, data: {
+    added: 1, pending: true, destinationId: 'github:1', entries: [{
+      id: '01M00TEST00000000000000001', taskUrl: 'https://example.com/task',
+      taskTitle: 'New local entry', entryDate: day, timezone: 'UTC', startedAt, endedAt,
+      durationSeconds: 1800, description: 'Accepted locally', _path: `times/${day.slice(0, 7)}/alice.jsonl`,
+      _sha: null, _index: -1, _pending: true,
+    }],
+  } });
+  await submission; await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(historyReads, historyBefore, 'bulk success must never wait on a GitHub history read');
+  assert.equal(bulkCalls, 2, 'bulk acceptance is not repeated');
+  assert.ok(createdNodes.some(node => node.textContent === 'Accepted locally'),
+    'local bulk time appears immediately in Activity');
+  assert.equal(createdNodes.some(node => node.textContent === 'Pending'), false);
 });
 
 test('Activity surfaces repository read failures and conflict omissions', async () => {
