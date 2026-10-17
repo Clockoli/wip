@@ -903,11 +903,14 @@ export class TrackerService {
     }).then(state => state.pendingWrites ?? []);
   }
 
-  async syncPending() {
+  async syncPending({ canSync = async () => true } = {}) {
     const queue = await this.compactPendingQueue();
     for (const operation of [...queue]) {
       if (!queue.some(item => item.id === operation.id)) continue;
       if (operation.stage === 'awaitSourceCompletion') break;
+      // A newer local change must postpone every not-yet-started GitHub write,
+      // even when several queued operations belong to the same repository.
+      if (!(await canSync())) break;
       const attemptStartedAt = Date.now();
       this.currentQueueDiagnostic = event => {
         appendQueueDiagnostic(operation, `GitHub ${event.method} ${event.path}: ${event.status} in ${event.durationMs}ms.`);
