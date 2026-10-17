@@ -292,14 +292,14 @@ test('MERGE_TASKS writes selected other-user storage branches rather than only t
 });
 
 test('extracted service-worker handler pins STOP to the active destination', async () => {
-  const calls = [];
+  const calls = [], syncRequests = [];
   const store = {
     getTrackingSnapshot: async () => ({ activeTimer: { destinationId: 'github:2', record: { id: 'running' } } }),
     getDestinationRegistry: async () => registry,
   };
   const context = handlerContext({
     store,
-    requestPendingSync: () => calls.push({ schedule: 'shared-idle-queue' }),
+    requestPendingSync: () => syncRequests.push('stop'),
     trackerForDestination: async (destinationId, options) => ({
       stop: async (...args) => { calls.push({ destinationId, options, args }); return { pending: true, entry: { id: 'running' } }; },
     }),
@@ -308,9 +308,8 @@ test('extracted service-worker handler pins STOP to the active destination', asy
   assert.equal(result.destinationId, 'github:2');
   assert.deepEqual(calls.map(call => [call.destinationId, call.args[0], call.args[1]?.background]), [
     ['github:2', 'done', true],
-    [undefined, undefined, undefined],
   ]);
-  assert.equal(calls[1].schedule, 'shared-idle-queue', 'Stop must use the shared 15-second idle scheduler');
+  assert.deepEqual(syncRequests, ['stop'], 'Stop must use the shared 15-second idle scheduler');
   assert.equal(calls[0].options?.localOnly, true, 'Stop must not wait for GitHub preflight');
 });
 
