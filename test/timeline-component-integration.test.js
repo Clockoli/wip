@@ -444,7 +444,8 @@ test('timeline STOP keeps the completed block and its connectors visible through
   const handler = content.slice(start, end);
 
   assert.match(handler, /const result = await send\(\{ type: 'STOP'/);
-  assert.match(handler, /timelineOptimisticCompletions\.set\(result\.entry\.id/);
+  assert.match(handler, /rememberCompletedLocally\(result, result\.destinationId\)/);
+  assert.match(content, /function rememberCompletedLocally\(completion, destinationId\)[\s\S]*timelineOptimisticCompletions\.set\(completion\.entry\.id/);
   assert.match(handler, /pageState = \{ \.\.\.pageState, active: null \}/);
   assert.match(handler, /refreshMountedTimeline\(\)/);
   assert.doesNotMatch(handler, /recentLoaded = false/);
