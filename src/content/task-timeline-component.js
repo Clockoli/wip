@@ -4631,13 +4631,14 @@
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
     .clockoli-calendar-description { margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; text-overflow:ellipsis; white-space:nowrap; }
     .history-controls { display: none; }
-    .clockoli-timeline-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-    .clockoli-description-field { position: relative; flex: 1 1 260px; min-width: 160px; max-width: 420px; }
-    .clockoli-timeline-description { width: 100%; margin: 0; padding: 6px 34px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
+    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: center; gap: 8px; }
+    .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
+    .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 6px 34px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
     .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
     .clockoli-description-save:hover:not(:disabled) { background: color-mix(in srgb, #1f883d 12%, transparent); }
     .clockoli-description-save[hidden] { display: none; }
     .clockoli-timeline-action {
+      flex: 0 0 auto; white-space: nowrap;
       min-height: 30px; padding: 5px 10px; border: 1px solid var(--button-default-borderColor-rest, var(--tt-border));
       border-radius: 6px; background: var(--button-default-bgColor-rest, var(--tt-panel));
       color: var(--button-default-fgColor-rest, var(--tt-text)); font: inherit; font-weight: 600; cursor: pointer;
@@ -5108,7 +5109,7 @@
         actions.append(button);
       } else if (typeof props.onStart === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Start tracking';
+        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Track time';
         button.disabled = !permissions.start;
         button.addEventListener('click', () => runAction(button, 'start', () => props.onStart(sourceItem(key))));
         actions.append(button);
