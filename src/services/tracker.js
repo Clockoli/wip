@@ -191,6 +191,21 @@ function hasLaterEntryEdit(queue, operationId, id) {
   return index >= 0 && queue.slice(index + 1).some(operation => operationEditsEntry(operation, id));
 }
 
+function completedCacheAfterSync(state, operation) {
+  if (!operation.entry) return state.recentCache ?? [];
+  const queue = state.pendingWrites ?? [], position = queue.findIndex(item => item.id === operation.id);
+  const later = position < 0 ? [] : queue.slice(position + 1);
+  const id = operation.entry.id;
+  const deleted = later.some(item => (item.operation ?? item.stage) === 'deleteEntry'
+    && item.request?.original?.id === id);
+  const edited = later.some(item => operationEditsEntry(item, id));
+  const locallyEdited = edited ? (state.recentCache ?? []).find(item => item.id === id) : null;
+  const visible = deleted ? null : locallyEdited ?? operation.entry;
+  return [...(visible ? [visible] : []), ...(state.recentCache ?? []).filter(item =>
+    !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
+    .sort(newestFirst).slice(0, 50);
+}
+
 function retargetLaterEntryEdits(queue, currentIndex, savedEntries) {
   const savedById = new Map((savedEntries ?? []).map(entry => [entry.id, entry]));
   const retarget = request => {
@@ -205,7 +220,7 @@ function retargetLaterEntryEdits(queue, currentIndex, savedEntries) {
   };
   for (let index = currentIndex + 1; index < queue.length; index += 1) {
     const operation = queue[index], type = operation.operation ?? operation.stage;
-    if (type === 'editEntry') operation.request = retarget(operation.request);
+    if (type === 'editEntry' || type === 'deleteEntry') operation.request = retarget(operation.request);
     else if (type === 'editEntries') operation.request = {
       ...operation.request,
       entries: (operation.request?.entries ?? []).map(retarget),
@@ -1072,14 +1087,13 @@ export class TrackerService {
         if (operation.stage === 'startNext') nextActive = await this.startQueuedActive(operation);
         const index = queue.findIndex(item => item.id === operation.id);
         if (index >= 0) queue.splice(index, 1);
-        await this.persistQueueOperation(operation, { remove: true, patch: latest => ({
-          activeCache: nextActive,
-          recentCache: operation.entry
-            ? [operation.entry, ...(latest.recentCache ?? []).filter(item =>
-              !sameCompletion(item, operation) && !(item._pending && sameTimer(item, operation.activeSnapshot)))]
-              .sort(newestFirst).slice(0, 50)
-            : latest.recentCache ?? [],
-        }) });
+        await this.persistQueueOperation(operation, { remove: true, savedEntries: operation.entry ? [operation.entry] : [],
+          patch: latest => ({
+            activeCache: nextActive,
+            // An edit or delete accepted while Stop synced is still authoritative.
+            recentCache: completedCacheAfterSync(latest, operation),
+          }),
+        });
       } catch (caughtError) {
         const rejectionDetail = String(caughtError?.message || '').trim();
         const detail = rejectionDetail && rejectionDetail !== 'GitHub rejected the request' ? ` GitHub said: ${rejectionDetail}` : '';
