@@ -132,6 +132,7 @@ test('a new local edit arriving during a slow GitHub write still schedules its o
     clearTimeout: timer => { timer.cancelled = true; },
     withCurrentRepositoryRecovery: async (_message, callback) => callback(),
     executor: { run: callback => callback() },
+    trackerForDestination: async () => ({}),
     syncPendingAll: async () => {
       if (commits.length === 0) { notifyStarted(); await blocked; }
       commits.push(pending.shift()?.id);
