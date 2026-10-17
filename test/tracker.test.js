@@ -2215,7 +2215,9 @@ test('Bulk add persists the entire import locally first and later creates a sing
   seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 9), localTimestamp(2026, 7, 21, 10))]), 'before');
   const text = '2026-08-21 https://example.com/a First 2:00\n2026-08-21 https://example.com/b Second 1.5';
   const added = await service({ github, store }).bulkAddTimes(text, { background: true });
-  assert.deepEqual(added, { added: 2, pending: true });
+  assert.equal(added.added, 2);
+  assert.equal(added.pending, true);
+  assert.equal(added.entries.length, 2);
   assert.equal(github.reads.length, 0);
   assert.equal(github.atomicWrites.length, 0);
   assert.equal(store.value.pendingWrites.length, 1);
