@@ -1208,7 +1208,8 @@ test('Check button alone shows progress before the completed inspection feedback
   await click;
   assert.match(status.textContent, /Checked acme\/time-data/);
   assert.match(status.textContent, /Unavailable/);
-  assert.match(status.textContent, /Repository files were not changed/);
+  assert.doesNotMatch(status.textContent, /Repository files were not changed/,
+    'the check result should report repository status only, without redundant file-change reassurance');
   assert.equal(refresh.disabled, false);
   assert.equal(refresh.attributes['aria-busy'], 'false');
   assert.equal(refresh.textContent, 'Check');
@@ -1319,6 +1320,8 @@ test('checking a ready repository offers a separate connect confirmation without
   assert.equal(page.nodes.get('connect-checked-repository').hidden, false);
   await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.nodes.get('repository-confirmation-body').textContent,
+    'Connect this repository to Clockoli in this browser for future time tracking. No repository files will be changed. Anyone with read access can see tracked URLs, titles, times, and descriptions.');
   await page.nodes.get('back-to-repository-selection').listeners.click();
   await page.nodes.get('connect-checked-repository').listeners.click();
   assert.equal(page.nodes.get('repository-confirmation').open, true);
