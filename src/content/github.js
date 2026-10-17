@@ -3728,6 +3728,18 @@
   });
 
   if (timesMode) {
+    document.addEventListener('clockoli:local-time-added', event => {
+      const result = event.detail ?? {};
+      if (result.entry?.id) {
+        recent = mergeActivityRecords([{ ...result.entry, destinationId: result.destinationId }], timesRange(), true);
+        recentLoaded = true;
+      }
+      if (result.active?.id) {
+        pageState = { ...pageState, active: { ...result.active, destinationId: result.destinationId } };
+      }
+      renderUi();
+      void refreshActivityState().catch(setError);
+    });
     mountInHeader();
     void restoreActivityViewMode();
     void loadSelectedTimes();
