@@ -772,7 +772,7 @@ test('restart adopts an active-timer edit already committed to GitHub before loc
   const newStart = '2026-08-18T08:30:00.000Z';
   await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt },
     startedAt: newStart, description: 'Updated before crash' });
-  const alreadySaved = { ...original, startedAt: newStart, description: 'Updated before crash', updatedAt: '2026-08-18T12:00:00.000Z' };
+  const alreadySaved = { ...original, startedAt: newStart, createdAt: newStart, description: 'Updated before crash', updatedAt: '2026-08-18T12:00:00.000Z' };
   await github.putText(path, serializeActiveRecord(alreadySaved), 'simulated completed but unacknowledged write', 'active-sha');
   const writes = github.writes.length;
 
