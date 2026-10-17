@@ -1772,7 +1772,7 @@
       const revealTimeEditor = () => beginRecordEdit(entry);
       const edit = button('Edit time', 'link-button entry-edit', async () => revealTimeEditor());
       const remove = button('Delete', 'danger-outline entry-delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
-      const disabled = Boolean(loadingRecent || !recentFresh);
+      const disabled = Boolean((loadingRecent || !recentFresh) && !entry._pending);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled);
