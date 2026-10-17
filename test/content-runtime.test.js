@@ -2286,7 +2286,8 @@ test('daily strip omits idle branding and panel List keeps its week navigation',
   assert.ok(nodes.some(node => node.textContent === 'Track this task'));
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
   assert.ok(!nodes.some(node => node.textContent === 'Yesterday task'));
-  assert.ok(nodes.some(node => node.classList?.contains('entry-pending')));
+  assert.ok(nodes.some(node => node.classList?.includes('entry-delete')), 'queued time has normal entry controls');
+  assert.ok(!nodes.some(node => node.textContent === 'Pending'));
   assert.ok(menu.querySelector('.today-list').querySelector('.entry-date-header'));
   assert.equal(menu.querySelector('.today-list').hidden, true);
   assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
@@ -3827,15 +3828,15 @@ test('background tab-activation message dismisses an open panel with no visibili
   }
 });
 
-test('daily panel shows pending operations without a visible entry but avoids duplicate entry status', async () => {
+test('daily panel never exposes a routine waiting status and keeps conflicts actionable', async () => {
   const harness = dailyPanelHarness({ state: { configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 } });
   let menu = harness.renderMenu({ compact: true });
   assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
-  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…');
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).hidden, true);
   assert.equal(menu.querySelector('.queue-diagnostics').open, false);
   harness.set({ configured: true, active: null, pendingWrites: [{ id: 'deleted', status: 'pending', operation: 'deleteEntry' }], pendingCount: 1 }, []);
   menu = harness.renderMenu({ compact: true });
-  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…', 'a deleted block cannot show an entry badge');
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).hidden, true, 'a queued delete must not show any wait status');
   harness.set({ configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'conflict', conflictReason: 'completion_saved_newer_timer', stage: 'clearActive', operation: 'completeTimer' }], pendingCount: 1 }, []);
   menu = harness.renderMenu({ compact: true });
   assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
@@ -3849,7 +3850,7 @@ test('daily panel shows pending operations without a visible entry but avoids du
   assert.deepEqual(harness.messages.filter(message => message.type !== 'LOAD_TASK_PARTICIPANTS').map(message => message.type), ['GET_PAGE_STATE', 'LOAD_RECENT']);
 });
 
-test('a pending entry suppresses duplicate status, but a simultaneous queued deletion keeps it visible', () => {
+test('pending edits and deletes never display a saving status in Timeline or Calendar', () => {
   const now = Date.now();
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, _pending: true };
   const pending = { configured: true, active: null, pendingCount: 1, pendingWrites: [{ id: 'edit', operation: 'editEntry', status: 'pending' }] };
@@ -3857,11 +3858,10 @@ test('a pending entry suppresses duplicate status, but a simultaneous queued del
   const status = () => harness.renderMenu({ compact: true }).walk().find(node => node.classList.contains('timeline-queue-status'));
   assert.equal(status().hidden, true);
   harness.set({ ...pending, pendingCount: 2, pendingWrites: [...pending.pendingWrites, { id: 'delete', operation: 'deleteEntry', status: 'pending' }] }, [entry]);
-  assert.equal(status().hidden, false);
-  assert.equal(status().textContent, 'Saving…');
+  assert.equal(status().hidden, true);
 });
 
-test('deleting a Timeline block keeps saving feedback visible through local queue acceptance', async () => {
+test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
   const now = Date.now();
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
@@ -3882,14 +3882,13 @@ test('deleting a Timeline block keeps saving feedback visible through local queu
   assert.equal(harness.confirmations.length, 1);
   assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
   assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:entry'), false);
-  assert.equal(status.hidden, false);
-  assert.equal(status.textContent, 'Saving…');
+  assert.equal(status.hidden, true);
   current = pending;
   acceptDelete({ ok: true, data: { operationId: 'queued-delete' } });
   assert.equal(await deleting, true);
-  assert.equal(status.hidden, false, 'accepted deletion stays visible until the queue drains');
+  assert.equal(status.hidden, true, 'accepted deletion never shows a queue status');
   harness.applyPageState(pending);
-  assert.equal(status.hidden, false);
+  assert.equal(status.hidden, true);
   harness.applyPageState(initial);
   assert.equal(status.hidden, true);
 });
