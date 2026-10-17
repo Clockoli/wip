@@ -58,6 +58,17 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
+
+async function expectFullWidthActivitySearch(page) {
+  const bounds = await page.getByRole('searchbox', { name: 'Search activity' }).evaluate(input => {
+    const field = input.getBoundingClientRect();
+    const toolbar = input.closest('.times-toolbar').getBoundingClientRect();
+    return { leftGap: field.left - toolbar.left, rightGap: toolbar.right - field.right };
+  });
+  expect(Math.abs(bounds.leftGap)).toBeLessThan(2);
+  expect(Math.abs(bounds.rightGap)).toBeLessThan(2);
+}
+
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
   test.setTimeout(60000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-extension-'));
@@ -150,6 +161,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     });
     expect(tabCenter).toBeLessThan(2);
     await page.getByRole('button', { name: 'List', exact: true }).click();
+    await expectFullWidthActivitySearch(page);
     await page.getByRole('button', { name: 'Previous week' }).click();
     const groups = page.locator('.activity-list .entry');
     await expect(groups).toHaveCount(2);
@@ -183,6 +195,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(strip.locator('.running-status-metrics')).toBeVisible();
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
+    await expectFullWidthActivitySearch(page);
     await expect(stop).toBeVisible();
     const stripBounds = await strip.evaluate(element => ({ left: element.getBoundingClientRect().left,
       right: element.getBoundingClientRect().right,
