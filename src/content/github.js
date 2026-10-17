@@ -1381,11 +1381,6 @@
 
   function originalRecord(entry) { return { id: entry.id, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), issueUrl: storedTaskIdentityOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
-  function sameRecord(left, right) {
-    const a = originalRecord(left), b = originalRecord(right);
-    return a.id === b.id && a.issueUrl === b.issueUrl && a.issueTitle === b.issueTitle && a.startedAt === b.startedAt && a.endedAt === b.endedAt && a.description === b.description;
-  }
-
   function validEntryDate(value) {
     const match = typeof value === 'string' ? value.match(/^(?!0000)(\d{4})-(\d{2})-(\d{2})$/) : null;
     if (!match) return false;
@@ -1403,74 +1398,6 @@
     const offset = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (Number(offsetHour) * 60 + Number(offsetMinute));
     const expected = Date.UTC(y, mo - 1, d, h, mi, sec, Number(millis.padEnd(3, '0'))) - offset * 60000;
     return new Date(value).getTime() === expected;
-  }
-
-  function validIssue(issue) {
-    if (!issue || typeof issue !== 'object' || Object.keys(issue).sort().join(',') !== 'number,owner,repo,type,url') return false;
-    const ownerOk = typeof issue.owner === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(issue.owner) && !issue.owner.includes('--');
-    const repoOk = typeof issue.repo === 'string' && /^[A-Za-z0-9_.-]{1,100}$/.test(issue.repo) && issue.repo !== '.' && issue.repo !== '..';
-    const numberOk = Number.isSafeInteger(issue.number) && issue.number > 0;
-    if (!ownerOk || !repoOk || !numberOk || !['issue', 'pull_request'].includes(issue.type)) return false;
-    const route = issue.type === 'pull_request' ? 'pull' : 'issues';
-    return issue.url === `https://github.com/${issue.owner}/${issue.repo}/${route}/${issue.number}`;
-  }
-
-  function validRewrittenEntry(item, position, path, sha) {
-    const required = [
-      '_index', '_path', '_sha', 'actor', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate',
-      'id', 'issueTitle', 'metadata', 'metrics', 'producer', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl',
-      'timezone', 'updatedAt', 'user',
-    ];
-    const allowed = new Set([...required, '_record', 'entryId', 'execution', 'issue']);
-    const identity = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'id', 'name'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const producer = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'name', 'version'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const object = value => value && typeof value === 'object' && !Array.isArray(value);
-    const validId = value => typeof value === 'string' && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value);
-    let timezoneOk = false;
-    try { new Intl.DateTimeFormat('en-US', { timeZone: item?.timezone }).format(new Date(0)); timezoneOk = true; } catch {}
-    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !allowed.has(key)) || required.some(key => !(key in item)) || item.schemaVersion !== 1
-        || !validId(item.id) || (item.entryId !== undefined && item.entryId !== item.id)
-        || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
-        || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
-        || !identity(item.actor) || !producer(item.producer) || !object(item.metadata) || !object(item.metrics) || !timezoneOk
-        || !storedTaskIdentityOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
-        || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
-        || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) || new Date(item.updatedAt) < new Date(item.createdAt)
-        || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
-        || item.taskTitle !== item.taskTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
-        || typeof item.description !== 'string' || item.description.length > 2000
-        || (item._record !== undefined && (!object(item._record) || item._record.schema_version !== 1 || item._record.id !== item.id))) return false;
-    const pathMatch = path.match(/^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\.jsonl$/);
-    if (!pathMatch || pathMatch[1] !== item.entryDate.slice(0, 7) || pathMatch[2] !== item.user
-        || timestampParts(item.startedAt, item.timezone).date !== item.entryDate) return false;
-    const duration = Math.floor((new Date(item.endedAt).getTime() - new Date(item.startedAt).getTime()) / 1000);
-    return Number.isInteger(item.durationSeconds) && duration >= 0 && item.durationSeconds === duration;
-  }
-
-  function reconcileDeletedFile(deleted, rewritten) {
-    if (!Array.isArray(rewritten)) return null;
-    const byIndex = new Map();
-    let rewrittenSha = null;
-    for (const [position, item] of rewritten.entries()) {
-      if (!validRewrittenEntry(item, position, deleted._path, rewrittenSha)) return null;
-      rewrittenSha ||= item._sha;
-      byIndex.set(position, item);
-    }
-    const next = [];
-    for (const item of recent) {
-      if (item.destinationId !== deleted.destinationId || item._path !== deleted._path || item._pending) { next.push(item); continue; }
-      if (item._index === deleted._index) {
-        if (!sameRecord(item, deleted)) return null;
-        continue;
-      }
-      const index = item._index > deleted._index ? item._index - 1 : item._index;
-      const replacement = byIndex.get(index);
-      if (!replacement || replacement._path !== deleted._path || !sameRecord(replacement, item)) return null;
-      next.push({ ...replacement, destinationId: deleted.destinationId, timeRepository: deleted.timeRepository });
-    }
-    return next;
   }
 
   function refreshRecent(force = false) {
@@ -1539,29 +1466,6 @@
     const duration = Math.max(0, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
     const endDay = end.date === start.date ? '' : `${relativeDayLabel(end.date)} `;
     return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
-  }
-
-  async function deleteRecentEntry(entry, node) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
-    const controls = node ? Array.from(node.parentElement?.children ?? [node]) : [];
-    for (const control of controls) control.disabled = true;
-    try {
-      const result = await send({ type: 'DELETE_ENTRY', payload: { destinationId: entry.destinationId, path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
-      activeInlineKey = null;
-      pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
-      const reconciled = reconcileDeletedFile(entry, result?.entries);
-      if (reconciled) {
-        recent = reconciled;
-        renderUi();
-        void send({ type: 'GET_PAGE_STATE', refresh: true }).then(data => { applyTrackedTotals(data); updatePanelClocks(); }).catch(setError);
-      } else {
-        recentLoaded = false;
-        await refreshState(false, true);
-      }
-    } catch (error) {
-      for (const control of controls) control.disabled = false;
-      setError(error);
-    }
   }
 
   function entryKey(entry) {
@@ -1862,19 +1766,12 @@
     record.append(identity);
     const title = record.querySelector('.task-title');
     if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
-    const timeRow = el('div', undefined, 'entry-time-row'); let day;
-    if (entry._pending) {
-      day = el('div', relativeDayLabel(timestampParts(entry.startedAt, entry.timezone).date), 'entry-day');
-      const time = el('span', recentTimeText(entry), 'entry-time-range');
-      const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
-      const actions = el('div', undefined, 'entry-actions entry-actions-visible');
-      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending); timeRow.append(time, duration, actions);
-    } else {
-      const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
+    const timeRow = el('div', undefined, 'entry-time-row');
+    const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'), day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const revealTimeEditor = () => beginRecordEdit(entry);
       const edit = button('Edit time', 'link-button entry-edit', async () => revealTimeEditor());
-      const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
+      const remove = button('Delete', 'danger-outline entry-delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
       const disabled = Boolean(loadingRecent || !recentFresh);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
@@ -1926,7 +1823,6 @@
         description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
-    }
     if (timesMode || popupMode || fullWidthPopupOpen) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
@@ -1953,8 +1849,7 @@
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
-    const syncing = hasRunnablePending();
-    refresh.disabled = syncing; // Background queue activity must not animate the toolbar.
+    refresh.disabled = loadingRecent; // GitHub sync runs silently and must not disable Refresh.
     refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (emptyState) container.append(emptyState);
@@ -2326,7 +2221,6 @@
         isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
-          || Boolean(!entry._active && entry._pending)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
       };
     });
@@ -2521,10 +2415,9 @@
     if (!timelineQueueIndicator) return;
     const status = globalThis.ClockoliRecovery.describeSaveStatus({ ...pageState, pendingCount: timelineQueueSize(),
       saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight });
-    const hasUnrepresentedWrite = timelineDeleteInFlight
-      || pageState.pendingWrites?.some(write => write.operation === 'deleteEntry' && write.status !== 'conflict')
-      || ![...timelineEntriesById.values()].some(entry => entry.isPending);
-    const hidden = status.label === 'Saved to GitHub' || !hasUnrepresentedWrite;
+    // Ordinary local writes never show a saving/waiting status. Only an
+    // actionable synchronization failure belongs in the visible feedback.
+    const hidden = !status.conflict && !status.action;
     timelineQueueIndicator.hidden = hidden;
     timelineQueueIndicator.setAttribute('aria-hidden', String(hidden));
     timelineQueueIndicator.textContent = status.label;
@@ -2691,7 +2584,7 @@
       if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
       if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
       timelineOptimisticCompletions.set(result.entry.id, {
-        ...result.entry,
+        ...result.entry, ...(result.localEntry || {}), destinationId: result.destinationId,
         _pending: Boolean(result.pending),
         _optimisticCompletion: true,
       });
