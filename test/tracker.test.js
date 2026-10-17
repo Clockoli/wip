@@ -2336,6 +2336,9 @@ test('background switching durably queues the transition before any GitHub reque
   const accepted = await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
   assert.equal(accepted.pending, true);
   assert.equal(accepted.active.taskUrl, 'https://example.com/next');
+  assert.equal(accepted.stopped.localEntry.id, accepted.stopped.entry.id);
+  assert.equal(accepted.stopped.localEntry._pending, true);
+  assert.equal(accepted.stopped.localEntry._path, 'times/2026-08/alice.jsonl');
   assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0, 'the UI response waits only for durable local storage');
   assert.equal(store.value.pendingWrites[0].operation, 'completeTimerAndStart');
   assert.equal(store.value.activeCache.taskUrl, 'https://example.com/next');
