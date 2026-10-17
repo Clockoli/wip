@@ -94,6 +94,16 @@ function mergeSupersededEntryRequests(earlier, later) {
   };
 }
 
+function queuedEntryEditsSatisfied(remote, edits) {
+  if (!remote) return false;
+  try {
+    const projected = applyEntryEdits(remote, edits, new Date(remote.updatedAt));
+    return ['taskUrl', 'taskTitle', 'issueTitle', 'startedAt', 'endedAt',
+      'entryDate', 'timezone', 'description', 'durationSeconds']
+      .every(key => sameValue(projected[key], remote[key]));
+  } catch { return false; }
+}
+
 function entryEditHasValidInterval(request) {
   const startedAt = new Date(request?.edits?.startedAt ?? request?.original?.startedAt).getTime();
   const endedAt = new Date(request?.edits?.endedAt ?? request?.original?.endedAt).getTime();
@@ -893,6 +903,24 @@ export class TrackerService {
     operation.request = ['editEntry', 'deleteEntry'].includes(operationType) ? rebased[0] : { ...operation.request, entries: rebased };
   }
 
+  async alreadyAppliedEntryEdits(requests) {
+    const files = new Map(), saved = [];
+    for (const request of requests) {
+      if (!request?.original?.id || !request?.edits) return null;
+      const proposed = applyEntryEdits(request.original, request.edits, editClock(this.clock, request.original));
+      const paths = new Set([request.path, monthlyRecordsPath(this.user, proposed.entryDate)]);
+      let remote = null;
+      for (const path of paths) {
+        if (!files.has(path)) files.set(path, await this.readMonthly(path));
+        remote = files.get(path).entries.find(entry => entry.id === request.original.id);
+        if (remote) break;
+      }
+      if (!queuedEntryEditsSatisfied(remote, request.edits)) return null;
+      saved.push(remote);
+    }
+    return saved;
+  }
+
   async compactPendingQueue() {
     return this.mutateState(state => {
       const pendingWrites = compactSupersededQueue(state.pendingWrites, state.recentCache);
@@ -986,9 +1014,12 @@ export class TrackerService {
           try { saved = await this.editEntry(operation.request, { updateCache: false }); }
           catch (error) {
             if (!(error instanceof TrackerConflictError)) throw error;
-            await this.rebaseQueuedEntryEdit(operation);
-            assertQueuedEntryIntervals([operation.request]);
-            saved = await this.editEntry(operation.request, { updateCache: false });
+            saved = (await this.alreadyAppliedEntryEdits([operation.request]))?.[0];
+            if (!saved) {
+              await this.rebaseQueuedEntryEdit(operation);
+              assertQueuedEntryIntervals([operation.request]);
+              saved = await this.editEntry(operation.request, { updateCache: false });
+            }
           }
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
@@ -1004,9 +1035,12 @@ export class TrackerService {
           try { saved = await this.editEntries(operation.request, { updateCache: false }); }
           catch (error) {
             if (!(error instanceof TrackerConflictError)) throw error;
-            await this.rebaseQueuedEntryEdit(operation);
-            assertQueuedEntryIntervals(operation.request?.entries);
-            saved = await this.editEntries(operation.request, { updateCache: false });
+            saved = await this.alreadyAppliedEntryEdits(operation.request?.entries ?? []);
+            if (!saved) {
+              await this.rebaseQueuedEntryEdit(operation);
+              assertQueuedEntryIntervals(operation.request?.entries);
+              saved = await this.editEntries(operation.request, { updateCache: false });
+            }
           }
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
