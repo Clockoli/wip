@@ -2547,7 +2547,7 @@
 
   async function queueTimelineEntryDelete(entry) {
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
-    const previousRecent = recent;
+    const previousRecent = recent, previousCompletion = timelineOptimisticCompletions.get(entry.id);
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
     timelineOptimisticCompletions.delete(entry.id);
@@ -2556,6 +2556,7 @@
     refreshTimelineQueueIndicator();
     refreshMountedTimeline();
     recordTimelineQueueDiagnostic('Delete time entry: accepted locally and queued for GitHub.');
+    if (timesMode && activityViewMode === 'list') renderUi();
     try {
       const result = await send({ type: 'QUEUE_ENTRY_DELETE', payload: {
         destinationId: entry.destinationId,
@@ -2564,13 +2565,14 @@
       if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
     } catch (error) {
       recent = previousRecent;
+      if (previousCompletion) timelineOptimisticCompletions.set(entry.id, previousCompletion);
       pageState = { ...pageState, ...previousTotals };
       recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
       throw error;
     } finally {
       finishTimelineQueueAcceptance(acceptanceId);
       refreshTimelineQueueIndicator();
-      if (!refreshMountedTimeline()) renderUi();
+      if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
     }
     void refreshMountedTimelineState().catch(setError);
     return true;
