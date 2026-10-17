@@ -1321,9 +1321,10 @@ async function handle(message, sender) {
     case 'BULK_ADD_TIMES': {
       const text = String(message.text || '');
       if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
-      const result = await (await context({ localOnly: true })).tracker.bulkAddTimes(text, { background: true });
+      const { tracker, destinationId } = await context({ localOnly: true });
+      const result = await tracker.bulkAddTimes(text, { background: true });
       if (result.pending) requestPendingSync();
-      return result;
+      return { ...result, destinationId };
     }
     case 'MERGE_TASKS': {
       const snapshot = await configuredSnapshot({ localOnly: true });
