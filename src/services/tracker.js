@@ -513,10 +513,10 @@ export class TrackerService {
     }
   }
 
-  async queueStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), overlapGuards = null } = {}) {
+  async queueStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), overlapGuards = null, requireNoOverlap = false } = {}) {
     const state = await this.store.getState();
     if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
-    const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description, { startedAt, overlapGuards });
+    const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description, { startedAt, overlapGuards, requireNoOverlap });
     await this.mutateState(current => {
       if (current.activeCache) throw new Error(`A timer is already tracking ${taskLabel(current.activeCache)}`);
       return { pendingWrites: [...(current.pendingWrites ?? []), operation], activeCache: pendingActive };
@@ -524,7 +524,7 @@ export class TrackerService {
     return pendingActive;
   }
 
-  prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null, overlapGuards = null } = {}) {
+  prepareQueuedStart(taskUrl, taskTitle = '', description = '', { startedAt = this.clock(), id = null, blockedBy = null, overlapGuards = null, requireNoOverlap = false } = {}) {
     const start = new Date(startedAt), activeId = id || this.idFactory(start.getTime());
     const active = this.buildActive({ id: activeId, taskUrl: normalizeStoredTaskIdentity(taskUrl), startedAt: start, description, taskTitle });
     const operation = {
@@ -533,6 +533,7 @@ export class TrackerService {
       nextActive: stripInternal(active), queuedAt: start.toISOString(), lastError: '',
       ...(blockedBy ? { blockedBy: structuredClone(blockedBy) } : {}),
       ...(overlapGuards ? { overlapGuards: structuredClone(overlapGuards) } : {}),
+      ...(requireNoOverlap ? { requireNoOverlap: true } : {}),
     };
     return {
       operation,
@@ -853,6 +854,22 @@ export class TrackerService {
   async startQueuedActive(operation) {
     const path = activeRecordPath(this.user), queuedTarget = operation.nextActive;
     if (!queuedTarget) return null;
+    if (operation.requireNoOverlap && !operation.overlapGuards) {
+      const today = queuedTarget.entryDate;
+      const yesterday = new Date(`${today}T12:00:00.000Z`);
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      const dates = [today, yesterday.toISOString().slice(0, 10)];
+      const paths = [...new Set(dates.map(date => monthlyRecordsPath(this.user, date)))];
+      const files = await Promise.all(paths.map(file => this.readMonthly(file)));
+      const startMs = new Date(queuedTarget.startedAt).getTime(), nowMs = this.clock().getTime();
+      if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < nowMs
+          && new Date(entry.endedAt).getTime() > startMs))) {
+        operation.overlapGuards = files.map(file => ({ path: file.path, sha: file.sha }));
+        throw new TrackerConflictError('Added time would overlap existing time. Review Activity or discard the queued start.', 'add_time_overlap_changed');
+      }
+      operation.overlapGuards = files.map(file => ({ path: file.path, sha: file.sha }));
+      await this.persistQueueOperation(operation);
+    }
     const target = await this.enrichGitHubMetadata(queuedTarget);
     let sha = undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1970,7 +1987,8 @@ export class TrackerService {
     const paths = [...new Set([today, yesterday.toISOString().slice(0, 10)]
       .map(date => monthlyRecordsPath(this.user, date)))];
     const files = await Promise.all(paths.map(path => this.readMonthly(path)));
-    if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < (endMs ?? now.getTime())
+    if (files.some(file => file.entries.some(entry => entry.id !== fixedId
+        && new Date(entry.startedAt).getTime() < (endMs ?? now.getTime())
         && new Date(entry.endedAt).getTime() > startMs))) throw new Error('Added time would overlap existing time.');
     if (!end) return { active: await this.queueStart(canonical, taskTitle, description, {
       startedAt: start, overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
