@@ -548,7 +548,7 @@ export class TrackerService {
         recentCache: [pendingEntry, ...(latest.recentCache ?? []).filter(item => !sameCompletion(item, operation))].slice(0, 50),
       };
     });
-    return { stopped: { entry, pending: true }, active: pendingActive, pending: true };
+    return { stopped: { entry, localEntry: pendingEntry, pending: true }, active: pendingActive, pending: true };
   }
 
   stop(description = '', { background = false } = {}) {
