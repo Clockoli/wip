@@ -1003,6 +1003,43 @@ export class TrackerService {
         }
         if (operationType === 'editEntry') assertQueuedEntryIntervals([operation.request]);
         if (operationType === 'editEntries') assertQueuedEntryIntervals(operation.request?.entries);
+        if (operation.operation === 'addTime') {
+          const entry = operation.entry;
+          const saved = (await this.addTime({
+            taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: entry.startedAt,
+            endedAt: entry.endedAt, description: entry.description,
+          }, { fixedId: entry.id, updateCache: false })).entry;
+          const index = queue.findIndex(item => item.id === operation.id);
+          if (index >= 0) queue.splice(index, 1);
+          await this.persistQueueOperation(operation, {
+            remove: true, savedEntries: [saved],
+            patch: state => ({ recentCache: completedCacheAfterAddition(state, operation, [saved]) }),
+          });
+          continue;
+        }
+        if (operation.operation === 'bulkAddTimes') {
+          let result;
+          try {
+            result = await this.bulkAddTimes('', {
+              requested: operation.requested, ids: operation.entries.map(entry => entry.id),
+              updateCache: false, includeEntries: true,
+            });
+          } catch (error) {
+            if (error instanceof TrackerConflictError) throw error;
+            if (/^Line \d+:|already overlaps|do not fit|overlap the running timer/i.test(error.message || '')) {
+              throw new TrackerConflictError(error.message, 'bulk_add_validation');
+            }
+            throw error;
+          }
+          const saved = result.savedEntries;
+          const index = queue.findIndex(item => item.id === operation.id);
+          if (index >= 0) queue.splice(index, 1);
+          await this.persistQueueOperation(operation, {
+            remove: true, savedEntries: saved,
+            patch: state => ({ recentCache: completedCacheAfterAddition(state, operation, saved) }),
+          });
+          continue;
+        }
         if (operation.operation === 'editEntry') {
           // Batch only consecutive independent edits. Stop/switch operations
           // stay as FIFO barriers so each completion retains its issue-linked
@@ -2012,7 +2049,10 @@ export class TrackerService {
     const files = await Promise.all(paths.map(path => this.readMonthly(path)));
     if (files.some(file => file.entries.some(entry => entry.id !== fixedId
         && new Date(entry.startedAt).getTime() < (endMs ?? now.getTime())
-        && new Date(entry.endedAt).getTime() > startMs))) throw new Error('Added time would overlap existing time.');
+        && new Date(entry.endedAt).getTime() > startMs))) {
+      if (fixedId) throw new TrackerConflictError('Added time overlaps existing time on GitHub. Review Activity.', 'add_time_overlap');
+      throw new Error('Added time would overlap existing time.');
+    }
     if (!end) return { active: await this.queueStart(canonical, taskTitle, description, {
       startedAt: start, overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
     }) };
