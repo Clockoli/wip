@@ -1891,7 +1891,59 @@ export class TrackerService {
     }
   }
 
-  async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }) {
+  async queueAddTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }) {
+    const canonical = normalizeStoredTaskIdentity(taskUrl);
+    const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
+    const end = endedAt == null ? null : new Date(endedAt);
+    const startMs = start.getTime(), endMs = end?.getTime();
+    if (!Number.isFinite(startMs) || startMs > now.getTime()) throw new Error('Start time must be valid and not in the future.');
+    if (end && (!Number.isFinite(endMs) || endMs <= startMs || endMs > now.getTime())) throw new Error('End time must be after Start and not in the future.');
+    const today = localDateInTimezone(now, this.timezone);
+    if (localDateInTimezone(start, this.timezone) !== today || (end && localDateInTimezone(end, this.timezone) !== today)) {
+      throw new Error('Add time is available only for today.');
+    }
+    if (typeof taskTitle !== 'string' || taskTitle.length > 500 || typeof description !== 'string' || description.length > 2000) {
+      throw new Error('Task title or description is too long.');
+    }
+    if (!end) {
+      const state = await this.store.getState();
+      if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
+      const active = await this.queueStart(canonical, taskTitle, description, { startedAt: start, requireNoOverlap: true });
+      return { active, pending: true };
+    }
+    let acceptedEntry;
+    await this.mutateState(state => {
+      if (state.activeCache && endMs > new Date(state.activeCache.startedAt).getTime()) {
+        throw new Error('Added time would overlap the running timer.');
+      }
+      const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])],
+        state.pendingWrites ?? []);
+      if (known.some(entry => new Date(entry.startedAt).getTime() < endMs
+          && new Date(entry.endedAt).getTime() > startMs)) {
+        throw new Error('Added time would overlap existing time.');
+      }
+      const usedIds = new Set(known.map(item => item.id));
+      const record = this.buildActive({ id: this.uniqueRecordId(startMs, usedIds), taskUrl: canonical,
+        taskTitle, startedAt: start, description });
+      const entry = buildEntry({ active: record, endedAt: end, now, description });
+      const path = monthlyRecordsPath(this.user, entry.entryDate);
+      acceptedEntry = { ...entry, _path: path, _sha: null, _index: -1, _pending: true };
+      const pendingWrites = [...(state.pendingWrites ?? []), {
+        operation: 'addTime', id: createUlid(now.getTime() + (state.pendingWrites?.length ?? 0)),
+        status: 'pending', stage: 'addTime', entry: stripInternal(entry),
+        queuedAt: now.toISOString(), lastError: '',
+      }];
+      return {
+        pendingWrites,
+        recentCache: [acceptedEntry, ...(state.recentCache ?? []).filter(item => item.id !== entry.id)]
+          .sort(newestFirst).slice(0, 50),
+      };
+    });
+    return { entry: acceptedEntry, pending: true };
+  }
+
+  async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }, { background = false, fixedId = null, updateCache = true } = {}) {
+    if (background) return this.queueAddTime({ taskUrl, taskTitle, startedAt, endedAt, description });
     const canonical = normalizeStoredTaskIdentity(taskUrl);
     const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
     const startMs = start.getTime(), end = endedAt == null ? null : new Date(endedAt), endMs = end?.getTime();
@@ -1906,12 +1958,12 @@ export class TrackerService {
     }
     const state = await this.store.getState();
     if (state.activeCache && !end) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
-    if (state.pendingWrites?.length) throw new Error('Pending time writes must sync before adding time.');
+    if (state.pendingWrites?.length && !fixedId) throw new Error('Pending time writes must sync before adding time.');
     const indexFile = /^https?:\/\//.test(canonical) ? null : await this.readTaskIndex();
     if (indexFile && !Object.hasOwn(indexFile.index.tasks, canonical)) {
       throw new Error('Select an existing imported task. New tasks require an HTTP(S) URL.');
     }
-    const active = await this.refreshActive();
+    const active = fixedId ? await this.readRemoteActive() : await this.refreshActive();
     if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
     const yesterday = new Date(`${today}T12:00:00.000Z`);
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
@@ -1923,11 +1975,19 @@ export class TrackerService {
     if (!end) return { active: await this.queueStart(canonical, taskTitle, description, {
       startedAt: start, overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
     }) };
-    const record = this.buildActive({ id: this.uniqueRecordId(startMs, new Set(files.flatMap(file => file.entries.map(entry => entry.id)))),
+    const record = this.buildActive({ id: fixedId || this.uniqueRecordId(startMs, new Set(files.flatMap(file => file.entries.map(entry => entry.id)))),
       taskUrl: canonical, taskTitle, startedAt: start, description });
     const entry = buildEntry({ active: record, endedAt: end, now, description });
     const path = monthlyRecordsPath(this.user, entry.entryDate);
     const file = files.find(item => item.path === path) ?? await this.readMonthly(path);
+    const previouslySaved = fixedId ? file.entries.find(item => item.id === fixedId) : null;
+    if (previouslySaved) {
+      if (previouslySaved.startedAt !== entry.startedAt || previouslySaved.endedAt !== entry.endedAt
+          || previouslySaved.taskUrl !== entry.taskUrl || previouslySaved.description !== entry.description) {
+        throw new TrackerConflictError('Previously saved Add time has changed on GitHub.', 'add_time_changed');
+      }
+      return { entry: previouslySaved, pending: false };
+    }
     const entries = [...file.entries, entry].sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
     const text = serializeMonthlyRecords(entries);
     parseMonthlyRecords(text, { user: this.user, month: file.month, path });
@@ -1939,8 +1999,8 @@ export class TrackerService {
         ], ...(indexFile ? { indexFile } : {}),
       });
       const saved = parseMonthlyRecords(text, { user: this.user, month: file.month, path, sha: blobShas[path] });
-      await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
-      return { entry };
+      if (updateCache) await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved, [path]) });
+      return { entry: fixedId ? saved.find(item => item.id === fixedId) : entry };
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('Time changed while adding this entry. Reload and try again.');
       throw error;
