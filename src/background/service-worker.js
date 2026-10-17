@@ -1518,7 +1518,10 @@ function syncPendingNow() {
       requestPendingSync();
       return;
     }
-    await syncPendingAll({ store, trackerForDestination });
+    await syncPendingAll({ store, trackerForDestination, canSync: async () => {
+      const quietUntil = pendingSyncQuietUntil(await store.getTrackingSnapshot());
+      return quietUntil === null || Date.now() >= quietUntil;
+    } });
   })).finally(() => {
     pendingSync = null;
     // A 15-second wakeup may have fired while a previous GitHub write was
