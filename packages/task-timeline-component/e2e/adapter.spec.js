@@ -114,7 +114,7 @@ test('a completed record of the running task offers Stop and save rather than di
     window.__items = window.__items.filter(item => item.id !== 'active:now').map(item => ({ ...item, isCurrentTask: false, isStartDisabled: false }));
     window.__timeline.update({ items: window.__items });
   });
-  await expect(action).toHaveText('Start tracking');
+  await expect(action).toHaveText('Track time');
   await expect(action).toBeEnabled();
 });
 
@@ -913,7 +913,7 @@ for (const mode of ['timeline', 'calendar']) {
     expect(state.interaction.runningInstanceId).toBe('active:c');
     expect(state.calls).toEqual([]);
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Start tracking');
+    await expect(action).toHaveText('Track time');
     await action.click();
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
   });
@@ -935,6 +935,64 @@ for (const mode of ['timeline', 'calendar']) {
     await action.click();
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
+
+  test('Track time stays on one line and description fills the remaining details width in ' + mode, async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    await page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first().click();
+
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Track time');
+    await expect(action).toHaveCSS('white-space', 'nowrap');
+
+    for (const width of [1600, 420]) {
+      await page.setViewportSize({ width, height: 900 });
+      // The fixture's 1000px inline width is fixed unless updated explicitly.
+      await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
+      const bounds = await action.evaluate(button => {
+        const actions = button.closest('.clockoli-timeline-actions');
+        const details = actions.closest('.details');
+        const input = actions.querySelector('.clockoli-timeline-description').getBoundingClientRect();
+        const field = actions.querySelector('.clockoli-description-field').getBoundingClientRect();
+        const deletion = actions.querySelector('.clockoli-timeline-action.danger').getBoundingClientRect();
+        const group = actions.getBoundingClientRect();
+        const container = details.getBoundingClientRect();
+        const primary = button.getBoundingClientRect();
+        return {
+          inputWidth: input.width,
+          fieldWidth: field.width,
+          inputRight: input.right,
+          deleteLeft: deletion.left,
+          freeRight: container.right - parseFloat(getComputedStyle(details).paddingRight) - group.right,
+          primaryHeight: primary.height,
+          primaryScrollWidth: button.scrollWidth,
+          primaryClientWidth: button.clientWidth,
+          sameRow: Math.abs(primary.top - field.top) < 12,
+        };
+      });
+      expect(Math.abs(bounds.freeRight)).toBeLessThanOrEqual(2);
+      expect(Math.abs(bounds.fieldWidth - bounds.inputWidth)).toBeLessThanOrEqual(2);
+      expect(Math.abs(bounds.deleteLeft - bounds.inputRight - 8)).toBeLessThanOrEqual(2);
+      expect(bounds.primaryScrollWidth).toBeLessThanOrEqual(bounds.primaryClientWidth);
+      expect(bounds.primaryHeight).toBeLessThan(40);
+      expect(bounds.sameRow).toBe(true);
+      expect(bounds.fieldWidth).toBeGreaterThan(width === 1600 ? 420 : 80);
+    }
+  });
+
+  test('Track time keeps its background on hover in ' + mode, async ({ page }) => {
+    await mount(page, { weeklyCalendar: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();
+    await block.dblclick();
+
+    const action = page.locator('#timeline .clockoli-timeline-action.primary');
+    await expect(action).toHaveText('Track time');
+    const restingBackground = await action.evaluate(button => getComputedStyle(button).backgroundColor);
+    await action.hover();
+    await expect(action).toHaveCSS('background-color', restingBackground);
+  });
+
 }
 
 test('Timeline drags and arrow edits snap to five minutes at every zoom level', async ({ page }) => {
@@ -1673,19 +1731,18 @@ for (const colorScheme of ['light', 'dark']) {
 }
 
 test('Calendar task cards show description only when the card has room', async ({ page }) => {
-  // Anchor to local midnight so the initial segment stays two hours tall on CI.
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
-  const startOfDay = dayStart.getTime();
+  // Keep the tasks within one local day, and well above/below the card's 48px
+  // description-height threshold (the rendered height excludes borders).
+  const noon = new Date();
+  noon.setHours(12, 0, 0, 0);
+  const midday = noon.getTime();
   await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [
-    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: startOfDay - 2 * HOUR, endedAt: startOfDay + 2 * HOUR, rowId: 'one', isEditable: true },
-    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: startOfDay + 3 * HOUR, endedAt: startOfDay + 3 * HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
+    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: midday - 4 * HOUR, endedAt: midday, rowId: 'one', isEditable: true },
+    { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: midday + HOUR, endedAt: midday + HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  // A task crossing local midnight has one Calendar segment per day; geometry
-  // below is defined for its initial card, not the continuation card.
-  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]:not(.segment-continuation)');
-  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]:not(.segment-continuation)');
+  const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]');
+  const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar description');
   await expect(short.locator('.clockoli-calendar-description')).toHaveCount(0);
   const geometry = await tall.evaluate(element => {
