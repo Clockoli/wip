@@ -107,6 +107,59 @@ test('a fresh local edit re-arms 15-second wakeup, without needing a minute tick
   assert.deepEqual(commits, [now]);
 });
 
+test('a new local edit arriving during a slow GitHub write still schedules its own flush', async () => {
+  let now = Date.now();
+  class FakeDate extends Date { static now() { return now; } }
+  const pending = [{ id: 'first', operation: 'editEntry', queuedAt: new Date(now - 15_000).toISOString() }];
+  const timers = [], alarms = [], commits = [];
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const store = {
+    getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+    getTrackingSnapshot: async () => ({
+      destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(pending) } } },
+    }),
+  };
+  const context = vm.createContext({
+    Date: FakeDate, store,
+    chrome: { alarms: { create: async (...args) => { alarms.push(args); } } },
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, cancelled: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: timer => { timer.cancelled = true; },
+    withCurrentRepositoryRecovery: async (_message, callback) => callback(),
+    executor: { run: callback => callback() },
+    syncPendingAll: async () => {
+      if (commits.length === 0) { notifyStarted(); await blocked; }
+      commits.push(pending.shift()?.id);
+    },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  const first = context.syncPendingNow();
+  await started;
+  now += 1_000;
+  pending.push({ id: 'second', operation: 'editEntry', queuedAt: new Date(now).toISOString() });
+  context.requestPendingSync();
+  await new Promise(resolve => setImmediate(resolve));
+  const originalWake = timers.at(-1);
+  assert.equal(originalWake.delay, 15_000);
+  now += 15_000;
+  originalWake.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(commits, ['first'], 'the second edit cannot be swallowed by the in-flight sync');
+  const followupWake = timers.filter(timer => !timer.cancelled).at(-1);
+  assert.notEqual(followupWake, originalWake, 'the new edit must get another flush after the first completes');
+  followupWake.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(commits, ['first', 'second']);
+});
+
 test('an early alarm cannot sync before 15 seconds of inactivity after service-worker restart', async () => {
   let now = Date.now();
   class FakeDate extends Date { static now() { return now; } }
