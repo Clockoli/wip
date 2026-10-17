@@ -219,8 +219,8 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(page.locator('.activity-list .entry-record')).toContainText('Activity test task');
     const stoppedRow = page.locator('.activity-list .entry-record');
     await expect(stoppedRow.getByRole('button', { name: 'Start tracking Activity test task' })).toBeVisible();
-    await expect(stoppedRow.getByRole('button', { name: 'Edit time' })).toBeAttached();
-    await expect(stoppedRow.getByRole('button', { name: 'Delete' })).toBeAttached();
+    await expect(stoppedRow.locator('.entry-edit')).toBeEnabled();
+    await expect(stoppedRow.locator('.entry-delete')).toBeEnabled();
     await expect(stoppedRow.getByRole('button', { name: 'Pending' })).toHaveCount(0);
     await expect(page.locator('.timeline-queue-status:visible')).toHaveCount(0);
     await page.getByRole('button', { name: 'Previous week' }).click();
