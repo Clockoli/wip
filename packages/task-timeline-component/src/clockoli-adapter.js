@@ -180,7 +180,7 @@
       border-radius: 6px; background: var(--button-default-bgColor-rest, var(--tt-panel));
       color: var(--button-default-fgColor-rest, var(--tt-text)); font: inherit; font-weight: 600; cursor: pointer;
     }
-    .clockoli-timeline-action:hover:not(:disabled) { background: var(--button-default-bgColor-hover, var(--tt-empty)); }
+    .clockoli-timeline-action:hover:not(:disabled):not(.primary) { background: var(--button-default-bgColor-hover, var(--tt-empty)); }
     .clockoli-timeline-action.primary { border-color: var(--button-primary-borderColor-rest, #1f232826); background: var(--button-primary-bgColor-rest, #1f883d); color: var(--button-primary-fgColor-rest, #fff); }
     .clockoli-timeline-action.danger { color: var(--button-danger-fgColor-rest, #d1242f); }
     .clockoli-timeline-action:disabled { opacity: .5; cursor: default; }
