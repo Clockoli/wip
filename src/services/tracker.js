@@ -1005,10 +1005,18 @@ export class TrackerService {
         if (operationType === 'editEntries') assertQueuedEntryIntervals(operation.request?.entries);
         if (operation.operation === 'addTime') {
           const entry = operation.entry;
-          const saved = (await this.addTime({
-            taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: entry.startedAt,
-            endedAt: entry.endedAt, description: entry.description,
-          }, { fixedId: entry.id, updateCache: false })).entry;
+          let saved;
+          try {
+            saved = (await this.addTime({
+              taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: entry.startedAt,
+              endedAt: entry.endedAt, description: entry.description,
+            }, { fixedId: entry.id, updateCache: false })).entry;
+          } catch (error) {
+            if (/Select an existing imported task/i.test(error.message || '')) {
+              throw new TrackerConflictError(error.message, 'add_time_invalid_identity');
+            }
+            throw error;
+          }
           const index = queue.findIndex(item => item.id === operation.id);
           if (index >= 0) queue.splice(index, 1);
           await this.persistQueueOperation(operation, {
@@ -1296,6 +1304,45 @@ export class TrackerService {
         if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
         pendingWrites[index] = { ...pendingWrites[index], overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
           status: 'pending', lastError: '', conflictReason: '' };
+        return { pendingWrites };
+      });
+      const remaining = await this.syncPending();
+      return { resolved: !remaining.some(item => item.id === id) };
+    }
+    if (['addTime', 'bulkAddTimes'].includes(operation.operation)) {
+      if (action === 'discard_queued_addition') {
+        const entries = operation.operation === 'addTime' ? [operation.entry] : operation.entries ?? [];
+        const ids = new Set(entries.map(entry => entry.id));
+        const at = state.pendingWrites.findIndex(item => item.id === id);
+        const later = state.pendingWrites.slice(at + 1);
+        if (later.some(item => [...ids].some(entryId => operationEditsEntry(item, entryId)
+            || (item.operation === 'deleteEntry' && item.request?.original?.id === entryId)))) {
+          throw new TrackerConflictError('Discard later edits or deletes of this added time before discarding the addition.');
+        }
+        // A lost HTTP acknowledgement does not mean GitHub failed to commit.
+        // Refuse destructive local discard until both GitHub stores confirm that
+        // none of these identities was persisted.
+        const taskIndex = await this.readTaskIndex();
+        if (Object.values(taskIndex.index.tasks).some(task => task.recordIds.some(savedId => ids.has(savedId)))) {
+          throw new TrackerConflictError('Some added time is already on GitHub. Reload Activity before discarding.');
+        }
+        const paths = [...new Set(entries.map(entry => monthlyRecordsPath(this.user, entry.entryDate)))];
+        const files = await Promise.all(paths.map(path => this.readMonthly(path)));
+        if (files.some(file => file.entries.some(entry => ids.has(entry.id)))) {
+          throw new TrackerConflictError('Some added time is already on GitHub. Reload Activity before discarding.');
+        }
+        await this.mutateState(latest => {
+          const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
+          if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
+          pendingWrites.splice(index, 1);
+          return { pendingWrites, recentCache: (latest.recentCache ?? []).filter(entry => !ids.has(entry.id)) };
+        });
+        return { resolved: true, discarded: true };
+      }
+      await this.mutateState(latest => {
+        const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
+        if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
+        pendingWrites[index] = { ...pendingWrites[index], status: 'pending', conflictReason: '', lastError: '' };
         return { pendingWrites };
       });
       const remaining = await this.syncPending();
