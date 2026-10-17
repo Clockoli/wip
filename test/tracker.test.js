@@ -2165,6 +2165,86 @@ test('linked time edits remain atomic when an adjusted Start moves across monthl
 });
 
 
+test('completed Add time is accepted and projected locally without any GitHub request, then synced', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, taskTitle: 'Investigate',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z', description: 'Locally added' };
+  const added = await tracker.addTime(request, { background: true });
+  assert.equal(added.pending, true);
+  assert.equal(added.entry.durationSeconds, 3600);
+  assert.deepEqual(github.reads, [], 'local acceptance must not read remote history');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.recentCache[0]._pending, true);
+  assert.equal((await tracker.projectActivityRecords([])).records[0].description, 'Locally added');
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(item => item.path).sort(), [TASK_INDEX_PATH, 'times/2026-08/alice.jsonl']);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' })[0].id, added.entry.id);
+});
+
+test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const result = await tracker.addTime({ taskUrl: issue.url,
+    startedAt: '2026-08-18T08:00:00.000Z', endedAt: null }, { background: true });
+  assert.equal(result.active._pending, true);
+  assert.equal(result.active.startedAt, '2026-08-18T08:00:00.000Z');
+  assert.deepEqual(github.reads, []);
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store }).syncPending();
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, result.active.id);
+});
+
+test('completed Add time accepted offline remains recoverable after restart and cannot overwrite an overlapping GitHub record', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), request = {
+    taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z',
+  };
+  await service({ github, store }).addTime(request, { background: true });
+  const before = structuredClone(store.value.pendingWrites);
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:30:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, before.length, 'a failed remote validation retains the durable intent');
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('Bulk add persists the entire import locally first and later creates a single atomic GitHub commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 9), localTimestamp(2026, 7, 21, 10))]), 'before');
+  const text = '2026-08-21 https://example.com/a First 2:00\\n2026-08-21 https://example.com/b Second 1.5';
+  const added = await service({ github, store }).bulkAddTimes(text, { background: true });
+  assert.deepEqual(added, { added: 2, pending: true });
+  assert.equal(github.reads.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].entries.length, 2);
+  assert.equal((await service({ github, store }).projectActivityRecords([])).records.length, 2);
+  const ids = store.value.pendingWrites[0].entries.map(row => row.id);
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 1);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.slice(1).map(row => row.id), ids);
+  assert.equal(saved[1].startedAt, new Date(localTimestamp(2026, 7, 21, 10)).toISOString());
+  assert.equal(saved[2].endedAt, new Date(localTimestamp(2026, 7, 21, 13, 30)).toISOString());
+});
+
+test('Bulk add is durable on remote validation failure and never partially writes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const submitted = await service({ github, store }).bulkAddTimes(
+    '2026-08-21 https://example.com/a First 12:00\\n2026-08-21 https://example.com/b Second 12:00',
+    { background: true });
+  assert.equal(submitted.added, 2);
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 12), localTimestamp(2026, 7, 21, 13))]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, 0, 'rejected import is still all-or-nothing');
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
 test('Add time writes an exact completed interval and task index atomically', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   const result = await tracker.addTime({ taskUrl: issue.url + '?noise=1', taskTitle: 'Fix frontend',
