@@ -2153,7 +2153,7 @@ export class TrackerService {
           .sort(newestFirst).slice(0, 50),
       };
     });
-    return { added: requested.length, pending: true };
+    return { added: requested.length, pending: true, entries: accepted };
   }
 
   async bulkAddTimes(text, { background = false, requested = null, ids = null, updateCache = true, includeEntries = false } = {}) {
