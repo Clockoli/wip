@@ -1686,6 +1686,15 @@ export class TrackerService {
   async editActiveStart({ original, startedAt, description }, { updateCache = true } = {}) {
     const active = await this.readRemoteActive();
     if (!active) throw new TrackerConflictError('The running timer is no longer active. Reload before saving.');
+    // GitHub may have accepted this exact change before the service worker
+    // stopped, without IndexedDB recording the successful acknowledgement.
+    // Adopt it instead of repeatedly conflicting or writing a duplicate commit.
+    if (matchesOriginal(active, original)
+        && (startedAt === undefined || active.startedAt === startedAt)
+        && (description === undefined || active.description === description)) {
+      if (updateCache) await this.store.patchState({ activeCache: active });
+      return active;
+    }
     if (!matchesOriginal(active, original) || active.startedAt !== original?.startedAt) {
       throw new TrackerConflictError('The running timer changed after the timeline loaded. Reload before saving.');
     }
