@@ -2267,6 +2267,29 @@ test('locally accepted Add time still synchronizes after midnight and several da
   assert.equal(saved[0].description, 'Saved offline');
 });
 
+test('queued Add time retains its originally accepted timezone and metadata if the user travels before GitHub sync', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = service({ github, store, timezone: 'UTC',
+    clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  const accepted = await original.addTime({
+    taskUrl: issue.url, taskTitle: 'Timezone stable',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z',
+    description: 'Travel safe',
+  }, { background: true });
+  const remoteSync = service({ github, store, timezone: 'Pacific/Honolulu',
+    clock: () => new Date('2026-08-22T09:00:00.000Z') });
+  await remoteSync.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const [saved] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text,
+    { user: 'alice', month: '2026-08' });
+  assert.equal(saved.id, accepted.entry.id);
+  assert.equal(saved.timezone, 'UTC');
+  assert.equal(saved.entryDate, accepted.entry.entryDate);
+  assert.equal(saved.createdAt, accepted.entry.createdAt);
+  assert.equal(saved.updatedAt, accepted.entry.updatedAt);
+  assert.equal(saved.description, accepted.entry.description);
+});
+
 test('queued Add time revalidates the original month rather than the current month after month rollover', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const original = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-31T23:30:00.000Z') });
