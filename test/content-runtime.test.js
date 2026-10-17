@@ -1538,7 +1538,7 @@ test('typing in the main-panel description cannot reach GitHub keyboard shortcut
   assert.equal(stopped, true);
 });
 
-test('recent entry deletion remains conflict-safe without between-row drag controls', async () => {
+test('List deletes locally and shows queued time entries without special status', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -1555,10 +1555,8 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   });
   const older = entry('01K31P0G000000000000000001', 1, '2026-08-18T06:00:00.000Z', '2026-08-18T07:00:00.000Z', 'daily', 1);
   const newer = entry('01K31SE6000000000000000002', 2, '2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z', 'daily', 0);
-  const hidden = entry('01K31WWM000000000000000003', 3, '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', 'post-delete', 1);
-  const rewrittenOlder = { ...older, _sha: 'post-delete', _index: 0 };
   const now = new Date(), reportDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  let loadedRecent = [newer, older], releaseDelete, deleteCalls = 0;
+  let loadedRecent = [newer, older], deleteCalls = 0, confirmDelete = true;
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1573,62 +1571,39 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
         summaries: [{ key: 'review-window', label: 'Review window', seconds: 7200, startDate: '2026-08-01', endDate: '2026-08-31', displayMs: 2000 }],
         active: null, pendingCount: 0, pendingWrites: [],
       } });
-      else if (message.type === 'DELETE_ENTRY') {
+      else if (message.type === 'QUEUE_ENTRY_DELETE') {
         deleteCalls += 1;
-        const respond = () => callback({ ok: true, data: { deleted: true, entries: deleteCalls === 1 ? [rewrittenOlder, hidden] : [hidden] } });
-        if (deleteCalls === 1) releaseDelete = respond; else respond();
+        callback({ ok: true, data: { operationId: 'delete-' + deleteCalls, pending: true } });
       } else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => confirmDelete, alert() {},
   });
-  let confirmDelete = true;
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const recentLinks = createdNodes.filter(node => node.tag === 'a' && [newer.issue.url, older.issue.url].includes(node.href));
-  assert.deepEqual(recentLinks.slice(-2).map(node => node.href), [newer.issue.url, older.issue.url], 'recent entries render by Start descending');
-  assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'between-row drag controls are removed');
-  const rowDeletes = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).slice(-2);
-  assert.equal(rowDeletes.length, 2, 'each editable recent entry has a direct Delete action');
+  const deletes = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).slice(-2);
+  assert.equal(deletes.length, 2);
   confirmDelete = false;
-  await rowDeletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'DELETE_ENTRY'), false, 'cancelling the confirmation preserves the entry');
+  await deletes[0].onclick({ isTrusted: true });
+  assert.equal(deleteCalls, 0, 'cancelled deletion never enters the local queue');
   confirmDelete = true;
-  const deletePromise = rowDeletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(rowDeletes[0].disabled, true); assert.equal(rowDeletes[0].parentElement.children[0].disabled, true,
-    'an in-flight direct deletion disables its sibling Edit action');
-  const deleteRenderStart = createdNodes.length;
-  releaseDelete(); await deletePromise; await new Promise(resolve => setTimeout(resolve, 0));
-  const postDeleteLinks = createdNodes.slice(deleteRenderStart).filter(node => node.tag === 'a' && [older.issue.url, hidden.issue.url].includes(node.href));
-  assert.deepEqual(postDeleteLinks.map(node => node.href), [older.issue.url], 'deletion keeps only the previously visible stable-ID survivor when indexes shift');
-  assert.equal(createdNodes.slice(deleteRenderStart).filter(node => node.className === 'today-total-value').at(-1)?.textContent, '…',
-    'a direct deletion invalidates totals until the authoritative projection refreshes');
-  const deletion = messages.find(message => message.type === 'DELETE_ENTRY');
-  assert.equal(deletion.payload.path, newer._path);
-  assert.equal(deletion.payload.index, newer._index);
-  assert.deepEqual(deletion.payload.original, {
-    id: newer.id, taskUrl: newer.taskUrl, taskTitle: newer.taskTitle, issueUrl: newer.issue.url, issueTitle: newer.issueTitle,
-    startedAt: newer.startedAt, endedAt: newer.endedAt, description: '',
-  });
-  const survivingDelete = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
-  await survivingDelete.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const secondDeletion = messages.filter(message => message.type === 'DELETE_ENTRY')[1];
-  assert.equal(secondDeletion.payload.path, older._path);
-  assert.equal(secondDeletion.payload.originalSha, 'post-delete', 'surviving rows use the rewritten monthly-file SHA');
-  assert.equal(secondDeletion.payload.index, 0, 'surviving rows use their rewritten monthly-file index');
-  loadedRecent = [{ ...newer, _pending: true }, older];
-  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
-  await sync.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const pending = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Pending').at(-1);
-  assert.equal(pending.disabled, true, 'a queued row renders a visible disabled Pending indicator');
-  const pendingRow = pending.parentElement.parentElement;
-  assert.equal(pendingRow.walk().some(node => node.className.includes('entry-edit') || node.className.includes('entry-delete')), false,
-    'a queued row exposes neither Edit nor Delete');
+  await deletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const queued = messages.find(message => message.type === 'QUEUE_ENTRY_DELETE');
+  assert.equal(deleteCalls, 1, 'deletion is queued immediately');
+  assert.equal(messages.some(message => message.type === 'DELETE_ENTRY'), false, 'List never waits for an immediate GitHub deletion');
+  assert.equal(queued.payload.original.id, newer.id);
+  assert.equal(queued.payload.originalSha, newer._sha);
+  const refreshed = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
+  loadedRecent = [{ ...newer, _sha: null, _index: -1, _pending: true }, older];
+  await refreshed.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(createdNodes.some(node => node.className?.includes('entry-pending')), false, 'locally stored entries have no Pending badge');
+  const normalControls = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
+  assert.ok(normalControls, 'queued entries expose the normal Delete action');
+  assert.equal(createdNodes.some(node => node.textContent === 'Pending'), false);
   assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false);
 });
-
 
 test('projected totals tick only in their stored local date range and unknown totals stay unknown', () => {
   const now = Date.parse('2026-08-19T02:00:00.000Z');
