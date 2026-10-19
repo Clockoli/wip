@@ -599,6 +599,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
       const avatar = document.createElement(interactive ? 'button' : 'span');
       avatar.className = `repository-collaborator${isPending ? ' repository-invitation' : ''}`;
       avatar.dataset.login = `@${user.login}${isPending ? ' · pending invitation' : ''}`;
+      avatar.dataset.clockoliTooltip = avatar.dataset.login;
       if (interactive) { avatar.type = 'button'; avatar.setAttribute('aria-label', `Manage @${user.login}${isPending ? ' pending invitation' : ' repository access'}`); }
       else { avatar.setAttribute('role', 'img'); avatar.setAttribute('aria-label', `@${user.login}${isPending ? ', pending invitation' : ''}`); }
       avatar.textContent = user.login[0].toUpperCase();
