@@ -6,3 +6,4 @@ test-results/
 .worktrees/
 __pycache__/
 *.py[cod]
+.idea

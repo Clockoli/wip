@@ -72,6 +72,465 @@ async function mount(page, overrides = {}) {
   }, { hour: HOUR, overrides });
 }
 
+for (const mode of ['timeline', 'calendar']) {
+  test(`drags a completed entry through its neighbor into free space in ${mode}`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
+    const first = now - 6 * HOUR;
+    const second = first + 2 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true, destinationId: 'repo' },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true, destinationId: 'repo' },
+    ], view: { start: first - HOUR, end: now, focusedAt: first } });
+    if (mode === 'timeline') await page.locator('#timeline').evaluate(element => { element.style.width = '985px'; });
+    if (mode === 'calendar') await page.evaluate(firstTime => {
+      const timeline = window.__timeline.__timeline;
+      timeline.setViewMode('calendar');
+      const start = new Date(firstTime);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 2);
+      timeline.setCalendarRange({ start: start.getTime(), end: end.getTime() });
+    }, first);
+    const block = key => page.locator(`#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:${key}"]`).first();
+    if (mode === 'calendar') {
+      await expect(block('a')).toBeVisible();
+      await expect(block('b')).toBeVisible();
+      await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
+    }
+    const { source, target } = mode === 'calendar' ? await page.evaluate(() => {
+      const canvas = window.__timeline.__timeline.calendarCanvas;
+      const source = canvas.querySelector('.calendar-task[data-task-key="entry:b"]');
+      const target = canvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+      return { source: source?.getBoundingClientRect().toJSON(), target: target?.getBoundingClientRect().toJSON() };
+    }) : { source: await block('b').boundingBox(), target: await block('a').boundingBox() };
+    expect(source, 'drag source must be visible in the selected Calendar range').toBeTruthy();
+    expect(target, 'drag target must be visible in the selected Calendar range').toBeTruthy();
+    expect(source.width).toBeGreaterThan(0);
+    expect(target.width).toBeGreaterThan(0);
+    const destination = mode === 'calendar'
+      ? { x: target.x + target.width / 2, y: target.y - 20 }
+      : await page.evaluate(time => {
+        const timeline = window.__timeline.__timeline;
+        const rect = timeline.viewport.getBoundingClientRect();
+        return { x: rect.left + timeline.timeToX(time) - timeline._scrollLeftNow(), y: rect.top + 30 };
+      }, first - 20 * 60_000);
+    if (mode === 'timeline') await expect.poll(() => page.evaluate(hour => {
+      const timeline = window.__timeline.__timeline;
+      return Math.abs(timeline.scalePxPerMs * 7 * hour - timeline.viewport.clientWidth);
+    }, HOUR)).toBeLessThan(0.1);
+    const beforeGeometry = mode === 'timeline' ? await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      return { width: timeline.totalWidth, scroll: timeline._scrollLeftNow(), scale: timeline.scalePxPerMs };
+    }) : null;
+    await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(destination.x, destination.y, { steps: 8 });
+    const duringDrag = await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => ({ id: task.instanceId, start: task.start, end: task.end })));
+    expect(duringDrag.find(item => item.id === 'entry:b').end).toBeLessThanOrEqual(duringDrag.find(item => item.id === 'entry:a').start);
+    expect(duringDrag.map(item => item.id)).toEqual(['entry:b', 'entry:a']);
+    if (mode === 'timeline') {
+      const geometry = await page.evaluate(() => {
+        const timeline = window.__timeline.__timeline;
+        return { width: timeline.totalWidth, scroll: timeline._scrollLeftNow(), scale: timeline.scalePxPerMs };
+      });
+      expect(Math.abs(geometry.width - beforeGeometry.width)).toBeLessThan(5);
+      expect(geometry.scale).toBe(beforeGeometry.scale);
+    }
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__calls[0]?.[0])).toBe('edit');
+    expect(await page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
+    const positions = await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => ({ id: task.instanceId, start: task.start, end: task.end })));
+    expect(positions.find(item => item.id === 'entry:a')).toEqual({ id: 'entry:a', start: first, end: first + HOUR });
+    expect(positions.find(item => item.id === 'entry:b').end).toBeLessThan(first);
+    expect(await page.evaluate(() => window.__timeline.__timeline.tasks.map(task => task.instanceId))).toEqual(['entry:b', 'entry:a']);
+  });
+}
+
+test('dragging a short Timeline entry does not push stationary entries or the viewport right', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  const second = now - 6 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: second } });
+  const source = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const before = await page.evaluate(targetStart => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const source = timeline._taskElementByKey('entry:b').getBoundingClientRect();
+    const task = timeline.tasks.find(item => item._key === 'entry:b');
+    const x = source.left + source.width / 2;
+    const pointerOffset = timeline.xToTime(timeline._scrollLeftNow() + x - viewport.left) - task.start;
+    return { x, y: source.top + source.height / 2,
+      targetX: viewport.left + timeline.timeToX(targetStart + pointerOffset) - timeline._scrollLeftNow(),
+      firstX: timeline._taskElementByKey('entry:a').getBoundingClientRect().left,
+      scroll: timeline._scrollLeftNow() };
+  }, first - 6 * HOUR);
+  await page.mouse.move(before.x, before.y);
+  await page.mouse.down();
+  await page.mouse.move(before.targetX, before.y, { steps: 8 });
+  const during = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { firstX: timeline._taskElementByKey('entry:a').getBoundingClientRect().left,
+      scroll: timeline._scrollLeftNow(),
+      movedRight: timeline._taskElementByKey('entry:b').getBoundingClientRect().right,
+      movedBefore: timeline.tasks[0]._key === 'entry:b' };
+  });
+  expect(during.movedBefore).toBe(true);
+  expect(during.movedRight).toBeLessThanOrEqual(during.firstX + 1);
+  expect(Math.abs(during.firstX - before.firstX)).toBeLessThan(2);
+  expect(Math.abs(during.scroll - before.scroll)).toBeLessThan(2);
+  await page.mouse.up();
+  const afterScroll = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { scroll: timeline._scrollLeftNow(), max: Math.max(0, timeline.totalWidth - timeline._viewportWidthNow()) };
+  });
+  expect(Math.abs(afterScroll.scroll - before.scroll)).toBeLessThan(2);
+  const afterWidths = await page.evaluate(() => ['entry:a', 'entry:b'].map(key =>
+    window.__timeline.__timeline._taskElementByKey(key).getBoundingClientRect().width));
+  expect(afterWidths.every(width => width >= 30)).toBe(true);
+});
+
+test('Timeline keeps a moved entry at its full visual width just before the entry it crossed', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: first + 2 * HOUR, endedAt: first + 2.5 * HOUR, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: first } });
+  const source = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const gesture = await page.evaluate(targetStart => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const block = timeline._taskElementByKey('entry:b').getBoundingClientRect();
+    const task = timeline._findTask('entry:b');
+    const x = block.left + block.width / 2;
+    const pointerOffset = timeline.xToTime(timeline._scrollLeftNow() + x - viewport.left) - task.start;
+    return { x, y: block.top + block.height / 2,
+      targetX: viewport.left + timeline.timeToX(targetStart + pointerOffset) - timeline._scrollLeftNow() };
+  }, first - 31 * 60_000);
+  await page.mouse.move(gesture.x, gesture.y);
+  await page.mouse.down();
+  await page.mouse.move(gesture.targetX, gesture.y, { steps: 8 });
+  const during = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const moved = timeline._findTask('entry:b');
+    return { beforeFirst: moved.end <= timeline._findTask('entry:a').start,
+      start: moved.start,
+      duration: moved.end - moved.start,
+      left: timeline._taskElementByKey('entry:b').getBoundingClientRect().left,
+      width: timeline._taskElementByKey('entry:b').getBoundingClientRect().width,
+      expectedWidth: moved.displayWidth };
+  });
+  expect(during.beforeFirst).toBe(true);
+  expect(Math.abs(during.start - (first - 31 * 60_000))).toBeLessThan(15 * 60_000);
+  expect(during.duration).toBe(30 * 60_000);
+  expect(during.width).toBeGreaterThanOrEqual(during.expectedWidth - 1);
+  await page.mouse.move(gesture.targetX - 1, gesture.y);
+  const nextStep = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { start: timeline._findTask('entry:b').start,
+      left: timeline._taskElementByKey('entry:b').getBoundingClientRect().left };
+  });
+  expect(Math.abs(nextStep.start - during.start)).toBeLessThan(20 * 60_000);
+  expect(Math.abs(nextStep.left - during.left)).toBeLessThan(2);
+  await page.mouse.up();
+  expect(await page.evaluate(() => {
+    const moved = window.__timeline.__timeline._findTask('entry:b');
+    return moved.end - moved.start;
+  })).toBe(30 * 60_000);
+});
+
+test('Timeline keeps a moved entry clear of the entry it crossed to the right', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  const second = first + 2 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + 30 * 60_000, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: second, endedAt: second + 30 * 60_000, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: first } });
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const gesture = await page.evaluate(targetStart => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const block = timeline._taskElementByKey('entry:a').getBoundingClientRect();
+    const task = timeline._findTask('entry:a');
+    const x = block.left + block.width / 2;
+    const pointerOffset = timeline.xToTime(timeline._scrollLeftNow() + x - viewport.left) - task.start;
+    return { x, y: block.top + block.height / 2,
+      targetX: viewport.left + timeline.timeToX(targetStart + pointerOffset) - timeline._scrollLeftNow() };
+  }, second + 31 * 60_000);
+  await page.mouse.move(gesture.x, gesture.y);
+  await page.mouse.down();
+  await page.mouse.move(gesture.targetX, gesture.y, { steps: 8 });
+  const during = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const moved = timeline._findTask('entry:a');
+    const firstBox = timeline._taskElementByKey('entry:a').getBoundingClientRect();
+    const secondBox = timeline._taskElementByKey('entry:b').getBoundingClientRect();
+    return { afterSecond: moved.start >= timeline._findTask('entry:b').end,
+      start: moved.start,
+      duration: moved.end - moved.start, movedLeft: firstBox.left, secondRight: secondBox.right };
+  });
+  expect(during.afterSecond).toBe(true);
+  expect(Math.abs(during.start - (second + 31 * 60_000))).toBeLessThan(15 * 60_000);
+  expect(during.duration).toBe(30 * 60_000);
+  expect(during.movedLeft).toBeGreaterThanOrEqual(during.secondRight);
+  await page.mouse.up();
+});
+
+test('Timeline keeps the current time at the right edge after moving an older entry', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: first + 2 * HOUR, endedAt: first + 2.5 * HOUR, isEditable: true },
+    { id: 'active:c', title: 'Current', startedAt: now - HOUR, endedAt: null, isRunning: true, isEditable: false },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: now } });
+  await page.evaluate(() => window.__timeline.scrollToEnd());
+  const source = page.locator('#timeline .task[data-task-key="entry:b"]');
+  const box = await source.boundingBox();
+  const before = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { position: (timeline.timeToX(timeline.currentTime) - timeline._scrollLeftNow()) / timeline._viewportWidthNow(),
+      width: timeline.totalWidth };
+  });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 35, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  const after = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { position: (timeline.timeToX(timeline.currentTime) - timeline._scrollLeftNow()) / timeline._viewportWidthNow(),
+      width: timeline.totalWidth };
+  });
+  expect(before.position).toBeCloseTo(1, 1);
+  expect(after.position).toBeCloseTo(before.position, 2);
+  expect(Math.abs(after.width - before.width)).toBeLessThan(3);
+});
+
+test('moving an entry with a running timer keeps future day bands visible throughout the gesture', async ({ page }) => {
+  const now = new Date(2026, 9, 16, 12).getTime();
+  await page.clock.install({ time: new Date(now) });
+  const tomorrow = new Date(now);
+  tomorrow.setHours(0, 0, 0, 0);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const futureEnd = new Date(tomorrow);
+  futureEnd.setDate(futureEnd.getDate() + 2);
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'Completed', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, isEditable: true },
+    { id: 'active:b', title: 'Running', startedAt: now - 30 * 60_000, endedAt: null, isRunning: true, isEditable: false },
+  ], view: { start: now - 24 * HOUR, end: futureEnd.getTime(), focusedAt: now } });
+  const futureBand = page.locator(`#timeline .day-band[data-start="${tomorrow.getTime()}"]`);
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const box = await source.boundingBox();
+  await expect(futureBand).toHaveCount(1);
+  await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 2000));
+  const bandGeometry = () => page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    return [...timeline.dayRow.querySelectorAll('.day-band')].map(band => {
+      const bounds = band.getBoundingClientRect();
+      return { start: band.dataset.start, left: bounds.left - viewport.left, width: bounds.width };
+    });
+  });
+  const before = await bandGeometry();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 18, box.y + box.height / 2);
+  expect(await page.evaluate(() => window.__timeline.__timeline.editState?.didMutate)).toBe(true);
+  await expect(futureBand).toHaveCount(1);
+  const during = await bandGeometry();
+  expect(during.map(band => band.start)).toEqual(before.map(band => band.start));
+  for (const [index, band] of during.entries()) {
+    expect(Math.abs(band.left - before[index].left), JSON.stringify({ before: before[index], during: band, index })).toBeLessThan(3);
+    expect(Math.abs(band.width - before[index].width)).toBeLessThan(3);
+  }
+  await page.evaluate(() => window.__timeline.__timeline._tickRunningTask());
+  await page.mouse.move(box.x + box.width / 2 - 28, box.y + box.height / 2);
+  await expect(futureBand).toHaveCount(1);
+  await page.mouse.up();
+  await expect(futureBand).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._runningTask()?.running)).toBe(true);
+});
+
+test('stopping a timer does not discard future days in the selected Timeline range', async ({ page }) => {
+  const now = Date.now();
+  const tomorrow = new Date(now);
+  tomorrow.setHours(0, 0, 0, 0);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const futureEnd = new Date(tomorrow);
+  futureEnd.setDate(futureEnd.getDate() + 2);
+  await mount(page, { items: [
+    { id: 'active:b', title: 'Running', startedAt: now - HOUR, endedAt: null, isRunning: true, isEditable: false },
+  ], view: { start: now - 24 * HOUR, end: futureEnd.getTime(), focusedAt: now } });
+  const futureBand = page.locator(`#timeline .day-band[data-start="${tomorrow.getTime()}"]`);
+  await expect(futureBand).toHaveCount(1);
+  const duringStop = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.stop();
+    return { end: timeline.domainEnd, baseEnd: timeline.baseDomainEnd,
+      futureBands: [...timeline.dayRow.querySelectorAll('.day-band')].filter(band => Number(band.dataset.start) > Date.now()).length };
+  });
+  expect(duringStop.end).toBeGreaterThanOrEqual(duringStop.baseEnd);
+  expect(duringStop.futureBands).toBeGreaterThan(0);
+  await expect(futureBand).toHaveCount(1);
+});
+
+test('a viewport refresh keeps the selected week’s future days after panning to today', async ({ page }) => {
+  const now = new Date(2026, 9, 16, 12).getTime();
+  await page.clock.install({ time: new Date(now) });
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const weekEnd = new Date(monday);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const futureDay = new Date(now);
+  futureDay.setHours(0, 0, 0, 0);
+  futureDay.setDate(futureDay.getDate() + 1);
+  const items = [
+    { id: 'entry:a', title: 'Completed', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, isEditable: true },
+    { id: 'active:b', title: 'Running', startedAt: now - 30 * 60_000, endedAt: null, isRunning: true, isEditable: false },
+  ];
+  const range = { start: monday.getTime(), end: weekEnd.getTime() };
+  await mount(page, { items, totalRange: range, view: { ...range, focusedAt: now } });
+  const futureBand = page.locator(`#timeline .day-band[data-start="${futureDay.getTime()}"]`);
+  await expect(futureBand).toHaveCount(1);
+  await page.evaluate(now => {
+    const timeline = window.__timeline.__timeline;
+    timeline.setVisibleDays(1);
+    timeline._setScrollLeft(timeline.timeToX(now) - timeline._viewportWidthNow() / 2);
+  }, now);
+  await expect.poll(() => page.evaluate(() => window.__timeline.getView().end)).toBeLessThan(range.end);
+  await page.evaluate(() => window.__timeline.update({ items: window.__items }));
+  await expect(futureBand).toHaveCount(1);
+  expect(await page.evaluate(() => window.__timeline.__timeline.domainEnd)).toBeGreaterThanOrEqual(range.end);
+  await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.setVisibleDays(2);
+    timeline.scrollToEnd();
+  });
+  expect(await page.evaluate(start => {
+    const timeline = window.__timeline.__timeline;
+    const viewport = timeline.viewport.getBoundingClientRect();
+    const bounds = timeline.dayRow.querySelector(`.day-band[data-start="${start}"]`).getBoundingClientRect();
+    return bounds.right > viewport.left && bounds.left < viewport.right;
+  }, futureDay.getTime())).toBe(true);
+});
+
+test('remounting a cropped Timeline viewport retains all days in the selected week', async ({ page }) => {
+  const now = new Date(2026, 9, 16, 12).getTime();
+  await page.clock.install({ time: new Date(now) });
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const weekEnd = new Date(monday);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const saturday = new Date(monday);
+  saturday.setDate(saturday.getDate() + 5);
+  await mount(page, {
+    items: [{ id: 'active:b', title: 'Running', startedAt: now - 30 * 60_000,
+      endedAt: null, isRunning: true, isEditable: false }],
+    totalRange: { start: monday.getTime(), end: weekEnd.getTime() },
+    view: { start: now - 24 * HOUR, end: now, focusedAt: now },
+  });
+  await expect(page.locator(`#timeline .day-band[data-start="${saturday.getTime()}"]`)).toHaveCount(1);
+  expect(await page.evaluate(() => window.__timeline.__timeline.domainEnd)).toBeGreaterThanOrEqual(weekEnd.getTime());
+});
+
+test('Timeline keeps the original minimum widths and task spacing in a weekly view', async ({ page }) => {
+  const now = Date.now();
+  const first = now - 8 * HOUR;
+  await mount(page, { items: [
+    { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
+    { id: 'entry:b', title: 'Second', startedAt: first + 2 * HOUR, endedAt: first + 2.5 * HOUR, isEditable: true },
+  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: first } });
+  const geometry = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return timeline.tasks.map(task => ({ width: timeline._taskElementByKey(task._key).getBoundingClientRect().width,
+      axisWidth: task.x1 - task.x0 }));
+  });
+  expect(geometry[0].width).toBeGreaterThanOrEqual(30);
+  expect(geometry[1].width).toBeGreaterThanOrEqual(30);
+  expect(geometry[0].axisWidth).toBeCloseTo(geometry[0].width, 1);
+  expect(geometry[1].axisWidth).toBeCloseTo(geometry[1].width, 1);
+});
+
+test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const base = today.getTime();
+  await mount(page, { items: [
+    { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 10 * HOUR, endedAt: base + 11 * HOUR, isEditable: true },
+    { id: 'entry:b', url: 'https://example.com/b', startedAt: base + 13 * HOUR, endedAt: base + 13 * HOUR + 5 * 60_000, isEditable: true },
+    { id: 'entry:c', url: 'https://example.com/c', startedAt: base + 11 * HOUR + 40 * 60_000, endedAt: base + 12 * HOUR, isEditable: true },
+  ], view: { start: base, end: base + 24 * HOUR, focusedAt: base + 11 * HOUR } });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first();
+  await source.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  const geometry = () => page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const fixed = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+    return { hour: timeline._calendarMetrics.verticalMap.toY(12 * 60), fixedTop: Number.parseFloat(fixed.style.top) };
+  });
+  const before = await geometry();
+  const from = await source.boundingBox();
+  const destination = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const rect = timeline.calendarCanvas.getBoundingClientRect();
+    const day = timeline._calendarDayIndexForTime(timeline._findTask('entry:b').start);
+    return { x: rect.left + timeline._calendarMetrics.timeAxisWidth + (day + 0.5) * timeline._calendarMetrics.dayWidth,
+      y: rect.top + timeline._calendarMetrics.headerHeight + timeline._calendarMetrics.verticalMap.toY(11 * 60 + 30) };
+  });
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(destination.x, destination.y, { steps: 8 });
+  expect(await geometry()).toEqual(before);
+  const boxes = await Promise.all(['b', 'c'].map(async key => page.locator(`#timeline .calendar-task[data-task-key="entry:${key}"]`).first().boundingBox()));
+  expect(boxes[0].y + boxes[0].height).toBeLessThanOrEqual(boxes[1].y);
+  await page.mouse.up();
+  expect((await geometry()).fixedTop).toBe(before.fixedTop);
+});
+
+test('Calendar recomputes short-entry spacing after pointer release and a same-week refresh', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+  const day = new Date('2026-10-16T16:00:00Z'); day.setHours(0, 0, 0, 0);
+  const base = day.getTime();
+  const original = { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 15 * HOUR,
+    endedAt: base + 15 * HOUR + 60_000, isEditable: true };
+  await mount(page, { items: [original], view: { start: base, end: base + 24 * HOUR, focusedAt: original.startedAt } });
+  await page.evaluate(base => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.__timeline.setCalendarRange({ start: base, end: base + 24 * 60 * 60_000 });
+  }, base);
+  const a = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await expect(a).toBeVisible();
+  await a.hover();
+  await page.mouse.down();
+  expect(await page.evaluate(() => Boolean(window.__timeline.__timeline._calendarPinnedVerticalMap))).toBe(true);
+  await page.mouse.up();
+  await page.evaluate(base => window.__timeline.update({ items: [{
+    id: 'entry:a', url: 'https://example.com/a', startedAt: base + 10 * 60 * 60_000,
+    endedAt: base + 10 * 60 * 60_000 + 60_000, isEditable: true,
+  }, {
+    id: 'entry:b', url: 'https://example.com/b', startedAt: base + 10 * 60 * 60_000 + 2 * 60_000,
+    endedAt: base + 10 * 60 * 60_000 + 3 * 60_000, isEditable: true,
+  }], now: Date.now() }), base);
+  const bounds = await page.evaluate(() => {
+    const canvas = window.__timeline.__timeline.calendarCanvas;
+    const first = canvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+    const second = canvas.querySelector('.calendar-task[data-task-key="entry:b"]');
+    return { firstBottom: first.getBoundingClientRect().bottom, secondTop: second.getBoundingClientRect().top };
+  });
+  expect(bounds.firstBottom).toBeLessThanOrEqual(bounds.secondTop);
+});
+
 test('hydrates running and pending entries with Clockoli block styling', async ({ page }) => {
   await mount(page);
   const state = await page.evaluate(() => ({
