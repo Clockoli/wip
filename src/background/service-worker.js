@@ -531,7 +531,8 @@ async function loadTasks(message, sender) {
         ...(operation.entry ? { entry: { ...operation.entry, destinationId, timeRepository: destination?.label || `${destination?.owner}/${destination?.repo}` } } : {}),
       }));
     });
-    const availableUsers = [...new Set(loaded.records.map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    const availableUsers = [...new Set([...loaded.records, ...(active ? [active] : [])]
+      .map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
     const selectedUsers = selectTaskUsers(availableUsers, currentUsers, message.payload);
     return {
       configured: true,

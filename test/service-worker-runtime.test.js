@@ -338,6 +338,8 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(reports, /includeStorageMetadata: true/);
   assert.match(tasks, /includeStorageMetadata: true/);
   assert.match(tasks, /selectTaskUsers\(availableUsers, currentUsers, message\.payload\)/);
+  assert.match(tasks, /\.\.\.loaded\.records, \.\.\.\(active \? \[active\] : \[\]\)/,
+    'An active-only task should not disappear when no completed entries exist for its owner');
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
 });
 

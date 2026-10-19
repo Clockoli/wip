@@ -67,6 +67,14 @@ test('tracked tasks aggregate current users by URL with sorted destination prove
   }]);
 });
 
+test('active-only tasks remain selectable even when nobody has completed entries', () => {
+  const running = { user: 'alice', issue: issue(42), startedAt: '2026-08-20T11:00:00.000Z' };
+  const users = [running].map(item => item.user);
+  const selected = selectTaskUsers(users, { 'github:1': 'alice' });
+  const tasks = aggregateTrackedTasks([], { currentUsers: selected, active: running });
+  assert.deepEqual(tasks.map(task => task.taskUrl), [running.issue.url]);
+});
+
 test('an empty selected-user set is an empty Top tasks result, not a missing-owner error', () => {
   assert.deepEqual(aggregateTrackedTasks([], { currentUsers: [] }), []);
   assert.deepEqual(aggregateTrackedTasks([record(issue(1), 60, '2026-08-20')], { currentUsers: [] }), []);
