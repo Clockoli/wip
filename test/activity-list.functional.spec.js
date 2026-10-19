@@ -129,7 +129,7 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
         "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: recent.slice(0, 4) } });");
     await writeFile(join(extension, 'test-worker.js'), denseWeek);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -188,7 +188,7 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -263,7 +263,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
         "else if (message.type === 'GET_PAGE_STATE') { if (message.refresh) (globalThis.pageRefreshReplies ||= []).push(respond); else respond({ ok: true, data: state() }); return true; }");
     await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -475,7 +475,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -717,7 +717,7 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest) + '\n');
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

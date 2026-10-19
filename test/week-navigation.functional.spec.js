@@ -248,7 +248,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -630,7 +630,7 @@ test('Activity Calendar focuses daytime records after disabling and re-enabling 
       .replace('active, pendingWrites: []', 'active: null, pendingWrites: []');
     await writeFile(join(extension, 'test-worker.js'), daytimeWorker);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

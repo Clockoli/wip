@@ -138,7 +138,7 @@ git diff --check
 
 Run `npm run test:options:functional` for the Settings repository-disclosure, access-menu, and device-code handoff Chromium checks. These load a temporary extension with synthetic responses and perform no GitHub access mutations. CI runs them under Xvfb.
 
-Run `npm run test:activity:functional` for the Activity List and weekly Timeline/Calendar browser checks on the Activity page and GitHub panel. These use a temporary extension with synthetic responses; CI runs them under Xvfb.
+Run `npm run test:activity:functional` for the Activity List, Add time, and weekly Timeline/Calendar browser checks on the Activity page and GitHub panel. These use a temporary extension with synthetic responses and run headless locally; CI runs them under Xvfb.
 
 ## Browser verification
 
