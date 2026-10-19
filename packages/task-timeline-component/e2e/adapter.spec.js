@@ -845,9 +845,9 @@ test('direct-connection tooltips do not mention seconds in Timeline or Calendar'
       { id: 'entry:next', title: 'Next', startedAt: start + 3_601_000, endedAt: start + 5_400_000, rowId: 'one', isEditable: true },
     ],
   });
-  await expect(page.locator('#timeline .connector-dot')).toHaveAttribute('title', 'First → Next: connected');
+  await expect(page.locator('#timeline .connector-dot')).toHaveAttribute('data-clockoli-tooltip', 'First → Next: connected');
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  await expect(page.locator('#timeline .calendar-connector-dot').first()).toHaveAttribute('title', 'First → Next: connected');
+  await expect(page.locator('#timeline .calendar-connector-dot').first()).toHaveAttribute('data-clockoli-tooltip', 'First → Next: connected');
 });
 
 test('switches Timeline and Calendar without losing running state', async ({ page }) => {
@@ -2286,7 +2286,7 @@ test('Calendar task cards show description only when the card has room', async (
   const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]');
   const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar\nDescription\nMore detail');
-  await expect(tall.locator('.clockoli-calendar-description')).toHaveAttribute('title', 'Calendar\nDescription\nMore detail');
+  await expect(tall.locator('.clockoli-calendar-description')).toHaveAttribute('data-clockoli-tooltip', 'Calendar\nDescription\nMore detail');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveCSS('-webkit-line-clamp', '2');
   await expect(tall.locator('.clockoli-calendar-description')).toHaveCSS('white-space', 'pre-line');
   await expect(short.locator('.clockoli-calendar-description')).toHaveCount(0);

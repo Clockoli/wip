@@ -458,7 +458,7 @@ test('participant tracked totals render during idle time and refresh after lazy 
   idleCallbacks.shift()();
   const aliceTotal = alice.querySelector('.clockoli-participant-time');
   assert.equal(aliceTotal?.textContent, '2m');
-  assert.equal(aliceTotal?.title, 'Alice tracked 2m');
+  assert.equal(aliceTotal?.getAttribute('data-clockoli-tooltip'), 'Alice tracked 2m');
   assert.equal(alice.style.display, 'inline-flex');
   assert.equal(bob.querySelector('.clockoli-participant-time'), null, 'timeline-only actors are not presented as complete totals');
   assert.equal(carol.querySelector('.clockoli-participant-time'), null, 'participants without tracked time remain unchanged');
@@ -603,7 +603,7 @@ test('stale participant responses cannot cross SPA routes and active time stays 
   await new Promise(resolve => setTimeout(resolve, 0));
   while (idleCallbacks.length) idleCallbacks.shift()();
   assert.equal(bob.querySelector('.clockoli-participant-time')?.textContent, '3m');
-  assert.match(bob.querySelector('.clockoli-participant-time')?.title || '', /including the active timer/);
+  assert.match(bob.querySelector('.clockoli-participant-time')?.getAttribute('data-clockoli-tooltip') || '', /including the active timer/);
 
   participantCallbacks.get(firstUrl)({ ok: true, data: {
     configured: true, complete: true, taskUrl: firstUrl,

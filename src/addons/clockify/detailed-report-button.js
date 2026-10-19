@@ -492,7 +492,7 @@
     button.id = BUTTON_ID;
     button.type = 'button';
     button.setAttribute('aria-label', 'Migrate Clockify history into Clockoli');
-    button.title = 'Migrate Clockify history into Clockoli';
+    button.dataset.clockoliTooltip = 'Migrate Clockify history into Clockoli';
     button.setAttribute('data-clockoli-ui', 'clockify-detailed-report');
     Object.assign(button.style, {
       alignItems: 'center', background: '#fff', border: '1px solid rgba(255, 255, 255, 0.82)', borderRadius: '10px',
@@ -533,7 +533,7 @@
     button.id = PAGE_BUTTON_ID;
     button.type = 'button';
     button.setAttribute('aria-label', 'Migrate Clockify history page by page into Clockoli');
-    button.title = 'Migrate Clockify history page by page without downloading CSV files';
+    button.dataset.clockoliTooltip = 'Migrate Clockify history page by page without downloading CSV files';
     button.setAttribute('data-clockoli-ui', 'clockify-detailed-report');
     button.textContent = 'Page to page migration';
     Object.assign(button.style, {
@@ -741,7 +741,7 @@
     const status = statusElement();
     if (armed) {
       button.setAttribute('aria-label', 'Clockoli migration capture is armed. Click to cancel.');
-      button.title = 'Clockoli migration capture is armed. Click to cancel.';
+      button.dataset.clockoliTooltip = 'Clockoli migration capture is armed. Click to cancel.';
       setCaptureButtonLabel(button, 'Cancel CSV migration');
       button.style.background = '#0f6b3a';
       button.style.color = '#fff';
@@ -750,7 +750,7 @@
       renderCaptureProgress(status, true, captureHistory);
     } else {
       button.setAttribute('aria-label', 'Migrate Clockify history into Clockoli');
-      button.title = 'Migrate Clockify history into Clockoli';
+      button.dataset.clockoliTooltip = 'Migrate Clockify history into Clockoli';
       setCaptureButtonLabel(button, 'CSV migration');
       button.style.background = '#fff';
       button.style.color = '#0f6b3a';
@@ -1019,6 +1019,7 @@
     setTimeout(waitForToolbar, 250);
   }
 
+  globalThis.ClockoliInstantTooltips?.attach(document, { selector: '[data-clockoli-ui="clockify-detailed-report"]' });
   restoreCaptureArm();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

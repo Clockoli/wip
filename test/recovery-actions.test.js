@@ -39,6 +39,7 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
   assert.deepEqual(JSON.parse(manifest).content_scripts[0].js, [
     'src/domain/recovery-actions.js',
     'src/ui/tracking-card.js',
+    'src/ui/instant-tooltips.js',
     'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);

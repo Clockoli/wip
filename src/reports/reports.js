@@ -285,7 +285,7 @@ function setInvoiceAvailable(filtered) {
   else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, recordDate(record)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
-  if (reason) control.setAttribute('title', reason); else control.removeAttribute('title');
+  if (reason) control.setAttribute('data-clockoli-tooltip', reason); else control.removeAttribute('data-clockoli-tooltip');
 }
 
 function setInvoiceActionsAvailable(available) {

@@ -354,10 +354,10 @@ test('custom-period editing cancels pending work without clearing the displayed 
 test('invoice entry point explains empty and unrated filtered sets', async () => {
   const empty = await loaded(result([]));
   assert.equal(empty.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
-  assert.equal(empty.nodes.get('create-invoice').attributes.title, 'No entries in this period to invoice');
+  assert.equal(empty.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No entries in this period to invoice');
   const unrated = await loaded(result([record('alice')]));
   assert.equal(unrated.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
-  assert.equal(unrated.nodes.get('create-invoice').attributes.title, 'No hourly rate covers these entries. Add rates in Settings.');
+  assert.equal(unrated.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No hourly rate covers these entries. Add rates in Settings.');
 });
 
 test('invoice dialog renders the filtered records and reserves one number across repeated prints', async () => {
