@@ -387,18 +387,48 @@ function renderInvoiceExtraLines() {
   const container = $('invoice-extra-lines'); container.replaceChildren();
   for (const line of state.invoiceExtraLines) {
     const row = invoiceNode('div', 'invoice-extra-row'), descriptionLabel = invoiceNode('label', '', 'Description'), amountLabel = invoiceNode('label', '', 'Amount');
-    const description = invoiceNode('input'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary', '✕');
-    description.type = 'text'; description.maxLength = 200; description.required = true; description.value = line.description;
+    const description = invoiceNode('textarea'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary', '✕');
+    description.rows = 1; description.maxLength = 200; description.required = true; description.value = line.description;
+    const more = invoiceNode('small', 'invoice-description-more', '↓ More lines — scroll'); more.hidden = true;
+    const resizeDescription = () => {
+      const count = description.value.split('\n').length;
+      description.rows = Math.min(8, Math.max(1, count));
+      description.style.height = 'auto';
+      const height = Number(description.scrollHeight) || 0;
+      const clipped = count > 8 || height > 180 + 1;
+      if (height) description.style.height = `${Math.min(180, Math.max(32, height))}px`;
+      description.style.overflowY = clipped ? 'auto' : 'hidden';
+      more.hidden = !clipped;
+    };
     amount.type = 'number'; amount.step = '0.01'; amount.required = true; amount.value = line.amount;
     remove.type = 'button'; remove.setAttribute('aria-label', 'Remove additional line');
-    for (const [input, key] of [[description, 'description'], [amount, 'amount']]) input.addEventListener('change', () => {
-      line[key] = input.value; resetInvoiceReservation(); void rebuildInvoicePreview();
+    const applied = invoiceNode('span', 'invoice-description-applied', '✓ Applied');
+    applied.setAttribute('role', 'status'); applied.hidden = true;
+    const applyDescription = async () => {
+      const value = description.value.replace(/\r\n?/g, '\n');
+      if (line.description === value) { applied.hidden = !state.invoice; return; }
+      line.description = value;
+      resetInvoiceReservation();
+      applied.hidden = true;
+      const success = await rebuildInvoicePreview();
+      if (success && line.description === value && description.value.replace(/\r\n?/g, '\n') === value) applied.hidden = false;
+    };
+    description.addEventListener('input', () => { resizeDescription(); applied.hidden = true; });
+    description.addEventListener('change', applyDescription);
+    description.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault(); applyDescription();
+    });
+    amount.addEventListener('change', () => {
+      if (line.amount === amount.value) return;
+      line.amount = amount.value; resetInvoiceReservation(); void rebuildInvoicePreview();
     });
     remove.addEventListener('click', () => {
       state.invoiceExtraLines = state.invoiceExtraLines.filter(item => item !== line);
       renderInvoiceExtraLines(); $('invoice-add-line').focus(); resetInvoiceReservation(); void rebuildInvoicePreview();
     });
-    descriptionLabel.append(description); amountLabel.append(amount); row.append(descriptionLabel, amountLabel, remove); container.append(row);
+    descriptionLabel.append(description, applied, more); amountLabel.append(amount); row.append(descriptionLabel, amountLabel, remove); container.append(row);
+    resizeDescription();
   }
   $('invoice-add-line').disabled = state.invoiceExtraLines.length >= 20;
 }
@@ -419,7 +449,7 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
-  if (!state.range || state.loading) return;
+  if (!state.range || state.loading) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
   $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null; showInvoiceEmpty();
@@ -431,14 +461,15 @@ async function rebuildInvoicePreview() {
       if (payload.sourceCurrencies.length) {
         showInvoiceLoading();
         const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...payload, requestId: `invoice-${state.requestId}-${requestId}` } });
-        if (requestId !== state.invoiceRequestId) return;
+        if (requestId !== state.invoiceRequestId) return false;
         exchangeRates = result.rates;
       }
     }
     const invoice = buildInvoice(filtered, invoiceBuildOptions(prospectiveInvoiceSequence(), exchangeRates));
-    if (requestId !== state.invoiceRequestId) return;
+    if (requestId !== state.invoiceRequestId) return false;
     state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice); setInvoiceActionsAvailable(true);
-  } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); }
+    return true;
+  } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); return false; }
 }
 
 function prepareInvoiceControls(filtered) {

@@ -109,6 +109,19 @@ test('running elapsed time participates in total-time ordering without mutating 
 });
 
 
+test('Top tasks ignores a stale activeStartedAt after Stop clears the active timer', () => {
+  const now = Date.parse('2026-08-20T12:00:00.000Z');
+  const cases = [issue(9).url, 'acme/project/imported-task'];
+  for (const taskUrl of cases) {
+    const task = { taskUrl, totalSeconds: 600, activeStartedAt: '2026-08-20T11:00:00.000Z' };
+    assert.equal(effectiveTrackedSeconds(task, { active: null, now }), 600);
+    assert.equal(effectiveTrackedSeconds(task, { now }), 600);
+    assert.deepEqual(sortTrackedTasks([task], { active: null, now }), [task]);
+    assert.equal(effectiveTrackedSeconds(task, { active: { taskUrl: 'https://example.com/other' }, now }), 600);
+    assert.equal(effectiveTrackedSeconds(task, { active: { taskUrl }, now }), 4200);
+  }
+});
+
 test('provider status metadata is not exposed in URL-first tracked-task results', () => {
   const completed = issue(10);
   const [task] = aggregateTrackedTasks([record(completed, 60, '2026-08-20')], {

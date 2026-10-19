@@ -112,10 +112,12 @@ test('extra lines append after time, remain in target currency, and affect tax w
 });
 
 test('extra lines validate descriptions, signed safe integer amounts and the twenty-line limit', () => {
+  assert.deepEqual(buildInvoice([], { ...options, currency: 'EUR', extraLines: [{ description: 'Weekend\nResearch', amountMinor: 500 }] }).lines,
+    [{ description: 'Weekend\nResearch', amountMinor: 500 }]);
   const line = { description: 'x'.repeat(200), amountMinor: 0 };
   assert.equal(buildInvoice([record], { ...options, extraLines: Array(20).fill(line) }).lines.length, 21);
   for (const extraLines of [null, {}, Array(21).fill(line), [null], [{ ...line, description: ' ' }], [{ ...line, description: 'x'.repeat(201) }],
-    ...['x\n', '\tx', 'x\u007f', 'x\u0085', 12].map(description => [{ ...line, description }]),
+    ...['x\r', '\tx', 'x\u007f', 'x\u0085', 12].map(description => [{ ...line, description }]),
     ...[1.1, NaN, Infinity, '100', Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1].map(amountMinor => [{ ...line, amountMinor }])]) {
     assert.throws(() => buildInvoice([record], { ...options, extraLines }), /extra line/i);
   }

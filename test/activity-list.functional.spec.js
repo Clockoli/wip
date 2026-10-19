@@ -47,6 +47,21 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   else if (message.type === 'BULK_ADD_TIMES') respond(globalThis.bulkAddFailure
     ? { ok: false, error: { message: 'Line 1: Invalid time entry' } }
     : { ok: true, data: { added: 4 } });
+  else if (message.type === 'QUEUE_ENTRIES_EDIT') {
+    for (const edit of message.payload.entries) {
+      const target = recent.find(item => item.id === edit.original.id);
+      if (target) Object.assign(target, edit.edits);
+    }
+    respond({ ok: true, data: { operationId: 'local-description-edit' } });
+  }
+  else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+    if (!active || active.id !== message.payload.original.id) {
+      respond({ ok: false, error: { message: 'No matching running timer' } });
+    } else {
+      active = { ...active, description: message.payload.description };
+      respond({ ok: true, data: { operationId: 'local-running-description' } });
+    }
+  }
   else if (message.type === 'START') {
     active = { id: 'quick-running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
       startedAt: new Date(Date.now() - 120000).toISOString(),
@@ -58,7 +73,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       startedAt: new Date().toISOString(), entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' };
     respond({ ok: true, data: { active, pending: false } });
   } else if (message.type === 'STOP') {
-    const completed = { ...active, endedAt: new Date().toISOString(), durationSeconds: 120 };
+    const completed = { ...active, description: message.description ?? active.description ?? '',
+      endedAt: new Date().toISOString(), durationSeconds: 120 };
     active = null;
     const localEntry = { ...completed, _path: 'times/' + completed.entryDate.slice(0, 7) + '/alice.jsonl',
       _sha: null, _index: -1, _pending: true, destinationId: 'github:1' };
@@ -193,6 +209,23 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     }
     expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '0px']);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-activity-list-days-desktop.png') });
+    const edited = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
+    await edited.hover();
+    await edited.locator('.entry-edit').click();
+    const description = edited.locator('.inline-description');
+    await expect(description).toHaveJSProperty('tagName', 'TEXTAREA');
+    await description.fill(['One', 'Two', 'Three', 'Four', 'Five', 'Six'].join('\n'));
+    await expect.poll(() => description.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
+    await description.fill(Array.from({ length: 18 }, (_, index) => `Note ${index + 1}`).join('\n'));
+    await expect(edited.locator('.description-overflow-hint')).toBeVisible();
+    await description.fill('First line');
+    await description.press('Shift+Enter');
+    await description.pressSequentially('Second line');
+    await expect(description).toHaveValue('First line\nSecond line');
+    await description.press('Enter');
+    await expect(edited.locator('.entry-description-saved')).toHaveText('✓ Saved');
+    expect(await edited.locator('.entry-description-link').textContent()).toBe('First line\nSecond line');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ENTRIES_EDIT'))).toEqual(['QUEUE_ENTRIES_EDIT']);
     const start = page.locator('.activity-list').getByRole('button', { name: 'Start tracking Activity test task' });
     await expect(start).toBeVisible({ timeout: 5000 });
     await start.locator('xpath=ancestor::*[contains(@class,"entry-record")][1]').hover();
@@ -204,6 +237,16 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(strip.locator('.running-status-live')).toHaveText('Tracking now');
     await expect(strip.locator('.running-status-task')).toHaveText('Activity test task');
     await expect(strip.locator('.running-status-metrics')).toBeVisible();
+    const runningDescription = strip.getByRole('textbox', { name: 'Description' });
+    await expect(runningDescription).toBeVisible();
+    await runningDescription.fill('First line');
+    await runningDescription.press('Shift+Enter');
+    await runningDescription.pressSequentially('Second line');
+    await expect(runningDescription).toHaveValue('First line\nSecond line');
+    await runningDescription.press('Enter');
+    await expect(strip.locator('.running-status-description-saved')).toHaveText('✓ Saved');
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ACTIVE_START_EDIT').length)).toBe(1);
+    await runningDescription.fill('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
     await expectFullWidthActivitySearch(page);
@@ -221,8 +264,12 @@ test('Activity List icon switches from Start to Stop and back in the extension p
       groups: [...document.querySelector('#clockoli-times-root').shadowRoot.querySelectorAll('.activity-list .entry')]
         .map(group => ({ right: group.getBoundingClientRect().right, width: group.getBoundingClientRect().width })) }));
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
-    await stop.click({ timeout: 5000 });
+    await runningDescription.press('Tab');
+    const saveTime = strip.getByRole('button', { name: 'Stop and save' });
+    await expect(saveTime).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(start).toBeVisible();
+    expect(await worker.evaluate(() => locallyStopped[0]?.description)).toBe('Finished work\nReviewed changes');
     // Stop was accepted locally, but the synthetic worker deliberately keeps
     // the completion pending and never writes it to the remote history.
     await page.getByRole('button', { name: 'Next week' }).click();

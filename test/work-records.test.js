@@ -78,6 +78,20 @@ test('monthly JSONL round-trips completed records and derives duration', () => {
   assert.equal(parsed[1].taskUrl, 'https://example.com/work?q=42');
 });
 
+test('multiline descriptions survive active JSON, monthly JSONL and edit round-trips', () => {
+  const multiline = 'Research notes\n- first finding\n\n- second finding\n日本語 \u{1f642}';
+  const timer = { ...active, description: multiline };
+  const serializedActive = serializeActiveRecord(timer);
+  assert.equal(JSON.parse(serializedActive).description, multiline);
+  assert.equal(parseActiveRecord(serializedActive, { user: 'alice' }).description, multiline);
+  const completed = buildEntry({ active: timer, endedAt: '2026-08-18T16:15:30.000Z' });
+  const stored = serializeMonthlyRecords([completed]);
+  assert.equal(stored.trim().split('\n').length, 1, 'a literal newline must not create another JSONL record');
+  assert.equal(parseMonthlyRecords(stored, context())[0].description, multiline);
+  const edited = applyEntryEdits(completed, { description: 'Updated\nparagraph' });
+  assert.equal(parseMonthlyRecords(serializeMonthlyRecords([edited]), context())[0].description, 'Updated\nparagraph');
+});
+
 test('unresolved imported identities round-trip as work records and appear in Top tasks', () => {
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const stored = JSON.parse(serializeMonthlyRecords([entry]));

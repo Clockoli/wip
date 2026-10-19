@@ -564,7 +564,7 @@ export class TrackerService {
     };
   }
 
-  async switchTask(taskUrl, taskTitle = '', description = '', { background = false } = {}) {
+  async switchTask(taskUrl, taskTitle = '', description, { background = false } = {}) {
     const targetUrl = normalizeStoredTaskIdentity(taskUrl);
     if (background) return this.queueTaskSwitch(targetUrl, taskTitle, description);
     const current = await this.refreshActive();
@@ -575,7 +575,7 @@ export class TrackerService {
     return { stopped, active: await this.start(targetUrl, taskTitle, '') };
   }
 
-  async queueTaskSwitch(targetUrl, taskTitle = '', description = '') {
+  async queueTaskSwitch(targetUrl, taskTitle = '', description) {
     const state = await this.store.getState();
     const current = state.activeCache;
     if (!current) return { stopped: null, active: await this.queueStart(targetUrl, taskTitle, ''), pending: true };
@@ -603,13 +603,13 @@ export class TrackerService {
     return { stopped: { entry, localEntry: pendingEntry, pending: true }, active: pendingActive, pending: true };
   }
 
-  stop(description = '', { background = false } = {}) {
+  stop(description, { background = false } = {}) {
     const result = this.stopTail.then(() => background ? this.queueStop(description) : this.stopInternal(description));
     this.stopTail = result.catch(() => {});
     return result;
   }
 
-  async queueStop(description = '') {
+  async queueStop(description) {
     const state = await this.store.getState();
     const active = state.activeCache;
     if (!active) throw new Error('No timer is running');
@@ -624,7 +624,7 @@ export class TrackerService {
     return { entry, localEntry: pendingEntry, pending: true };
   }
 
-  prepareQueuedStop(active, description = '', { endedAt = this.clock() } = {}) {
+  prepareQueuedStop(active, description, { endedAt = this.clock() } = {}) {
     const persistedActive = stripInternal(active);
     validateActiveTimer(persistedActive);
     const end = new Date(endedAt), id = persistedActive.id;
@@ -665,7 +665,7 @@ export class TrackerService {
     });
   }
 
-  async stopInternal(description = '') {
+  async stopInternal(description) {
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).some(operation => operation.nextActive)) {
       throw new Error('The task switch is still syncing. Wait for it to finish before stopping.');

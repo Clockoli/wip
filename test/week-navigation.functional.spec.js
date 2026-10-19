@@ -33,6 +33,7 @@ const crossing = { id: 'cross-week', taskUrl: 'https://github.com/acme/app/issue
   durationSeconds: (mondayEnd.getTime() - saturday.getTime()) / 1000,
   _path: 'times/' + day(saturday).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 3 };
 globalThis.weekReads = [];
+globalThis.activeDescriptionEdits = [];
 globalThis.includeCrossWeek = false;
 globalThis.holdNextWeekRead = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
@@ -44,7 +45,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (globalThis.holdNextWeekRead) { globalThis.holdNextWeekRead = false; globalThis.finishHeldWeekRead = finish; return true; }
     finish();
   } else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { configured: true, active, recent: [current] } });
-  else if (message.type === 'GET_PAGE_STATE' || message.type === 'GET_STATE') {
+  else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+    // Acknowledged edits are durable locally: page-state reads must see them
+    // immediately, even while the GitHub push remains pending.
+    active.description = message.payload.description;
+    globalThis.activeDescriptionEdits.push(message.payload);
+    respond({ ok: true, data: { operationId: 'active-description-edit' } });
+  } else if (message.type === 'GET_PAGE_STATE' || message.type === 'GET_STATE') {
     respond({ ok: true, data: { configured: true, active, pendingWrites: [], pendingCount: 0,
       projects: [{ name: 'Issue work', substrings: ['/acme/app/issues/42'] }, { name: 'Unused', substrings: ['/other/repo/'] }] } });
   } else respond({ ok: true, data: {} });
@@ -423,9 +430,30 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await page.goto('https://github.com/acme/app/issues/42');
     const githubRoot = page.locator('#clockoli-root');
     await expect(githubRoot).toBeVisible();
+    await worker.evaluate(() => { active.description = ['First line', 'Second line', 'Third line', 'Fourth line'].join('\n'); });
     await githubRoot.locator('.trigger-main').click();
     const popupRoot = page.locator('#clockoli-full-width-popup-root');
     await expectRunningCardFits(popupRoot);
+    const runningDescription = popupRoot.locator('.strip-description');
+    await expect(runningDescription).toHaveJSProperty('tagName', 'TEXTAREA');
+    await expect(runningDescription).toHaveValue('First line\nSecond line\nThird line\nFourth line');
+    await expect.poll(() => runningDescription.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
+    await runningDescription.fill('First line');
+    await runningDescription.press('Shift+Enter');
+    await runningDescription.pressSequentially('Second line');
+    await expect(runningDescription).toHaveValue('First line\nSecond line');
+    await runningDescription.press('Enter');
+    await expect.poll(() => worker.evaluate(() => globalThis.activeDescriptionEdits.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.activeDescriptionEdits[0].description)).toBe('First line\nSecond line');
+    await expect(popupRoot.locator('.description-saved')).toHaveText('✓ Saved');
+    await expect(popupRoot.locator('.active-task-strip.is-active')).toBeVisible();
+    await runningDescription.fill('Finished work\nReviewed changes');
+    await runningDescription.press('Tab');
+    const stopAndSave = popupRoot.getByRole('button', { name: 'Stop and save' });
+    await expect(stopAndSave).toBeFocused();
+    await expect.poll(() => worker.evaluate(() => globalThis.activeDescriptionEdits.length)).toBe(2);
+    await expect(stopAndSave).toBeFocused();
+    expect(await worker.evaluate(() => globalThis.activeDescriptionEdits[1].description)).toBe('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-popup-active-before.png') });
     await expectViewTabsBelowTracking(popupRoot);
     await page.setViewportSize({ width: 1280, height: 600 });

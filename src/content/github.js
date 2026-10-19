@@ -94,6 +94,17 @@
   let timelineDeleteInFlight = false;
   let timelineScrollToRightPending = false;
   const inlineQueuedOperationIds = new Set();
+  const inlineSavedNotices = new Map();
+  function markInlineSaved(key) {
+    const stamp = Date.now();
+    inlineSavedNotices.set(key, stamp);
+    setTimeout(() => {
+      if (inlineSavedNotices.get(key) === stamp) {
+        inlineSavedNotices.delete(key);
+        if (extensionContextActive) renderUi();
+      }
+    }, 3000);
+  }
   const queueDiagnostics = [];
 
   let menuOpen = false, menuScrollTop = 0;
@@ -271,7 +282,24 @@
     return timelineOptimisticEdits.get(active.id || active.startedAt)?.description ?? active.description ?? '';
   }
   function normalizedDescription(value) {
-    return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+    return String(value || '').replace(/\r\n?/g, '\n').replace(/\t/g, ' ')
+      .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+  }
+  function fitDescriptionTextarea(field, { minRows = 1, maxRows = 8, maxHeight = 200, more = null } = {}) {
+    const count = String(field.value || '').split('\n').length;
+    // Rows work before a detached editor has any measurable scrollHeight.
+    field.rows = Math.min(maxRows, Math.max(minRows, count));
+    const measure = () => {
+      field.style.height = 'auto';
+      const height = Number(field.scrollHeight) || 0;
+      const clipped = count > maxRows || height > maxHeight + 1;
+      if (height) field.style.height = `${Math.min(maxHeight, Math.max(30, height))}px`;
+      field.style.overflowY = clipped ? 'auto' : 'hidden';
+      if (more) more.hidden = !clipped;
+    };
+    measure();
+    // Refresh after mounting: wrapping depends on the actual available width.
+    globalThis.requestAnimationFrame?.(() => { if (field.isConnected !== false) measure(); });
   }
   function retireActiveDescriptionDraft(active, value) {
     const id = active?.id || active?.startedAt;
@@ -1688,7 +1716,7 @@
             ? taskFromUrl(value.taskUrl, value.taskTitle)
             : { taskUrl: originalIdentity, taskTitle: value.metadataActive ? value.taskTitle : taskTitleOf(target) };
           if (!task?.taskUrl) throw new Error('Enter a valid HTTP(S) task URL.');
-          const description = String(value.metadataActive ? value.description : target.description || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+          const description = normalizedDescription(value.metadataActive ? value.description : target.description);
           const edits = { ...(task.taskUrl === originalIdentity && !taskUrlOf(target) ? {} : { taskUrl: task.taskUrl }),
             taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
           const changed = task.taskUrl !== originalIdentity || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
@@ -1709,6 +1737,7 @@
           if (current && JSON.stringify(current) === JSON.stringify(submitted)) { inlineDrafts.delete(draftKey); acceptedKeys.add(draftKey); }
         }
         clearBoundaryLinks(acceptedKeys);
+        for (const draftKey of acceptedKeys) markInlineSaved(draftKey);
         activeInlineKey = inlineDrafts.has(key) ? key : null; renderUi();
         void refreshState(false, false).catch(setError);
       } catch (error) { setError(error); }
@@ -1745,6 +1774,7 @@
 
   function beginMetadataEdit(entry, { focusTime = false } = {}) {
     const key = entryKey(entry);
+    inlineSavedNotices.delete(key);
     activeInlineKey = key;
     const existing = inlineDrafts.get(key);
     inlineDrafts.set(key, {
@@ -1815,13 +1845,18 @@
         const metadata = el('div', undefined, 'inline-metadata-editor');
         const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = taskUrlOf(entry) ? 'url' : 'text'; urlField.required = true; urlField.value = draft.taskUrl;
         const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
-        const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
+        const descriptionField = el('textarea'); descriptionField.className = 'inline-description'; descriptionField.rows = 2; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
+        const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+        fitDescriptionTextarea(descriptionField, { minRows: 2, more: descriptionMore });
+        descriptionField.addEventListener('input', () => fitDescriptionTextarea(descriptionField, { minRows: 2, more: descriptionMore }));
         const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
         const field = (labelText, input, saveLabel) => {
           const label = el('label', labelText), control = el('span', undefined, 'save-field');
           const save = saveCheckButton(saveLabel, async () => { updateMetadata(); await inline.saveGroup(); });
           save.disabled = disabled || inlineGroupSaves.has(draft.group || key);
-          control.append(input, save); label.append(control); return label;
+          control.append(input, save);
+          if (input === descriptionField) control.append(descriptionMore);
+          label.append(control); return label;
         };
         metadata.append(
           field(taskUrlOf(entry) ? 'Task URL' : 'Imported task identity (replace with an HTTP(S) URL)', urlField, 'Save task URL'),
@@ -1830,7 +1865,11 @@
         );
         for (const input of [urlField, titleField, descriptionField]) {
           input.disabled = disabled; input.addEventListener('input', updateMetadata);
-          input.addEventListener('keydown', event => { if (event.key === 'Enter' && event.isTrusted) { event.preventDefault(); updateMetadata(); void inline.saveGroup(); } });
+          input.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' || !event.isTrusted || event.isComposing || event.keyCode === 229
+                || (input === descriptionField && event.shiftKey)) return;
+            event.preventDefault(); updateMetadata(); void inline.saveGroup();
+          });
         }
         record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
       } else {
@@ -1838,6 +1877,7 @@
         description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
+    if (inlineSavedNotices.has(key)) record.append(el('span', '✓ Saved', 'description-saved entry-description-saved'));
     if (timesMode || popupMode || fullWidthPopupOpen) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
@@ -2968,7 +3008,8 @@
     const active = pageState.active, current = taskFromLocation();
     strip.classList.toggle('is-active', Boolean(active));
     const activeIdentity = active ? String(active.id || active.startedAt) : '';
-    const preserveActiveDescription = Boolean(active && activeElement?.classList?.contains('strip-description')
+    const preserveActiveDescription = Boolean(active && (strip.contains(activeElement)
+      || strip.getAttribute('data-moving-focus-to-stop') !== null)
       && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
     if (!preserveActiveDescription) {
       strip.replaceChildren();
@@ -2978,34 +3019,78 @@
       const copy = el('div', undefined, 'strip-task-copy');
       copy.append(siteFavicon(active, 'strip-favicon'));
       copy.append(taskResult(active, 'strip-task'));
-      const description = el('input');
+      const description = el('textarea');
+      description.rows = 1;
       description.className = 'strip-description';
       description.maxLength = 2000;
       description.placeholder = 'Description (optional)';
       description.value = activeDescriptionValue(active);
+      const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+      const resizeDescription = () => fitDescriptionTextarea(description, { maxHeight: 180, more: descriptionMore });
+      resizeDescription();
       const descriptionField = el('div', undefined, 'save-field strip-description-field');
-      const saveDescription = saveCheckButton('Save description', async () => {
-        const value = normalizedDescription(description.value);
-        if (value === String(savedActiveDescriptionValue(active)).trim()) return;
-        await queueActiveDescriptionEdit(active, value);
-        updateDescriptionSave();
-      });
-      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === String(savedActiveDescriptionValue(active)).trim(); };
+      const savedIndicator = el('span', '✓ Saved', 'description-saved');
+      savedIndicator.setAttribute('role', 'status');
+      savedIndicator.hidden = true;
+      let savingDescription = null, saveAgain = false, submittedDescription = null, hideSavedTimer = null;
+      const showSaved = () => {
+        clearTimeout(hideSavedTimer);
+        savedIndicator.hidden = false;
+        hideSavedTimer = setTimeout(() => { savedIndicator.hidden = true; }, 3000);
+      };
+      const currentActive = () => active.id
+        ? (pageState.active?.id === active.id ? pageState.active : null)
+        : (pageState.active?.startedAt === active.startedAt ? pageState.active : null);
+      const saveActiveDescription = () => {
+        if (savingDescription) {
+          if (normalizedDescription(description.value) !== submittedDescription) saveAgain = true;
+          return savingDescription;
+        }
+        savingDescription = (async () => {
+          do {
+            saveAgain = false;
+            const current = currentActive();
+            if (!current) return; // The timer was stopped or switched while this field was focused.
+            const value = normalizedDescription(description.value);
+            submittedDescription = value;
+            if (value === normalizedDescription(savedActiveDescriptionValue(current))) {
+              if (value === normalizedDescription(current.description)) retireActiveDescriptionDraft(current, value);
+            } else {
+              await queueActiveDescriptionEdit(current, value);
+            }
+            if (!saveAgain && normalizedDescription(description.value) === value) showSaved();
+          } while (saveAgain);
+        })().finally(() => {
+          savingDescription = null;
+          submittedDescription = null;
+          updateDescriptionSave();
+        });
+        return savingDescription;
+      };
+      const saveDescription = saveCheckButton('Save description', saveActiveDescription);
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === normalizedDescription(savedActiveDescriptionValue(currentActive() ?? active)); };
       updateDescriptionSave();
       description.addEventListener('input', () => {
         descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+        resizeDescription();
+        savedIndicator.hidden = true;
         updateDescriptionSave();
       });
-      description.addEventListener('blur', async () => {
-        const value = normalizedDescription(description.value);
-        if (value === String(savedActiveDescriptionValue(active)).trim()) {
-          if (value === normalizedDescription(active.description)) retireActiveDescriptionDraft(active, value);
+      description.addEventListener('keydown', event => {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+          event.preventDefault();
+          // Blur may trigger an immediate timeline render before focus reaches Stop.
+          strip.setAttribute('data-moving-focus-to-stop', '');
+          try { stop.focus({ preventScroll: true }); }
+          finally { strip.removeAttribute('data-moving-focus-to-stop'); }
           return;
         }
-        try { await queueActiveDescriptionEdit(active, value); updateDescriptionSave(); }
-        catch (error) { setError(error); }
+        if (event.key !== 'Enter' || event.shiftKey || !event.isTrusted || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        return saveActiveDescription().catch(setError);
       });
-      descriptionField.append(description, saveDescription); copy.append(descriptionField);
+      description.addEventListener('blur', () => saveActiveDescription().catch(setError));
+      descriptionField.append(description, saveDescription, savedIndicator, descriptionMore); copy.append(descriptionField);
       const elapsed = el('span', formatElapsed(active.startedAt), 'running-status-elapsed running-elapsed');
       elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
       const todayTotal = el('span', undefined, 'running-status-today');
@@ -3141,8 +3226,46 @@
         body.append(tracking);
         body.append(taskResult(active, 'active-task-result'));
         body.append(el('div', formatElapsed(active.startedAt), 'elapsed running-elapsed'));
-        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = activeDescriptionValue(active); label.append(description); body.append(label);
-        description.addEventListener('input', () => { descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value }; });
+        const label = el('label', 'Description'), description = el('textarea');
+        description.rows = 2; description.maxLength = 2000; description.placeholder = 'Optional'; description.value = activeDescriptionValue(active);
+        const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+        const resizeDescription = () => fitDescriptionTextarea(description, { minRows: 2, more: descriptionMore });
+        resizeDescription();
+        const saved = el('span', '✓ Saved', 'description-saved dialog-description-saved'); saved.setAttribute('role', 'status'); saved.hidden = true;
+        label.append(description, saved, descriptionMore); body.append(label);
+        let savingDescription = null, saveAgain = false, submittedDescription = null;
+        const saveDescription = () => {
+          if (savingDescription) {
+            if (normalizedDescription(description.value) !== submittedDescription) saveAgain = true;
+            return savingDescription;
+          }
+          savingDescription = (async () => {
+            do {
+              saveAgain = false;
+              const current = pageState.active;
+              if (!current || (active.id ? current.id !== active.id : current.startedAt !== active.startedAt)) return;
+              const value = normalizedDescription(description.value);
+              submittedDescription = value;
+              if (value !== normalizedDescription(savedActiveDescriptionValue(current))) {
+                await queueActiveDescriptionEdit(current, value);
+              } else if (value === normalizedDescription(current.description)) {
+                retireActiveDescriptionDraft(current, value);
+              }
+              if (!saveAgain && normalizedDescription(description.value) === value) saved.hidden = false;
+            } while (saveAgain);
+          })().catch(setError).finally(() => { savingDescription = null; submittedDescription = null; });
+          return savingDescription;
+        };
+        description.addEventListener('input', () => {
+          descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+          resizeDescription();
+          saved.hidden = true;
+        });
+        description.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
+          event.preventDefault();
+          void saveDescription();
+        });
         const switchToCurrent = Boolean(!same && current);
         const makeStop = switchToCurrent => {
         const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save', switchToCurrent ? 'primary wide' : 'danger wide', async (event, node) => {
@@ -3495,7 +3618,14 @@
       a { color:var(--fgColor-accent,var(--ck-accent)); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
       .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px }
-      .save-field { position:relative; display:block; width:100% } .save-field input { padding-right:34px }
+      .save-field { position:relative; display:block; width:100% } .save-field input,.save-field textarea { padding-right:34px }
+      .description-saved { color:var(--ck-success); font:700 11px/1.4 var(--fontStack-sansSerif); white-space:nowrap }
+      .description-saved[hidden] { display:none }
+      .description-overflow-hint { display:block; margin-top:3px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:500 }
+      .description-overflow-hint[hidden] { display:none }
+      .strip-description-field .description-saved { position:absolute; right:38px; top:50%; transform:translateY(-50%); padding:2px 4px; background:var(--bgColor-default,var(--ck-bg)); border-radius:3px }
+      .dialog-description-saved { display:inline-block; margin:4px 0 0 6px }
+      .entry-description-saved { display:inline-block; margin:4px 0 0 27px }
       .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:5px; background:transparent; color:var(--ck-success); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
       .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       .timeline-queue-status { margin:0 0 8px; font-size:12px; font-weight:600 }
@@ -3503,7 +3633,7 @@
       .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .trigger-main { width:34px; margin-right:8px }
       .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
-      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input,.inline-metadata-editor textarea { font-size:14px } .inline-metadata-editor textarea { width:100%; min-height:54px; max-height:200px; resize:vertical; padding-right:34px; overflow-y:auto; white-space:pre-wrap } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
  .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
  label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
       /* Activity redesign: compact, scan-first list rows. */
@@ -3558,6 +3688,7 @@
       .activity-list .entry-record-task-identity { gap:9px }
       .activity-list .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:4px }
       .activity-list .entry-record-task-result { margin:0 }
+      .entry-description-link { white-space:pre-wrap; overflow-wrap:anywhere }
       .activity-list .entry-description-link { margin:5px 0 0 27px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
       .activity-list .entry-description-link:hover { background:transparent; color:var(--fgColor-accent,var(--ck-accent)); text-decoration:underline }
       .activity-list .entry-actions { position:absolute; top:12px; right:14px; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
@@ -3637,7 +3768,8 @@
       .strip-task-copy { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:2px 8px; flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
       .strip-task .task-title,.strip-task.task-result-untitled .task-url { margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650 }
       .strip-description-field { grid-column:2 }
-      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 32px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
+      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 96px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
+      .strip-description { min-height:30px; resize:vertical; max-height:180px; overflow-y:auto; white-space:pre-wrap }
       .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
       .active-task-strip .running-status-metrics { display:flex; align-items:center; gap:18px; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
@@ -3756,7 +3888,7 @@
       } else if (detail.type === 'START' && detail.active?.id) {
         pageState = { ...pageState, active: detail.active };
       } else return;
-      if (!refreshMountedTimeline()) renderUi();
+      if (!refreshMountedTimeline() || activityViewMode === 'list') renderUi();
       void refreshActivityState().catch(setError);
     });
     document.addEventListener('clockoli:local-time-added', event => {

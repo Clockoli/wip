@@ -15,7 +15,7 @@ const packageJson = JSON.parse(read('package.json'));
 const plan = read('IMPLEMENTATION_PLAN.md');
 
 test('main tracker uses one inline editor with Enter-save and no legacy Edit panel', () => {
-  assert.match(content, /event\.key === 'Enter'[\s\S]*saveGroup\(\)/);
+  assert.match(content, /const onEnter = event => \{[\s\S]*event\.key !== 'Enter'[\s\S]*saveGroup\(\)/);
   assert.match(content, /entry-description-editable/);
   assert.match(content, /inline-task-url/);
   assert.match(content, /inline-task-title/);

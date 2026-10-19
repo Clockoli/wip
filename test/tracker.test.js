@@ -144,6 +144,31 @@ test('queued start/stop preparation is side-effect free and keeps destination me
   assert.doesNotMatch(serializeMonthlyRecords([stopped.pendingEntry]), /destination/i);
 });
 
+test('Stop and switch keep the saved active description unless explicitly replaced', async () => {
+  const notes = 'First line\n\nSecond line';
+  const running = active('2026-08-18T08:00:00.000Z', { description: notes });
+
+  const stopStore = new MemoryStore(), stopTracker = service({ store: stopStore });
+  stopStore.value.activeCache = running;
+  const stopped = await stopTracker.queueStop();
+  assert.equal(stopped.entry.description, notes);
+  assert.equal(stopStore.value.recentCache[0].description, notes);
+
+  const switchStore = new MemoryStore(), switchTracker = service({ store: switchStore });
+  switchStore.value.activeCache = running;
+  const switched = await switchTracker.queueTaskSwitch('https://example.com/new', 'New task');
+  assert.equal(switched.stopped.entry.description, notes);
+
+  const crossStore = new MemoryStore(), crossTracker = service({ store: crossStore });
+  assert.equal(crossTracker.prepareQueuedStop(running).entry.description, notes,
+    'cross-repository switches should also preserve saved descriptions');
+
+  const clearStore = new MemoryStore(), clearTracker = service({ store: clearStore });
+  clearStore.value.activeCache = running;
+  assert.equal((await clearTracker.queueStop('')).entry.description, '',
+    'an explicitly cleared description must remain empty');
+});
+
 test('sync leaves an await-source start untouched without attempting a remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   store.value.pendingWrites = [{

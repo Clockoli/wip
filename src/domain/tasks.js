@@ -107,7 +107,7 @@ export function taskPeriodRange(period, today) {
 export function effectiveTrackedSeconds(task, { active = null, now = Date.now() } = {}) {
   const completed = Number(task?.totalSeconds);
   if (!Number.isFinite(completed) || completed < 0) throw new Error('Invalid tracked task duration');
-  if (!task.activeStartedAt || taskUrlOf(active) !== taskUrlOf(task)) return completed;
+  if (!task.activeStartedAt || !active || taskUrlOf(active) !== taskUrlOf(task)) return completed;
   const startedAt = new Date(task.activeStartedAt).getTime(), current = new Date(now).getTime();
   if (!Number.isFinite(startedAt) || !Number.isFinite(current)) throw new Error('Invalid active task time');
   return completed + Math.max(0, Math.floor((current - startedAt) / 1000));

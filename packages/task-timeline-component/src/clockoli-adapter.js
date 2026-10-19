@@ -167,14 +167,18 @@
     .calendar-task.selected, .calendar-task.focused:not(.selected) { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
-    .clockoli-calendar-description { margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; white-space:pre-line; }
     .history-controls { display: none; }
     .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: center; gap: 8px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
-    .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 6px 34px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
+    .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 6px 94px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
     .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
     .clockoli-description-save:hover:not(:disabled) { background: color-mix(in srgb, #1f883d 12%, transparent); }
     .clockoli-description-save[hidden] { display: none; }
+    .clockoli-description-saved { position: absolute; top: 50%; right: 36px; transform: translateY(-50%); padding: 2px 4px; border-radius: 3px; background: var(--tt-panel); color: #1f883d; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .clockoli-description-saved[hidden] { display: none; }
+    .clockoli-description-more { display: block; margin-top: 3px; color: var(--tt-muted); font-size: 11px; line-height: 1.3; }
+    .clockoli-description-more[hidden] { display: none; }
     .clockoli-timeline-action {
       flex: 0 0 auto; white-space: nowrap;
       min-height: 30px; padding: 5px 10px; border: 1px solid var(--button-default-borderColor-rest, var(--tt-border));
@@ -563,9 +567,26 @@
           else {
             if (!description) { description = document.createElement('div'); description.className = 'clockoli-calendar-description'; element.append(description); }
             if (description.textContent !== text) description.textContent = text;
+            description.title = text; // The full description is available when the compact card is clipped.
           }
         }
       }
+    }
+
+    function resizeDescription(field) {
+      const count = String(field.value || '').split('\n').length;
+      field.rows = Math.min(8, Math.max(1, count));
+      const measure = () => {
+        field.style.height = 'auto';
+        const height = Number(field.scrollHeight) || 0;
+        const clipped = count > 8 || height > 180 + 1;
+        if (height) field.style.height = `${Math.min(180, Math.max(32, height))}px`;
+        field.style.overflowY = clipped ? 'auto' : 'hidden';
+        const more = field.parentElement?.querySelector('.clockoli-description-more');
+        if (more) more.hidden = !clipped;
+      };
+      measure();
+      requestAnimationFrame(() => { if (field.isConnected) measure(); });
     }
 
     function renderActions() {
@@ -582,6 +603,7 @@
         if (description && timeline.shadow.activeElement !== description) {
           description.value = item.description || '';
           description.dataset.savedDescription = savedDescription;
+          resizeDescription(description);
           const save = existing.querySelector('.clockoli-description-save');
           if (save) save.hidden = description.value.trim() === String(savedDescription).trim();
         }
@@ -599,8 +621,8 @@
       if (typeof props.onDescriptionCommit === 'function') {
         const field = document.createElement('div');
         field.className = 'clockoli-description-field';
-        const description = document.createElement('input');
-        description.type = 'text'; description.maxLength = 2000; description.className = 'clockoli-timeline-description';
+        const description = document.createElement('textarea');
+        description.rows = 1; description.maxLength = 2000; description.className = 'clockoli-timeline-description';
         description.placeholder = 'Add description'; description.value = item.description || '';
         description.dataset.savedDescription = savedDescription;
         description.setAttribute('aria-label', 'Task description');
@@ -609,10 +631,23 @@
         save.type = 'button'; save.className = 'clockoli-description-save'; save.textContent = '✓';
         save.hidden = description.value.trim() === String(savedDescription).trim();
         save.title = 'Save description'; save.setAttribute('aria-label', 'Save description');
-        let saving = null;
-        const updateDirty = () => { save.hidden = description.value.trim() === String(description.dataset.savedDescription || '').trim(); };
+        const saved = document.createElement('span');
+        saved.className = 'clockoli-description-saved'; saved.textContent = '✓ Saved'; saved.hidden = true;
+        saved.setAttribute('role', 'status');
+        const more = document.createElement('span');
+        more.className = 'clockoli-description-more'; more.textContent = '↓ More lines — scroll'; more.hidden = true;
+        let saving = null, hideSaved = null;
+        const showSaved = () => {
+          clearTimeout(hideSaved);
+          saved.hidden = false;
+          hideSaved = setTimeout(() => { saved.hidden = true; }, 3000);
+        };
+        const updateDirty = () => {
+          save.hidden = description.value.trim() === String(description.dataset.savedDescription || '').trim();
+          if (!save.hidden) saved.hidden = true;
+        };
         const commit = async () => {
-          if (description.value.trim() === String(description.dataset.savedDescription || '').trim()) return;
+          if (description.value.trim() === String(description.dataset.savedDescription || '').trim()) { showSaved(); return; }
           if (saving) {
             try { await saving; } catch {}
             return commit();
@@ -620,15 +655,25 @@
           const requested = description.value;
           save.disabled = true;
           saving = Promise.resolve().then(() => props.onDescriptionCommit(sourceItem(key), requested));
-          try { await saving; description.dataset.savedDescription = requested; save.hidden = true; }
+          try {
+            await saving; description.dataset.savedDescription = requested; save.hidden = true;
+            if (description.value === requested) showSaved();
+          }
           catch (error) { props.onError?.(error, { action: 'description', source: 'clockoli-details' }); }
           finally { saving = null; save.disabled = false; updateDirty(); }
         };
-        description.addEventListener('input', () => { props.onDescriptionInput?.(sourceItem(key), description.value); updateDirty(); });
+        description.addEventListener('input', () => {
+          resizeDescription(description); props.onDescriptionInput?.(sourceItem(key), description.value); updateDirty();
+        });
         description.addEventListener('blur', commit);
+        description.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
+          event.preventDefault(); void commit();
+        });
         save.addEventListener('pointerdown', event => event.preventDefault());
         save.addEventListener('click', commit);
-        field.append(description, save); actions.append(field);
+        field.append(description, save, saved, more); actions.append(field);
+        resizeDescription(description);
       }
       if (typeof props.onDelete === 'function') {
         const button = document.createElement('button');
