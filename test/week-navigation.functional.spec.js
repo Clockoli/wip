@@ -715,6 +715,16 @@ test('Activity follows the theme switch in every shadow-root surface without a r
     await switcher.click();
     await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
     await expect(activity).toHaveAttribute('data-clockoli-theme', 'dark');
+    const themeDebug = await page.evaluate(() => {
+      const host = document.getElementById('clockoli-times-root');
+      const card = host.shadowRoot?.querySelector('.activity-weekly-card');
+      const value = (node, name) => getComputedStyle(node).getPropertyValue(name).trim();
+      return { documentTheme: document.documentElement.dataset.clockoliTheme, hostTheme: host.dataset.clockoliTheme,
+        hostClass: host.className, html: value(document.documentElement, '--bgColor-default'),
+        body: value(document.body, '--bgColor-default'), host: value(host, '--bgColor-default'),
+        card: value(card, '--bgColor-default'), color: getComputedStyle(card).backgroundColor };
+    });
+    console.log('CLOCKOLI_COLOR_DEBUG', JSON.stringify(themeDebug));
     await expect(card).toHaveCSS('background-color', 'rgb(13, 17, 23)');
     await expect(calendar).toHaveCSS('background-color', 'rgb(13, 17, 23)');
     await expect(panel).toHaveCSS('background-color', 'rgb(13, 17, 23)');
