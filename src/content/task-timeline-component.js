@@ -4741,7 +4741,7 @@
     .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
 
     .history-controls { display: none; }
-    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: center; gap: 8px; }
+    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: flex-start; gap: 8px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
     .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 6px 94px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
     .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
