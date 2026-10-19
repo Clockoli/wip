@@ -85,4 +85,5 @@ test('manual themes control select arrows and print reports stay light', () => {
     assert.ok(css.includes(':root[data-clockoli-theme="dark"]'), file);
   }
   assert.ok(read('src/reports/reports.css').includes(':root:root{color-scheme:light;'));
+  assert.ok(read('src/styles/running-status.css').includes(':root[data-clockoli-theme="light"] .running-status-live'));
 });
