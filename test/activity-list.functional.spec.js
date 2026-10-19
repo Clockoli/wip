@@ -332,7 +332,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
     await page.mouse.up();
-    const dragDebug = await source.evaluate(element => {
+    const dragDebug = await source.evaluate((element, from) => {
       const root = element.getRootNode();
       const hit = root.elementFromPoint(from.x + from.width / 2, from.y + from.height / 2);
       return { trace: window.__clockoliPointerTrace, width: element.getBoundingClientRect().width,
