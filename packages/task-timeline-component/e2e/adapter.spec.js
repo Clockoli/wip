@@ -90,6 +90,29 @@ async function mount(page, overrides = {}) {
   }, { hour: HOUR, overrides });
 }
 
+async function dragGeometry(page, sourceSelector, viewportSelector) {
+  let geometry;
+  await expect.poll(async () => {
+    geometry = await page.locator(sourceSelector).first().evaluate(async (element, [sourceSelector, viewportSelector]) => {
+      const root = element.getRootNode();
+      element.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const source = root.querySelector(sourceSelector.replace('#timeline ', ''))?.getBoundingClientRect();
+      const viewport = root.querySelector(viewportSelector.replace('#timeline ', ''))?.getBoundingClientRect();
+      if (!source || !viewport) return null;
+      const left = Math.max(source.left, viewport.left, 0);
+      const right = Math.min(source.right, viewport.right, innerWidth);
+      const top = Math.max(source.top, viewport.top, 0);
+      const bottom = Math.min(source.bottom, viewport.bottom, innerHeight);
+      if (right <= left || bottom <= top) return null;
+      return { box: { x: left, y: top, width: right - left, height: bottom - top },
+        viewport: { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height } };
+    }, [sourceSelector, viewportSelector]);
+    return geometry !== null;
+  }, { timeout: 5000 }).toBe(true);
+  return geometry;
+}
+
 test('holding a dragged Calendar entry at a week edge navigates and drops in the loaded week', async ({ page }) => {
   const now = new Date(2026, 9, 16, 16).getTime();
   const monday = new Date(2026, 9, 12).getTime();
@@ -143,10 +166,8 @@ test('holding a Timeline move at the left edge loads the previous week before co
     targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
     view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
   expect(await page.evaluate(() => window.__timeline.__timeline.getVisibleDays())).toBe(2);
-  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const edge = await page.locator('#timeline .viewport').boundingBox();
+  const { box, viewport: edge } = await dragGeometry(page,
+    '#timeline .task[data-task-key="entry:a"]', '#timeline .viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -182,10 +203,8 @@ test('cancelling a Timeline cross-week drag restores its original zoom without s
     items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
     targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
     view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
-  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  const { box, viewport } = await dragGeometry(page,
+    '#timeline .task[data-task-key="entry:a"]', '#timeline .viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -218,10 +237,8 @@ test('cross-week drag retains the full duration of an entry clipped at the displ
     targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart,
       endedAt: neighborStart + HOUR, isEditable: true }],
     view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: monday, visibleDays: 2 } });
-  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  const { box, viewport } = await dragGeometry(page,
+    '#timeline .task[data-task-key="entry:a"]', '#timeline .viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -247,10 +264,8 @@ test('releasing on a cached preview while the next week loads never queues a mov
     targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart,
       endedAt: neighborStart + HOUR, isEditable: true }],
     view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
-  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  const { box, viewport } = await dragGeometry(page,
+    '#timeline .task[data-task-key="entry:a"]', '#timeline .viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -319,8 +334,10 @@ test('Calendar cancels a cross-week drag while an earlier edit is pending', asyn
   const pendingStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start);
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
-  const box = await source.boundingBox();
+  await dragGeometry(page, '#timeline .calendar-task[data-task-key="entry:a"]', '#timeline .calendar-viewport');
+  await source.click();
+  const { box } = await dragGeometry(page,
+    '#timeline .calendar-task[data-task-key="entry:a"]', '#timeline .calendar-viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -350,10 +367,8 @@ test.describe('Timeline fall-back week', () => {
         endedAt: previous + 3 * 24 * HOUR + HOUR, isEditable: true }],
       view: { start: monday, end: new Date('2026-11-02T00:00:00+01:00').getTime(),
         focusedAt: sourceStart, visibleDays: 2 } });
-    const source = page.locator('#timeline .task[data-task-key="entry:a"]');
-    await source.scrollIntoViewIfNeeded();
-    const box = await source.boundingBox();
-    const viewport = await page.locator('#timeline .viewport').boundingBox();
+    const { box, viewport } = await dragGeometry(page,
+      '#timeline .task[data-task-key="entry:a"]', '#timeline .viewport');
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
@@ -386,10 +401,8 @@ test('holding a Calendar move at the right edge loads the next week', async ({ p
     window.__timeline.setViewMode('calendar');
     window.__timeline.setCalendarRange({ start, end });
   }, [previous, monday]);
-  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  const { box, viewport: edge } = await dragGeometry(page,
+    '#timeline .calendar-task[data-task-key="entry:a"]', '#timeline .calendar-viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(await page.evaluate(() => innerWidth - 1), box.y + box.height / 2, { steps: 5 });
@@ -415,10 +428,8 @@ test('dropping outside the loaded week after edge navigation does not save', asy
     window.__timeline.setViewMode('calendar');
     window.__timeline.setCalendarRange({ start, end });
   }, [monday, new Date(2026, 9, 19).getTime()]);
-  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await source.scrollIntoViewIfNeeded();
-  const box = await source.boundingBox();
-  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  const { box, viewport: edge } = await dragGeometry(page,
+    '#timeline .calendar-task[data-task-key="entry:a"]', '#timeline .calendar-viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(edge.x + 5, box.y + box.height / 2, { steps: 5 });
@@ -443,10 +454,8 @@ test('a rejected cross-week drop removes the preview without changing the destin
     targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
     view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart } });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
-  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
-  const box = await source.boundingBox();
-  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  const { box, viewport: edge } = await dragGeometry(page,
+    '#timeline .calendar-task[data-task-key="entry:a"]', '#timeline .calendar-viewport');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
