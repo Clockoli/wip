@@ -45,7 +45,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
     await writeFile(join(extension, 'test-worker.js'), workerSource);
-    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const base = `chrome-extension://${new URL(worker.url()).host}/src/`;
@@ -59,19 +59,24 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(add).toBeVisible();
       const localTime = () => page.evaluate(() => {
         const now = new Date();
-        return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       });
       const beforeOpen = await localTime();
       await add.click();
       const dialog = page.getByRole('dialog', { name: 'Add new time' });
       await expect(dialog).toBeVisible();
+      await expect(dialog.locator('.add-time-preview')).toBeHidden();
+      await expect(dialog).not.toContainText('Select a task to preview it here.');
+      await expect(dialog.getByRole('group', { name: 'Time range' })).toBeVisible();
+      await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(2);
+      await expect(dialog.locator('input[type="date"], input[type="time"]')).toHaveCount(0);
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
-      const startTime = dialog.getByLabel('Start time');
+      const startTime = dialog.getByLabel('Start', { exact: true });
+      const endTime = dialog.getByLabel('End (optional)');
       expect([beforeOpen, await localTime()]).toContain(await startTime.inputValue());
+      await expect(endTime).toHaveValue('');
       const startTimestamp = () => page.evaluate(() => {
-        const now = new Date(), time = document.getElementById('add-time-start').value;
-        const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        return new Date(`${date}T${time}:00`).toISOString();
+        return new Date(document.getElementById('add-time-start').value).toISOString();
       });
       const search = dialog.getByRole('combobox', { name: 'Task' });
       await search.fill('Existing');
@@ -79,8 +84,8 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await dialog.getByRole('button', { name: /Existing task/ }).click();
       await expect(dialog.locator('.add-time-preview')).toContainText(taskUrl);
       expect((await worker.evaluate(() => globalThis.messages)).some(message => message.type === 'SEARCH_ACTIVITY')).toBe(true);
-      await dialog.getByLabel('Start time').fill('09:15');
-      await dialog.getByLabel('End time').fill('10:45');
+      await startTime.fill(`${beforeOpen.slice(0, 10)}T09:15`);
+      await endTime.fill(`${beforeOpen.slice(0, 10)}T10:45`);
       await dialog.getByLabel('Description').fill('Focused work');
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await expect(dialog).not.toBeVisible();
@@ -108,6 +113,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', startedAt: importedStart, endedAt: null, description: '' });
       await add.click();
       await search.fill('javascript:alert(1)');
+      await expect(dialog.locator('.add-time-preview')).toBeHidden();
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
       await expect(dialog.getByRole('alert')).toContainText('Select a task or enter an HTTP(S) URL');
       await search.fill('https://example.org/new-task');
@@ -129,8 +135,9 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await add.click();
       await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
-      await dialog.getByLabel('Start time').fill('09:15');
-      await dialog.getByLabel('End time').fill('10:45');
+      const today = (await localTime()).slice(0, 10);
+      await startTime.fill(`${today}T09:15`);
+      await endTime.fill(`${today}T10:45`);
       const multiline = dialog.getByLabel('Description');
       await multiline.fill(['A', 'B', 'C', 'D', 'E', 'F'].join('\n'));
       await expect.poll(() => multiline.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
@@ -139,9 +146,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await multiline.pressSequentially('Reviewed results');
       await expect(multiline).toHaveValue('Focused work\nReviewed results');
       const expectedTimes = await page.evaluate(() => {
-        const today = new Date();
-        const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        return ['09:15', '10:45'].map(time => new Date(`${date}T${time}:00`).toISOString());
+        return ['add-time-start', 'add-time-end'].map(id => new Date(document.getElementById(id).value).toISOString());
       });
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       await multiline.press('Enter');
@@ -169,6 +174,49 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
         });
       }
       expect(await page.evaluate(() => globalThis.__addTimeNoReload)).toBe('accepted locally');
+      await add.click();
+      await search.fill('Existing');
+      await dialog.getByRole('button', { name: /Existing task/ }).click();
+      await startTime.fill('2026-08-18T08:00');
+      await endTime.fill('2026-08-19T08:01');
+      const count = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('24 hours');
+      expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(count);
+      await endTime.fill('2026-08-19T08:00');
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog).not.toBeVisible();
+      const historical = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
+      expect(historical.startedAt).toBe('2026-08-18T08:00:00.000Z');
+      expect(historical.endedAt).toBe('2026-08-19T08:00:00.000Z');
+      await add.click();
+      await search.fill('https://example.org/new-task');
+      const tomorrow = await page.evaluate(() => {
+        const day = new Date(); day.setDate(day.getDate() + 1);
+        return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      });
+      await startTime.fill(`${tomorrow}T08:00`);
+      const beforeInvalid = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('future');
+      expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(beforeInvalid);
+      await startTime.fill('2026-08-18T08:00');
+      await endTime.fill('2026-08-18T07:59');
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('after start');
+      expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(beforeInvalid);
+      if (path === 'tasks/tasks.html') {
+        await page.clock.install({ time: new Date('2026-10-19T10:00:00Z') });
+        await endTime.focus();
+        await expect(endTime).toHaveAttribute('max', '2026-10-19T10:00');
+        await page.clock.fastForward(2 * 60 * 1000);
+        await startTime.focus();
+        await expect(startTime).toHaveAttribute('max', '2026-10-19T10:02');
+      }
+      await page.setViewportSize({ width: 375, height: 700 });
+      await expect.poll(() => dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(startTime).toBeVisible();
+      await expect(endTime).toBeVisible();
       await page.close();
     }
     expect(errors).toEqual([]);

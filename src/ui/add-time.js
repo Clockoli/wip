@@ -1,6 +1,7 @@
 import { normalizeTaskUrl } from '../domain/values.js';
 
 const dateValue = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const dateTimeValue = date => `${dateValue(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
 /** Mount the extension-page-only Add time control. Reads task suggestions on open; writes only on Add. */
 export function mountAddTime(button, { send, onAdded = () => location.reload() }) {
@@ -17,13 +18,18 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
   const suggestions = document.createElement('div'); suggestions.id = 'add-time-suggestions'; suggestions.className = 'add-time-suggestions';
   suggestions.setAttribute('aria-label', 'Matching tasks');
   const times = document.createElement('div'); times.className = 'add-time-times';
-  const makeTime = (text, id) => {
+  times.setAttribute('role', 'group'); times.setAttribute('aria-label', 'Time range');
+  const makeDateTime = (text, id) => {
     const label = document.createElement('label'); label.textContent = text;
-    const input = document.createElement('input'); input.type = 'time'; input.id = id;
+    const input = document.createElement('input'); input.type = 'datetime-local'; input.id = id;
     label.htmlFor = id; label.append(input); times.append(label); return input;
   };
-  const start = makeTime('Start time', 'add-time-start'), end = makeTime('End time', 'add-time-end');
-  const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Start time defaults to now. Leave End time empty to start a running timer. Times use today’s date.';
+  const start = makeDateTime('Start', 'add-time-start');
+  const end = makeDateTime('End (optional)', 'add-time-end');
+  const refreshDateTimeMax = () => { start.max = end.max = dateTimeValue(new Date()); };
+  start.addEventListener('focus', refreshDateTimeMax);
+  end.addEventListener('focus', refreshDateTimeMax);
+  const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Choose a start and end date with time. Leave End empty to start a running timer. One entry can be at most 24 hours.';
   const descriptionLabel = document.createElement('label'); descriptionLabel.textContent = 'Description'; descriptionLabel.htmlFor = 'add-time-description';
   const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
   const moreDescription = document.createElement('small');
@@ -39,7 +45,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     moreDescription.hidden = !clipped;
   };
   description.addEventListener('input', resizeDescription);
-  const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite');
+  const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite'); preview.hidden = true;
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
@@ -77,11 +83,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     search.setAttribute('aria-expanded', String(suggestions.childElementCount > 0));
     preview.replaceChildren();
     const task = taskIdentity();
+    preview.hidden = !task;
     if (task) {
       const title = document.createElement('strong'); title.textContent = task.title || 'New URL task';
       const url = document.createElement('span'); url.textContent = task.taskUrl;
       preview.append(title, url);
-    } else preview.textContent = 'Select a task to preview it here.';
+    }
   };
   search.addEventListener('input', async () => {
     selected = null; setError(''); update();
@@ -112,7 +119,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     generation++;
     const now = new Date();
     tasks = []; selected = null; searched = false; busy = false; search.value = '';
-    start.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    refreshDateTimeMax();
+    start.value = dateTimeValue(now);
     end.value = ''; description.value = '';
     resizeDescription();
     setError('');
@@ -122,11 +130,24 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     if (busy) return;
     const task = taskIdentity();
     if (!task) { setError('Select a task or enter an HTTP(S) URL.'); return; }
-    if (end.value && !start.value) { setError('Enter a start time before an end time.'); return; }
-    const today = dateValue(new Date());
-    const timestamp = value => value ? new Date(`${today}T${value}:00`).toISOString() : null;
-    const startedAt = timestamp(start.value), endedAt = timestamp(end.value);
-    if (startedAt && endedAt && endedAt <= startedAt) { setError('End time must be after start time.'); return; }
+    if (end.value && !start.value) { setError('Enter a start date and time before an end.'); return; }
+    const now = new Date();
+    const timestamp = input => {
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input)) return null;
+      const value = new Date(input);
+      return Number.isFinite(value.getTime()) && dateTimeValue(value) === input
+        ? value.toISOString() : null;
+    };
+    const startedAt = start.value ? timestamp(start.value) : now.toISOString();
+    const endedAt = end.value ? timestamp(end.value) : null;
+    if (!startedAt || (end.value && !endedAt)) { setError('Enter valid start and end dates and times.'); return; }
+    if (new Date(startedAt) > now || (endedAt && new Date(endedAt) > now)) {
+      setError('Start and End cannot be in the future.'); return;
+    }
+    if (endedAt && endedAt <= startedAt) { setError('End time must be after start time.'); return; }
+    if (new Date(endedAt ?? now).getTime() - new Date(startedAt).getTime() > 24 * 60 * 60 * 1000) {
+      setError('One entry cannot exceed 24 hours. Split the time into separate entries.'); return;
+    }
     // Only the short local IndexedDB acceptance is in flight. Never show a
     // GitHub saving status: the shared 15-second sync happens silently later.
     busy = true; add.disabled = true; cancel.disabled = true; setError('');

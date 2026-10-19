@@ -2554,11 +2554,146 @@ test('Add time refuses a concurrent change to yesterday at a month boundary', as
   assert.equal(github.atomicWrites.length, 0);
 });
 
-test('Add time rejects a start outside today before reading or writing', async () => {
-  const github = new FakeGitHub(), tracker = service({ github });
-  await assert.rejects(() => tracker.addTime({ taskUrl: issue.url,
-    startedAt: '2026-08-17T07:00:00.000Z', endedAt: '2026-08-17T08:00:00.000Z' }), /today/i);
-  assert.equal(github.reads.length, 0);
+test('Add time accepts a historical date and guards both neighboring monthly partitions across midnight', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-31T23:00:00.000Z', endedAt: '2026-09-01T00:00:00.000Z' };
+  const accepted = await tracker.addTime(request, { background: true });
+  assert.equal(accepted.entry.entryDate, '2026-08-31');
+  assert.deepEqual(github.reads, []);
+  await tracker.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.reads.filter(path => path.startsWith('times/')).sort(),
+    ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl']);
+  assert.equal(github.atomicWrites[0].guards.some(guard => guard.path === 'times/2026-09/alice.jsonl'), true);
+});
+
+test('historical Add time keeps a cross-month remote overlap as a recoverable conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-31T23:00:00.000Z',
+    endedAt: '2026-09-01T01:00:00.000Z' }, { background: true });
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-09-01T00:30:00.000Z', '2026-09-01T02:00:00.000Z'),
+  ]));
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('historical Add time finds a long-running completed record from an earlier month', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-02T08:00:00.000Z',
+    endedAt: '2026-08-02T09:00:00.000Z' }, { background: true });
+  const olderPath = 'times/2026-07/alice.jsonl';
+  seedText(github, olderPath, serializeMonthlyRecords([
+    entry('2026-07-31T23:00:00.000Z', '2026-08-02T08:30:00.000Z'),
+  ]));
+  await tracker.syncPending();
+  assert.ok(github.reads.includes(olderPath));
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap');
+});
+
+test('historical Add time cannot start a running timer over an older-month completion', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-03T07:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-02T08:00:00.000Z' }, { background: true });
+  seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-07-31T23:00:00.000Z', '2026-08-02T08:30:00.000Z'),
+  ]));
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+});
+
+test('historical running Add time keeps a raced older-month conflict recoverable', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-03T07:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-02T08:00:00.000Z' }, { background: true });
+  const discover = github.listTextFilesSnapshot.bind(github);
+  github.listTextFilesSnapshot = async prefix => {
+    const snapshot = await discover(prefix);
+    if (github.headSha === 'discovery-head') {
+      github.headSha = 'raced-head';
+      seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([
+        entry('2026-07-31T23:00:00.000Z', '2026-08-02T08:30:00.000Z'),
+      ]));
+    }
+    return snapshot;
+  };
+  const write = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (changes, message, options) => {
+    if (options.expectedHeadSha !== github.headSha) throw github.conflict();
+    return write(changes, message, options);
+  };
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  const pending = store.value.pendingWrites[0];
+  assert.equal(pending.status, 'conflict');
+  assert.equal(pending.conflictReason, 'add_time_overlap_changed');
+  await assert.rejects(() => tracker.resolvePendingConflict(pending.id), /overlap/i);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('historical Add time guards discovered older monthly files in its atomic write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const olderPath = 'times/2026-07/alice.jsonl';
+  seedText(github, olderPath, serializeMonthlyRecords([
+    entry('2026-07-31T08:00:00.000Z', '2026-07-31T09:00:00.000Z'),
+  ]));
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-02T08:00:00.000Z',
+    endedAt: '2026-08-02T09:00:00.000Z' }, { background: true });
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites[0].expectedHeadSha, 'discovery-head');
+  assert.ok(github.atomicWrites[0].guards.some(guard => guard.path === olderPath));
+});
+
+test('historical Add time rejects a new older monthly file raced after discovery', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-08-02T08:00:00.000Z',
+    endedAt: '2026-08-02T09:00:00.000Z' }, { background: true });
+  const discover = github.listTextFilesSnapshot.bind(github);
+  github.listTextFilesSnapshot = async prefix => {
+    const snapshot = await discover(prefix);
+    github.headSha = 'raced-head';
+    seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([
+      entry('2026-07-31T23:00:00.000Z', '2026-08-02T08:30:00.000Z'),
+    ]));
+    return snapshot;
+  };
+  const write = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (changes, message, options) => {
+    if (options.expectedHeadSha !== github.headSha) throw github.conflict();
+    return write(changes, message, options);
+  };
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('Add time rejects intervals longer than 24 hours before local or remote work', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-10-19T12:00:00.000Z') });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-19T07:00:01.000Z' };
+  for (const settings of [{ background: true }, {}]) {
+    await assert.rejects(() => tracker.addTime(request, settings), /24 hours/i);
+  }
+  await assert.rejects(() => tracker.addTime({ ...request, endedAt: null }, { background: true }), /24 hours/i);
+  const exactDay = await tracker.addTime({ ...request, endedAt: '2026-08-19T07:00:00.000Z' }, { background: true });
+  assert.equal(exactDay.entry.durationSeconds, 24 * 60 * 60);
+  assert.deepEqual(github.reads, []);
+  assert.equal(store.value.pendingWrites.length, 1);
   assert.equal(github.atomicWrites.length, 0);
 });
 
