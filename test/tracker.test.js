@@ -253,6 +253,26 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.equal(github.atomicWrites.length, 1);
 });
 
+test('active-only task merge safely updates the running timer with an index guard', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const source = 'https://example.test/old-active', target = 'https://example.test/new-active';
+  const running = active('2026-08-18T08:00:00.000Z', { taskUrl: source, taskTitle: 'Old active' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  const tracker = service({ github, store });
+  const result = await tracker.mergeTasks({
+    pairs: [{ sourceTaskUrl: source, targetTaskUrl: target, targetTaskTitle: 'New active' }],
+    startDate: '2026-08-18', endDate: '2026-08-18',
+  });
+  assert.deepEqual(result, { mergedEntries: 0, mergedActive: true });
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['active/alice.json']);
+  assert.deepEqual(github.atomicWrites[0].guards.map(guard => guard.path), [TASK_INDEX_PATH]);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).taskUrl, target);
+  assert.equal(store.value.activeCache.taskUrl, target);
+  assert.deepEqual(store.value.activeCache.metadata.clockoli.task_identity_history,
+    [{ url: source, title: 'Old active' }]);
+});
+
 test('task merge replaces an imported identity with a URL and rejects an imported replacement', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const source = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';

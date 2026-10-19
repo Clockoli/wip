@@ -2020,7 +2020,9 @@ export class TrackerService {
     try {
       const result = removed.length
         ? await this.updateCompletedRecords(changes, `time: merge tasks ${this.user}`, { remove: removed, add: added })
-        : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`);
+        : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`, {
+          guards: [{ path: TASK_INDEX_PATH, sha: (await this.readTaskIndex()).sha }],
+        });
       const replacements = touched.flatMap(file => parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
       }));
