@@ -16,8 +16,50 @@ function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitl
 function sameTimer(left, right) {
   if (left?.id && right?.id && left.id === right.id) return true;
   if (right?.id && Array.isArray(left?.recordIds) && left.recordIds.includes(right.id)) return true;
-  return left?.user === right?.user && taskUrlOf(left) === taskUrlOf(right)
+  return typeof left?.startedAt === 'string' && typeof right?.startedAt === 'string'
+    && left.user === right.user && taskUrlOf(left) === taskUrlOf(right)
     && left.startedAt === right.startedAt;
+}
+
+// One local projection for task totals and participant totals. Until the
+// shared GitHub flush completes, accepted manual and bulk additions count just
+// like locally stopped timers. Later queued edits/deletes remain authoritative.
+function locallyQueuedCompletions(pendingWrites, { participantView = false } = {}) {
+  const byId = new Map(), anonymous = [];
+  for (const operation of pendingWrites ?? []) {
+    const kind = operation?.operation;
+    const stop = ['completeTimer', 'completeTimerAndStart'].includes(kind);
+    const added = stop
+      ? (participantView && ['clearActive', 'startNext'].includes(operation.stage) ? [] : [operation.entry])
+      : kind === 'addTime' ? [operation.entry]
+        : kind === 'bulkAddTimes' ? operation.entries ?? [] : [];
+    for (const entry of added) {
+      if (!entry) continue;
+      const projected = {
+        ...entry,
+        destinationId: entry.destinationId || operation.destinationId,
+        timeRepository: entry.timeRepository || operation.timeRepository,
+      };
+      if (projected.id) byId.set(projected.id, projected);
+      else anonymous.push(projected);
+    }
+    if (kind === 'deleteEntry') byId.delete(operation.request?.original?.id);
+    const requests = kind === 'editEntry' ? [operation.request]
+      : kind === 'editEntries' ? operation.request?.entries ?? [] : [];
+    for (const request of requests) {
+      const previous = byId.get(request?.original?.id);
+      if (!previous) continue;
+      const edits = request.edits ?? {};
+      const startedAt = edits.startedAt ?? previous.startedAt, endedAt = edits.endedAt ?? previous.endedAt;
+      const start = new Date(startedAt).getTime(), end = new Date(endedAt).getTime();
+      byId.set(previous.id, {
+        ...previous, ...edits, startedAt, endedAt,
+        durationSeconds: Number.isFinite(start) && Number.isFinite(end)
+          ? Math.floor(Math.max(0, end - start) / 1000) : previous.durationSeconds,
+      });
+    }
+  }
+  return [...byId.values(), ...anonymous];
 }
 
 export function aggregateTaskParticipants(records, {
@@ -26,10 +68,7 @@ export function aggregateTaskParticipants(records, {
   const canonicalTaskUrl = taskUrlOf(taskUrl);
   if (!canonicalTaskUrl) throw new Error('Task URL is required');
   const persisted = [...(records ?? [])];
-  const pending = pendingWrites
-    .filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry
-      && !['clearActive', 'startNext'].includes(operation.stage))
-    .map(operation => operation.entry)
+  const pending = locallyQueuedCompletions(pendingWrites, { participantView: true })
     .filter(entry => (!currentUser || String(entry?.user).toLowerCase() === currentUser.toLowerCase())
       && !persisted.some(record => sameTimer(record, entry)));
   const totals = new Map();
@@ -84,12 +123,7 @@ export function aggregateTrackedTasks(records, { user, currentUsers = null, meta
   if (Array.isArray(currentUsers) && !currentUsers.length) return [];
   if (!users.size) throw new Error('Task owner is required');
   const persisted = [...(records ?? [])];
-  const pending = pendingWrites.filter(operation => ['completeTimer', 'completeTimerAndStart'].includes(operation?.operation) && operation.entry)
-    .map(operation => ({
-      ...operation.entry,
-      destinationId: operation.entry.destinationId || operation.destinationId,
-      timeRepository: operation.entry.timeRepository || operation.timeRepository,
-    }))
+  const pending = locallyQueuedCompletions(pendingWrites)
     .filter(entry => (!startDate || entry.entryDate >= startDate) && (!endDate || entry.entryDate <= endDate)
       && !persisted.some(record => sameTimer(record, entry)));
   const tasks = new Map(), countedIds = new Set();

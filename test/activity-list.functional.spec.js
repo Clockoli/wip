@@ -30,6 +30,8 @@ const history = [...recent, { id: 'archived', taskUrl: 'https://example.com/arch
     startedAt: archivedDate + 'T08:00:00Z', endedAt: archivedDate + 'T08:30:00Z',
     durationSeconds: 1800, description: '', _path: 'times/' + archivedDate.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: index + 1 }))];
 let active = null;
+let pendingWrites = [];
+let locallyStopped = [];
 globalThis.trackingMessages = [];
 globalThis.editPayloads = [];
 globalThis.searchMode = 'ok';
@@ -37,8 +39,9 @@ let viewMode = 'timeline';
 globalThis.bulkAddFailure = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
-  const state = () => ({ configured: true, active, pendingWrites: [], pendingCount: 0 });
-  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });
+  const state = () => ({ configured: true, active, recent: [...locallyStopped, ...recent],
+    pendingWrites, pendingCount: pendingWrites.length });
+  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
     else respond({ ok: true, data: { ...state(), recent: history, partial: globalThis.searchMode === 'partial' } });
@@ -54,14 +57,24 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   else if (message.type === 'BULK_ADD_TIMES') respond(globalThis.bulkAddFailure
     ? { ok: false, error: { message: 'Line 1: Invalid time entry' } }
     : { ok: true, data: { added: 4 } });
+  else if (message.type === 'START') {
+    active = { id: 'quick-running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
+      startedAt: new Date(Date.now() - 120000).toISOString(),
+      entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' };
+    respond({ ok: true, data: { ...active, _pending: true, destinationId: 'github:1' } });
+  }
   else if (message.type === 'SWITCH_TASK') {
     active = { id: 'running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
-      startedAt: new Date().toISOString(), entryDate: date, timezone: 'UTC' };
+      startedAt: new Date().toISOString(), entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' };
     respond({ ok: true, data: { active, pending: false } });
   } else if (message.type === 'STOP') {
-    const completed = { ...active, endedAt: new Date().toISOString(), durationSeconds: 1 };
+    const completed = { ...active, endedAt: new Date().toISOString(), durationSeconds: 120 };
     active = null;
-    respond({ ok: true, data: { entry: completed, pending: false } });
+    const localEntry = { ...completed, _path: 'times/' + completed.entryDate.slice(0, 7) + '/alice.jsonl',
+      _sha: null, _index: -1, _pending: true, destinationId: 'github:1' };
+    locallyStopped = [localEntry, ...locallyStopped];
+    pendingWrites = [{ operation: 'completeTimer', id: completed.id, stage: 'verifyActive', status: 'pending', queuedAt: new Date().toISOString() }];
+    respond({ ok: true, data: { entry: completed, localEntry, pending: true, destinationId: 'github:1' } });
   } else respond({ ok: false, error: { message: 'Unexpected test request: ' + message.type } });
 });
 `;
@@ -94,7 +107,7 @@ for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
 let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle: 'Synthetic running task',
   startedAt: new Date(2026, 9, 16, 11, 30).toISOString(), entryDate: '2026-10-16', timezone: 'UTC',
   destinationId: 'github:1' };`)
-      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });",
+      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });",
         "if (message.type === 'LOAD_TIMES') { setTimeout(() => respond({ ok: true, data: { ...state(), recent } }), 500); return true; }\n  if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });")
       .replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
         "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: recent.slice(0, 4) } });");
@@ -224,7 +237,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
-      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent } });",
+      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
       .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: recent.filter(entry => entry.id === 'record') } });\n  else if (message.type === 'SEARCH_ACTIVITY')");
     await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
@@ -327,6 +340,16 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
   }
 });
 
+async function expectFullWidthActivitySearch(page) {
+  const bounds = await page.getByRole('searchbox', { name: 'Search activity' }).evaluate(input => {
+    const field = input.getBoundingClientRect();
+    const toolbar = input.closest('.times-toolbar').getBoundingClientRect();
+    return { leftGap: field.left - toolbar.left, rightGap: toolbar.right - field.right };
+  });
+  expect(Math.abs(bounds.leftGap)).toBeLessThan(2);
+  expect(Math.abs(bounds.rightGap)).toBeLessThan(2);
+}
+
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
   test.setTimeout(60000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-extension-'));
@@ -419,6 +442,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     });
     expect(tabCenter).toBeLessThan(2);
     await page.getByRole('button', { name: 'List', exact: true }).click();
+    await expectFullWidthActivitySearch(page);
     await page.getByRole('button', { name: 'Previous week' }).click();
     const groups = page.locator('.activity-list .entry');
     await expect(groups).toHaveCount(2);
@@ -439,7 +463,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     }
     expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '0px']);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-activity-list-days-desktop.png') });
-    const start = page.getByRole('button', { name: 'Start tracking Activity test task' });
+    const start = page.locator('.activity-list').getByRole('button', { name: 'Start tracking Activity test task' });
     await expect(start).toBeVisible({ timeout: 5000 });
     await expect.poll(async () => {
       await start.locator('xpath=ancestor::*[contains(@class,"entry-record")][1]').hover();
@@ -454,6 +478,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(strip.locator('.running-status-metrics')).toBeVisible();
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
+    await expectFullWidthActivitySearch(page);
     await expect(stop).toBeVisible();
     const stripBounds = await strip.evaluate(element => ({ left: element.getBoundingClientRect().left,
       right: element.getBoundingClientRect().right,
@@ -470,6 +495,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
     await stop.click({ timeout: 5000 });
     await expect(start).toBeVisible();
+    // Stop was accepted locally, but the synthetic worker deliberately keeps
+    // the completion pending and never writes it to the remote history.
+    await page.getByRole('button', { name: 'Next week' }).click();
+    await expect(page.locator('.activity-list .entry-record')).toHaveCount(1);
+    await expect(page.locator('.activity-list .entry-record')).toContainText('Activity test task');
+    const stoppedRow = page.locator('.activity-list .entry-record');
+    await expect(stoppedRow.getByRole('button', { name: 'Start tracking Activity test task' })).toBeVisible();
+    await expect(stoppedRow.locator('.entry-edit')).toBeEnabled();
+    await expect(stoppedRow.locator('.entry-delete')).toBeEnabled();
+    await expect(stoppedRow.getByRole('button', { name: 'Pending' })).toHaveCount(0);
+    await expect(page.locator('.timeline-queue-status:visible')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Previous week' }).click();
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => ['SWITCH_TASK', 'STOP'].includes(type)))).toEqual(['SWITCH_TASK', 'STOP']);
     const total = await page.locator('.times-list-total').textContent();
     await page.getByRole('searchbox', { name: 'Search activity' }).fill('Archived');
@@ -516,6 +553,59 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await page.getByRole('button', { name: 'Retry search' }).click();
     await expect(page.locator('.activity-list .entry-record')).toContainText('Archived task');
     await expect(page.locator('.activity-list .partial-read-warning')).toContainText('Results may be incomplete');
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Quick start Stop stays visible in Activity Timeline before any GitHub write', async () => {
+  test.setTimeout(60000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-quick-start-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-quick-start-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest) + '\n');
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: false,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+
+    const quickStart = page.getByRole('button', { name: 'Start tracking Activity test task' })
+      .and(page.locator('.running-status-recent-task'));
+    await expect(quickStart).toBeVisible();
+    await quickStart.click();
+    await expect(page.locator('.running-status.is-active')).toBeVisible();
+    await expect(page.locator('.task[data-task-key="active:quick-running"]')).toHaveCount(1);
+
+    await page.locator('.running-status-stop').click();
+    await expect(page.locator('.running-status.is-idle')).toBeVisible();
+    const completed = page.locator('.task[data-task-key="entry:quick-running"]');
+    await expect(completed).toHaveCount(1, { timeout: 1200 });
+    await expect(page.locator('.task[data-task-key="active:quick-running"]')).toHaveCount(0);
+    // Keep the locally saved block visible across the next five-second state
+    // poll and remote-history refresh, not just in the immediate Stop callback.
+    await page.waitForTimeout(5300);
+    await expect(completed).toHaveCount(1);
+    // The simulated GitHub history is deliberately stale and never receives
+    // the locally accepted completion, even if Activity requests it again.
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(
+      type => type === 'START' || type === 'STOP'))).toEqual(['START', 'STOP']);
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await expect(page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' })).toHaveCount(1);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

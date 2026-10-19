@@ -8,10 +8,12 @@ const worker = await readFile(new URL('../src/background/service-worker.js', imp
 const recovery = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
 
-test('repository creation is an attention cue only during the authorized repository step and respects reduced motion', () => {
-  assert.match(source, /id="new-time-repository" class="[^"]*new-repository-action[^"]*"/);
-  assert.match(styles, /#repository-step:not\(\[hidden\]\) \.new-repository-action\{[^}]*background:#238636/);
-  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{#repository-step:not\(\[hidden\]\) \.new-repository-action\{animation:none\}\}/);
+test('existing repository connection is the primary onboarding path, creation is secondary', () => {
+  assert.match(source, /class="existing-repository-option"[\s\S]*Connect an existing repository/);
+  assert.match(source, /id="new-time-repository" class="button-link secondary-link new-repository-action"/);
+  assert.ok(source.indexOf('id="repository-target-form"') < source.indexOf('id="new-time-repository"'));
+  assert.match(styles, /\.existing-repository-option\{[^}]*border:/);
+  assert.doesNotMatch(styles, /new-repository-pulse|\.new-repository-action\{[^}]*animation:/);
 });
 
 test('repository setup omits redundant instructions while retaining actionable controls', () => {
@@ -50,12 +52,16 @@ test('onboarding names and explains Device activation without hiding GitHub safe
 
 test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
   assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/i);
-  assert.match(source, /copies the one-time code before opening GitHub so you can paste it/i);
+  assert.match(source, /try to copy it before opening GitHub/i);
+  assert.match(source, /id="device-initial-paste-shortcut"/i);
+  assert.match(source, /id="device-copy-status"[^>]*aria-live="polite"/i);
+  assert.match(source, /id="open-device-page"[^>]*>Open GitHub to enter code/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
   assert.match(source, /id="device-handoff-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
   assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
   assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
+  assert.match(script, /deviceClipboardState !== 'copied'/);
   assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
   const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
   assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
@@ -84,7 +90,7 @@ test('Sign in requests the manifest host permissions in its click gesture before
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
   assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
-  assert.match(script, /Enter a repository URL or owner\/name/i);
+  assert.match(source, /Connect an existing repository[\s\S]*Enter a repository URL or owner\/name/i);
 });
 
 test('repository-first choice has no scenario or owner preselection', () => {
@@ -293,7 +299,7 @@ test('repository choice copy is plain language and errors stay visible at the cu
 });
 
 test('visible repository check status keeps space below the input form', () => {
-  assert.match(styles, /#repository-step>\.repository-check-status:not\(\[hidden\]\)\{[^}]*margin:16px 0 18px/);
+  assert.match(styles, /#repository-step \.existing-repository-option>\.repository-check-status:not\(\[hidden\]\)\{[^}]*margin:16px 0 18px/);
 });
 
 test('options mounts the shared running status directly below the tabs', () => {
@@ -355,6 +361,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
 
   const gettingStarted = await readFile(new URL('../docs/getting-started.md', import.meta.url), 'utf8');
   const troubleshooting = await readFile(new URL('../docs/troubleshooting.md', import.meta.url), 'utf8');
+  const repositoryGuide = await readFile(new URL('../docs/time-data-repository.md', import.meta.url), 'utf8');
   assert.match(source, /Step <span id="current-step">1<\/span> of 2:/);
   assert.doesNotMatch(source, /id="repository-setup-step"|id="repository-access-step"/);
   for (const label of ['Sign in with GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
@@ -365,7 +372,12 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   for (const label of ['Check repository']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
-  assert.match(gettingStarted, /repository field and leave the field or press Enter/);
+  assert.match(gettingStarted, /repository field and click \*\*Check\*\* \(or press Enter\)/);
+  assert.match(repositoryGuide, /select \*\*Check\*\* \(or press Enter\)/);
+  assert.match(troubleshooting, /Use the same \*\*Check\*\* button to retry/);
+  for (const doc of [gettingStarted, troubleshooting, repositoryGuide]) {
+    assert.doesNotMatch(doc, /leave the field or press Enter|refresh icon|reload icon/i);
+  }
   assert.match(gettingStarted, /Discovery and inspection never write to GitHub/i);
   assert.match(gettingStarted, /then explicitly confirm the offered action/i);
   assert.match(gettingStarted, /requires fresh GitHub repository-admin permission/i);

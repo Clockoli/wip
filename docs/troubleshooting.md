@@ -31,12 +31,12 @@ GitHub user authorization and GitHub App installation are separate.
 
 1. Return to Clockoli Settings.
 2. Use **Done on GitHub—check now** if automatic checking has not completed.
-3. After sign-in, type a repository name in **Connect time repositories** to choose an App-granted suggestion, or paste a GitHub URL or `owner/name` and leave the field or press Enter to check it.
+3. After sign-in, type a repository name in **Connect time repositories** to choose an App-granted suggestion, or paste a GitHub URL or `owner/name` and select **Check** (or press Enter).
 4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 
 ### My repository does not appear in suggestions
 
-Enter its GitHub URL or `owner/name` in **Repository URL or owner/name**, then leave the field or press Enter to check it. Use the refresh icon beside the field to retry. A missing private repository is not necessarily nonexistent: GitHub may hide it when your account or the App lacks access. Check the spelling and your GitHub access before creating a replacement.
+Enter its GitHub URL or `owner/name` in **Repository URL or owner/name**, then select **Check** (or press Enter). Use the same **Check** button to retry. A missing private repository is not necessarily nonexistent: GitHub may hide it when your account or the App lacks access. Check the spelling and your GitHub access before creating a replacement.
 
 Check that:
 
@@ -49,7 +49,7 @@ Check that:
 
 When the checked target is missing or needs App Contents-write permission, use **Grant access**. If Clockoli knows the owner's existing App installation, this opens its settings. Choose **Only select repositories** and add the intended repository; ask its owner or organization administrator if you cannot change the grant. There is no need to repeat installation when the repository is already accessible.
 
-The access dialog appears only after explicitly checking a pasted target or autocomplete suggestion. **Grant access** closes it and opens GitHub. Return to Settings; Clockoli checks the unresolved remembered target after one second, even if you closed the access dialog or reloaded Settings. If GitHub has not exposed the grant yet, complete it and return again to recheck, or use the refresh icon to retry manually. Clockoli never silently substitutes another repository. Network errors are reported separately from missing App access.
+The access dialog appears only after explicitly checking a pasted target or autocomplete suggestion. **Grant access** closes it and opens GitHub. Return to Settings; Clockoli checks the unresolved remembered target after one second, even if you closed the access dialog or reloaded Settings. If GitHub has not exposed the grant yet, complete it and return again to recheck, or select **Check** to retry manually. Clockoli never silently substitutes another repository. Network errors are reported separately from missing App access.
 
 If you really need a repository, use **Create a new time repository** at the beginning of the repository section. After creating it on GitHub, copy its URL into the **New repository URL** dialog in Settings and select **Check repository**. Creating it does not grant App access, and checking does not connect or initialize it; review and confirm the offered action separately.
 
@@ -57,11 +57,11 @@ Discovery and inspection never write to GitHub or connect new repositories local
 
 ### Check an edited repository target before connecting
 
-Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Leave the field or press Enter to inspect the edited target, resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
+Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
 
 ### Suggestions do not appear, or Finish setup is unavailable
 
-Type at least two characters of a repository name to see up to eight matching App-granted suggestions. The catalog is fetched on demand rather than shown in full; you can always paste its GitHub URL or `owner/name`. During active setup with a remembered target or pending authorization, discovery refreshes silently every 3 seconds. Unchanged results preserve focus, scroll, drafts, messages, and dialogs. Background errors retain the last good suggestions without a notification. Leave the field or press Enter to check a pasted target; writes still require the disclosed action-specific confirmation.
+Type at least two characters of a repository name to see up to eight matching App-granted suggestions. The catalog is fetched on demand rather than shown in full; you can always paste its GitHub URL or `owner/name`. During active setup with a remembered target or pending authorization, discovery refreshes silently every 3 seconds. Unchanged results preserve focus, scroll, drafts, messages, and dialogs. Background errors retain the last good suggestions without a notification. Select **Check** (or press Enter) to check a pasted target; writes still require the disclosed action-specific confirmation.
 
 Choose a usable connected repository in the separate **Default time repository** selector. New or replacement GitHub authorization is promoted automatically only for the same GitHub identity after every configured destination passes read-only validation and active/queued-work safety checks. If promotion is blocked, follow the single account-level message; there is no per-repository confirmation action. **Finish setup** remains unavailable while authorization or the default is unresolved. Finishing stops polling, discards late replies, and clears the remembered target without remote writes.
 
@@ -81,11 +81,11 @@ Use a dedicated private repository with direct authenticated writes. Do not dele
 
 ### Organization approval is pending
 
-An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings; Clockoli rechecks a remembered target when its grant becomes available. Use the field's refresh icon to retry explicitly if needed.
+An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings; Clockoli rechecks a remembered target when its grant becomes available. Use the field's **Check** button to retry explicitly if needed.
 
 ### I cannot initialize an organization repository
 
-Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then choose it from autocomplete or enter its URL or `owner/name` and leave the field or press Enter to check it. Review the offered action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
+Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then choose it from autocomplete or enter its URL or `owner/name` and select **Check** (or press Enter). Review the offered action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
 
 ### Fine-grained PAT setup fails
 

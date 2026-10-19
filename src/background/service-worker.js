@@ -1191,10 +1191,10 @@ async function handle(message, sender) {
       if (currentDestinationId && currentDestinationId !== destinationId) {
         throw new Error('A timer is running in another time repository. Stop it before adding time.');
       }
-      const tracker = await trackerForDestination(destinationId);
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const { destinationId: _requestedDestination, ...entry } = payload;
-      const result = await tracker.addTime(entry);
-      if (result.active?._pending) requestPendingSync();
+      const result = await tracker.addTime(entry, { background: true });
+      if (result.pending || result.active?._pending) requestPendingSync();
       return { ...result, destinationId };
     }
     case 'START': {
@@ -1257,7 +1257,8 @@ async function handle(message, sender) {
       if (!accepted) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
       requestPendingSync();
       return {
-        stopped: { entry: { ...source.entry, destinationId: sourceDestinationId }, pending: true },
+        stopped: { entry: { ...source.entry, destinationId: sourceDestinationId },
+          localEntry: { ...source.pendingEntry, destinationId: sourceDestinationId }, pending: true },
         active: { ...target.pendingActive, destinationId: targetDestinationId }, pending: true,
         destinationId: targetDestinationId,
       };
@@ -1320,7 +1321,10 @@ async function handle(message, sender) {
     case 'BULK_ADD_TIMES': {
       const text = String(message.text || '');
       if (new TextEncoder().encode(text).byteLength > 262_144) throw new Error('Bulk input is too large.');
-      return (await context()).tracker.bulkAddTimes(text);
+      const { tracker, destinationId } = await context({ localOnly: true });
+      const result = await tracker.bulkAddTimes(text, { background: true });
+      if (result.pending) requestPendingSync();
+      return { ...result, destinationId };
     }
     case 'MERGE_TASKS': {
       const snapshot = await configuredSnapshot({ localOnly: true });
@@ -1404,7 +1408,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
-      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE',
+      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'BULK_ADD_TIMES',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
     ].includes(message?.type);
     const taskMerge = message?.type === 'MERGE_TASKS';
@@ -1419,6 +1423,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 let pendingSync = null;
+let pendingSyncFollowupRequested = false;
 let pendingPull = null;
 let pendingSyncWakeTimer = null;
 let pendingSyncWakeRevision = 0;
@@ -1506,6 +1511,7 @@ async function shouldContinuePendingSync() {
 }
 function syncPendingNow() {
   if (pendingSync) return pendingSync;
+  pendingSyncFollowupRequested = false;
   pendingSync = withCurrentRepositoryRecovery({ type: 'SYNC' }, () => executor.run(async () => {
     if (!(await store.getPendingDestinationIds()).length) return;
     const deadline = pendingSyncQuietUntil(await store.getTrackingSnapshot());
@@ -1515,13 +1521,26 @@ function syncPendingNow() {
       requestPendingSync();
       return;
     }
-    await syncPendingAll({ store, trackerForDestination });
-  })).finally(() => { pendingSync = null; });
+    await syncPendingAll({ store, trackerForDestination, canSync: async () => {
+      const quietUntil = pendingSyncQuietUntil(await store.getTrackingSnapshot());
+      return quietUntil === null || Date.now() >= quietUntil;
+    } });
+  })).finally(() => {
+    pendingSync = null;
+    // A 15-second wakeup may have fired while a previous GitHub write was
+    // still running. Do not drop the new local edit until the minute alarm.
+    if (pendingSyncFollowupRequested) {
+      pendingSyncFollowupRequested = false;
+      requestPendingSync();
+    }
+  });
   return pendingSync;
 }
 
 function requestPendingSync() {
   // Every local mutation was committed to IndexedDB before this is called.
+  // Preserve a follow-up wakeup if an earlier GitHub flush is still in flight.
+  if (pendingSync) pendingSyncFollowupRequested = true;
   // Older asynchronous scheduling requests must not re-arm a stale deadline.
   void schedulePendingSyncFromStore().catch(() => {});
 }

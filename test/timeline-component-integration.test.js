@@ -427,6 +427,27 @@ test('optimistic completion replaces the same completed timer instead of adding 
   assert.equal(merged[0], optimistic);
 });
 
+test('a locally edited completion is never replaced by an older optimistic Stop snapshot', () => {
+  const content = read('src/content/github.js');
+  const start = content.indexOf('function mergeTimelineCompletedEntries');
+  const end = content.indexOf('\n\n  function popupTimelineEntries', start);
+  assert.ok(start >= 0 && end > start);
+  const merge = Function(`${content.slice(start, end)}; return mergeTimelineCompletedEntries;`)();
+  const local = {
+    id: 'timer-1', description: 'Changed locally after Stop', _pending: true,
+    startedAt: '2026-10-17T10:00:00.000Z', endedAt: '2026-10-17T10:30:00.000Z',
+    updatedAt: '2026-10-17T10:30:01.000Z', _path: 'times/2026-10/alice.jsonl',
+  };
+  const staleOptimistic = {
+    ...local, description: 'Original Stop description',
+    updatedAt: '2026-10-17T10:30:00.000Z', _optimisticCompletion: true,
+  };
+  const merged = merge([local], [staleOptimistic]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].description, 'Changed locally after Stop',
+    'the List and Timeline must display the latest locally accepted edit before GitHub sync');
+});
+
 test('routine full-width UI updates never destroy the mounted timeline', () => {
   const content = read('src/content/github.js');
 
@@ -444,7 +465,8 @@ test('timeline STOP keeps the completed block and its connectors visible through
   const handler = content.slice(start, end);
 
   assert.match(handler, /const result = await send\(\{ type: 'STOP'/);
-  assert.match(handler, /timelineOptimisticCompletions\.set\(result\.entry\.id/);
+  assert.match(handler, /rememberCompletedLocally\(result, result\.destinationId\)/);
+  assert.match(content, /function rememberCompletedLocally\(completion, destinationId\)[\s\S]*timelineOptimisticCompletions\.set\(completion\.entry\.id/);
   assert.match(handler, /pageState = \{ \.\.\.pageState, active: null \}/);
   assert.match(handler, /refreshMountedTimeline\(\)/);
   assert.doesNotMatch(handler, /recentLoaded = false/);

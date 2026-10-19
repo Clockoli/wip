@@ -8,4 +8,11 @@ function send(message) {
   }));
 }
 
-mountAddTime(document.getElementById('add-time-button'), { send });
+mountAddTime(document.getElementById('add-time-button'), {
+  send,
+  onAdded: result => {
+    // The background worker already committed to IndexedDB; notify Activity
+    // directly, without a page reload or waiting for a GitHub history read.
+    document.dispatchEvent(new CustomEvent('clockoli:local-time-added', { detail: result }));
+  },
+});

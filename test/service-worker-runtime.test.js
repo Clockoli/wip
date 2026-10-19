@@ -107,6 +107,60 @@ test('a fresh local edit re-arms 15-second wakeup, without needing a minute tick
   assert.deepEqual(commits, [now]);
 });
 
+test('a new local edit arriving during a slow GitHub write still schedules its own flush', async () => {
+  let now = Date.now();
+  class FakeDate extends Date { static now() { return now; } }
+  const pending = [{ id: 'first', operation: 'editEntry', queuedAt: new Date(now - 15_000).toISOString() }];
+  const timers = [], alarms = [], commits = [];
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const store = {
+    getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+    getTrackingSnapshot: async () => ({
+      destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(pending) } } },
+    }),
+  };
+  const context = vm.createContext({
+    Date: FakeDate, store,
+    chrome: { alarms: { create: async (...args) => { alarms.push(args); } } },
+    setTimeout: (callback, delay) => {
+      const timer = { callback, delay, cancelled: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: timer => { timer.cancelled = true; },
+    withCurrentRepositoryRecovery: async (_message, callback) => callback(),
+    executor: { run: callback => callback() },
+    trackerForDestination: async () => ({}),
+    syncPendingAll: async () => {
+      if (commits.length === 0) { notifyStarted(); await blocked; }
+      commits.push(pending.shift()?.id);
+    },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  const first = context.syncPendingNow();
+  await started;
+  now += 1_000;
+  pending.push({ id: 'second', operation: 'editEntry', queuedAt: new Date(now).toISOString() });
+  context.requestPendingSync();
+  await new Promise(resolve => setImmediate(resolve));
+  const originalWake = timers.at(-1);
+  assert.equal(originalWake.delay, 15_000);
+  now += 15_000;
+  originalWake.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await first;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(commits, ['first'], 'the second edit cannot be swallowed by the in-flight sync');
+  const followupWake = timers.filter(timer => !timer.cancelled).at(-1);
+  assert.notEqual(followupWake, originalWake, 'the new edit must get another flush after the first completes');
+  followupWake.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(commits, ['first', 'second']);
+});
+
 test('an early alarm cannot sync before 15 seconds of inactivity after service-worker restart', async () => {
   let now = Date.now();
   class FakeDate extends Date { static now() { return now; } }
@@ -222,6 +276,57 @@ test('extracted service-worker handler routes START to the first matching destin
   assert.equal(calls[0].options?.localOnly, true, 'Start must not wait for GitHub preflight');
 });
 
+test('single Add time is accepted locally and uses the same delayed scheduler as Stop', async () => {
+  const calls = [], schedules = [];
+  const context = handlerContext({
+    addTimeForSender: payload => ({ taskUrl: payload.taskUrl, taskTitle: payload.taskTitle,
+      startedAt: payload.startedAt, endedAt: payload.endedAt, description: payload.description }),
+    store: {},
+    activeDestinationId: async () => null,
+    resolveStartDestinationId: async () => 'github:1',
+    trackerForDestination: async (id, options) => ({
+      addTime: async (entry, settings) => {
+        calls.push({ id, options, entry, settings });
+        return { pending: true, entry: { id: 'record' } };
+      },
+    }),
+    requestPendingSync: () => schedules.push(true),
+  });
+  const entry = { type: 'ADD_TIME', taskUrl: 'https://example.com/one', taskTitle: 'A',
+    startedAt: '2026-10-17T10:00:00.000Z', endedAt: '2026-10-17T10:30:00.000Z', description: '' };
+  const result = await context.handle(entry, extensionSender);
+  assert.equal(result.pending, true);
+  assert.equal(result.destinationId, 'github:1');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.localOnly, true);
+  assert.equal(calls[0].settings.background, true);
+  assert.deepEqual(schedules, [true]);
+});
+
+test('Bulk add accepts locally and queues a shared idle GitHub flush without blocking on remote writes', async () => {
+  const calls = [], schedules = [];
+  const context = handlerContext({
+    context: async options => ({ tracker: {
+      bulkAddTimes: async (text, settings) => {
+        calls.push({ options, text, settings });
+        return { added: 2, pending: true };
+      },
+    } }),
+    requestPendingSync: () => schedules.push(true),
+  });
+  const input = '2026-08-21 https://example.com/a First 1\\n2026-08-22 https://example.com/b Second 1';
+  const result = await context.handle({ type: 'BULK_ADD_TIMES', text: input }, extensionSender);
+  assert.equal(result.added, 2);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.localOnly, true);
+  assert.equal(calls[0].settings.background, true);
+  assert.deepEqual(schedules, [true]);
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /'ADD_TIME', 'BULK_ADD_TIMES'/);
+  assert.match(worker, /const taskMerge = message\?\.type === 'MERGE_TASKS'/,
+    'Merge tasks must stay outside the local-acceptance scheduler');
+});
+
 test('multi-destination read callbacks use local-only contexts and retain persistent bodies for merging', () => {
   const participants = sourceBetween('async function loadTaskParticipants(', 'async function loadTimes(');
   const tasks = sourceBetween('async function loadTasks(', 'async function cancelReports(');
@@ -292,13 +397,14 @@ test('MERGE_TASKS writes selected other-user storage branches rather than only t
 });
 
 test('extracted service-worker handler pins STOP to the active destination', async () => {
-  const calls = [];
+  const calls = [], syncRequests = [];
   const store = {
     getTrackingSnapshot: async () => ({ activeTimer: { destinationId: 'github:2', record: { id: 'running' } } }),
     getDestinationRegistry: async () => registry,
   };
   const context = handlerContext({
     store,
+    requestPendingSync: () => syncRequests.push('stop'),
     trackerForDestination: async (destinationId, options) => ({
       stop: async (...args) => { calls.push({ destinationId, options, args }); return { pending: true, entry: { id: 'running' } }; },
     }),
@@ -308,6 +414,7 @@ test('extracted service-worker handler pins STOP to the active destination', asy
   assert.deepEqual(calls.map(call => [call.destinationId, call.args[0], call.args[1]?.background]), [
     ['github:2', 'done', true],
   ]);
+  assert.deepEqual(syncRequests, ['stop'], 'Stop must use the shared 15-second idle scheduler');
   assert.equal(calls[0].options?.localOnly, true, 'Stop must not wait for GitHub preflight');
 });
 
@@ -480,6 +587,9 @@ test('extracted service-worker handler submits one atomic cross-destination SWIT
   });
   const result = await context.handle({ type: 'SWITCH_TASK', taskUrl: 'https://example.test/team/2', taskTitle: 'New' }, extensionSender);
   assert.equal(result.destinationId, 'github:2');
+  assert.equal(result.stopped.localEntry.destinationId, 'github:1', 'completion stays in its original repository');
+  assert.equal(result.stopped.localEntry._pending, true);
+  assert.equal(result.stopped.localEntry.id, current.id);
   assert.equal(acceptedPlans.length, 1);
   const plan = acceptedPlans[0];
   assert.deepEqual(plan.expectedActive, { destinationId: 'github:1', recordId: current.id });

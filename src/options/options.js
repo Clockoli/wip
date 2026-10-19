@@ -13,6 +13,10 @@ let state = null;
 let repositories = [];
 let selectedRepository = null;
 let pollTimer = null;
+let deviceClipboardAttemptId = '';
+let deviceClipboardState = 'unknown';
+let deviceOpeningGitHubAutomatically = false;
+let deviceGitHubOpened = false;
 let showOnboarding = false;
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
@@ -667,6 +671,28 @@ function renderDestinationCards() {
   }
 }
 
+function deviceKeyboardShortcut(key) {
+  const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
+  return /mac|iphone|ipad|ipod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+function renderDeviceHandoff(attempt) {
+  const clipboard = deviceClipboardAttemptId === attempt.attemptId ? deviceClipboardState : 'unknown';
+  const status = $('device-copy-status');
+  status.dataset.state = clipboard;
+  status.textContent = clipboard === 'copied' ? '✓ Code copied to your clipboard.'
+    : clipboard === 'selection' ? `Clipboard copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
+      : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
+        : 'Code ready. Select Copy to put it on your clipboard.';
+  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code.`;
+  $('device-handoff-status').textContent = clipboard === 'copied'
+    ? deviceOpeningGitHubAutomatically ? `Next: When GitHub opens, ${paste}`
+      : deviceGitHubOpened ? `Next: On GitHub, ${paste}`
+        : `Next: Open GitHub, then ${paste}`
+    : clipboard === 'selection' ? 'Next: Copy the selected code, then open GitHub.'
+      : 'Next: Copy the code, then open GitHub.';
+}
+
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
   const step = onboardingStep({ authorized });
@@ -703,6 +729,7 @@ function renderState() {
   $('setup-cancelled').hidden = !setupCancelled;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
+  $('device-initial-paste-shortcut').textContent = deviceKeyboardShortcut('V');
   $('connection-status').textContent = accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${accountConnected ? ' ready' : ''}`;
   $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
@@ -739,15 +766,21 @@ function renderDeviceAttempt(attempt) {
     $('copy-code').disabled = true;
     $('device-done').hidden = true;
     setLink('open-device-page', '');
+    $('device-copy-status').textContent = 'Getting your one-time code…';
+    $('device-copy-status').dataset.state = 'unknown';
+    $('device-handoff-status').textContent = '';
     $('device-wait').textContent = 'Starting secure GitHub authorization…';
     schedulePoll(attempt);
     return;
   }
-  $('device-code').value = attempt.userCode;
+  // Keep the user's selection intact when polling refreshes the same code.
+  if ($('device-code').value !== attempt.userCode) $('device-code').value = attempt.userCode;
   $('copy-code').disabled = false;
   $('device-done').hidden = false;
   $('device-done').disabled = false;
   setLink('open-device-page', attempt.verificationUri);
+  $('open-device-page').textContent = deviceGitHubOpened ? 'Open GitHub again' : 'Open GitHub to enter code';
+  renderDeviceHandoff(attempt);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
   $('device-wait').textContent = `Clockoli checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
   schedulePoll(attempt);
@@ -835,12 +868,13 @@ function closeRepositoryAccess() {
   dialog.hidden = true;
 }
 
-function renderRepositoryRefresh() {
-  const refresh = $('refresh-repository-target');
+function renderRepositoryCheckButton() {
+  const button = $('check-repository-target');
   const busy = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget
     || (discoveryStatus === 'loading' && repositoryTarget && !repositoryInputDirty));
-  refresh.disabled = !$('repository-target').value.trim() || busy;
-  refresh.setAttribute('aria-busy', String(busy));
+  button.disabled = !$('repository-target').value.trim() || busy;
+  button.textContent = busy ? 'Checking…' : 'Check';
+  button.setAttribute('aria-busy', String(busy));
 }
 
 function renderRepositoryAccess() {
@@ -866,7 +900,7 @@ function renderRepositoryAccess() {
     : 'Clockoli needs Contents: Read and write permission for this repository.';
   const targetStatus = $('repository-target-status');
   const input = $('repository-target');
-  renderRepositoryRefresh();
+  renderRepositoryCheckButton();
   const action = repositoryActionKey(selectedRepository);
   const actionButton = $('connect-checked-repository');
   actionButton.textContent = repositoryAction(selectedRepository);
@@ -879,14 +913,14 @@ function renderRepositoryAccess() {
   const unavailable = manual && missing && !checkingRepositoryTarget;
   const error = repositoryCheckFeedbackError || failed || (unavailable && !repositoryGrantAwaitingDeparture);
   const attention = !error && !repositoryInputDirty && Boolean(action) && repositoryCanBeSelected(selectedRepository);
+  const checking = Boolean(checkingRepositoryTarget || autoCheckingRepositoryTarget);
   targetStatus.className = `repository-check-status${error ? ' repository-target-error' : ''}`;
   targetStatus.dataset.kind = error ? 'error' : attention ? 'attention' : selectedRepository?.ready ? 'ready' : 'neutral';
-  targetStatus.textContent = repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? 'Checking when you leave this field.'
-    : checkingRepositoryTarget === repositoryTarget ? 'Checking access and storage… No changes will be made.'
-    : failed ? 'Check failed. Edit the name or press Enter to retry.' : unavailable
+  targetStatus.textContent = checking ? '' : repositoryCheckFeedback || (!manual ? '' : repositoryInputDirty ? ''
+    : failed ? 'Check failed. Edit the name or select Check to retry.' : unavailable
     ? 'Clockoli cannot access this repository. It may be private, not granted to the App, awaiting approval, or the name may be incorrect. Its existence is not confirmed. Check the name and your GitHub access.'
-    : selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Checking access and storage…');
-  targetStatus.hidden = discoveryStatus === 'loading' || !targetStatus.textContent;
+    : selectedRepository ? repositoryInspectionStatus(selectedRepository) : '');
+  targetStatus.hidden = checking || discoveryStatus === 'loading' || !targetStatus.textContent;
   if (error) input.setAttribute('aria-invalid', 'true');
   else input.removeAttribute('aria-invalid');
 }
@@ -1007,7 +1041,7 @@ function renderRepositoryList() {
 
 function renderRepositoryLoading() {
   renderRepositoryList();
-  renderRepositoryRefresh();
+  renderRepositoryCheckButton();
   $('repository-target-status').hidden = discoveryStatus === 'loading' || !$('repository-target-status').textContent;
 }
 
@@ -1044,14 +1078,14 @@ function reviewSelectedRepository() {
     initialize_organization: `Initialize ${fullName}?`,
   };
   const bodies = {
-    connect: 'Clockoli will recheck access and storage, then add this ready repository to this browser. Checking alone does not connect it. This action does not change repository files. Once connected, it can be used for future time records.',
+    connect: 'Connect this repository to Clockoli in this browser for future time tracking. No repository files will be changed.',
     add: 'Clockoli will add this repository to this browser, create or verify your personal storage branch, and make it available for project routing. Existing Clockoli records and other users’ branches will not be changed.',
     join: 'Clockoli will add your GitHub identity to this repository’s Clockoli user list and create your personal storage branch if it does not exist. Other users’ branches and time records will not be changed.',
     initialize_personal: 'Clockoli will initialize this repository for time tracking.',
     initialize_organization: 'Clockoli will initialize this repository for time tracking. Repository administrator confirmation is required.',
   };
   $('repository-confirmation-title').textContent = titles[intent];
-  $('repository-confirmation-body').textContent = `${bodies[intent]} Anyone with read access can see stored task URLs, titles, timestamps, and descriptions.`;
+  $('repository-confirmation-body').textContent = `${bodies[intent]} Anyone with read access can see tracked URLs, titles, times, and descriptions.`;
   $('confirm-repository-action').textContent = repositoryAction(repository);
   const writes = $('repository-write-list'); writes.replaceChildren();
   const writeDescriptions = intent === 'add'
@@ -1165,7 +1199,7 @@ async function inspectNewlyGrantedTarget(revision, account) {
       || repositoryInputDirty || selectedRepository?.state || checkingRepositoryTarget || autoInspectedGrantKey === grantKey) return;
   autoCheckingRepositoryTarget = inspectedTarget;
   repositoryCheckError = '';
-  repositoryCheckFeedback = `Checking ${repositoryTarget} after GitHub access changed…`;
+  repositoryCheckFeedback = '';
   repositoryCheckFeedbackError = false;
   renderRepositoryAccess();
   try {
@@ -1186,7 +1220,7 @@ async function inspectNewlyGrantedTarget(revision, account) {
   } catch (error) {
     if (revision !== repositoryLifecycle || account !== repositoryChoiceAccount()
         || repositoryInputDirty || repositoryTarget !== inspectedTarget) return;
-    repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`;
+    repositoryCheckFeedback = `Check failed: ${error.message}. Press Check to retry.`;
     repositoryCheckFeedbackError = true;
   } finally {
     if (autoCheckingRepositoryTarget === inspectedTarget) autoCheckingRepositoryTarget = '';
@@ -1211,7 +1245,7 @@ async function discoverRepositories({ silent = false } = {}) {
     discoveryStatus = 'loading'; selectedRepository = null;
     renderRepositoryLoading();
     updateRepositoryConfirmation(); closeRepositoryAccess();
-    message('Checking accessible repositories…'); showRecovery();
+    message(''); showRecovery();
   }
   const request = send({ type: 'DISCOVER_REPOSITORIES' });
   discoveryPromise = request;
@@ -1256,7 +1290,7 @@ async function discoverRepositories({ silent = false } = {}) {
       $('finish-setup').disabled = !canFinishRepositorySetup();
     } else {
       discoveryStatus = 'ready'; repositoryDiscoveryKnown = true; renderRepositories(result); renderDestinationCards();
-      message(repositoryTarget && !selectedRepository ? $('repository-target-status').textContent : 'Enter a repository URL or owner/name, review a repository action, or finish setup with a ready default.');
+      message('');
     }
     await inspectNewlyGrantedTarget(revision, account);
     return result;
@@ -1767,38 +1801,71 @@ $('authorize').addEventListener('click', async () => {
     if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
     const attempt = await send({ type: 'START_DEVICE_FLOW' });
     state.deviceAttempt = attempt;
+    message('');
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'unknown';
+    deviceOpeningGitHubAutomatically = false;
+    deviceGitHubOpened = false;
     renderDeviceAttempt(attempt);
     $('device-panel').scrollIntoView({ block: 'center' });
     $('device-code').classList.add('code-reveal');
-    let copied = false;
     try {
       await navigator.clipboard.writeText(attempt.userCode);
-      copied = true;
+      deviceClipboardState = 'copied';
+      deviceOpeningGitHubAutomatically = true;
     } catch {
-      // Clipboard access is optional; a denied copy must not block the GitHub tab.
+      // A denied clipboard write must not send the user to GitHub without a pasteable code.
+      deviceClipboardState = 'failed';
     }
-    if (!await revealDeviceCode(attempt)) return;
-    $('device-handoff-status').textContent = copied
-      ? 'Code copied. GitHub will open in four seconds.'
-      : 'Copy the code here before entering it on GitHub. GitHub will open in four seconds.';
-    await new Promise(resolve => setTimeout(resolve, 4000));
     if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    renderDeviceHandoff(attempt);
+    if (!await revealDeviceCode(attempt)) return;
+    if (deviceClipboardState !== 'copied') return;
+    renderDeviceHandoff(attempt);
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    if (state.deviceAttempt?.attemptId !== attempt.attemptId || deviceGitHubOpened || deviceClipboardState !== 'copied') return;
     githubHandoff = true;
-    await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-    $('device-handoff-status').textContent = copied
-      ? 'Paste the copied code on GitHub.'
-      : 'Copy the code above and paste it on GitHub.';
-    message('Authorize Clockoli on GitHub, then choose Done on GitHub—check now if this page does not advance automatically.', 'success');
+    try {
+      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
+      deviceGitHubOpened = true;
+      $('open-device-page').textContent = 'Open GitHub again';
+    } finally {
+      deviceOpeningGitHubAutomatically = false;
+      renderDeviceHandoff(attempt);
+    }
   } catch (error) {
-    if (!$('device-panel').hidden) $('device-handoff-status').textContent = 'Could not open GitHub automatically. Select Open GitHub again.';
+    if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
     message(error.message, 'error');
   }
   finally { $('authorize').disabled = !state?.appConfigured; }
 });
 
+$('open-device-page').addEventListener('click', () => {
+  const attempt = state?.deviceAttempt;
+  if (!attempt?.verificationUri) return;
+  // A manually opened GitHub tab must not be followed by the scheduled automatic one.
+  deviceGitHubOpened = true;
+  deviceOpeningGitHubAutomatically = false;
+  $('open-device-page').textContent = 'Open GitHub again';
+  renderDeviceHandoff(attempt);
+});
+
 $('copy-code').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('device-code').value); message('Device code copied.', 'success'); }
-  catch { $('device-code').focus(); $('device-code').select(); message('Could not copy automatically. The code is selected; copy it with your keyboard.', 'error'); }
+  const attempt = state?.deviceAttempt;
+  if (!attempt?.userCode) return;
+  try {
+    await navigator.clipboard.writeText(attempt.userCode);
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'copied';
+    renderDeviceHandoff(attempt);
+  } catch {
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+    $('device-code').focus(); $('device-code').select();
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'selection';
+    renderDeviceHandoff(attempt);
+  }
 });
 
 $('device-done').addEventListener('click', async () => {
@@ -1910,7 +1977,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     checkingRepositoryTarget = target;
     repositorySuggestionsOpen = false;
     repositoryCheckError = '';
-    repositoryCheckFeedback = keepInput ? `Checking ${target}… Repository files will not be changed.` : '';
+    repositoryCheckFeedback = '';
     repositoryCheckFeedbackError = false;
     selectedRepository = null;
     updateRepositoryConfirmation();
@@ -1942,7 +2009,7 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
   } catch (error) {
     if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled && !repositoryInputDirty) {
       repositoryCheckError = checkingRepositoryTarget;
-      if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press recheck to retry.`; repositoryCheckFeedbackError = true; }
+      if (keepInput) { repositoryCheckFeedback = `Check failed: ${error.message}. Press Check to retry.`; repositoryCheckFeedbackError = true; }
       message(error.message, 'error');
     }
   } finally {
@@ -1951,7 +2018,9 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     if (revision === repositoryLifecycle && account === repositoryChoiceAccount() && !setupCancelled) {
       if (completed && keepInput && !repositoryInputDirty) {
         const status = selectedRepository ? repositoryInspectionStatus(selectedRepository) : 'Unavailable — Clockoli cannot access this repository; check its name and App grant';
-        repositoryCheckFeedback = `Checked ${repositoryTarget}: ${status}.${status === 'Ready — not connected' ? ' Select Connect repository below to add it to this browser.' : ''} Repository files were not changed.`;
+        repositoryCheckFeedback = status === 'Ready — not connected'
+          ? 'Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.'
+          : `Checked ${repositoryTarget}: ${status}.`;
         repositoryCheckFeedbackError = status.startsWith('Unavailable');
       }
       renderRepositoryAccess();
@@ -1965,31 +2034,31 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     }
   }
 }
+function checkEnteredRepositoryTarget() {
+  const input = $('repository-target');
+  try { parseRepositoryTarget(input.value); }
+  catch {
+    repositoryCheckFeedback = 'Enter a valid GitHub repository URL or owner/name.';
+    repositoryCheckFeedbackError = true;
+    repositoryCheckError = '';
+    renderRepositoryAccess();
+    input.focus();
+    return;
+  }
+  return checkRepositoryTarget(input.value, false, true);
+}
 $('repository-target-form').addEventListener('submit', event => {
   event.preventDefault();
   repositorySuggestionsOpen = false;
   renderRepositoryList();
-  return checkRepositoryTarget($('repository-target').value, false, true);
+  return checkEnteredRepositoryTarget();
 });
 $('repository-target').addEventListener('blur', event => {
-  const input = $('repository-target');
   if (event?.relatedTarget?.dataset?.repositoryAction) return;
   repositorySuggestionsOpen = false;
   renderRepositoryList();
-  if (['refresh-repository-target', 'connect-checked-repository'].includes(event?.relatedTarget?.id)
-      || !input.value.trim() || !repositoryInputDirty) return;
-  try { parseRepositoryTarget(input.value); }
-  catch {
-    input.setAttribute('aria-invalid', 'true');
-    $('repository-target-status').className = 'repository-check-status repository-target-error';
-    $('repository-target-status').dataset.kind = 'error';
-    $('repository-target-status').textContent = 'Enter a valid GitHub repository URL or owner/name.';
-    $('repository-target-status').hidden = false;
-    return;
-  }
-  return checkRepositoryTarget(input.value, false, true);
 });
-$('refresh-repository-target').addEventListener('click', () => checkRepositoryTarget($('repository-target').value, false, true));
+$('check-repository-target').addEventListener('click', () => checkEnteredRepositoryTarget());
 $('connect-checked-repository').addEventListener('click', () => reviewSelectedRepository());
 $('repository-target').addEventListener('input', () => {
   clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
@@ -2157,7 +2226,7 @@ async function rediscoverAfterGitHubHandoff() {
         cancelRepositoryGrantHandoff();
         scheduleRepositoryPolling();
       } else if (discoveryStatus === 'ready') {
-        repositoryCheckFeedback = `GitHub access to ${target} is not available yet. Finish granting access, then return here to check again. Repository files were not changed.`;
+        repositoryCheckFeedback = `GitHub access to ${target} is not available yet. Finish granting access, then return here to check again.`;
         repositoryCheckFeedbackError = false;
         renderRepositoryAccess();
         message('GitHub access is not available yet. Return here after granting access to check again.');

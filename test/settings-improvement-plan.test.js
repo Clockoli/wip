@@ -22,7 +22,7 @@ test('first run has two steps: GitHub sign-in then repository selection regardle
   assert.match(html, /Step <span id="current-step">1<\/span> of 2/);
   assert.match(html, /Set up Clockoli[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
   assert.match(html, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
-  assert.match(html, /Clockoli copies the one-time code before opening GitHub so you can paste it/);
+  assert.match(html, /try to copy it before opening GitHub[\s\S]*id="device-initial-paste-shortcut"/);
   assert.match(html, /<details[^>]*id="connection-details"[\s\S]*<summary>How it works<\/summary>/i);
   assert.doesNotMatch(html, /of [34]|Step [34]/i);
   assert.equal(onboardingStep({ authorized: false }), 1);
@@ -222,7 +222,7 @@ test('storage recovery returns to selection under the universal explicit-confirm
 test('direct repository selection is accessible and exposes check progress and focused review', () => {
   assert.match(html, /<label for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(html, /id="refresh-repository-target"[^>]*type="button"[^>]*aria-label="Recheck repository"/);
+  assert.match(html, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
   assert.match(html, /id="confirm-repository-action"[^>]*type="button"/);
   assert.doesNotMatch(html, /Unavailable repositories include the reason/);
