@@ -113,6 +113,12 @@ export function effectiveTrackedSeconds(task, { active = null, now = Date.now() 
   return completed + Math.max(0, Math.floor((current - startedAt) / 1000));
 }
 
+export function selectTaskUsers(availableUsers, currentUsers, { includeAllUsers = false, selectedUsers } = {}) {
+  const requested = Array.isArray(selectedUsers) ? selectedUsers
+    : includeAllUsers ? availableUsers : Object.values(currentUsers);
+  return requested.filter(user => availableUsers.includes(user));
+}
+
 export function sortTrackedTasks(tasks, options = {}) {
   return [...(tasks ?? [])].sort((a, b) => effectiveTrackedSeconds(b, options) - effectiveTrackedSeconds(a, options)
     || taskUrlOf(a).localeCompare(taskUrlOf(b)));

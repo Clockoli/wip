@@ -337,6 +337,7 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(tasks, /tracker\.getState\(\{ refresh: true, signal \}\)/);
   assert.match(reports, /includeStorageMetadata: true/);
   assert.match(tasks, /includeStorageMetadata: true/);
+  assert.match(tasks, /selectTaskUsers\(availableUsers, currentUsers, message\.payload\)/);
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
 });
 

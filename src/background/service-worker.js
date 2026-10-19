@@ -7,7 +7,7 @@ import {
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
 import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
-import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
+import { aggregateTaskParticipants, aggregateTrackedTasks, selectTaskUsers } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
 import { setAddonEnabled } from '../addons/service.js';
@@ -532,8 +532,7 @@ async function loadTasks(message, sender) {
       }));
     });
     const availableUsers = [...new Set(loaded.records.map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
-    const requestedUsers = Array.isArray(message.payload?.selectedUsers) ? message.payload.selectedUsers : Object.values(currentUsers);
-    const selectedUsers = requestedUsers.filter(user => availableUsers.includes(user));
+    const selectedUsers = selectTaskUsers(availableUsers, currentUsers, message.payload);
     return {
       configured: true,
       sourceRepositories: destinations.map(destination => destination.label),
