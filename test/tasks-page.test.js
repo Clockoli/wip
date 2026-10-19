@@ -57,42 +57,25 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.doesNotMatch(js, /Saved in|task-repositories/);
 });
 
-test('Settings exposes two filtered task lists, people selection, and a queued atomic merge list', () => {
+test('Settings provides sequential merge selection with an opt-in all-people scope', () => {
   const optionsHtml = fs.readFileSync(new URL('../src/options/options.html', import.meta.url), 'utf8');
   const optionsJs = fs.readFileSync(new URL('../src/options/options.js', import.meta.url), 'utf8');
   assert.match(optionsHtml, /id="merge-tasks"[\s\S]*<h2[^>]*>Merge tasks<\/h2>/);
   assert.match(optionsHtml, /id="merge-task-period"[\s\S]*one-month[\s\S]*three-months[\s\S]*all-time/);
-  assert.match(optionsHtml, /id="merge-task-period"[\s\S]*id="merge-task-destination"[\s\S]*id="merge-people-select"/);
-  assert.match(optionsHtml, /<details id="merge-people-select"/);
-  assert.match(optionsHtml, /<summary[^>]*>[\s\S]*id="merge-people-filter"[^>]*type="search"/);
-  assert.match(optionsHtml, /id="merge-people-all"[^>]*>All people<\/button>[\s\S]*<\/summary>/);
-  assert.doesNotMatch(optionsHtml, /id="merge-people-summary"/);
-  assert.doesNotMatch(optionsHtml, /id="merge-people-none"/);
-  assert.match(optionsHtml, /id="merge-source-filter"/); assert.match(optionsHtml, /id="merge-source-list"/);
+  assert.match(optionsHtml, /id="merge-task-period"[\s\S]*id="merge-task-destination"[\s\S]*id="merge-all-people" type="checkbox"/);
+  assert.doesNotMatch(optionsHtml, /merge-people-select/);
+  assert.match(optionsHtml, /id="merge-source-filter"/);
   assert.match(optionsHtml, /class="merge-task-arrow"[^>]*>→<\/span>/);
-  assert.match(optionsHtml, /id="merge-target-filter"/); assert.match(optionsHtml, /id="merge-target-list"/);
-  assert.match(optionsHtml, /id="merge-queue-list"/); assert.match(optionsHtml, /id="merge-tasks-submit"[^>]*>Merge<\/button>/);
-  assert.match(optionsHtml, /class="actions merge-task-actions"/);
-  assert.match(optionsJs, /taskPeriodRange\(\$\('merge-task-period'\)\.value/);
-  assert.match(optionsJs, /includeAllUsers: true/);
+  assert.match(optionsHtml, /id="merge-target-filter"[^>]*disabled/);
+  assert.match(optionsHtml, /id="merge-queue-list"/);
+  assert.match(optionsHtml, /id="merge-tasks-submit"[^>]*>Merge my tasks<\/button>/);
+  assert.match(optionsJs, /includeAllUsers: \$\('merge-all-people'\)\.checked/);
+  assert.match(optionsJs, /allUsers, pairs/);
+  assert.match(optionsJs, /function mergeTaskIdentity\(task\)/);
+  assert.match(optionsJs, /function renderMergeTaskList\(side\)/);
   assert.match(optionsJs, /mergePairs\.push/);
-  assert.match(optionsJs, /allSelected \? mergePeople\.clear\(\) : mergeAvailableUsers\.forEach/);
-  assert.match(optionsJs, /type:\s*'MERGE_TASKS'/);
-  assert.match(optionsJs, /pairs = mergePairs\.map/);
   assert.match(optionsJs, /destinationIds:\s*\[\$\('merge-task-destination'\)\.value\]/);
   assert.match(optionsJs, /remove\.textContent = '✕'/);
-  assert.match(optionsJs, /className = 'merge-queue-task-url'/);
-  assert.doesNotMatch(optionsJs, /mergeTaskDuration|merge-task-total/);
-  assert.match(optionsJs, /className = 'merge-task-title'/);
-  assert.match(optionsJs, /focusedUser = document\.activeElement\?\.type === 'checkbox'/);
-  assert.match(optionsJs, /focused\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(optionsJs, /function setMergePeopleOpen\(open\)[\s\S]*aria-expanded'[\s\S]*String\(open\)/);
-  assert.match(optionsJs, /\$\('merge-people-filter'\)\.addEventListener\('focus',[\s\S]*setMergePeopleOpen\(true\)/);
-  assert.match(optionsJs, /mergePeopleSelect\.addEventListener\('keydown',[\s\S]*event\.key !== 'Escape'[\s\S]*merge-people-filter'\)\.focus\(\{ preventScroll: true \}\)[\s\S]*setMergePeopleOpen\(false\)/);
-  assert.match(optionsJs, /document\.addEventListener\('pointerdown',[\s\S]*!mergePeopleSelect\.contains\(event\.target\)[\s\S]*setMergePeopleOpen\(false\)/);
-  assert.match(optionsJs, /document\.addEventListener\('focusin',[\s\S]*!mergePeopleSelect\.contains\(event\.target\)[\s\S]*setMergePeopleOpen\(false\)/);
-  assert.match(optionsJs, /merge-people-filter'\)\.addEventListener\('click',[\s\S]*setMergePeopleOpen\(true\)/);
-  assert.match(optionsJs, /event\.stopPropagation\(\)/);
 });
 
 test('failed task switches reconcile from local tracker state without reloading reports', () => {

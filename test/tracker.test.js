@@ -271,6 +271,21 @@ test('task merge replaces an imported identity with a URL and rejects an importe
   assert.equal(github.atomicWrites.length, 1);
 });
 
+test('task merge rejects source-target chains and cycles before any writes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store });
+  for (const pairs of [
+    [{ sourceTaskUrl: 'https://example.test/a', targetTaskUrl: 'https://example.test/b' },
+      { sourceTaskUrl: 'https://example.test/b', targetTaskUrl: 'https://example.test/c' }],
+    [{ sourceTaskUrl: 'https://example.test/a', targetTaskUrl: 'https://example.test/b' },
+      { sourceTaskUrl: 'https://example.test/b', targetTaskUrl: 'https://example.test/a' }],
+  ]) {
+    await assert.rejects(tracker.mergeTasks({ pairs, startDate: '2026-08-18', endDate: '2026-08-18' }),
+      /both a merge source and a replacement/);
+  }
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('start writes one readable active text file with its durable issue title', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.start(issue, 'Ranking regression', 'Investigating');

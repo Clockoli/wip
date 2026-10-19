@@ -214,9 +214,13 @@ test('Merge tasks offers an imported identity only on the source side in Chromiu
     await expect(page.locator('#merge-tasks')).toBeVisible();
     await page.locator('#merge-task-destination').selectOption('github:20');
     await expect(page.locator('#merge-source-list .merge-task-row')).toHaveCount(2);
-    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(1);
+    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(0);
+    await expect(page.locator('#merge-target-list')).toContainText('Select a task to replace first.');
+    await expect(page.locator('#merge-all-people')).not.toBeChecked();
     await page.locator('#merge-source-filter').fill('6-Polish-the-Clockoli');
     await page.locator('#merge-source-list .merge-task-row').click();
+    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(1);
+    await expect(page.locator('#merge-target-list .merge-task-url')).toHaveText('acme/app #6');
     await page.locator('#merge-target-list .merge-task-row').click();
     await expect(page.locator('#merge-queue-list .merge-queue-row')).toHaveCount(1);
     await expect(page.locator('#merge-tasks-submit')).toBeEnabled();
