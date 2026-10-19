@@ -144,3 +144,9 @@
   .running-status-task{flex-basis:100%}
   .running-status-description-field{flex-basis:100%;min-width:0}
 }
+
+/* The tracking badge follows Clockoli's explicit theme, not the OS theme. */
+:root[data-clockoli-theme="light"] .running-status-live{background:rgba(46,160,67,.13)}
+:root[data-clockoli-theme="light"] .running-status-live::before{box-shadow:0 0 0 3px rgba(46,160,67,.16)}
+:root[data-clockoli-theme="dark"] .running-status-live{background:rgba(63,185,80,.16)}
+:root[data-clockoli-theme="dark"] .running-status-live::before{box-shadow:0 0 0 3px rgba(63,185,80,.18)}
