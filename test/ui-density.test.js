@@ -31,7 +31,7 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
 test('Activity places week navigation below view controls without a period selector', () => {
   const page = renderer('renderTimesPage(preservedTimeline = null)', 'renderMenu()');
   assert.match(page, /filterLabel\.className = 'times-filter'/);
-  assert.match(page, /toolbar\.append\(filterLabel\);[\s\S]*body\.append\(overview, views, weeklySummary, toolbar, weekNavigation\(\), listTotal\)/);
+  assert.match(page, /toolbar\.append\(filterLabel\);[\s\S]*headingRow\.append\(overview, views\);[\s\S]*body\.append\(headingRow, weeklySummary, toolbar, weekNavigation\(\), listTotal\)/);
   assert.doesNotMatch(page.split('function mergeTimelineCompletedEntries')[0], /Time period|times-custom|periodLabel/);
   assert.match(content, /\.times-toolbar\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/s);
   assert.match(content, /\.times-filter\s*\{[^}]*grid-column:auto/s);
