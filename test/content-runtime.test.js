@@ -1538,7 +1538,7 @@ test('typing in the main-panel description cannot reach GitHub keyboard shortcut
   assert.equal(stopped, true);
 });
 
-test('recent entry deletion remains conflict-safe without between-row drag controls', async () => {
+test('List deletes locally and shows queued time entries without special status', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
@@ -1555,10 +1555,8 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
   });
   const older = entry('01K31P0G000000000000000001', 1, '2026-08-18T06:00:00.000Z', '2026-08-18T07:00:00.000Z', 'daily', 1);
   const newer = entry('01K31SE6000000000000000002', 2, '2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z', 'daily', 0);
-  const hidden = entry('01K31WWM000000000000000003', 3, '2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', 'post-delete', 1);
-  const rewrittenOlder = { ...older, _sha: 'post-delete', _index: 0 };
   const now = new Date(), reportDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  let loadedRecent = [newer, older], releaseDelete, deleteCalls = 0;
+  let loadedRecent = [newer, older], deleteCalls = 0, confirmDelete = true;
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1573,62 +1571,39 @@ test('recent entry deletion remains conflict-safe without between-row drag contr
         summaries: [{ key: 'review-window', label: 'Review window', seconds: 7200, startDate: '2026-08-01', endDate: '2026-08-31', displayMs: 2000 }],
         active: null, pendingCount: 0, pendingWrites: [],
       } });
-      else if (message.type === 'DELETE_ENTRY') {
+      else if (message.type === 'QUEUE_ENTRY_DELETE') {
         deleteCalls += 1;
-        const respond = () => callback({ ok: true, data: { deleted: true, entries: deleteCalls === 1 ? [rewrittenOlder, hidden] : [hidden] } });
-        if (deleteCalls === 1) releaseDelete = respond; else respond();
+        callback({ ok: true, data: { operationId: 'delete-' + deleteCalls, pending: true } });
       } else callback({ ok: true, data: {} });
     } } },
     setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => confirmDelete, alert() {},
   });
-  let confirmDelete = true;
   new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
   new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
   await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const recentLinks = createdNodes.filter(node => node.tag === 'a' && [newer.issue.url, older.issue.url].includes(node.href));
-  assert.deepEqual(recentLinks.slice(-2).map(node => node.href), [newer.issue.url, older.issue.url], 'recent entries render by Start descending');
-  assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false, 'between-row drag controls are removed');
-  const rowDeletes = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).slice(-2);
-  assert.equal(rowDeletes.length, 2, 'each editable recent entry has a direct Delete action');
+  const deletes = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).slice(-2);
+  assert.equal(deletes.length, 2);
   confirmDelete = false;
-  await rowDeletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'DELETE_ENTRY'), false, 'cancelling the confirmation preserves the entry');
+  await deletes[0].onclick({ isTrusted: true });
+  assert.equal(deleteCalls, 0, 'cancelled deletion never enters the local queue');
   confirmDelete = true;
-  const deletePromise = rowDeletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(rowDeletes[0].disabled, true); assert.equal(rowDeletes[0].parentElement.children[0].disabled, true,
-    'an in-flight direct deletion disables its sibling Edit action');
-  const deleteRenderStart = createdNodes.length;
-  releaseDelete(); await deletePromise; await new Promise(resolve => setTimeout(resolve, 0));
-  const postDeleteLinks = createdNodes.slice(deleteRenderStart).filter(node => node.tag === 'a' && [older.issue.url, hidden.issue.url].includes(node.href));
-  assert.deepEqual(postDeleteLinks.map(node => node.href), [older.issue.url], 'deletion keeps only the previously visible stable-ID survivor when indexes shift');
-  assert.equal(createdNodes.slice(deleteRenderStart).filter(node => node.className === 'today-total-value').at(-1)?.textContent, '…',
-    'a direct deletion invalidates totals until the authoritative projection refreshes');
-  const deletion = messages.find(message => message.type === 'DELETE_ENTRY');
-  assert.equal(deletion.payload.path, newer._path);
-  assert.equal(deletion.payload.index, newer._index);
-  assert.deepEqual(deletion.payload.original, {
-    id: newer.id, taskUrl: newer.taskUrl, taskTitle: newer.taskTitle, issueUrl: newer.issue.url, issueTitle: newer.issueTitle,
-    startedAt: newer.startedAt, endedAt: newer.endedAt, description: '',
-  });
-  const survivingDelete = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
-  await survivingDelete.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const secondDeletion = messages.filter(message => message.type === 'DELETE_ENTRY')[1];
-  assert.equal(secondDeletion.payload.path, older._path);
-  assert.equal(secondDeletion.payload.originalSha, 'post-delete', 'surviving rows use the rewritten monthly-file SHA');
-  assert.equal(secondDeletion.payload.index, 0, 'surviving rows use their rewritten monthly-file index');
-  loadedRecent = [{ ...newer, _pending: true }, older];
-  const sync = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
-  await sync.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const pending = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Pending').at(-1);
-  assert.equal(pending.disabled, true, 'a queued row renders a visible disabled Pending indicator');
-  const pendingRow = pending.parentElement.parentElement;
-  assert.equal(pendingRow.walk().some(node => node.className.includes('entry-edit') || node.className.includes('entry-delete')), false,
-    'a queued row exposes neither Edit nor Delete');
+  await deletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  const queued = messages.find(message => message.type === 'QUEUE_ENTRY_DELETE');
+  assert.equal(deleteCalls, 1, 'deletion is queued immediately');
+  assert.equal(messages.some(message => message.type === 'DELETE_ENTRY'), false, 'List never waits for an immediate GitHub deletion');
+  assert.equal(queued.payload.original.id, newer.id);
+  assert.equal(queued.payload.originalSha, newer._sha);
+  const refreshed = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
+  loadedRecent = [{ ...newer, _sha: null, _index: -1, _pending: true }, older];
+  await refreshed.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(createdNodes.some(node => node.className?.includes('entry-pending')), false, 'locally stored entries have no Pending badge');
+  const normalControls = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
+  assert.ok(normalControls, 'queued entries expose the normal Delete action');
+  assert.equal(createdNodes.some(node => node.textContent === 'Pending'), false);
   assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false);
 });
-
 
 test('projected totals tick only in their stored local date range and unknown totals stay unknown', () => {
   const now = Date.parse('2026-08-19T02:00:00.000Z');
@@ -1645,108 +1620,6 @@ test('projected totals tick only in their stored local date range and unknown to
   harness.applyPageState({ ...state, summaryError: { code: 'error' } });
   assert.equal(harness.trackedTotalText('weekTrackedMs'), '…');
 });
-
-
-test('successful Delete responses accept exact empty output and reject malformed parser-shaped entries safely', async t => {
-  const recentEntry = {
-    schemaVersion: 1, id: '01K31SE6000000000000000002', entryId: '01K31SE6000000000000000002', user: 'alice',
-    actor: { kind: 'human', id: 'github:1', name: 'alice' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
-    timezone: 'UTC', metadata: {}, metrics: {},
-    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Ranking regression',
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Ranking regression',
-    entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
-    durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
-    _path: 'times/2026-08/alice.jsonl', _sha: 'rewritten', _index: 0,
-  };
-  const secondEntry = {
-    ...recentEntry, id: '01K31WWM000000000000000003', entryId: '01K31WWM000000000000000003', taskUrl: 'https://github.com/acme/app/issues/8',
-    issue: { ...recentEntry.issue, number: 8, url: 'https://github.com/acme/app/issues/8' },
-    startedAt: '2026-08-18T10:00:00+00:00', endedAt: '2026-08-18T11:00:00+00:00',
-    createdAt: '2026-08-18T11:00:00+00:00', updatedAt: '2026-08-18T11:00:00+00:00', _index: 1,
-  };
-  const omit = (entry, key) => { const copy = structuredClone(entry); delete copy[key]; return copy; };
-  const malformed = [
-    ['null member', [null]],
-    ['primitive member', [7]],
-    ['wrong index', [{ ...recentEntry, _index: 1 }]],
-    ['wrong path', [{ ...recentEntry, _path: 'times/2026-08/bob.jsonl' }]],
-    ['empty SHA', [{ ...recentEntry, _sha: '' }]],
-    ['inconsistent SHA', [recentEntry, { ...secondEntry, _sha: 'other' }]],
-    ['missing ID', [omit(recentEntry, 'id')]],
-    ['empty ID', [{ ...recentEntry, id: '' }]],
-    ['extra metadata', [{ ...recentEntry, unexpected: true }]],
-    ['wrong schema', [{ ...recentEntry, schemaVersion: 2 }]],
-    ['wrong user', [{ ...recentEntry, user: 'bob' }]],
-    ['missing actor', [omit(recentEntry, 'actor')]],
-    ['missing issue title', [omit(recentEntry, 'issueTitle')]],
-    ['unnormalized issue title', [{ ...recentEntry, issueTitle: ' two  spaces ' }]],
-    ['empty issue URL', [{ ...recentEntry, issue: { ...recentEntry.issue, url: '' } }]],
-    ['noncanonical issue URL', [{ ...recentEntry, issue: { ...recentEntry.issue, url: 'not-a-github-url' } }]],
-    ['malformed issue identity', [{ ...recentEntry, issue: { ...recentEntry.issue, owner: 'bad--owner' } }]],
-    ['empty Start', [{ ...recentEntry, startedAt: '' }]],
-    ['malformed Start', [{ ...recentEntry, startedAt: 'not-a-time' }]],
-    ['empty End', [{ ...recentEntry, endedAt: '' }]],
-    ['malformed End', [{ ...recentEntry, endedAt: 'not-a-time' }]],
-    ['wrong entry date', [{ ...recentEntry, entryDate: '2026-02-31' }]],
-    ['entry date disagrees with Start in timezone', [{ ...recentEntry, entryDate: '2026-08-19' }]],
-    ['mismatched entry ID', [{ ...recentEntry, entryId: '01K31WWM000000000000000003' }]],
-    ['wrong duration', [{ ...recentEntry, durationSeconds: 1 }]],
-    ['wrong createdAt', [{ ...recentEntry, createdAt: '2026-08-18T10:00:00+00:00' }]],
-    ['wrong updatedAt', [{ ...recentEntry, updatedAt: recentEntry.startedAt }]],
-    ['overlong description', [{ ...recentEntry, description: 'x'.repeat(2001) }]],
-  ];
-
-  async function exercise(entries, expectFallback, initialRecent = [recentEntry]) {
-    documentNodes.clear(); createdNodes.length = 0;
-    const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-    const { actions } = makeHeader();
-    let deleted = false, loadCalls = 0;
-    const document = {
-      documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-      createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-      querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-    };
-    const context = vm.createContext({
-      location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-        if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-        else if (message.type === 'LOAD_RECENT') {
-          loadCalls += 1;
-          callback(deleted ? { ok: false, error: { code: 'error', message: 'Refresh failed' } } : { ok: true, data: initialRecent });
-        } else if (message.type === 'DELETE_ENTRY') { deleted = true; callback({ ok: true, data: { deleted: true, entries } }); }
-        else callback({ ok: true, data: {} });
-      } } },
-      setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-    });
-    new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-    await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-    const remove = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
-    const rerenderStart = createdNodes.length;
-    await remove.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-    const rerendered = createdNodes.slice(rerenderStart);
-    assert.equal(loadCalls, expectFallback ? 2 : 1, expectFallback ? 'malformed response triggers one compatibility reload' : 'empty exact response needs no compatibility reload');
-    assert.equal(rerendered.some(node => node.className.includes('entry-edit') || node.className.includes('entry-delete')), false,
-      'successful deletion never restores actionable stale row controls');
-    assert.equal(rerendered.some(node => node.className === 'error' && node.walk().some(child => child.textContent === 'Refresh failed')), expectFallback);
-  }
-
-  await t.test('empty exact response after deleting the last record', () => exercise([], false));
-  const fractionalEntry = {
-    ...secondEntry, _index: 0,
-    startedAt: '2026-08-18T10:00:00.3Z', endedAt: '2026-08-18T11:00:00.3Z',
-    createdAt: '2026-08-18T11:00:00.3Z', updatedAt: '2026-08-18T11:00:00.3Z',
-  };
-  await t.test('valid one-digit fractional timestamps need no fallback reload', () => exercise([fractionalEntry], false));
-  const changedSurvivorId = '01K31WWM000000000000000004';
-  await t.test('changed stable ID', () => exercise(
-    [{ ...secondEntry, id: changedSurvivorId, entryId: changedSurvivorId, _index: 0 }], true, [secondEntry, recentEntry],
-  ));
-  for (const [label, entries] of malformed) await t.test(label, () => exercise(entries, true));
-});
-
 
 
 test('main panel shows today total and opens Reports before Settings', async () => {
@@ -1936,10 +1809,10 @@ test('Times bulk import preserves its draft and remains single-flight across rer
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
     querySelector: () => null, addEventListener() {},
   };
-  let bulkCallback = null, bulkCalls = 0;
+  let bulkCallback = null, bulkCalls = 0, historyReads = 0;
   const context = vm.createContext({
     location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      if (message.type === 'LOAD_TIMES') callback({ ok: true, data: { configured: true, recent: [] } });
+      if (message.type === 'LOAD_TIMES') { historyReads += 1; callback({ ok: true, data: { configured: true, recent: [] } }); }
       else if (message.type === 'BULK_ADD_TIMES') { bulkCalls += 1; bulkCallback = callback; }
       else callback({ ok: true, data: { configured: true, active: null, recent: [], pendingWrites: [] } });
     } } },
@@ -1973,6 +1846,26 @@ test('Times bulk import preserves its draft and remains single-flight across rer
   assert.equal(failedInput.disabled, false);
   assert.equal(failedAdd.disabled, false);
   assert.equal(createdNodes.some(node => node.textContent === 'The monthly file changed.'), true);
+
+  const historyBefore = historyReads;
+  const submission = failedAdd.onclick({ isTrusted: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const now = new Date(), startedAt = new Date(now.getTime() - 30 * 60_000).toISOString(),
+    endedAt = now.toISOString(), day = now.toISOString().slice(0, 10);
+  bulkCallback({ ok: true, data: {
+    added: 1, pending: true, destinationId: 'github:1', entries: [{
+      id: '01M00TEST00000000000000001', taskUrl: 'https://example.com/task',
+      taskTitle: 'New local entry', entryDate: day, timezone: 'UTC', startedAt, endedAt,
+      durationSeconds: 1800, description: 'Accepted locally', _path: `times/${day.slice(0, 7)}/alice.jsonl`,
+      _sha: null, _index: -1, _pending: true,
+    }],
+  } });
+  await submission; await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(historyReads, historyBefore, 'bulk success must never wait on a GitHub history read');
+  assert.equal(bulkCalls, 2, 'bulk acceptance is not repeated');
+  assert.ok(createdNodes.some(node => node.textContent === 'Accepted locally'),
+    'local bulk time appears immediately in Activity');
+  assert.equal(createdNodes.some(node => node.textContent === 'Pending'), false);
 });
 
 test('Activity surfaces repository read failures and conflict omissions', async () => {
@@ -2311,7 +2204,8 @@ test('daily strip omits idle branding and panel List keeps its week navigation',
   assert.ok(nodes.some(node => node.textContent === 'Track this task'));
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
   assert.ok(!nodes.some(node => node.textContent === 'Yesterday task'));
-  assert.ok(nodes.some(node => node.classList?.contains('entry-pending')));
+  assert.ok(nodes.some(node => node.classList?.contains('entry-delete')), 'queued time has normal entry controls');
+  assert.ok(!nodes.some(node => node.textContent === 'Pending'));
   assert.ok(menu.querySelector('.today-list').querySelector('.entry-date-header'));
   assert.equal(menu.querySelector('.today-list').hidden, true);
   assert.equal(menu.querySelector('.popup-timeline-section').hidden, false);
@@ -3852,15 +3746,15 @@ test('background tab-activation message dismisses an open panel with no visibili
   }
 });
 
-test('daily panel shows pending operations without a visible entry but avoids duplicate entry status', async () => {
+test('daily panel never exposes a routine waiting status and keeps conflicts actionable', async () => {
   const harness = dailyPanelHarness({ state: { configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 } });
   let menu = harness.renderMenu({ compact: true });
   assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
-  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…');
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).hidden, true);
   assert.equal(menu.querySelector('.queue-diagnostics').open, false);
   harness.set({ configured: true, active: null, pendingWrites: [{ id: 'deleted', status: 'pending', operation: 'deleteEntry' }], pendingCount: 1 }, []);
   menu = harness.renderMenu({ compact: true });
-  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).textContent, 'Saving…', 'a deleted block cannot show an entry badge');
+  assert.equal(menu.walk().find(node => node.classList.contains('timeline-queue-status')).hidden, true, 'a queued delete must not show any wait status');
   harness.set({ configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'conflict', conflictReason: 'completion_saved_newer_timer', stage: 'clearActive', operation: 'completeTimer' }], pendingCount: 1 }, []);
   menu = harness.renderMenu({ compact: true });
   assert.equal(menu.querySelector('.timeline-queue-spinner'), null);
@@ -3874,7 +3768,7 @@ test('daily panel shows pending operations without a visible entry but avoids du
   assert.deepEqual(harness.messages.filter(message => message.type !== 'LOAD_TASK_PARTICIPANTS').map(message => message.type), ['GET_PAGE_STATE', 'LOAD_RECENT']);
 });
 
-test('a pending entry suppresses duplicate status, but a simultaneous queued deletion keeps it visible', () => {
+test('pending edits and deletes never display a saving status in Timeline or Calendar', () => {
   const now = Date.now();
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, _pending: true };
   const pending = { configured: true, active: null, pendingCount: 1, pendingWrites: [{ id: 'edit', operation: 'editEntry', status: 'pending' }] };
@@ -3882,11 +3776,38 @@ test('a pending entry suppresses duplicate status, but a simultaneous queued del
   const status = () => harness.renderMenu({ compact: true }).walk().find(node => node.classList.contains('timeline-queue-status'));
   assert.equal(status().hidden, true);
   harness.set({ ...pending, pendingCount: 2, pendingWrites: [...pending.pendingWrites, { id: 'delete', operation: 'deleteEntry', status: 'pending' }] }, [entry]);
-  assert.equal(status().hidden, false);
-  assert.equal(status().textContent, 'Saving…');
+  assert.equal(status().hidden, true);
 });
 
-test('deleting a Timeline block keeps saving feedback visible through local queue acceptance', async () => {
+test('Timeline can delete an already locally stored completion before GitHub sync', async () => {
+  const now = Date.now();
+  const entry = {
+    id: 'unsynced-entry', taskUrl: 'https://example.com/local-task', taskTitle: 'Local task',
+    timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
+    endedAt: new Date(now - 60 * 60_000).toISOString(), durationSeconds: 3600,
+    _path: 'times/2026-10/alice.jsonl', _sha: null, _index: -1, _pending: true,
+    destinationId: 'github:1',
+  };
+  const initial = { configured: true, active: null, pendingCount: 1,
+    pendingWrites: [{ id: entry.id, operation: 'completeTimer', status: 'pending', queuedAt: new Date(now).toISOString() }] };
+  const harness = dailyPanelHarness({ state: initial, records: [entry], now, timelineEnabled: true,
+    respond(message, callback) {
+      if (message.type === 'QUEUE_ENTRY_DELETE') {
+        callback({ ok: true, data: { operationId: 'delete-local-entry', pending: true } });
+      } else callback({ ok: true, data: initial });
+    },
+  });
+  const menu = harness.renderMenu({ compact: true }); harness.attach(menu);
+  while (harness.frames.length && !harness.timelineMounts.length) harness.frames.shift()();
+  assert.equal(harness.timelineMounts.length, 1);
+  const result = await harness.timelineMounts[0].onDelete({ id: 'entry:unsynced-entry' });
+  assert.equal(result, true, 'a queued completion should be deletable in Timeline, as in List');
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
+  assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:unsynced-entry'), false);
+  assert.equal(menu.querySelector('.timeline-queue-status').hidden, true);
+});
+
+test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
   const now = Date.now();
   const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
@@ -3907,14 +3828,13 @@ test('deleting a Timeline block keeps saving feedback visible through local queu
   assert.equal(harness.confirmations.length, 1);
   assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ENTRY_DELETE').length, 1);
   assert.equal(harness.timelineItems(0, now).some(item => item.id === 'entry:entry'), false);
-  assert.equal(status.hidden, false);
-  assert.equal(status.textContent, 'Saving…');
+  assert.equal(status.hidden, true);
   current = pending;
   acceptDelete({ ok: true, data: { operationId: 'queued-delete' } });
   assert.equal(await deleting, true);
-  assert.equal(status.hidden, false, 'accepted deletion stays visible until the queue drains');
+  assert.equal(status.hidden, true, 'accepted deletion never shows a queue status');
   harness.applyPageState(pending);
-  assert.equal(status.hidden, false);
+  assert.equal(status.hidden, true);
   harness.applyPageState(initial);
   assert.equal(status.hidden, true);
 });
@@ -3976,11 +3896,11 @@ async function runningStatusHarness(initial) {
     }
     if (message.type === 'STOP') {
       if (stopError) throw stopError;
-      state = { ...state, active: null }; return { pending: true };
+      state = { ...state, active: null }; return { pending: true, entry: { id: 'completed' } };
     }
     throw new Error(`Unexpected message ${message.type}`);
   };
-  const destroy = context.mountRunningStatus(container, { send, onChange: () => { changes.push(true); } });
+  const destroy = context.mountRunningStatus(container, { send, onChange: change => { changes.push(change); } });
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   await settle();
   return {
@@ -4062,6 +3982,8 @@ test('idle quick start starts with one click, blocks repeat clicks, and updates 
   assert.equal(h.find('running-status-quick-start').hidden, true);
   assert.equal(h.container.classList.contains('is-active'), true);
   assert.equal(h.changes.length, 1);
+  assert.equal(h.changes[0].type, 'START');
+  assert.equal(h.changes[0].active.id, 'started');
   h.destroy();
 });
 
@@ -4107,6 +4029,8 @@ test('shared running status ticks without replacing controls and rereads after S
   assert.equal(h.find('running-status-idle').hidden, false); assert.equal(stop.hidden, true);
   assert.equal(h.container.classList.contains('is-active'), false);
   assert.equal(h.find('running-status-live').hidden, true);
+  assert.equal(h.changes[0].type, 'STOP');
+  assert.equal(h.changes[0].completion.entry.id, 'completed');
   h.destroy();
 });
 
@@ -4192,8 +4116,12 @@ test('Activity List starts a row task, switches from another running task, and s
     state: { configured: true, active, pendingWrites: [] },
     respond(message, callback) {
       if (message.type === 'SWITCH_TASK') {
+        const stopped = { ...active, taskTitle: 'Other task', endedAt: '2026-09-05T12:00:00Z',
+          entryDate: '2026-09-05', timezone: 'UTC', durationSeconds: 3600 };
         active = { id: 'running', taskUrl: message.taskUrl, startedAt: '2026-09-05T12:00:00Z' };
-        callback({ ok: true, data: { active, pending: true } });
+        callback({ ok: true, data: { active, pending: true, destinationId: 'github:1',
+          stopped: { entry: stopped, localEntry: { ...stopped, _path: 'times/2026-09/alice.jsonl',
+            _sha: null, _index: -1, _pending: true }, pending: true } } });
       } else if (message.type === 'STOP') {
         active = null;
         callback({ ok: true, data: { entry: { id: 'running', taskUrl: second.taskUrl, startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T12:01:00Z', durationSeconds: 60 }, pending: true } });
@@ -4207,7 +4135,10 @@ test('Activity List starts a row task, switches from another running task, and s
   assert.deepEqual(h.messages.filter(message => message.type === 'SWITCH_TASK').map(message => message.taskUrl), [second.taskUrl]);
   root = h.renderActivity();
   assert.equal(root.querySelectorAll('.entry-stop').length, 1);
-  assert.equal(root.querySelectorAll('.entry-track').length, 1);
+  assert.equal(root.querySelectorAll('.entry-record').length, 3, 'the stopped task appears without waiting for GitHub');
+  assert.equal(root.querySelectorAll('.entry-delete').length, 3, 'the stopped task is immediately editable and deletable');
+  assert.equal(root.walk().some(node => node.textContent === 'Pending'), false);
+  assert.ok(root.querySelectorAll('.entry-track').length >= 1, 'locally completed timers also remain trackable');
   const stop = root.querySelector('.entry-stop');
   assert.equal(stop.getAttribute('aria-label'), 'Stop tracking Task 2');
   await start.onclick({ isTrusted: true });
@@ -4230,11 +4161,11 @@ test('Activity List can restart a validated imported task identity through the t
   assert.equal(h.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, entry.taskUrl);
 });
 
-test('Activity List does not offer tracking for an invalid identity or a pending row', () => {
+test('Activity List lets locally completed tasks restart but never tracks an invalid identity', () => {
   const invalid = activityEntry('1', '2026-09-05', '08', 'not a task URL');
   const pending = { ...activityEntry('2', '2026-09-05', '09'), _pending: true };
   const root = activityHarness([invalid, pending]).renderActivity();
-  assert.equal(root.querySelectorAll('.entry-track').length, 0);
+  assert.equal(root.querySelectorAll('.entry-track').length, 1, 'locally accepted entry offers normal tracking action');
   assert.equal(root.querySelectorAll('.entry-stop').length, 0);
 });
 

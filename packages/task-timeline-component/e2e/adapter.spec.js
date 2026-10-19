@@ -1071,7 +1071,7 @@ test('Calendar keeps one-minute edit precision when Timeline changes to five min
   expect(steps).toEqual({ calendar: 60_000, timeline: 5 * 60_000 });
 });
 
-test('keyboard edit keeps the Clockoli instance ID and pending deletion stays blocked', async ({ page }) => {
+test('keyboard edit keeps the Clockoli instance ID and locally pending deletion works', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:a"]').click());
   await page.keyboard.press('ArrowLeft');
@@ -1080,8 +1080,7 @@ test('keyboard edit keeps the Clockoli instance ID and pending deletion stays bl
 
   await page.evaluate(() => document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:b"]').click());
   await page.keyboard.press('Delete');
-  expect(await page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:a', 'move']]);
-  expect(await page.evaluate(() => Boolean(document.querySelector('#timeline').shadowRoot.querySelector('.task[data-task-key="entry:b"]')))).toBeTruthy();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:a', 'move'], ['delete', 'entry:b']]);
 });
 
 test('active start resize edits without dispatching Stop and stays running', async ({ page }) => {
@@ -1508,7 +1507,7 @@ test('pending blocks have no saving overlay in Timeline or Calendar', async ({ p
   await page.evaluate(() => window.__editSettlers.shift().resolve(true));
 });
 
-test('pending entries stay editable and deletion remains blocked', async ({ page }) => {
+test('locally accepted entries stay editable and deletable without saving indicators', async ({ page }) => {
   await mount(page);
   const block = page.locator('#timeline .task[data-task-key="entry:b"]');
   await block.click();
@@ -1516,8 +1515,8 @@ test('pending entries stay editable and deletion remains blocked', async ({ page
   await page.keyboard.press('ArrowRight');
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
   await page.keyboard.press('Delete');
-  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
-  await expect(block.locator('.clockoli-entry-saving')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move'], ['delete', 'entry:b']]);
+  await expect(page.locator('#timeline .clockoli-entry-saving')).toHaveCount(0);
 });
 
 test('focused task keeps keyboard focus when timeline items render again', async ({ page }) => {

@@ -163,7 +163,7 @@ function hasRunnablePending(queue = state.pendingWrites) {
 }
 
 function updateRefreshControl() {
-  const busy = state.loading || hasRunnablePending();
+  const busy = state.loading;
   const refresh = $('refresh-tasks');
   refresh.disabled = busy;
   refresh.classList.toggle('syncing', state.loading); // Pending background writes do not animate.
@@ -318,7 +318,7 @@ $('refresh-tasks').addEventListener('click', async () => {
   const button = $('refresh-tasks'); button.disabled = true; setError();
   try { await load(); }
   catch (error) { setError(error); }
-  finally { button.disabled = hasRunnablePending(); }
+  finally { button.disabled = state.loading; }
 });
 $('task-list').addEventListener('focusout', reconcileList);
 $('task-filter').addEventListener('input', () => render({ force: true }));

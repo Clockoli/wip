@@ -28,13 +28,11 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
   const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
   const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite');
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
-  const progress = document.createElement('progress'); progress.className = 'add-time-progress'; progress.setAttribute('aria-label', 'Adding time'); progress.hidden = true;
-  const status = document.createElement('p'); status.className = 'add-time-status'; status.setAttribute('role', 'status'); status.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, suggestions, times, hint, descriptionLabel, description, preview, error, progress, status, actions);
+  dialog.append(close, heading, intro, taskLabel, search, suggestions, times, hint, descriptionLabel, description, preview, error, actions);
   document.body.append(dialog);
 
   let tasks = [], selected = null, generation = 0, busy = false, searched = false;
@@ -97,7 +95,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     tasks = []; selected = null; searched = false; busy = false; search.value = '';
     start.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     end.value = ''; description.value = '';
-    setError(''); progress.hidden = true; status.hidden = true; status.textContent = '';
+    setError('');
     update(); dialog.showModal(); search.focus();
   });
   add.addEventListener('click', async () => {
@@ -109,18 +107,17 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
     const timestamp = value => value ? new Date(`${today}T${value}:00`).toISOString() : null;
     const startedAt = timestamp(start.value), endedAt = timestamp(end.value);
     if (startedAt && endedAt && endedAt <= startedAt) { setError('End time must be after start time.'); return; }
-    busy = true; add.disabled = true; cancel.disabled = true; add.textContent = 'Adding…'; setError('');
-    status.textContent = endedAt ? 'Saving time…' : 'Starting tracking…';
-    progress.hidden = false; status.hidden = false;
+    // Only the short local IndexedDB acceptance is in flight. Never show a
+    // GitHub saving status: the shared 15-second sync happens silently later.
+    busy = true; add.disabled = true; cancel.disabled = true; setError('');
     try {
-      await send({ type: 'ADD_TIME', taskUrl: task.taskUrl, taskTitle: task.title || '',
+      const result = await send({ type: 'ADD_TIME', taskUrl: task.taskUrl, taskTitle: task.title || '',
         ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}),
         startedAt, endedAt, description: description.value.trim() });
-      dialog.close(); await onAdded();
+      dialog.close(); await onAdded(result);
     } catch (cause) { setError(cause.message || 'Could not add time.'); }
     finally {
-      busy = false; add.disabled = false; cancel.disabled = false; add.textContent = 'Add';
-      progress.hidden = true; status.hidden = true; status.textContent = '';
+      busy = false; add.disabled = false; cancel.disabled = false;
     }
   });
   return dialog;

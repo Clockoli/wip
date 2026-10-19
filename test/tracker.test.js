@@ -460,6 +460,149 @@ test('queued completed-entry deletion disappears locally immediately and syncs l
   assert.deepEqual(parseMonthlyRecords(github.files.get(path)?.text || '', { user: 'alice', month: '2026-08' }), []);
 })
 
+test('retrying an already committed linked edit does not create a second GitHub commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const first = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const second = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  const rows = (await service({ github, store }).readMonthly(path)).entries;
+  store.value.recentCache = rows;
+  const requests = rows.map((original, index) => ({
+    path, originalSha: 'monthly-sha', index, original, edits: { description: `Already saved ${index}` },
+  }));
+  const tracker = service({ github, store });
+  await tracker.queueEntriesEdit({ entries: requests });
+  await tracker.editEntries({ entries: structuredClone(requests) }, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.map(row => row.description), ['Already saved 0', 'Already saved 1']);
+});
+
+test('retry of a committed entry move across months does not conflict or duplicate the move', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), oldPath = 'times/2026-08/alice.jsonl',
+    newPath = 'times/2026-09/alice.jsonl';
+  const original = entry('2026-08-31T08:00:00.000Z', '2026-08-31T09:00:00.000Z');
+  seedText(github, oldPath, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: oldPath, _sha: 'monthly-sha', _index: 0 }];
+  const clock = () => new Date('2026-09-02T12:00:00.000Z');
+  const tracker = service({ github, store, clock });
+  const request = { path: oldPath, originalSha: 'monthly-sha', index: 0, original,
+    edits: { startedAt: '2026-09-01T08:00:00.000Z', endedAt: '2026-09-01T09:00:00.000Z' } };
+  await tracker.queueEntryEdit(request);
+  await tracker.editEntry(request, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store, clock }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits);
+  assert.equal(github.files.has(oldPath), false);
+  assert.equal(parseMonthlyRecords(github.files.get(newPath).text, { user: 'alice', month: '2026-09' })[0].id, original.id);
+});
+
+test('retrying an entry edit already committed by GitHub is idempotent', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original, edits: { description: 'Accepted locally' } };
+  await tracker.queueEntryEdit(request);
+  await tracker.editEntry(request, { updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits,
+    'replayed acknowledgement should not produce another commit for the same already-saved change');
+  assert.equal(store.value.recentCache[0].description, 'Accepted locally');
+});
+
+test('retrying a Delete already committed on GitHub adopts the result without conflict or a second commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'monthly-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original };
+  await tracker.queueEntryDelete(request);
+  // Simulate a crash after the Git commit completed, before IndexedDB
+  // could acknowledge the queued operation.
+  await tracker.deleteEntry(request, { updateCache: false });
+  const committed = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, [], 'a completed delete must not remain a conflict');
+  assert.equal(github.atomicWrites.length, committed, 'the retry must not create a duplicate GitHub commit');
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.files.has(path), false);
+});
+
+test('delete acknowledgement must preserve a newer local edit to another record in the same file', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const deleted = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const survivor = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([deleted, survivor]), 'seed-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [deleted, survivor].map((row, index) => ({ ...row, _path: path, _sha: 'seed-sha', _index: index }));
+  const tracker = service({ github, store });
+  await tracker.queueEntryDelete({ path, originalSha: 'seed-sha', index: 0, original: deleted });
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; entered(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntryEdit({ path, originalSha: 'seed-sha', index: 1, original: survivor,
+      edits: { description: 'last accepted local version' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache.find(row => row.id === survivor.id)?.description, 'last accepted local version');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.description, 'last accepted local version');
+});
+
+test('delete acknowledgement must preserve a newly stopped timer queued during the same GitHub write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const old = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([old]), 'seed-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...old, _path: path, _sha: 'seed-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  await tracker.queueEntryDelete({ path, originalSha: 'seed-sha', index: 0, original: old });
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; entered(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  let stopped;
+  try {
+    await tracker.queueStart('https://example.com/new', 'New task');
+    stopped = await tracker.stop('', { background: true });
+  } finally { release(); }
+  await syncing;
+  assert.ok(store.value.recentCache.some(row => row.id === stopped.entry.id),
+    'an unsynced Stop must not vanish when an earlier deletion finishes');
+  assert.ok(store.value.pendingWrites.some(item => item.operation === 'completeTimer'));
+});
+
 test('sync compacts superseded queued edits for the same completed entry into one remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
@@ -490,6 +633,236 @@ test('sync compacts superseded queued edits for the same completed entry into on
   assert.equal(saved.startedAt, '2026-08-18T08:15:00.000Z');
   assert.equal(saved.endedAt, '2026-08-18T10:00:00.000Z');
   assert.equal(saved.description, 'Final edit');
+});
+
+test('Stop sync does not roll back a locally edited completion accepted while GitHub is writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), activePath = 'active/alice.json';
+  const running = active('2026-08-18T08:00:00.000Z');
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  ensureTaskIndexFixture(github);
+  store.value.activeCache = { ...running, _path: activePath, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const stopped = await tracker.stop('', { background: true });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  const pendingEntry = stopped.localEntry;
+  try {
+    await tracker.queueEntryEdit({ path: pendingEntry._path, originalSha: pendingEntry._sha,
+      index: pendingEntry._index, original: pendingEntry, edits: { description: 'edited during Stop sync' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'edited during Stop sync',
+    'completion acknowledgement must not put the older record back in the local UI');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  const saved = parseMonthlyRecords(github.files.get(pendingEntry._path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved[0].description, 'edited during Stop sync');
+});
+
+test('Stop sync cannot resurrect a completion deleted locally while GitHub was writing', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), activePath = 'active/alice.json';
+  const running = active('2026-08-18T08:00:00.000Z');
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  ensureTaskIndexFixture(github);
+  store.value.activeCache = { ...running, _path: activePath, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const stopped = await tracker.stop('', { background: true });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return write(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  const pendingEntry = stopped.localEntry;
+  try {
+    await tracker.queueEntryDelete({ path: pendingEntry._path, originalSha: pendingEntry._sha,
+      index: pendingEntry._index, original: pendingEntry });
+  } finally { release(); }
+  await syncing;
+  assert.deepEqual(store.value.recentCache, [], 'an accepted local Delete must remain invisible while the prior Stop commits');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  assert.equal(github.files.has(pendingEntry._path), false, 'GitHub eventually removes the completed entry');
+});
+
+test('new local edit during an in-flight GitHub write pauses later queued operations in the same repository', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const one = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const two = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([one, two]), 'monthly-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [one, two].map((row, index) => ({ ...row, _path: path, _sha: 'monthly-sha', _index: index }));
+  const tracker = service({ github, store });
+  const request = (original, index, description) => ({
+    path, originalSha: 'monthly-sha', index, original, edits: { description },
+  });
+  await tracker.queueEntryEdit(request(one, 0, 'first'));
+  // Different operation types: this second change must not be folded into
+  // the first GitHub commit's independent-edit batch.
+  await tracker.queueEntriesEdit({ entries: [request(two, 1, 'second')] });
+  let startedSignal, release;
+  const started = new Promise(resolve => { startedSignal = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const write = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; startedSignal(); await hold; }
+    return write(...args);
+  };
+  let quiet = true;
+  const syncing = tracker.syncPending({ canSync: async () => quiet });
+  await started;
+  try {
+    await tracker.queueEntryEdit(request(one, 0, 'last'));
+    quiet = false;
+  } finally { release(); }
+  await syncing;
+  assert.equal(github.atomicWrites.length, 1,
+    'the second queued operation must not write during the new 15-second idle window');
+  assert.equal(store.value.pendingWrites.length, 2);
+  assert.equal(store.value.recentCache.find(row => row.id === one.id).description, 'last');
+  quiet = true;
+  await tracker.syncPending({ canSync: async () => quiet });
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(row => row.id === one.id).description, 'last');
+  assert.equal(saved.find(row => row.id === two.id).description, 'second');
+});
+
+test('edit accepted during an in-flight GitHub commit is not deleted with the older queue item', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'original-sha', _index: 0 }];
+  const tracker = service({ github, store, clock: () => new Date('2026-08-18T12:00:00.000Z') });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const request = { path, originalSha: 'original-sha', index: 0, original };
+  await tracker.queueEntryEdit({ ...request, edits: { description: 'first edit' } });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntryEdit({ ...request, edits: { description: 'second edit' } });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'second edit', 'a stale GitHub result must not overwrite a newer local edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'the edit accepted during sync still needs a GitHub write');
+  await tracker.syncPending();
+  const [saved] = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.description, 'second edit');
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('linked edits accepted during remote sync are not erased when that sync finishes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [{ ...original, _path: path, _sha: 'original-sha', _index: 0 }];
+  const tracker = service({ github, store });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const request = { path, originalSha: 'original-sha', index: 0, original };
+  await tracker.queueEntriesEdit({ entries: [{ ...request, edits: { description: 'first edit' } }] });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntriesEdit({ entries: [{ ...request, edits: { description: 'second edit' } }] });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache[0].description, 'second edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'a newer linked edit remains queued');
+  await tracker.syncPending();
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].description, 'second edit');
+});
+
+test('in-flight batch of independent edits cannot roll back a newer linked local edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const one = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const two = entry('2026-08-18T10:00:00.000Z', '2026-08-18T11:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([one, two]), 'original-sha');
+  ensureTaskIndexFixture(github);
+  store.value.recentCache = [one, two].map((row, index) => ({ ...row, _path: path, _sha: 'original-sha', _index: index }));
+  const tracker = service({ github, store });
+  const request = (original, index, description) => ({ path, originalSha: 'original-sha', index, original, edits: { description } });
+  await tracker.queueEntryEdit(request(one, 0, 'first'));
+  await tracker.queueEntryEdit(request(two, 1, 'other'));
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.updateTextsAtomic.bind(github);
+  let blocked = false;
+  github.updateTextsAtomic = async (...args) => {
+    if (!blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueEntriesEdit({ entries: [request(one, 0, 'final')] });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.recentCache.find(row => row.id === one.id).description, 'final');
+  assert.equal(store.value.pendingWrites.length, 1);
+  await tracker.syncPending();
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].description, 'final');
+});
+
+test('active timer edit accepted during GitHub sync remains queued and locally authoritative', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, 'active/alice.json', serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: 'active/alice.json', _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  let notifyStarted, release;
+  const started = new Promise(resolve => { notifyStarted = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const originalWrite = github.putText.bind(github);
+  let blocked = false;
+  github.putText = async (...args) => {
+    if (args[0] === 'active/alice.json' && !blocked) { blocked = true; notifyStarted(); await hold; }
+    return originalWrite(...args);
+  };
+  const originalIdentity = { id: original.id, startedAt: original.startedAt };
+  await tracker.queueActiveStartEdit({ original: originalIdentity, description: 'first edit' });
+  const syncing = tracker.syncPending();
+  await started;
+  try {
+    await tracker.queueActiveStartEdit({ original: originalIdentity, description: 'second edit' });
+  } finally { release(); }
+  await syncing;
+  assert.equal(store.value.activeCache.description, 'second edit');
+  assert.equal(store.value.pendingWrites.length, 1, 'newer timer edit must survive the first commit');
+  await tracker.syncPending();
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).description, 'second edit');
 });
 
 test('coalesced local edits persist the latest acceptance time without resetting the original queue timestamp', async () => {
@@ -671,6 +1044,29 @@ test('queued running start and description edits coalesce and persist together',
   const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
   assert.equal(saved.startedAt, '2026-08-18T09:00:00.000Z');
   assert.equal(saved.description, 'Saved on blur');
+});
+
+test('restart adopts an active-timer edit already committed to GitHub before local acknowledgement', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'active/alice.json';
+  const original = active('2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeActiveRecord(original), 'active-sha');
+  store.value.activeCache = { ...original, _path: path, _sha: 'active-sha' };
+  const tracker = service({ github, store });
+  const newStart = '2026-08-18T08:30:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: original.id, startedAt: original.startedAt },
+    startedAt: newStart, description: 'Updated before crash' });
+  const alreadySaved = { ...original, startedAt: newStart, createdAt: newStart, description: 'Updated before crash', updatedAt: '2026-08-18T12:00:00.000Z' };
+  await github.putText(path, serializeActiveRecord(alreadySaved), 'simulated completed but unacknowledged write', 'active-sha');
+  const writes = github.writes.length;
+
+  // The service worker was stopped after GitHub saved, but before it removed
+  // the durable operation from IndexedDB. The retry must converge harmlessly.
+  const resumed = service({ github, store });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.activeCache.startedAt, newStart);
+  assert.equal(store.value.activeCache.description, 'Updated before crash');
+  assert.equal(github.writes.length, writes, 'idempotent retry must not create another GitHub commit');
 });
 
 test('restart compaction preserves active fields changed by separate persisted edits', async () => {
@@ -1769,6 +2165,210 @@ test('linked time edits remain atomic when an adjusted Start moves across monthl
 });
 
 
+test('completed Add time is accepted and projected locally without any GitHub request, then synced', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, taskTitle: 'Investigate',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z', description: 'Locally added' };
+  const added = await tracker.addTime(request, { background: true });
+  assert.equal(added.pending, true);
+  assert.equal(added.entry.durationSeconds, 3600);
+  assert.deepEqual(github.reads, [], 'local acceptance must not read remote history');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.recentCache[0]._pending, true);
+  assert.equal((await tracker.projectActivityRecords([])).records[0].description, 'Locally added');
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(item => item.path).sort(), [TASK_INDEX_PATH, 'times/2026-08/alice.jsonl']);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' })[0].id, added.entry.id);
+});
+
+test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const result = await tracker.addTime({ taskUrl: issue.url,
+    startedAt: '2026-08-18T08:00:00.000Z', endedAt: null }, { background: true });
+  assert.equal(result.active._pending, true);
+  assert.equal(result.active.startedAt, '2026-08-18T08:00:00.000Z');
+  assert.deepEqual(github.reads, []);
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store }).syncPending();
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, result.active.id);
+});
+
+test('completed Add time accepted offline remains recoverable after restart and cannot overwrite an overlapping GitHub record', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), request = {
+    taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z',
+  };
+  await service({ github, store }).addTime(request, { background: true });
+  const before = structuredClone(store.value.pendingWrites);
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:30:00.000Z')]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, before.length, 'a failed remote validation retains the durable intent');
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('Bulk add persists the entire import locally first and later creates a single atomic GitHub commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 9), localTimestamp(2026, 7, 21, 10))]), 'before');
+  const text = '2026-08-21 https://example.com/a First 2:00\n2026-08-21 https://example.com/b Second 1.5';
+  const added = await service({ github, store }).bulkAddTimes(text, { background: true });
+  assert.equal(added.added, 2);
+  assert.equal(added.pending, true);
+  assert.equal(added.entries.length, 2);
+  assert.equal(github.reads.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].entries.length, 2);
+  assert.equal((await service({ github, store }).projectActivityRecords([])).records.length, 2);
+  const ids = store.value.pendingWrites[0].entries.map(row => row.id);
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 1);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.slice(1).map(row => row.id), ids);
+  assert.equal(saved[1].startedAt, new Date(localTimestamp(2026, 7, 21, 10)).toISOString());
+  assert.equal(saved[2].endedAt, new Date(localTimestamp(2026, 7, 21, 13, 30)).toISOString());
+});
+
+test('Bulk add is durable on remote validation failure and never partially writes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const submitted = await service({ github, store }).bulkAddTimes(
+    '2026-08-21 https://example.com/a First 12:00\n2026-08-21 https://example.com/b Second 12:00',
+    { background: true });
+  assert.equal(submitted.added, 2);
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 12), localTimestamp(2026, 7, 21, 13))]), 'raced');
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, 0, 'rejected import is still all-or-nothing');
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('locally accepted Add time still synchronizes after midnight and several days offline', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const initial = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  const result = await initial.addTime({
+    taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z',
+    description: 'Saved offline',
+  }, { background: true });
+  assert.equal(result.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  const resumed = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-21T12:00:00.000Z') });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const saved = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, {
+    user: 'alice', month: '2026-08',
+  });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, result.entry.id);
+  assert.equal(saved[0].description, 'Saved offline');
+});
+
+test('queued Add time retains its originally accepted timezone and metadata if the user travels before GitHub sync', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = service({ github, store, timezone: 'UTC',
+    clock: () => new Date('2026-08-18T09:00:00.000Z') });
+  const accepted = await original.addTime({
+    taskUrl: issue.url, taskTitle: 'Timezone stable',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z',
+    description: 'Travel safe',
+  }, { background: true });
+  const remoteSync = service({ github, store, timezone: 'Pacific/Honolulu',
+    clock: () => new Date('2026-08-22T09:00:00.000Z') });
+  await remoteSync.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const [saved] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text,
+    { user: 'alice', month: '2026-08' });
+  assert.equal(saved.id, accepted.entry.id);
+  assert.equal(saved.timezone, 'UTC');
+  assert.equal(saved.entryDate, accepted.entry.entryDate);
+  assert.equal(saved.createdAt, accepted.entry.createdAt);
+  assert.equal(saved.updatedAt, accepted.entry.updatedAt);
+  assert.equal(saved.description, accepted.entry.description);
+});
+
+test('queued Add time revalidates the original month rather than the current month after month rollover', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const original = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-08-31T23:30:00.000Z') });
+  await original.addTime({
+    taskUrl: issue.url, startedAt: '2026-08-31T21:00:00.000Z', endedAt: '2026-08-31T22:00:00.000Z',
+  }, { background: true });
+  // A remote overlap in August must not be missed just because the retry is in September.
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-08-31T21:30:00.000Z', '2026-08-31T22:30:00.000Z'),
+  ]), 'new-august-record');
+  const resumed = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-09-02T11:00:00.000Z') });
+  await resumed.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('queued completed Add time does not duplicate a GitHub commit after a service-worker crash', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  const accepted = await tracker.addTime(request, { background: true });
+  await tracker.addTime(request, { fixedId: accepted.entry.id, updateCache: false });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, commits, 'replaying a completed local addition never duplicates time');
+  assert.equal(store.value.recentCache[0]._pending, undefined);
+});
+
+test('queued Bulk add survives restart without duplicating already committed records', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const text = '2026-08-21 https://example.com/one First 1\n2026-09-01 https://example.com/two Second 2';
+  await service({ github, store }).bulkAddTimes(text, { background: true });
+  const operation = structuredClone(store.value.pendingWrites[0]);
+  await service({ github, store }).bulkAddTimes('', { requested: operation.requested, ids: operation.entries.map(row => row.id),
+    updateCache: false, includeEntries: true });
+  const commits = github.atomicWrites.length;
+  await service({ github, store }).syncPending();
+  assert.equal(github.atomicWrites.length, commits);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' }).length, 1);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-09/alice.jsonl').text, { user: 'alice', month: '2026-09' }).length, 1);
+});
+
+test('historical Bulk add entry outside the 50-row local cache can be edited before sync without GitHub reads', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const lines = Array.from({ length: 55 }, (_, i) =>
+    `2026-08-21 https://example.com/task/${i} Row ${i} 0.25`).join('\n');
+  await tracker.bulkAddTimes(lines, { background: true });
+  const queued = store.value.pendingWrites[0].entries[0];
+  assert.equal(store.value.recentCache.some(entry => entry.id === queued.id), false, 'oldest preview is evicted');
+  const reads = github.reads.length;
+  const local = { ...queued, _path: 'times/2026-08/alice.jsonl', _index: -1, _sha: null, _pending: true };
+  await tracker.queueEntryEdit({
+    path: local._path, originalSha: null, index: -1, original: local, edits: { description: 'Revised locally' },
+  });
+  assert.equal(github.reads.length, reads, 'editing an unsynced bulk entry uses the IndexedDB queue');
+  assert.equal((await tracker.projectActivityRecords([])).records.find(entry => entry.id === queued.id).description, 'Revised locally');
+  await service({ github, store }).syncPending();
+  const saved = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(entry => entry.id === queued.id).description, 'Revised locally');
+});
+
+test('a remote overlap prevents queued Add time from writing and verified discard clears only its local record', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
+  const request = { taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T09:00:00.000Z' };
+  await tracker.addTime(request, { background: true });
+  seedText(github, 'times/2026-08/alice.jsonl',
+    serializeMonthlyRecords([entry('2026-08-18T08:30:00.000Z', '2026-08-18T09:30:00.000Z')]), 'raced');
+  await tracker.syncPending();
+  const id = store.value.pendingWrites[0].id;
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  const resolved = await tracker.resolvePendingConflict(id, 'discard_queued_addition');
+  assert.deepEqual(resolved, { resolved: true, discarded: true });
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(store.value.recentCache, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('Add time writes an exact completed interval and task index atomically', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   const result = await tracker.addTime({ taskUrl: issue.url + '?noise=1', taskTitle: 'Fix frontend',
@@ -2191,6 +2791,9 @@ test('background switching durably queues the transition before any GitHub reque
   const accepted = await tracker.switchTask('https://example.com/next', 'Next task', '', { background: true });
   assert.equal(accepted.pending, true);
   assert.equal(accepted.active.taskUrl, 'https://example.com/next');
+  assert.equal(accepted.stopped.localEntry.id, accepted.stopped.entry.id);
+  assert.equal(accepted.stopped.localEntry._pending, true);
+  assert.equal(accepted.stopped.localEntry._path, 'times/2026-08/alice.jsonl');
   assert.equal(github.reads.length + github.writes.length + github.deletes.length, 0, 'the UI response waits only for durable local storage');
   assert.equal(store.value.pendingWrites[0].operation, 'completeTimerAndStart');
   assert.equal(store.value.activeCache.taskUrl, 'https://example.com/next');

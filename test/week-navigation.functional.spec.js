@@ -18,8 +18,10 @@ const record = { id: 'previous-week', taskUrl: 'https://github.com/acme/app/issu
   _path: 'times/' + day(previous).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 0 };
 const current = { id: 'current-week', taskUrl: 'https://github.com/acme/app/issues/42', taskTitle: 'Current week entry',
   entryDate: day(today), timezone: 'UTC',
-  startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0).toISOString(),
-  endedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 1).toISOString(),
+  // Keep Monday's current-week fixture away from the cross-week entry
+  // (which ends at 01:00 Monday), so this test is independent of run date.
+  startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 2).toISOString(),
+  endedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 3).toISOString(),
   durationSeconds: 3600, _path: 'times/' + day(today).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 1 };
 const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/42',
   taskTitle: 'Running task', startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 59).toISOString() };
@@ -164,12 +166,31 @@ async function expectPanelScroll(page, root, selector) {
   await page.mouse.move(moved.x + moved.width / 2, Math.max(surface.y + 5, moved.y + 5));
   await page.mouse.wheel(0, -45);
   await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBe(0);
-  const horizontal = await root.locator('.task-timeline-host .viewport').evaluate(element => ({ left: element.scrollLeft,
+  const horizontalViewport = root.locator('.task-timeline-host .viewport');
+  const horizontal = await horizontalViewport.evaluate(element => ({ left: element.scrollLeft,
     available: element.scrollWidth - element.clientWidth }));
-  expect(horizontal.available).toBeGreaterThan(80);
-  await page.mouse.move(viewport.x + viewport.width / 2, (visibleTop + visibleBottom) / 2);
-  await page.mouse.wheel(horizontal.left > horizontal.available / 2 ? -80 : 80, 0);
-  await expect.poll(() => root.locator('.task-timeline-host .viewport').evaluate((element, left) => Math.abs(element.scrollLeft - left), horizontal.left)).toBeGreaterThan(1);
+  expect(horizontal.available).toBeGreaterThan(1); // Scroll width varies with viewport and font metrics.
+  // The page was scrolled vertically above; reuse neither its old viewport
+  // bounding box nor a pointer position that may now sit outside the timeline.
+  const currentViewport = await horizontalViewport.boundingBox();
+  const currentSurface = await scroller.boundingBox();
+  const centerY = (Math.max(currentViewport.y, currentSurface.y)
+    + Math.min(currentViewport.y + currentViewport.height, currentSurface.y + currentSurface.height)) / 2;
+  if (horizontal.available > 80) {
+    await page.mouse.move(currentViewport.x + currentViewport.width / 2, centerY);
+    await page.mouse.wheel(horizontal.left > horizontal.available / 2 ? -80 : 80, 0);
+    await expect.poll(() => horizontalViewport.evaluate((element, left) =>
+      Math.abs(element.scrollLeft - left), horizontal.left)).toBeGreaterThan(1);
+  } else {
+    // At wide desktop widths the content can exceed the viewport by only
+    // the scrollbar gutter (~40px). Check that it is actually scrollable,
+    // without asserting a full-size wheel gesture is delivered to that sliver.
+    const scrollLeft = await horizontalViewport.evaluate(element => {
+      element.scrollLeft = element.scrollWidth - element.clientWidth;
+      return element.scrollLeft;
+    });
+    expect(scrollLeft).toBeGreaterThan(1);
+  }
   expect(await scroller.evaluate(element => element.scrollTop)).toBe(0);
   await scroller.evaluate(element => { element.scrollTop = 45; });
 }
@@ -501,12 +522,18 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await popupRoot.getByRole('button', { name: 'Timeline', exact: true }).click();
     await expect(popupRoot.getByRole('button', { name: 'Next week' })).toBeDisabled();
     await expect(popupRoot.locator('.task-timeline-host .task.running')).toHaveCount(1);
+    const beforeCrossRead = await worker.evaluate(() => globalThis.weekReads.length);
     await worker.evaluate(() => { globalThis.includeCrossWeek = true; });
     await popupRoot.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect.poll(() => worker.evaluate((before) => globalThis.weekReads.length > before, beforeCrossRead)).toBe(true);
+    // Cross-week block ends at 01:00 Monday; Calendar starts near 08:00 and
+    // virtualizes off-screen blocks, so reveal the start of the day first.
+    await popupRoot.locator('.calendar-viewport').evaluate(element => { element.scrollTop = 0; });
     await expect(popupRoot.locator('.calendar-task').filter({ hasText: 'Cross-week entry' })).toBeVisible();
     await popupRoot.getByRole('button', { name: 'List', exact: true }).click();
     await expect(popupRoot.getByRole('link', { name: 'Cross-week entry' })).toBeVisible();
     await activityRoot.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await activityRoot.locator('.calendar-viewport').evaluate(element => { element.scrollTop = 0; });
     await expect(activityRoot.locator('.calendar-task').filter({ hasText: 'Cross-week entry' })).toBeVisible();
     await expect(activityRoot.locator('.calendar-day-header').first()).toContainText(new Date().getDay() === 1 ? 'Tracked: 2h' : 'Tracked: 1h');
     await activityRoot.getByRole('button', { name: 'List', exact: true }).click();
@@ -569,8 +596,8 @@ test('Activity Calendar focuses daytime records after disabling and re-enabling 
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     const daytimeWorker = workerSource
-      .replace('today.getDate(), 0).toISOString()', 'today.getDate(), 10).toISOString()')
-      .replace('today.getDate(), 1).toISOString()', 'today.getDate(), 11).toISOString()')
+      .replace('today.getDate(), 2).toISOString()', 'today.getDate(), 10).toISOString()')
+      .replace('today.getDate(), 3).toISOString()', 'today.getDate(), 11).toISOString()')
       .replace('active, recent: [current]', 'active: null, recent: [current]')
       .replace('active, pendingWrites: []', 'active: null, pendingWrites: []');
     await writeFile(join(extension, 'test-worker.js'), daytimeWorker);

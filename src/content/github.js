@@ -1066,11 +1066,26 @@
     recentFresh = fresh;
   }
 
+  function mergeLocalPendingActivity(entries) {
+    if (!timesMode || !Array.isArray(entries)) return;
+    // GET_PAGE_STATE reads IndexedDB, unlike LOAD_TIMES which also reads GitHub.
+    // A Stop accepted by another component/tab must appear in Activity without
+    // waiting for the remote weekly history to finish loading.
+    const pending = entries.filter(entry => entry?._pending && entry?.id && entry?._path && entry?.endedAt);
+    if (!pending.length) return;
+    const identity = entry => `${entry.destinationId || ''}\u0000${entry.id}`;
+    const keys = new Set(pending.map(identity));
+    recent = [...recent.filter(entry => !keys.has(identity(entry))), ...pending]
+      .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+    recentLoaded = true;
+  }
+
   function applyPageState(data) {
     if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
     pageState = reconcileTimelineAcceptedActive(data);
+    mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     fullWidthPopupRoot?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     applyTrackedTotals(data);
@@ -1381,11 +1396,6 @@
 
   function originalRecord(entry) { return { id: entry.id, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), issueUrl: storedTaskIdentityOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
-  function sameRecord(left, right) {
-    const a = originalRecord(left), b = originalRecord(right);
-    return a.id === b.id && a.issueUrl === b.issueUrl && a.issueTitle === b.issueTitle && a.startedAt === b.startedAt && a.endedAt === b.endedAt && a.description === b.description;
-  }
-
   function validEntryDate(value) {
     const match = typeof value === 'string' ? value.match(/^(?!0000)(\d{4})-(\d{2})-(\d{2})$/) : null;
     if (!match) return false;
@@ -1403,74 +1413,6 @@
     const offset = zone === 'Z' ? 0 : (sign === '+' ? 1 : -1) * (Number(offsetHour) * 60 + Number(offsetMinute));
     const expected = Date.UTC(y, mo - 1, d, h, mi, sec, Number(millis.padEnd(3, '0'))) - offset * 60000;
     return new Date(value).getTime() === expected;
-  }
-
-  function validIssue(issue) {
-    if (!issue || typeof issue !== 'object' || Object.keys(issue).sort().join(',') !== 'number,owner,repo,type,url') return false;
-    const ownerOk = typeof issue.owner === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(issue.owner) && !issue.owner.includes('--');
-    const repoOk = typeof issue.repo === 'string' && /^[A-Za-z0-9_.-]{1,100}$/.test(issue.repo) && issue.repo !== '.' && issue.repo !== '..';
-    const numberOk = Number.isSafeInteger(issue.number) && issue.number > 0;
-    if (!ownerOk || !repoOk || !numberOk || !['issue', 'pull_request'].includes(issue.type)) return false;
-    const route = issue.type === 'pull_request' ? 'pull' : 'issues';
-    return issue.url === `https://github.com/${issue.owner}/${issue.repo}/${route}/${issue.number}`;
-  }
-
-  function validRewrittenEntry(item, position, path, sha) {
-    const required = [
-      '_index', '_path', '_sha', 'actor', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate',
-      'id', 'issueTitle', 'metadata', 'metrics', 'producer', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl',
-      'timezone', 'updatedAt', 'user',
-    ];
-    const allowed = new Set([...required, '_record', 'entryId', 'execution', 'issue']);
-    const identity = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'id', 'name'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const producer = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'name', 'version'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const object = value => value && typeof value === 'object' && !Array.isArray(value);
-    const validId = value => typeof value === 'string' && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value);
-    let timezoneOk = false;
-    try { new Intl.DateTimeFormat('en-US', { timeZone: item?.timezone }).format(new Date(0)); timezoneOk = true; } catch {}
-    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !allowed.has(key)) || required.some(key => !(key in item)) || item.schemaVersion !== 1
-        || !validId(item.id) || (item.entryId !== undefined && item.entryId !== item.id)
-        || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
-        || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
-        || !identity(item.actor) || !producer(item.producer) || !object(item.metadata) || !object(item.metrics) || !timezoneOk
-        || !storedTaskIdentityOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
-        || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
-        || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) || new Date(item.updatedAt) < new Date(item.createdAt)
-        || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
-        || item.taskTitle !== item.taskTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
-        || typeof item.description !== 'string' || item.description.length > 2000
-        || (item._record !== undefined && (!object(item._record) || item._record.schema_version !== 1 || item._record.id !== item.id))) return false;
-    const pathMatch = path.match(/^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\.jsonl$/);
-    if (!pathMatch || pathMatch[1] !== item.entryDate.slice(0, 7) || pathMatch[2] !== item.user
-        || timestampParts(item.startedAt, item.timezone).date !== item.entryDate) return false;
-    const duration = Math.floor((new Date(item.endedAt).getTime() - new Date(item.startedAt).getTime()) / 1000);
-    return Number.isInteger(item.durationSeconds) && duration >= 0 && item.durationSeconds === duration;
-  }
-
-  function reconcileDeletedFile(deleted, rewritten) {
-    if (!Array.isArray(rewritten)) return null;
-    const byIndex = new Map();
-    let rewrittenSha = null;
-    for (const [position, item] of rewritten.entries()) {
-      if (!validRewrittenEntry(item, position, deleted._path, rewrittenSha)) return null;
-      rewrittenSha ||= item._sha;
-      byIndex.set(position, item);
-    }
-    const next = [];
-    for (const item of recent) {
-      if (item.destinationId !== deleted.destinationId || item._path !== deleted._path || item._pending) { next.push(item); continue; }
-      if (item._index === deleted._index) {
-        if (!sameRecord(item, deleted)) return null;
-        continue;
-      }
-      const index = item._index > deleted._index ? item._index - 1 : item._index;
-      const replacement = byIndex.get(index);
-      if (!replacement || replacement._path !== deleted._path || !sameRecord(replacement, item)) return null;
-      next.push({ ...replacement, destinationId: deleted.destinationId, timeRepository: deleted.timeRepository });
-    }
-    return next;
   }
 
   function refreshRecent(force = false) {
@@ -1539,29 +1481,6 @@
     const duration = Math.max(0, Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000));
     const endDay = end.date === start.date ? '' : `${relativeDayLabel(end.date)} `;
     return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
-  }
-
-  async function deleteRecentEntry(entry, node) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return;
-    const controls = node ? Array.from(node.parentElement?.children ?? [node]) : [];
-    for (const control of controls) control.disabled = true;
-    try {
-      const result = await send({ type: 'DELETE_ENTRY', payload: { destinationId: entry.destinationId, path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
-      activeInlineKey = null;
-      pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
-      const reconciled = reconcileDeletedFile(entry, result?.entries);
-      if (reconciled) {
-        recent = reconciled;
-        renderUi();
-        void send({ type: 'GET_PAGE_STATE', refresh: true }).then(data => { applyTrackedTotals(data); updatePanelClocks(); }).catch(setError);
-      } else {
-        recentLoaded = false;
-        await refreshState(false, true);
-      }
-    } catch (error) {
-      for (const control of controls) control.disabled = false;
-      setError(error);
-    }
   }
 
   function entryKey(entry) {
@@ -1862,20 +1781,13 @@
     record.append(identity);
     const title = record.querySelector('.task-title');
     if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
-    const timeRow = el('div', undefined, 'entry-time-row'); let day;
-    if (entry._pending) {
-      day = el('div', relativeDayLabel(timestampParts(entry.startedAt, entry.timezone).date), 'entry-day');
-      const time = el('span', recentTimeText(entry), 'entry-time-range');
-      const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
-      const actions = el('div', undefined, 'entry-actions entry-actions-visible');
-      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending); timeRow.append(time, duration, actions);
-    } else {
-      const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
+    const timeRow = el('div', undefined, 'entry-time-row');
+    const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'), day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const revealTimeEditor = () => beginRecordEdit(entry);
       const edit = button('Edit time', 'link-button entry-edit', async () => revealTimeEditor());
-      const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(loadingRecent || !recentFresh);
+      const remove = button('Delete', 'danger-outline entry-delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
+      const disabled = Boolean((loadingRecent || !recentFresh) && !entry._pending);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled);
@@ -1926,7 +1838,6 @@
         description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
-    }
     if (timesMode || popupMode || fullWidthPopupOpen) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
@@ -1953,8 +1864,7 @@
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
-    const syncing = hasRunnablePending();
-    refresh.disabled = syncing; // Background queue activity must not animate the toolbar.
+    refresh.disabled = loadingRecent; // GitHub sync runs silently and must not disable Refresh.
     refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
     if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (emptyState) container.append(emptyState);
@@ -1979,13 +1889,15 @@
       // Queues persisted before operation was projected to the page expose only
       // their stage. Keep their recovery actionable after an extension upgrade.
       const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
+      const queuedAddition = ['addTime', 'bulkAddTimes'].includes(item.operation ?? item.stage);
       const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
       const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
       const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
         : changedAddTime ? 'Add time needs review'
         : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
-          : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
+          : queuedAddition ? 'Added time needs review'
+            : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
       const detail = item.conflictReason === 'active_missing_no_completion'
         ? 'The active timer is gone and no matching completion exists. Discarding removes this unsaved completion.'
         : item.conflictReason === 'active_changed_no_completion'
@@ -1994,17 +1906,25 @@
             : changedAddTime ? 'Completed time changed before this timer synced. Recheck for overlap or, while online, verify GitHub and discard the unsaved start.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
-                : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
-                  : 'Repair or remove the conflicting entry in GitHub, then retry.';
+                : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
+                  : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
+                    : 'Repair or remove the conflicting entry in GitHub, then retry.';
       const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
         : changedAddTime ? 'Recheck and retry start'
-        : rejectedWrite ? 'Retry queued write' : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
+        : rejectedWrite ? 'Retry queued write' : queuedAddition ? 'Retry added time'
+          : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
       box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
         await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
         recentLoaded = false;
         await refreshState(true, true);
+      }));
+      if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
+        if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;
+        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_addition' });
+        recentLoaded = false;
+        await refreshState(false, true);
       }));
       if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
         if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
@@ -2120,10 +2040,13 @@
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
       const draftKeys = new Set(drafts.map(activityRecordKey));
       const range = timesRange();
-      const entries = query
+      // Use the same optimistic completions as Timeline and Calendar while
+      // the shared background queue waits for GitHub synchronization.
+      const entries = mergeTimelineCompletedEntries(query
         ? [...(activitySearchEntries || []).filter(entry => !draftKeys.has(activityRecordKey(entry))),
           ...recent.filter(entry => entry._pending && !draftKeys.has(activityRecordKey(entry))), ...drafts]
-        : recordsWithDrafts().filter(entry => (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
+        : recordsWithDrafts(), timelineOptimisticCompletions.values())
+        .filter(entry => query || (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
           || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
       const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
       if (query) {
@@ -2234,14 +2157,22 @@
       try {
         const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
         added = result.added;
-        bulkDraft = ''; bulkMutation = false; recentLoaded = false;
-        await refreshRecent(true);
+        bulkDraft = ''; bulkMutation = false;
+        // Accepted records are already durable in IndexedDB. Show them now,
+        // without waiting for a GitHub history read or the 15-second flush.
+        if (Array.isArray(result.entries)) {
+          const accepted = result.entries.map(entry => ({ ...entry, destinationId: result.destinationId }));
+          recent = mergeActivityRecords(accepted, timesRange(), true);
+          recentLoaded = true;
+          recentFresh = true;
+        }
+        void refreshActivityState().catch(setError);
         bulkFeedback = { kind: 'success', message: `${added} ${added === 1 ? 'entry was' : 'entries were'} added.` };
       } catch (error) {
         bulkMutation = false;
         if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; }
         const message = error?.message || 'Could not add time.';
-        bulkFeedback = { kind: 'error', message: added === null ? message : `Time was added, but Activity could not be refreshed: ${message}` };
+        bulkFeedback = { kind: 'error', message };
       }
       renderUi();
     }); add.disabled = bulkMutation;
@@ -2266,8 +2197,14 @@
       else anonymous.push(entry);
     }
     for (const entry of optimisticCompletions) {
-      if (entry?.id) byId.set(entry.id, entry);
-      else anonymous.push(entry);
+      if (!entry?.id) { anonymous.push(entry); continue; }
+      const local = byId.get(entry.id);
+      const localUpdated = Date.parse(local?.updatedAt), optimisticUpdated = Date.parse(entry.updatedAt);
+      // Stop can be followed immediately by another edit. Once its newer
+      // IndexedDB projection has arrived, never reapply an older Stop snapshot.
+      if (local?._pending && Number.isFinite(localUpdated) && Number.isFinite(optimisticUpdated)
+          && localUpdated >= optimisticUpdated) continue;
+      byId.set(entry.id, entry);
     }
     return [...byId.values(), ...anonymous];
   }
@@ -2323,7 +2260,6 @@
         isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
-          || Boolean(!entry._active && entry._pending)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
       };
     });
@@ -2427,6 +2363,16 @@
     return true;
   }
 
+  function rememberCompletedLocally(completion, destinationId) {
+    if (!completion?.entry?.id) return;
+    const local = completion.localEntry ?? completion.entry;
+    timelineOptimisticCompletions.set(completion.entry.id, {
+      ...completion.entry, ...local,
+      destinationId: local.destinationId ?? completion.entry.destinationId ?? destinationId,
+      _pending: Boolean(completion.pending), _optimisticCompletion: true,
+    });
+  }
+
   function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '', previousDescription } = {}) {
     const startedAt = new Date().toISOString();
     const previousActive = pageState.active;
@@ -2436,7 +2382,9 @@
     try {
       if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
         timelineOptimisticCompletions.set(previousActive.id, {
-          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt, _pending: true, _optimisticCompletion: true,
+          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt,
+          durationSeconds: Math.max(0, Math.floor((new Date(startedAt) - new Date(previousActive.startedAt)) / 1_000)),
+          _pending: true, _optimisticCompletion: true,
         });
       }
       const acceptedActive = {
@@ -2485,11 +2433,12 @@
       const result = await send(switching
         ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '', description: previousDescription }
         : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
+      if (switching) rememberCompletedLocally(result?.stopped, result?.destinationId);
       const active = switching ? result?.active : result;
       if (active?.id) {
         timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        if (!refreshMountedTimeline()) renderUi();
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
       }
       void refreshMountedTimelineState().catch(setError);
     } catch (error) {
@@ -2518,10 +2467,9 @@
     if (!timelineQueueIndicator) return;
     const status = globalThis.ClockoliRecovery.describeSaveStatus({ ...pageState, pendingCount: timelineQueueSize(),
       saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight });
-    const hasUnrepresentedWrite = timelineDeleteInFlight
-      || pageState.pendingWrites?.some(write => write.operation === 'deleteEntry' && write.status !== 'conflict')
-      || ![...timelineEntriesById.values()].some(entry => entry.isPending);
-    const hidden = status.label === 'Saved to GitHub' || !hasUnrepresentedWrite;
+    // Ordinary local writes never show a saving/waiting status. Only an
+    // actionable synchronization failure belongs in the visible feedback.
+    const hidden = !status.conflict && !status.action;
     timelineQueueIndicator.hidden = hidden;
     timelineQueueIndicator.setAttribute('aria-hidden', String(hidden));
     timelineQueueIndicator.textContent = status.label;
@@ -2650,8 +2598,10 @@
   }
 
   async function queueTimelineEntryDelete(entry) {
+    if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
     if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
-    const previousRecent = recent;
+    timelineDeleteInFlight = true;
+    const previousRecent = recent, previousCompletion = timelineOptimisticCompletions.get(entry.id);
     const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
     recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
     timelineOptimisticCompletions.delete(entry.id);
@@ -2660,6 +2610,7 @@
     refreshTimelineQueueIndicator();
     refreshMountedTimeline();
     recordTimelineQueueDiagnostic('Delete time entry: accepted locally and queued for GitHub.');
+    if (timesMode && activityViewMode === 'list') renderUi();
     try {
       const result = await send({ type: 'QUEUE_ENTRY_DELETE', payload: {
         destinationId: entry.destinationId,
@@ -2668,13 +2619,15 @@
       if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
     } catch (error) {
       recent = previousRecent;
+      if (previousCompletion) timelineOptimisticCompletions.set(entry.id, previousCompletion);
       pageState = { ...pageState, ...previousTotals };
       recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
       throw error;
     } finally {
       finishTimelineQueueAcceptance(acceptanceId);
+      timelineDeleteInFlight = false;
       refreshTimelineQueueIndicator();
-      if (!refreshMountedTimeline()) renderUi();
+      if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
     }
     void refreshMountedTimelineState().catch(setError);
     return true;
@@ -2687,13 +2640,10 @@
       const result = await send({ type: 'STOP', description: activeDescriptionValue(activeEntry) });
       if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
       if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
-      timelineOptimisticCompletions.set(result.entry.id, {
-        ...result.entry,
-        _pending: Boolean(result.pending),
-        _optimisticCompletion: true,
-      });
+      rememberCompletedLocally(result, result.destinationId);
       pageState = { ...pageState, active: null };
       refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
       await refreshState(false, false);
       return true;
     } catch (error) { setError(error); throw error; }
@@ -2711,10 +2661,11 @@
     try {
       const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription,
         sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } });
+      rememberCompletedLocally(result?.stopped, result?.destinationId);
       if (result?.active) {
         timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
         pageState = { ...pageState, active: timelineAcceptedActive };
-        if (!refreshMountedTimeline()) renderUi();
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
       }
     } catch (error) {
       rollbackTimelineStart(startContext);
@@ -2804,10 +2755,7 @@
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
-          if (!entry._active) {
-            if (entry._pending) return false;
-            return queueTimelineEntryDelete(entry);
-          }
+          if (!entry._active) return queueTimelineEntryDelete(entry);
           if (!confirm('Delete this running timer without saving its tracked time?')) return false;
           timelineDeleteInFlight = true;
           const acceptanceId = beginTimelineQueueAcceptance();
@@ -3795,6 +3743,34 @@
   });
 
   if (timesMode) {
+    document.addEventListener('clockoli:local-tracking-changed', event => {
+      const detail = event.detail ?? {};
+      if (detail.type === 'STOP' && detail.completion?.entry?.id) {
+        rememberCompletedLocally(detail.completion, detail.completion.destinationId);
+        mergeLocalPendingActivity([{
+          ...detail.completion.entry, ...(detail.completion.localEntry ?? {}),
+          destinationId: detail.completion.destinationId,
+          _pending: Boolean(detail.completion.pending),
+        }]);
+        pageState = { ...pageState, active: null };
+      } else if (detail.type === 'START' && detail.active?.id) {
+        pageState = { ...pageState, active: detail.active };
+      } else return;
+      if (!refreshMountedTimeline()) renderUi();
+      void refreshActivityState().catch(setError);
+    });
+    document.addEventListener('clockoli:local-time-added', event => {
+      const result = event.detail ?? {};
+      if (result.entry?.id) {
+        recent = mergeActivityRecords([{ ...result.entry, destinationId: result.destinationId }], timesRange(), true);
+        recentLoaded = true;
+      }
+      if (result.active?.id) {
+        pageState = { ...pageState, active: { ...result.active, destinationId: result.destinationId } };
+      }
+      renderUi();
+      void refreshActivityState().catch(setError);
+    });
     mountInHeader();
     void restoreActivityViewMode();
     void loadSelectedTimes();
