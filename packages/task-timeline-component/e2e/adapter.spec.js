@@ -383,16 +383,23 @@ test('Timeline keeps a moved entry clear of the entry it crossed to the right', 
 });
 
 test('Timeline keeps the current time at the right edge after moving an older entry', async ({ page }) => {
-  const now = Date.now();
+  await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+  const now = await page.evaluate(() => Date.now());
   const first = now - 8 * HOUR;
   await mount(page, { items: [
     { id: 'entry:a', title: 'First', startedAt: first, endedAt: first + HOUR, isEditable: true },
     { id: 'entry:b', title: 'Second', startedAt: first + 2 * HOUR, endedAt: first + 2.5 * HOUR, isEditable: true },
     { id: 'active:c', title: 'Current', startedAt: now - HOUR, endedAt: null, isRunning: true, isEditable: false },
-  ], view: { start: now - 7 * 24 * HOUR, end: now, focusedAt: now } });
+  ], view: { start: now - 24 * HOUR, end: now, focusedAt: now } });
   await page.evaluate(() => window.__timeline.scrollToEnd());
   const source = page.locator('#timeline .task[data-task-key="entry:b"]');
+  await expect(source).toBeVisible();
   const box = await source.boundingBox();
+  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.width).toBeGreaterThan(0);
+  expect(box.x + box.width / 2).toBeGreaterThan(viewport.x);
+  expect(box.x + box.width / 2).toBeLessThan(viewport.x + viewport.width);
   const before = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     return { position: (timeline.timeToX(timeline.currentTime) - timeline._scrollLeftNow()) / timeline._viewportWidthNow(),
@@ -402,6 +409,8 @@ test('Timeline keeps the current time at the right edge after moving an older en
   await page.mouse.down();
   await page.mouse.move(box.x - 35, box.y + box.height / 2, { steps: 8 });
   await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit')))
+    .toEqual([['edit', 'entry:b', 'move']]);
   const after = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     return { position: (timeline.timeToX(timeline.currentTime) - timeline._scrollLeftNow()) / timeline._viewportWidthNow(),
