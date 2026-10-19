@@ -719,7 +719,7 @@ function renderState() {
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
-  $('merge-tasks').hidden = !state.config && destinations.length === 0;
+  $('merge-tasks').hidden = !accountConnected || (!state.config && destinations.length === 0);
   if (settingsConnected !== accountConnected) {
     $('more-settings').open = Boolean(accountConnected);
     settingsConnected = accountConnected;
@@ -1585,25 +1585,34 @@ function mergeTaskIdentity(task) {
 const mergeSelection = { source: '', target: '' };
 let mergePairs = [];
 let mergeLoadGeneration = 0;
+let mergeContextSignature = '';
 let mergeTasksLoaded = false;
 let mergeTasksLoading = false;
 let mergeSubmitting = false;
 function renderMergeDestinationOptions() {
   const select = $('merge-task-destination'), destinations = configuredDestinations();
   const previous = select.value, fallback = defaultDestinationId();
+  const signature = JSON.stringify([
+    state?.auth?.mode, state?.auth?.githubLogin, state?.auth?.githubUserId,
+    destinations.map(destination => [
+      destination.id, destination.owner, destination.repo, destination.branch || destination.defaultBranch,
+      destination.repoId, destination.installationId,
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  ]);
+  const contextChanged = mergeContextSignature !== signature;
+  mergeContextSignature = signature;
   select.replaceChildren();
   for (const destination of destinations) {
     const option = document.createElement('option'); option.value = destination.id; option.textContent = destinationLabel(destination); select.append(option);
   }
   const next = destinations.some(destination => destination.id === previous) ? previous : fallback;
   select.value = next;
-  select.disabled = destinations.length < 2;
-  if (previous && next !== previous) {
-    mergeLoadGeneration++;
-    mergeTasksLoaded = false; mergeTasksLoading = false;
-    mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
-    $('merge-all-people').checked = false; updateMergeScope(); renderMergeTasks([]);
-    if ($('merge-tasks').open) void refreshMergeTasks();
+  select.disabled = destinations.length < 2 || mergeSubmitting;
+  if (contextChanged || (previous && next !== previous)) {
+    resetMergeTaskCandidates();
+    $('merge-all-people').checked = false; updateMergeScope();
+    if (contextChanged) $('merge-tasks').open = false;
+    else if ($('merge-tasks').open) void refreshMergeTasks();
   }
 }
 function mergeTasksVisible(side) {
@@ -1706,7 +1715,7 @@ function selectMergeTask(side, taskUrl) {
   renderMergeTaskList('source'); renderMergeTaskList('target'); renderMergeQueue();
 }
 async function refreshMergeTasks() {
-  if ($('merge-tasks').hidden || !$('merge-tasks').open) return;
+  if ($('merge-tasks').hidden || !$('merge-tasks').open) return null;
   const generation = ++mergeLoadGeneration;
   mergeTasksLoading = true;
   $('merge-tasks-feedback').textContent = 'Loading tasks…';
@@ -1719,7 +1728,7 @@ async function refreshMergeTasks() {
     if (generation !== mergeLoadGeneration) return;
     if (result.partial || result.conflicts?.length) {
       mergeTasksLoaded = false;
-      renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
+      renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return false;
     }
     const unavailable = renderMergeTasks(result.tasks || []);
     mergeTasksLoaded = true;
@@ -1728,10 +1737,12 @@ async function refreshMergeTasks() {
       ? `${unavailable} invalid task ${unavailable === 1 ? 'identity was' : 'identities were'} excluded.`
       : imported ? 'Imported task identities can be replaced with a tracked URL; replacement tasks must have a URL.'
         : mergeTasks.length ? '' : 'No tasks match the selected period.';
+    return true;
   } catch (error) {
     if (generation === mergeLoadGeneration) {
       mergeTasksLoaded = false;
       renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message;
+      return false;
     }
   } finally {
     if (generation === mergeLoadGeneration) mergeTasksLoading = false;
@@ -2477,14 +2488,20 @@ $('merge-tasks-submit').addEventListener('click', async () => {
     const pairs = mergePairs.map(pair => ({ sourceTaskUrl: pair.source.taskUrl, targetTaskUrl: pair.target.taskUrl, targetTaskTitle: pair.target.title || '' }));
     const result = await send({ type: 'MERGE_TASKS', destinationIds: [$('merge-task-destination').value], allUsers, pairs, ...range });
     const changed = result.mergedEntries + (result.mergedActive ? 1 : 0);
-    mergePairs = []; mergeSelection.source = ''; mergeSelection.target = '';
-    $('merge-all-people').checked = false; updateMergeScope(); renderMergeQueue();
-    await refreshMergeTasks();
-    formFeedback('merge-tasks-feedback', changed
+    resetMergeTaskCandidates();
+    $('merge-all-people').checked = false; updateMergeScope();
+    const refreshed = await refreshMergeTasks();
+    const refreshError = refreshed === false ? $('merge-tasks-feedback').textContent : '';
+    const summary = changed
       ? `Merged ${pairs.length} ${pairs.length === 1 ? 'task pair' : 'task pairs'} ${allUsers ? 'for all people' : 'for your entries'}.`
-      : 'No matching entries needed changing.', 'success');
+      : 'No matching entries needed changing.';
+    formFeedback('merge-tasks-feedback', refreshError ? `${summary} Could not refresh the task list: ${refreshError}` : summary,
+      refreshError ? 'error' : 'success');
   } catch (error) {
-    if (error.code === 'partial_task_merge') await refreshMergeTasks().catch(() => {});
+    if (error.code === 'partial_task_merge') {
+      resetMergeTaskCandidates();
+      await refreshMergeTasks().catch(() => {});
+    }
     formFeedback('merge-tasks-feedback', error.message || 'Could not merge tasks.', 'error');
   } finally {
     mergeSubmitting = false;
