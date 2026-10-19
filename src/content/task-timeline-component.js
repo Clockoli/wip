@@ -853,6 +853,7 @@
       this.host = container;
       this.shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
       this.shadow.innerHTML = TEMPLATE;
+      global.ClockoliInstantTooltips?.attach(this.shadow);
 
       this.options = {
         minTaskWidth: 30,

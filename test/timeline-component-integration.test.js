@@ -34,6 +34,7 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
   assert.deepEqual(manifest.content_scripts[0].js, [
     'src/domain/recovery-actions.js',
     'src/ui/tracking-card.js',
+    'src/ui/instant-tooltips.js',
     'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);

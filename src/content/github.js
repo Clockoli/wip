@@ -518,8 +518,9 @@
       const duration = formatCompactTrackedDuration(value.seconds);
       const label = existing || el('span', undefined, 'clockoli-participant-time');
       if (label.textContent !== duration) label.textContent = duration;
-      label.title = `${value.login} tracked ${duration}${value.activeStartedAt ? ', including the active timer' : ''}`;
-      label.setAttribute('aria-label', label.title);
+      const tooltip = `${value.login} tracked ${duration}${value.activeStartedAt ? ', including the active timer' : ''}`;
+      label.setAttribute('data-clockoli-tooltip', tooltip);
+      label.setAttribute('aria-label', tooltip);
       Object.assign(label.style, {
         display: 'inline-block', marginLeft: '4px', padding: '0 4px', borderRadius: '6px',
         color: 'var(--fgColor-accent,#0969da)', background: 'var(--bgColor-accent-muted,#ddf4ff)',
@@ -1400,6 +1401,7 @@
       isolateShadowHost(root, { wide: true });
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
+      globalThis.ClockoliInstantTooltips?.attach(shadow);
       return true;
     }
     const target = headerTarget();
@@ -1408,6 +1410,7 @@
       root = el('div'); root.id = ROOT_ID;
       isolateShadowHost(root);
       shadow = root.attachShadow({ mode: 'closed' });
+      globalThis.ClockoliInstantTooltips?.attach(shadow);
     }
     if (root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) target.actions.insertBefore(root, target.anchor);
     return true;
@@ -3399,6 +3402,7 @@
     fullWidthPopupRoot.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
     fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
+    globalThis.ClockoliInstantTooltips?.attach(fullWidthPopupShadow);
     (document.body || document.documentElement).append(fullWidthPopupRoot);
   }
 
@@ -3907,6 +3911,7 @@
     if (menuOpen && !path.includes(root)) closeMenu();
   }
 
+  if (!extensionPageMode) globalThis.ClockoliInstantTooltips?.attach(document, { selector: '.clockoli-participant-time' });
   if (!popupMode && !timesMode) document.addEventListener('visibilitychange', () => {
     if (document.hidden && fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
     if (!actionSurfaceMode) updateTaskAnimation();

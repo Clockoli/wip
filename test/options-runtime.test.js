@@ -2522,10 +2522,11 @@ test('repository avatar hover uses the GitHub login and overflow does not impers
   const row = page.nodes.get('time-repository-list').children[0];
   const avatar = row.querySelector('.repository-collaborator');
   assert.equal(avatar.dataset.login, '@New');
+  assert.equal(avatar.dataset.clockoliTooltip, '@New');
   assert.equal(row.querySelector('.repository-collaborator-more').textContent, '…');
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
-  assert.match(css, /\.repository-collaborator\[data-login\]:hover::after\{[^}]*content:attr\(data-login\)/);
+  assert.doesNotMatch(css, /\.repository-collaborator\[data-login\]:hover::after/);
 });
 
 test('pending GitHub invitations show distinct noninteractive avatars and accessible status', async () => {

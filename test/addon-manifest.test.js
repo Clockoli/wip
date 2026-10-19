@@ -34,12 +34,12 @@ test('manifest injects the Clockify adapter only on the Detailed Report route', 
   assert.deepEqual(manifest.content_scripts, [
     {
       matches: ['https://github.com/*'],
-      js: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
+      js: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/ui/instant-tooltips.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
       run_at: 'document_idle',
     },
     {
       matches: ['https://app.clockify.me/reports/detailed*'],
-      js: ['src/addons/clockify/detailed-report-button.js'],
+      js: ['src/ui/instant-tooltips.js', 'src/addons/clockify/detailed-report-button.js'],
       run_at: 'document_start',
     },
     {

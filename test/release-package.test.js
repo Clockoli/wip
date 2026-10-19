@@ -117,6 +117,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/times/times.html',
   'src/ui/add-time.css',
   'src/ui/add-time.js',
+  'src/ui/instant-tooltips.js',
   'src/ui/interface-width.js',
   'src/ui/running-status.js',
   'src/ui/tracking-card.js',
