@@ -788,6 +788,49 @@ test('partially applied merge cannot leave a stale, resubmittable pair in a clos
   assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Some task entries were merged/);
 });
 
+test('changing repository coordinates invalidates cached tasks even when its id stays the same', async () => {
+  const task = { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] };
+  let loads = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks: [task], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  const first = { ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } };
+  const panel = page.nodes.get('merge-tasks');
+  page.render(first);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === task.taskUrl), true);
+  page.render({ ...first, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'other', repo: 'different-time' } } } });
+  assert.equal(panel.open, false);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === task.taskUrl), false);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').length, 2);
+});
+
+test('successful merge reports a refresh failure as a warning without claiming the merge failed', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let loads = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? ++loads === 1 ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] }
+      : new Error('Temporary network failure')
+    : request.type === 'MERGE_TASKS' ? { mergedEntries: 1, mergedActive: false, destinationCount: 1 } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  await page.nodes.get('merge-tasks-submit').listeners.click();
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 1 task pair/);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Temporary network failure/);
+  assert.doesNotMatch(page.nodes.get('merge-tasks-feedback').textContent, /Could not merge tasks/);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+});
+
 test('Merge tasks offers an imported identity as a source, with replacement choices only after source selection', async () => {
   const imported = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
   const page = harness({ reply: request => request.type === 'LOAD_TASKS' ? { tasks: [
