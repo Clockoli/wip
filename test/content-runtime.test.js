@@ -1532,10 +1532,12 @@ test('typing in the main-panel description cannot reach GitHub keyboard shortcut
   new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const description = createdNodes.findLast(node => node.tag === 'input' && node.placeholder === 'Optional');
+  const description = createdNodes.findLast(node => node.tag === 'textarea' && node.placeholder === 'Optional');
   let stopped = false;
-  description.onkeydown({ target: description, key: 'a', stopPropagation() { stopped = true; } });
+  description.onkeypress({ target: description, key: 'a', stopPropagation() { stopped = true; } });
   assert.equal(stopped, true);
+  assert.match(source, /for \(const type of \['keydown', 'keypress', 'keyup'\]\) node\.addEventListener\(type, event => event\.stopPropagation\(\)\)/,
+    'all keyboard events stay inside the content-script shadow control');
 });
 
 test('List deletes locally and shows queued time entries without special status', async () => {
@@ -2162,7 +2164,7 @@ test('header totals-only polling preserves the description draft and updates exi
   const headerRoot = h.document.panelShadow;
   await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
   const root = h.document.panelShadow;
-  const menu = root.querySelector('.menu'), input = menu.querySelector('input');
+  const menu = root.querySelector('.menu'), input = menu.querySelector('.strip-description');
   const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
   const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
   const elapsed = menu.querySelector('.running-elapsed');
@@ -2171,9 +2173,9 @@ test('header totals-only polling preserves the description draft and updates exi
     h.set({ ...state, todayTrackedMs: ms, weekTrackedMs: ms }); h.advance(500);
     const [id, poll] = [...h.timeouts].find(([, timer]) => timer.delay === 500);
     h.timeouts.delete(id); await poll.callback();
-    assert.equal(root.querySelector('input').value, 'Unsaved draft');
+    assert.equal(root.querySelector('.strip-description').value, 'Unsaved draft');
     assert.equal(root.querySelector('.menu'), menu, 'totals-only reads keep the dialog mounted');
-    assert.equal(root.querySelector('input'), input);
+    assert.equal(root.querySelector('.strip-description'), input);
     assert.equal(h.document.activeElement, input);
     assert.equal(root.querySelector('[data-tracked-total="todayTrackedMs"]'), total);
     assert.equal(root.querySelector('[data-tracked-total="weekTrackedMs"]'), week);
@@ -2191,15 +2193,15 @@ test('header description draft survives a required rerender without leaking to a
   const headerRoot = h.document.panelShadow;
   await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
   const root = h.document.panelShadow;
-  const input = root.querySelector('input');
+  const input = root.querySelector('.strip-description');
   input.value = ''; input.oninput?.({ target: input });
   h.set({ ...state, active: { ...active, taskTitle: 'Updated title' } });
   await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
-  assert.notEqual(root.querySelector('input'), input, 'metadata changes require a new input');
-  assert.equal(root.querySelector('input').value, '', 'an intentionally cleared draft survives');
+  assert.notEqual(root.querySelector('.strip-description'), input, 'metadata changes require a new input');
+  assert.equal(root.querySelector('.strip-description').value, '', 'an intentionally cleared draft survives');
   h.set({ ...state, active: { ...active, id: 'new-timer', description: 'New timer description' } });
   await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
-  assert.equal(root.querySelector('input').value, 'New timer description');
+  assert.equal(root.querySelector('.strip-description').value, 'New timer description');
 });
 
 test('header opening retries failed initial reads and retains Retry until recovery succeeds', async () => {
@@ -2298,6 +2300,40 @@ test('active strip uses a favicon and saves its editable description with Stop',
   assert.equal(harness.messages.find(message => message.type === 'STOP').description, 'Published launch story');
 });
 
+test('time descriptions preserve intentional newlines while normalizing line endings', () => {
+  const begin = source.indexOf('  function normalizedDescription(value) {');
+  const end = source.indexOf('\n  function retireActiveDescriptionDraft(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const context = vm.createContext({});
+  vm.runInContext(`${source.slice(begin, end)}; this.normalize = normalizedDescription;`, context);
+  assert.equal(context.normalize(' First  line\r\nSecond   line\n\nThird '), 'First line\nSecond line\n\nThird');
+  assert.equal(context.normalize('x'.repeat(2001)).length, 2000);
+});
+
+test('running description supports Shift+Enter and confirms an Enter save locally', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') return callback({ ok: true, data: { operationId: 'local-edit' } });
+    callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const field = menu.querySelector('.strip-description');
+  assert.equal(field.tag, 'textarea', 'multiline description needs a textarea');
+  field.value = 'First line\nSecond line'; field.oninput();
+  let prevented = false;
+  await field.onkeydown({ key: 'Enter', shiftKey: true, isTrusted: true, preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, false, 'Shift+Enter inserts a native textarea newline');
+  await field.onkeydown({ key: 'Enter', shiftKey: false, isTrusted: true, preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, true, 'Enter saves instead of inserting another newline');
+  assert.equal(harness.messages.filter(m => m.type === 'QUEUE_ACTIVE_START_EDIT').length, 1);
+  assert.equal(harness.messages.find(m => m.type === 'QUEUE_ACTIVE_START_EDIT').payload.description, 'First line\nSecond line');
+  assert.equal(menu.querySelector('.description-saved')?.hidden, false, 'save confirmation stays beside the field');
+  assert.match(menu.querySelector('.description-saved')?.textContent, /Saved/);
+});
+
 test('active strip shows a green check and saves its description when clicked', async () => {
   const now = Date.now();
   const active = { id: 'active', taskUrl: 'https://example.com/running', taskTitle: 'Running', startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
@@ -2319,6 +2355,165 @@ test('active strip shows a green check and saves its description when clicked', 
   const remoteActive = { ...active, description: 'Updated on another device' };
   harness.set({ ...state, active: remoteActive, pendingWrites: [] }, [], []);
   assert.equal(harness.renderMenu({ compact: true }).querySelector('.strip-description').value, 'Updated on another device', 'accepted drafts must not hide later authoritative updates');
+});
+
+test('Enter saves the running timer description without clicking the check or stopping time', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running', taskTitle: 'Running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') return callback({ ok: true, data: { operationId: 'active-edit' } });
+    callback({ ok: true, data: state });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  description.value = '  Expanding   the coverage  '; description.oninput();
+  let prevented = false;
+  await description.onkeydown({ key: 'Enter', isTrusted: true,
+    preventDefault() { prevented = true; }, stopPropagation() {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const writes = harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
+  assert.equal(prevented, true, 'Enter should not submit the containing panel or add a newline');
+  assert.equal(writes.length, 1, 'Enter invokes the same local queue as the green check');
+  assert.equal(writes[0].payload.description, 'Expanding the coverage');
+  assert.equal(writes[0].payload.startedAt, undefined);
+  assert.equal(harness.messages.some(message => message.type === 'STOP'), false, 'Enter leaves tracking running');
+  assert.equal(menu.querySelector('.active-task-strip').classList.contains('is-active'), true);
+});
+
+test('Enter and blur while an active description save is in flight queue only once', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  let reply;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now,
+    respond(message, callback) {
+      if (message.type === 'QUEUE_ACTIVE_START_EDIT') { reply = callback; return; }
+      callback({ ok: true, data: { configured: true, active, pendingWrites: [] } });
+    },
+  });
+  const description = harness.renderMenu({ compact: true }).querySelector('.strip-description');
+  description.value = 'New description'; description.oninput();
+  description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  description.onkeydown({ key: 'Enter', isTrusted: true, repeat: true, preventDefault() {}, stopPropagation() {} });
+  const blur = description.onblur();
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1);
+  reply({ ok: true, data: { operationId: 'saved-locally' } });
+  await blur;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1,
+    'Enter, key repeat and losing focus must not enqueue duplicate edits');
+});
+
+test('a second Enter and blur save the latest running description while an earlier save is in flight', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const responders = [];
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now,
+    respond(message, callback) {
+      if (message.type === 'QUEUE_ACTIVE_START_EDIT') { responders.push(callback); return; }
+      callback({ ok: true, data: { configured: true, active, pendingWrites: [] } });
+    },
+  });
+  const menu = harness.renderMenu({ compact: true });
+  const description = menu.querySelector('.strip-description');
+  description.value = 'First'; description.oninput();
+  const first = description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
+  description.value = 'Second'; description.oninput();
+  const second = description.onblur();
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1);
+  responders.shift()({ ok: true, data: { operationId: 'first' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const edits = harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
+  assert.equal(edits.length, 2, 'a newer submitted description must be queued after the first save');
+  assert.equal(edits[1].payload.description, 'Second');
+  responders.shift()({ ok: true, data: { operationId: 'second' } });
+  await Promise.all([first, second]);
+  assert.equal(menu.querySelector('.description-saved').hidden, false);
+  assert.equal(harness.descriptionDraftValue() ?? null, null, 'the accepted latest draft is retired');
+});
+
+test('a running description still saves after its timer start was edited elsewhere', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    callback({ ok: true, data: message.type === 'QUEUE_ACTIVE_START_EDIT' ? { operationId: 'edit' } : state });
+  } });
+  const description = harness.renderMenu({ compact: true }).querySelector('.strip-description');
+  const newStart = new Date(now - 120_000).toISOString();
+  harness.applyPageState({ ...state, active: { ...active, startedAt: newStart } });
+  description.value = 'Changed after adjusting start'; description.oninput();
+  await description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
+  const edit = harness.messages.find(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
+  assert.ok(edit, 'the editor should not silently discard a save for the same active timer');
+  assert.equal(edit.payload.original.startedAt, newStart, 'use the latest durable start time');
+  assert.equal(edit.payload.description, 'Changed after adjusting start');
+});
+
+test('noncompact timer description queues a second Enter after a pending edit', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const responders = [];
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now,
+    respond(message, callback) {
+      if (message.type === 'QUEUE_ACTIVE_START_EDIT') { responders.push(callback); return; }
+      callback({ ok: true, data: { configured: true, active, pendingWrites: [] } });
+    },
+  });
+  const menu = harness.renderMenu({ compact: false });
+  const description = menu.walk().find(node => node.tag === 'textarea' && node.placeholder === 'Optional');
+  assert.ok(description);
+  description.value = 'First'; description.oninput();
+  description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
+  description.value = 'Second'; description.oninput();
+  description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {} });
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1);
+  responders.shift()({ ok: true, data: { operationId: 'first' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const edits = harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
+  assert.equal(edits.length, 2);
+  assert.equal(edits[1].payload.description, 'Second');
+  responders.shift()({ ok: true, data: { operationId: 'second' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(menu.querySelector('.dialog-description-saved').hidden, false);
+});
+
+test('Enter followed by a refreshed local timer and blur does not resave the old snapshot', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const state = { configured: true, active, pendingWrites: [] };
+  const harness = dailyPanelHarness({ state, now, respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') return callback({ ok: true, data: { operationId: 'active-edit' } });
+    callback({ ok: true, data: state });
+  } });
+  const description = harness.renderMenu({ compact: true }).querySelector('.strip-description');
+  description.value = 'Saved by Enter'; description.oninput();
+  await description.onkeydown({ key: 'Enter', isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1);
+  harness.applyPageState({ ...state, active: { ...active, description: 'Saved by Enter' }, pendingWrites: [] });
+  await description.onblur();
+  assert.equal(harness.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').length, 1,
+    'blur must compare with the refreshed IndexedDB state rather than the timer captured when the input was created');
+  assert.equal(harness.messages.some(message => message.type === 'STOP'), false);
+});
+
+test('Enter while composing text does not save the active description', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/running',
+    startedAt: new Date(now - 60_000).toISOString(), description: 'Before' };
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now });
+  const description = harness.renderMenu({ compact: true }).querySelector('.strip-description');
+  description.value = 'Unfinished composition'; description.oninput();
+  let prevented = false;
+  description.onkeydown({ key: 'Enter', isTrusted: true, isComposing: true, preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, false, 'IME confirmation keeps its native Enter behavior');
+  assert.equal(harness.messages.some(message => message.type === 'QUEUE_ACTIVE_START_EDIT'), false);
 });
 
 test('active strip keeps a newer draft and visible check while an older save finishes', async () => {
@@ -2372,9 +2567,9 @@ test('a repeated active-description blur retains the draft if local acceptance l
   description.value = 'Unsaved draft'; description.oninput();
   const firstBlur = description.onblur();
   assert.equal(typeof editCallback, 'function');
-  await description.onblur();
+  const secondBlur = description.onblur();
   editCallback({ ok: false, error: { message: 'Local enqueue failed' } });
-  await firstBlur;
+  await Promise.all([firstBlur, secondBlur]);
   const refreshed = harness.renderMenu({ compact: true });
   assert.equal(refreshed.querySelector('.strip-description').value, 'Unsaved draft');
   const check = refreshed.querySelectorAll('.save-check').find(node => node.getAttribute('aria-label') === 'Save description');
@@ -4095,7 +4290,7 @@ test('shared running status ticks without replacing controls and rereads after S
   assert.equal(h.find('running-status-stop'), stop);
   await stop.onclick(); await h.settle();
   const stopIndex = h.calls.findIndex(call => call.type === 'STOP');
-  assert.deepEqual(h.calls[stopIndex], { type: 'STOP' });
+  assert.deepEqual(h.calls[stopIndex], { type: 'STOP', description: '' });
   assert.ok(h.calls.slice(stopIndex + 1).some(call => call.type === 'GET_PAGE_STATE'));
   assert.equal(h.find('running-status-idle').hidden, false); assert.equal(stop.hidden, true);
   assert.equal(h.container.classList.contains('is-active'), false);

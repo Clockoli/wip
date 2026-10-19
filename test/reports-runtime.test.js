@@ -684,6 +684,49 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   assert.equal(rows.children.length, 20); assert.equal(page.nodes.get('invoice-add-line').disabled, true);
 });
 
+test('invoice extra description uses Enter to apply multiline text while Shift+Enter remains a newline', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle(); await page.fire('invoice-add-line');
+  const row = page.nodes.get('invoice-extra-lines').children[0];
+  const [description, applied] = row.children[0].children;
+  const amount = row.children[1].children[0];
+  assert.equal(description.tagName, 'textarea');
+  assert.equal(applied.hidden, true);
+  amount.value = '5.00'; await amount.listeners.change(); await page.settle();
+  description.value = 'One\nTwo\nThree\nFour';
+  description.listeners.input();
+  assert.ok(description.rows >= 4, 'invoice description displays the stored line breaks, not only its first line');
+  description.value = 'Additional work\nResearch';
+  let prevented = false;
+  description.listeners.keydown({ key: 'Enter', shiftKey: true, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false);
+  description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  await page.settle();
+  assert.equal(applied.hidden, false);
+  assert.equal(applied.textContent, '✓ Applied');
+  amount.value = '5.00'; await amount.listeners.change(); await page.settle();
+  const table = page.nodes.get('invoice-preview').children[0].children.find(node => node.tagName === 'table');
+  assert.ok(page.textOf(table).includes('Additional work\nResearch'));
+  await description.listeners.change(); await page.settle();
+  assert.equal(applied.hidden, false, 'blur does not clear confirmation for unchanged description');
+
+  description.value = '   ';
+  description.listeners.input();
+  description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
+  await page.settle();
+  assert.equal(applied.hidden, true, 'a rejected invoice description must not show Applied');
+  assert.match(page.nodes.get('invoice-feedback').textContent, /extra line description/i);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+
+  description.value = 'Recovered work';
+  description.listeners.input();
+  description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
+  await page.settle();
+  assert.equal(applied.hidden, false, 'Applied appears only after preview recovery');
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+});
+
 test('extra lines stay in the target currency when time is converted and survive reopening', async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle(); await page.fire('invoice-add-line');

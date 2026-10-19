@@ -226,7 +226,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   const resources = [], messages = [], intervals = new Map(), timeouts = new Map();
   let now = Date.parse('2026-09-05T10:00:00Z'), timerId = 0;
   class Node {
-    constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.className = ''; this.value = ''; this.hidden = false; this.scrollTop = 0; this.scrollLeft = 0; }
+    constructor(tag) { this.tag = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.className = ''; this.value = ''; this.hidden = false; this.style = {}; this.scrollTop = 0; this.scrollLeft = 0; }
     get disabled() { return Boolean(this.isDisabled); }
     set disabled(value) { this.isDisabled = value; if (value && document.activeElement === this) document.activeElement = document.body; }
     get classList() { return { add: name => this.classList.toggle(name, true), contains: name => this.className.split(' ').includes(name), toggle: (name, enabled) => { const names = new Set(this.className.split(' ').filter(Boolean)); if (enabled) names.add(name); else names.delete(name); this.className = [...names].join(' '); } }; }
@@ -345,6 +345,121 @@ test('Top tasks distinguishes read failures from conflict-only omissions', async
   } : undefined });
   assert.match(conflicted.nodes['partial-status'].textContent, /1 conflicting record was omitted/i);
   assert.doesNotMatch(conflicted.nodes['partial-status'].textContent, /could not be loaded/i);
+});
+
+test('Tracking now adds multiline Description to a completed Top tasks timer without a separate save', async () => {
+  const initial = { id: 'running-1', taskUrl: taskA.taskUrl, taskTitle: taskA.title,
+    startedAt: '2026-09-05T09:00:00Z', description: 'Initial note' };
+  let active = initial, completed = null;
+  const page = await tasksHarness({ runningStatus: true, respond: message => {
+    if (message.type === 'STOP') {
+      completed = { ...active, description: message.description };
+      active = null;
+      return { entry: completed, pending: true };
+    }
+    return { configured: true, active, tasks: [taskA], pendingWrites: [], todayTrackedMs: 3_600_000 };
+  } });
+  const strip = page.nodes['running-status'];
+  const description = strip.querySelector('.running-status-description');
+  assert.equal(description.tag, 'textarea');
+  assert.equal(description.value, 'Initial note');
+  description.value = 'First line\nSecond line';
+  await description.dispatch('input');
+  await page.advance(5);
+  assert.equal(description.value, 'First line\nSecond line', 'polling must not discard the unsaved draft');
+  const tab = await description.dispatch('keydown', { key: 'Tab', isTrusted: true });
+  assert.equal(tab.defaultPrevented, true, 'Tab should move directly to Stop and save');
+  assert.equal(page.document.activeElement, strip.querySelector('.running-status-stop'));
+  assert.equal(page.messages.some(message => message.type === 'STOP'), false, 'Tab must not stop the timer');
+  await strip.querySelector('.running-status-stop').click();
+  assert.equal(page.messages.find(message => message.type === 'STOP')?.description, 'First line\nSecond line');
+  assert.equal(completed.description, 'First line\nSecond line');
+  assert.equal(strip.querySelector('.running-status-idle').hidden, false);
+});
+
+test('Tracking now Enter saves locally, Shift+Enter keeps a newline, and repeated edits are not lost', async () => {
+  let active = { id: 'running-1', taskUrl: taskA.taskUrl, taskTitle: taskA.title,
+    startedAt: '2026-09-05T09:00:00Z', description: '' };
+  let acceptFirst;
+  let accepted = 0;
+  const page = await tasksHarness({ runningStatus: true, respond: message => {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+      if (++accepted === 1) return new Promise(resolve => { acceptFirst = () => {
+        active = { ...active, description: message.payload.description };
+        resolve({ operationId: 'first' });
+      }; });
+      active = { ...active, description: message.payload.description };
+      return { operationId: 'second' };
+    }
+    return { configured: true, active, tasks: [taskA], pendingWrites: [] };
+  } });
+  const strip = page.nodes['running-status'];
+  const description = strip.querySelector('.running-status-description');
+  const shift = await description.dispatch('keydown', { key: 'Enter', shiftKey: true, isTrusted: true });
+  assert.equal(shift.defaultPrevented, undefined);
+  const composing = await description.dispatch('keydown', { key: 'Enter', isComposing: true, isTrusted: true });
+  assert.equal(composing.defaultPrevented, undefined);
+  assert.equal(accepted, 0);
+  description.value = 'First\nline'; await description.dispatch('input');
+  const enter = await description.dispatch('keydown', { key: 'Enter', isTrusted: true });
+  assert.equal(enter.defaultPrevented, true);
+  await page.settle();
+  assert.equal(accepted, 1);
+  await description.dispatch('keydown', { key: 'Enter', isTrusted: true });
+  assert.equal(accepted, 1, 'key repetition must not enqueue duplicate writes');
+  description.value = 'Latest\nline'; await description.dispatch('input');
+  await description.dispatch('keydown', { key: 'Enter', isTrusted: true });
+  await description.dispatch('blur');
+  assert.equal(accepted, 1, 'wait for the first local acceptance');
+  acceptFirst();
+  await page.settle();
+  assert.equal(accepted, 2, 'a newer description is queued after the first succeeds');
+  assert.deepEqual(page.messages.filter(message => message.type === 'QUEUE_ACTIVE_START_EDIT').map(message => message.payload.description),
+    ['First\nline', 'Latest\nline']);
+  assert.equal(strip.querySelector('.running-status-description-saved').hidden, false);
+  await page.advance(5);
+  assert.equal(description.value, 'Latest\nline', 'the accepted description survives a state refresh');
+  assert.equal(strip.querySelector('.running-status-description-save').hidden, true);
+  assert.equal(page.messages.some(message => message.type === 'STOP'), false);
+});
+
+test('Top tasks remains usable while a shared Stop clears active before the task list refresh finishes', async () => {
+  const startedAt = '2026-09-05T09:00:00Z';
+  const active = { id: 'running-1', taskUrl: taskA.taskUrl, taskTitle: taskA.title, startedAt };
+  const previousTask = { ...taskA, totalSeconds: 300, activeStartedAt: startedAt };
+  const startPending = [{ id: 'start-pending', status: 'pending', operation: 'startTimer', stage: 'startNext' }];
+  const stopPending = [{ id: 'stop-pending', status: 'pending', operation: 'completeTimer', stage: 'verifyActive' }];
+  let stopped = false, loadCount = 0, finishLoad;
+  const completed = { ...active, endedAt: '2026-09-05T10:00:00Z', durationSeconds: 3600 };
+  const page = await tasksHarness({ runningStatus: true, tasks: [previousTask], active, pendingWrites: startPending,
+    respond: message => {
+      if (message.type === 'LOAD_TASKS') {
+        if (++loadCount === 1) return { configured: true, tasks: [previousTask], active, pendingWrites: startPending };
+        return new Promise(resolve => { finishLoad = resolve; });
+      }
+      if (message.type === 'STOP') {
+        stopped = true;
+        return { entry: completed, pending: true };
+      }
+      return { configured: true, active: stopped ? null : active,
+        recent: stopped ? [completed] : [], pendingWrites: stopped ? stopPending : startPending };
+    },
+  });
+  const stop = page.nodes['running-status'].querySelector('.running-status-stop');
+  const stopping = stop.click();
+  await page.settle();
+  assert.equal(stopped, true);
+  assert.equal(typeof finishLoad, 'function', 'remote task aggregation is still delayed');
+  const pendingRefresh = [...page.timeouts.values()][0];
+  assert.equal(typeof pendingRefresh, 'function');
+  await pendingRefresh(); await page.settle();
+  assert.equal(page.nodes.error.hidden, true, 'local completion must not show Invalid task URL');
+  assert.equal(page.rows()[0].querySelector('.timer-button').textContent, 'Start');
+  finishLoad({ configured: true, active: null, pendingWrites: stopPending,
+    tasks: [{ ...previousTask, totalSeconds: 3900, activeStartedAt: null }] });
+  await stopping;
+  assert.equal(page.nodes.error.hidden, true);
+  assert.equal(page.rows()[0].querySelector('.tracked-time').textContent, '1h 5m');
 });
 
 for (const pending of [false, true]) test(`shared strip Stop reconciles Top tasks with pending writes ${pending}`, async () => {

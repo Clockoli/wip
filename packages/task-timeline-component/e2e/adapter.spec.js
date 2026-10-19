@@ -2018,6 +2018,58 @@ test('details descriptions expose a green check and save when it is clicked', as
   ]);
 });
 
+test('pre-existing multiline descriptions open expanded and long descriptions clearly offer scrolling', async ({ page }) => {
+  const now = Date.now();
+  const fourLines = ['First finding', 'Second finding', '', 'Final finding'].join('\n');
+  const longLines = Array.from({ length: 18 }, (_, i) => `Detail ${i + 1}`).join('\n');
+  await mount(page, { items: [
+    { id: 'entry:old', url: 'https://example.com/old', title: 'Old', description: fourLines,
+      startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+  ] });
+  for (const mode of ['timeline', 'calendar']) {
+    await page.evaluate(value => window.__timeline.setViewMode(value), mode);
+    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="entry:old"]`).first().click();
+    const description = page.locator('#timeline .clockoli-timeline-description');
+    await expect(description).toHaveValue(fourLines);
+    const initial = await description.evaluate(el => ({ height: el.clientHeight, content: el.scrollHeight, rows: el.rows }));
+    expect(initial.rows).toBeGreaterThanOrEqual(4);
+    expect(initial.content).toBeLessThanOrEqual(initial.height + 2);
+    await description.fill(longLines);
+    await expect(page.locator('#timeline .clockoli-description-more')).toBeVisible();
+    const clipped = await description.evaluate(el => ({ height: el.clientHeight, content: el.scrollHeight }));
+    expect(clipped.content).toBeGreaterThan(clipped.height + 2);
+    await description.fill(fourLines);
+    await expect(page.locator('#timeline .clockoli-description-more')).toBeHidden();
+    await expect.poll(() => description.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
+  }
+});
+
+test('Timeline and Calendar descriptions save multiline text on Enter with visible feedback', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { items: [
+    { id: 'entry:old', url: 'https://example.com/old', title: 'Old', description: 'Original',
+      startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+  ] });
+  for (const mode of ['timeline', 'calendar']) {
+    await page.evaluate(value => window.__timeline.setViewMode(value), mode);
+    await page.locator(`#timeline .${mode === 'timeline' ? 'task' : 'calendar-task'}[data-task-key="entry:old"]`).first().click();
+    const input = page.locator('#timeline .clockoli-timeline-description');
+    await expect(input).toHaveJSProperty('tagName', 'TEXTAREA');
+    await input.fill('First line');
+    await input.press('Shift+Enter');
+    await input.pressSequentially('Second line');
+    await expect(input).toHaveValue('First line\nSecond line');
+    const before = await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length);
+    await input.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
+    expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').at(-1)[2])).toBe('First line\nSecond line');
+    await expect(page.locator('#timeline .clockoli-description-saved')).toHaveText('✓ Saved');
+    await input.press('Tab');
+    expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
+    await page.locator('#timeline .clockoli-description-saved').waitFor({ state: 'visible' });
+  }
+});
+
 test('details description remains clickable and editable for a non-movable task in Timeline and Calendar', async ({ page }) => {
   const now = Date.now();
   await mount(page, { items: [
@@ -2195,13 +2247,16 @@ test('Calendar task cards show description only when the card has room', async (
   noon.setHours(12, 0, 0, 0);
   const midday = noon.getTime();
   await mount(page, { rows: [{ id: 'one', title: 'One' }], items: [
-    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar description', startedAt: midday - 4 * HOUR, endedAt: midday, rowId: 'one', isEditable: true },
+    { id: 'entry:tall-description', url: 'https://example.com/tall', title: 'Tall task', description: 'Calendar\nDescription\nMore detail', startedAt: midday - 4 * HOUR, endedAt: midday, rowId: 'one', isEditable: true },
     { id: 'entry:short-description', url: 'https://example.com/short', title: 'Short task', description: 'Must not overflow', startedAt: midday + HOUR, endedAt: midday + HOUR + 5 * 60_000, rowId: 'one', isEditable: true },
   ] });
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const tall = page.locator('#timeline .calendar-task[data-task-key="entry:tall-description"]');
   const short = page.locator('#timeline .calendar-task[data-task-key="entry:short-description"]');
-  await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar description');
+  await expect(tall.locator('.clockoli-calendar-description')).toHaveText('Calendar\nDescription\nMore detail');
+  await expect(tall.locator('.clockoli-calendar-description')).toHaveAttribute('title', 'Calendar\nDescription\nMore detail');
+  await expect(tall.locator('.clockoli-calendar-description')).toHaveCSS('-webkit-line-clamp', '2');
+  await expect(tall.locator('.clockoli-calendar-description')).toHaveCSS('white-space', 'pre-line');
   await expect(short.locator('.clockoli-calendar-description')).toHaveCount(0);
   const geometry = await tall.evaluate(element => {
     const card = element.getBoundingClientRect();

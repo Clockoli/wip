@@ -65,7 +65,7 @@ export function buildInvoice(records, {
   }
   if (!Array.isArray(extraLines) || extraLines.length > 20) throw new Error('Invoice extra lines must be a list of at most 20 entries');
   for (const line of extraLines) {
-    if (typeof line?.description !== 'string' || /[\u0000-\u001f\u007f-\u009f]/.test(line.description) || !line.description.trim() || line.description.trim().length > 200) throw new Error('Invoice extra line description must contain 1–200 characters without control characters');
+    if (typeof line?.description !== 'string' || /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/.test(line.description) || !line.description.trim() || line.description.trim().length > 200) throw new Error('Invoice extra line description must contain 1–200 characters without control characters');
     if (!Number.isSafeInteger(line.amountMinor)) throw new Error('Invoice extra line amount must be a safe integer in minor units');
     lines.push({ description: line.description.trim(), amountMinor: line.amountMinor });
   }

@@ -26,14 +26,31 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
   const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Start time defaults to now. Leave End time empty to start a running timer. Times use today’s date.';
   const descriptionLabel = document.createElement('label'); descriptionLabel.textContent = 'Description'; descriptionLabel.htmlFor = 'add-time-description';
   const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
+  const moreDescription = document.createElement('small');
+  moreDescription.className = 'add-time-description-more'; moreDescription.textContent = '↓ More lines — scroll'; moreDescription.hidden = true;
+  const resizeDescription = () => {
+    const count = description.value.split('\n').length;
+    description.rows = Math.min(9, Math.max(3, count));
+    description.style.height = 'auto';
+    const height = Number(description.scrollHeight) || 0;
+    const clipped = count > 9 || height > 240 + 1;
+    if (height) description.style.height = `${Math.min(240, Math.max(36, height))}px`;
+    description.style.overflowY = clipped ? 'auto' : 'hidden';
+    moreDescription.hidden = !clipped;
+  };
+  description.addEventListener('input', resizeDescription);
   const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite');
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, suggestions, times, hint, descriptionLabel, description, preview, error, actions);
+  dialog.append(close, heading, intro, taskLabel, search, suggestions, times, hint, descriptionLabel, description, moreDescription, preview, error, actions);
   document.body.append(dialog);
+  const saved = document.createElement('span');
+  saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
+  button.insertAdjacentElement('afterend', saved);
+  let savedTimer = null;
 
   let tasks = [], selected = null, generation = 0, busy = false, searched = false;
   const setError = text => { error.textContent = text; error.hidden = !text; };
@@ -90,15 +107,18 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('close', () => { generation++; button.focus(); });
   button.addEventListener('click', () => {
+    saved.hidden = true;
+    clearTimeout(savedTimer);
     generation++;
     const now = new Date();
     tasks = []; selected = null; searched = false; busy = false; search.value = '';
     start.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     end.value = ''; description.value = '';
+    resizeDescription();
     setError('');
     update(); dialog.showModal(); search.focus();
   });
-  add.addEventListener('click', async () => {
+  const submit = async () => {
     if (busy) return;
     const task = taskIdentity();
     if (!task) { setError('Select a task or enter an HTTP(S) URL.'); return; }
@@ -114,11 +134,20 @@ export function mountAddTime(button, { send, onAdded = () => location.reload() }
       const result = await send({ type: 'ADD_TIME', taskUrl: task.taskUrl, taskTitle: task.title || '',
         ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}),
         startedAt, endedAt, description: description.value.trim() });
-      dialog.close(); await onAdded(result);
+      dialog.close();
+      saved.hidden = false;
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => { saved.hidden = true; }, 3000);
+      await onAdded(result);
     } catch (cause) { setError(cause.message || 'Could not add time.'); }
     finally {
       busy = false; add.disabled = false; cancel.disabled = false;
     }
+  };
+  add.addEventListener('click', submit);
+  description.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
+    event.preventDefault(); void submit();
   });
   return dialog;
 }

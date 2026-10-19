@@ -1231,7 +1231,7 @@ async function handle(message, sender) {
       const sourceDestinationId = await activeDestinationId(store);
       if (!sourceDestinationId || sourceDestinationId === targetDestinationId) {
         const tracker = await trackerForDestination(targetDestinationId, { localOnly: true });
-        const result = await tracker.switchTask(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
+        const result = await tracker.switchTask(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description, { background: true });
         if (result.pending) requestPendingSync();
         return { ...result, destinationId: targetDestinationId };
       }
@@ -1242,7 +1242,7 @@ async function handle(message, sender) {
       if (!current) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
       if (taskUrlOf(current) === taskUrl) return { stopped: null, active: { ...current, destinationId: sourceDestinationId }, pending: false, destinationId: sourceDestinationId };
       const changedAt = new Date();
-      const source = sourceTracker.prepareQueuedStop(current, message.description || '', { endedAt: changedAt });
+      const source = sourceTracker.prepareQueuedStop(current, message.description, { endedAt: changedAt });
       let nextId = createUlid(changedAt.getTime());
       if (nextId === current.id) nextId = createUlid(changedAt.getTime() + 1);
       const target = targetTracker.prepareQueuedStart(taskUrl, message.taskTitle ?? message.issueTitle ?? '', '', {
@@ -1266,7 +1266,7 @@ async function handle(message, sender) {
     case 'STOP': {
       const destinationId = await activeDestinationId(store, { required: true });
       const tracker = await trackerForDestination(destinationId, { localOnly: true });
-      const result = await tracker.stop(message.description || '', { background: true });
+      const result = await tracker.stop(message.description, { background: true });
       if (result.pending) requestPendingSync();
       return { ...result, destinationId };
     }

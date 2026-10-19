@@ -10,6 +10,8 @@ globalThis.messages = [];
 globalThis.failAdd = false;
 globalThis.deferAdd = false;
 globalThis.pendingAddRespond = null;
+globalThis.deferTasks = false;
+globalThis.pendingTasksRespond = null;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.messages.push(message);
   if (message.type === 'SEARCH_ACTIVITY') respond({ ok: true, data: { configured: true, recent: [
@@ -23,6 +25,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     respond(globalThis.failAdd
       ? { ok: false, error: { message: 'Cannot add time' } }
       : { ok: true, data: { accepted: true } });
+  }
+  else if (message.type === 'LOAD_TASKS' && globalThis.deferTasks) {
+    globalThis.pendingTasksRespond = respond;
+    return true;
   }
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
 });
@@ -125,17 +131,24 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await dialog.getByRole('button', { name: /Existing task/ }).click();
       await dialog.getByLabel('Start time').fill('09:15');
       await dialog.getByLabel('End time').fill('10:45');
-      await dialog.getByLabel('Description').fill('Focused work');
+      const multiline = dialog.getByLabel('Description');
+      await multiline.fill(['A', 'B', 'C', 'D', 'E', 'F'].join('\n'));
+      await expect.poll(() => multiline.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
+      await multiline.fill('Focused work');
+      await multiline.press('Shift+Enter');
+      await multiline.pressSequentially('Reviewed results');
+      await expect(multiline).toHaveValue('Focused work\nReviewed results');
       const expectedTimes = await page.evaluate(() => {
         const today = new Date();
         const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         return ['09:15', '10:45'].map(time => new Date(`${date}T${time}:00`).toISOString());
       });
       await worker.evaluate(() => { globalThis.deferAdd = true; });
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await multiline.press('Enter');
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
       await page.evaluate(() => { globalThis.__addTimeNoReload = 'accepted locally'; });
+      if (path === 'tasks/tasks.html') await worker.evaluate(() => { globalThis.deferTasks = true; });
       await worker.evaluate(() => {
         globalThis.deferAdd = false;
         globalThis.pendingAddRespond({ ok: true, data: { accepted: true } });
@@ -144,7 +157,17 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog).not.toBeVisible();
       const completed = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
       expect(completed).toEqual({ type: 'ADD_TIME', taskUrl, taskTitle: 'Existing task',
-        startedAt: expectedTimes[0], endedAt: expectedTimes[1], description: 'Focused work' });
+        startedAt: expectedTimes[0], endedAt: expectedTimes[1], description: 'Focused work\nReviewed results' });
+      await expect(page.locator('.add-time-success')).toBeVisible();
+      await expect(page.locator('.add-time-success')).toHaveText('✓ Saved');
+      if (path === 'tasks/tasks.html') {
+        await expect.poll(() => worker.evaluate(() => Boolean(globalThis.pendingTasksRespond))).toBe(true);
+        await worker.evaluate(() => {
+          globalThis.deferTasks = false;
+          globalThis.pendingTasksRespond({ ok: false, error: { message: 'Fixture refresh unavailable' } });
+          globalThis.pendingTasksRespond = null;
+        });
+      }
       expect(await page.evaluate(() => globalThis.__addTimeNoReload)).toBe('accepted locally');
       await page.close();
     }

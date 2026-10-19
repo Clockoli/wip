@@ -23,18 +23,137 @@ export function mountRunningStatus(container, { send, onChange }) {
   const elapsed = make('span', 'running-status-elapsed'); elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
   const today = make('span', 'running-status-today');
   const stop = make('button', 'running-status-stop'); stop.type = 'button'; stop.textContent = 'Stop and save';
+  const descriptionField = make('div', 'running-status-description-field');
+  const description = make('textarea', 'running-status-description');
+  description.rows = 1; description.maxLength = 2000; description.placeholder = 'Description (optional)';
+  description.setAttribute('aria-label', 'Description');
+  const saveDescription = make('button', 'running-status-description-save');
+  saveDescription.type = 'button'; saveDescription.textContent = '✓';
+  saveDescription.title = 'Save description'; saveDescription.setAttribute('aria-label', 'Save description');
+  const saved = make('span', 'running-status-description-saved');
+  saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status');
+  const moreLines = make('small', 'running-status-description-more');
+  moreLines.textContent = '↓ More lines — scroll'; moreLines.hidden = true;
+  descriptionField.append(description, saveDescription, saved, moreLines);
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
   row.append(idle, quickStart);
-  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, elapsed, today, stop });
-  for (const node of [live, task, metrics, stop]) node.hidden = true;
+  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today, stop });
+  for (const node of [live, task, descriptionField, metrics, stop]) node.hidden = true;
   container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
+  let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
+  let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
   const localDate = () => entryDateValue(localDateParts(new Date(Date.now())));
+  const timerKey = active => active ? String(active.id || active.startedAt) : '';
+  const normalizedDescription = value => String(value || '').replace(/\r\n?/g, '\n').replace(/\t/g, ' ')
+    .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
 
   function showError(cause) {
     error.textContent = cause?.message || ''; error.hidden = !error.textContent;
   }
+
+  function resizeDescription() {
+    const count = String(description.value || '').split('\n').length;
+    description.rows = Math.min(8, Math.max(1, count));
+    description.style.height = 'auto';
+    const height = Number(description.scrollHeight) || 0;
+    const clipped = count > 8 || height > 180;
+    if (height) description.style.height = `${Math.min(180, Math.max(32, height))}px`;
+    description.style.overflowY = clipped ? 'auto' : 'hidden';
+    moreLines.hidden = !clipped;
+  }
+
+  function updateDescriptionSave() {
+    saveDescription.hidden = normalizedDescription(description.value) === normalizedDescription(acceptedDescription);
+  }
+
+  function showSaved() {
+    if (hideSavedTimer !== null) clearTimeout(hideSavedTimer);
+    saved.hidden = false;
+    hideSavedTimer = setTimeout(() => { saved.hidden = true; }, 3000);
+  }
+
+  function renderDescription(active) {
+    const key = timerKey(active);
+    if (key !== shownTimer) {
+      shownTimer = key;
+      acceptedDescription = active?.description || '';
+      pendingAccepted = null;
+      savingDescription = null; submittedDescription = null; saveAgain = false;
+      if (hideSavedTimer !== null) clearTimeout(hideSavedTimer);
+      saved.hidden = true;
+      description.value = acceptedDescription;
+    } else if (active && !savingDescription && !saveDescription.hidden) {
+      // Preserve an unsaved draft across the five-second state refresh.
+    } else if (active && !savingDescription) {
+      const latest = active.description || '';
+      if (pendingAccepted === null || latest === pendingAccepted) {
+        acceptedDescription = latest;
+        pendingAccepted = null;
+        description.value = latest;
+      }
+    }
+    descriptionField.hidden = !active;
+    resizeDescription();
+    updateDescriptionSave();
+  }
+
+  function commitDescription() {
+    const key = shownTimer;
+    if (savingDescription) {
+      if (normalizedDescription(description.value) !== submittedDescription) saveAgain = true;
+      return savingDescription;
+    }
+    const work = (async () => {
+      do {
+        saveAgain = false;
+        const active = state?.active;
+        if (!active || timerKey(active) !== key) return;
+        const value = normalizedDescription(description.value);
+        submittedDescription = value;
+        if (value !== normalizedDescription(acceptedDescription)) {
+          await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+            original: { id: active.id, startedAt: active.startedAt }, description: value,
+          } });
+          if (shownTimer !== key) return;
+          acceptedDescription = value;
+          pendingAccepted = value;
+        }
+        if (!saveAgain && normalizedDescription(description.value) === value) showSaved();
+        updateDescriptionSave();
+      } while (saveAgain);
+    })();
+    savingDescription = work.finally(() => {
+      if (savingDescription === saving) {
+        savingDescription = null;
+        submittedDescription = null;
+        updateDescriptionSave();
+      }
+    });
+    const saving = savingDescription;
+    return saving;
+  }
+
+  description.addEventListener('input', () => {
+    saved.hidden = true;
+    resizeDescription();
+    updateDescriptionSave();
+  });
+  description.addEventListener('keydown', event => {
+    if (event.key === 'Tab' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+      event.preventDefault();
+      stop.focus({ preventScroll: true });
+      return;
+    }
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    void commitDescription().catch(showError);
+  });
+  description.addEventListener('blur', () => {
+    if (!busy && !saveDescription.hidden) void commitDescription().catch(showError);
+  });
+  saveDescription.addEventListener('click', () => void commitDescription().catch(showError));
 
   function recentTasks() {
     const candidates = [];
@@ -102,6 +221,7 @@ export function mountRunningStatus(container, { send, onChange }) {
     quickStart.hidden = !state.configured || Boolean(active);
     if (!quickStart.hidden) renderRecent();
     for (const node of [live, task, metrics, stop]) node.hidden = !active;
+    renderDescription(active);
     stop.disabled = busy;
     if (active) {
       const url = active.taskUrl || active.issue?.url || '';
@@ -156,16 +276,21 @@ export function mountRunningStatus(container, { send, onChange }) {
   stop.addEventListener('click', async () => {
     if (busy || destroyed || !state?.active) return;
     busy = true; stop.disabled = true; ++requestId;
+    const stoppingTimer = shownTimer;
+    const stopDescription = normalizedDescription(description.value);
     let failure = null;
     try {
-      // Another surface may have changed the active task since the last poll.
-      state = await send({ type: 'GET_PAGE_STATE' });
+      // A preceding Enter/blur save must not race with the local Stop acceptance.
+      if (savingDescription) await savingDescription.catch(() => {});
+      const latest = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed) return;
+      state = latest;
       readAt = Date.now(); reportDate = localDate(); render();
       if (!state.active) return;
+      if (timerKey(state.active) !== stoppingTimer) throw new Error('The running timer changed. Retry Stop.');
       const hours = (Date.now() - new Date(state.active.startedAt).getTime()) / HOUR_MS;
       if (hours > LONG_ENTRY_HOURS && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
-      const completion = await send({ type: 'STOP' });
+      const completion = await send({ type: 'STOP', description: stopDescription });
       if (!destroyed) await onChange?.({ type: 'STOP', completion });
     } catch (cause) { failure = cause; }
     finally {
