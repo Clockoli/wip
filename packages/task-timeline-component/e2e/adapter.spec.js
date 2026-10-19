@@ -73,6 +73,104 @@ async function mount(page, overrides = {}) {
 }
 
 for (const mode of ['timeline', 'calendar']) {
+  test(`restores a completed entry after dragging it into the future in ${mode}`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
+    const start = now - 2 * HOUR;
+    const neighborStart = now - 4 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:neighbor', url: 'https://example.com/neighbor', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + 30 * 60_000, isEditable: true },
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
+    ], view: { start: now - 5 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
+    await page.clock.pauseAt(new Date('2026-10-16T16:00:01Z'));
+    if (mode === 'calendar') await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      timeline.setViewMode('calendar');
+      const day = new Date(Date.now());
+      day.setHours(0, 0, 0, 0);
+      const nextDay = new Date(day);
+      nextDay.setDate(nextDay.getDate() + 1);
+      timeline.setCalendarRange({ start: day.getTime(), end: nextDay.getTime() });
+    });
+    const source = page.locator(`#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:a"]`).first();
+    await expect(source).toBeVisible();
+    await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+    const target = await source.evaluate((element, { mode, hour }) => {
+      const timeline = window.__timeline.__timeline;
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (mode === 'calendar') return { x, y, targetX: x, targetY: y + 4 * timeline.options.calendarHourHeight };
+      return { x, y, targetX: x + 3 * hour * timeline.scalePxPerMs, targetY: y };
+    }, { mode, hour: HOUR });
+    expect(target.targetX).toBeLessThan(await page.evaluate(() => innerWidth));
+    expect(target.targetY).toBeLessThan(await page.evaluate(() => innerHeight));
+    await page.mouse.move(target.x, target.y);
+    await page.mouse.down();
+    await page.mouse.move(target.targetX, target.targetY, { steps: 8 });
+    const duringDrag = await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      return { mutated: Boolean(timeline.editState?.didMutate || timeline.calendarEditState?.didMutate),
+        end: timeline._findTask('entry:a').end };
+    });
+    expect(duringDrag.mutated).toBe(true);
+    expect(duringDrag.end).toBeGreaterThan(now);
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      return { start: timeline._findTask('entry:a').start, end: timeline._findTask('entry:a').end,
+        neighborStart: timeline._findTask('entry:neighbor').start, edits: window.__calls.filter(call => call[0] === 'edit').length,
+        errors: window.__calls.filter(call => call[0] === 'error').map(call => call[2]), undo: timeline.undoStack.length };
+    })).toEqual({ start, end: start + HOUR, neighborStart, edits: 0,
+      errors: ['Time entries cannot end in the future.'], undo: 0 });
+  });
+
+  test(`rejects a move into the future in ${mode} without sending an edit`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
+    const start = now - 2 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
+    ], view: { start: now - 4 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
+    const result = await page.evaluate(mode => {
+      const timeline = window.__timeline.__timeline;
+      if (mode === 'calendar') timeline.setViewMode('calendar');
+      timeline._selectTask(timeline._findTask('entry:a'), false);
+      timeline._keyboardEditSelected('move', 4 * 60 * 60_000);
+      return { start: timeline._findTask('entry:a').start, end: timeline._findTask('entry:a').end,
+        calls: window.__calls.filter(call => call[0] === 'edit'),
+        errors: window.__calls.filter(call => call[0] === 'error') };
+    }, mode);
+    expect(result.start).toBe(start);
+    expect(result.end).toBe(start + HOUR);
+    expect(result.calls).toEqual([]);
+    expect(result.errors).toEqual([['error', undefined, 'Time entries cannot end in the future.']]);
+  });
+
+  test(`rejects extending an entry into the future but permits a past move in ${mode}`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
+    const start = now - 3 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
+    ], view: { start: now - 4 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
+    const result = await page.evaluate(mode => {
+      const timeline = window.__timeline.__timeline;
+      if (mode === 'calendar') timeline.setViewMode('calendar');
+      timeline._selectTask(timeline._findTask('entry:a'), false);
+      timeline._keyboardEditSelected('resize-end', 4 * 60 * 60_000);
+      const afterRejectedEnd = timeline._findTask('entry:a').end;
+      timeline._keyboardEditSelected('move', 60 * 60_000);
+      return { afterRejectedEnd, start: timeline._findTask('entry:a').start,
+        end: timeline._findTask('entry:a').end };
+    }, mode);
+    expect(result.afterRejectedEnd).toBe(start + HOUR);
+    expect(result.start).toBeGreaterThanOrEqual(start);
+    expect(result.end).toBeLessThan(now);
+    await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit')))
+      .toEqual([['edit', 'entry:a', 'move']]);
+  });
+
   test(`drags a completed entry through its neighbor into free space in ${mode}`, async ({ page }) => {
     await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
     const now = await page.evaluate(() => Date.now());

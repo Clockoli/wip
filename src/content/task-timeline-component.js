@@ -4863,6 +4863,8 @@
       else if (event.action === 'resize-end') allowed = permissions.resizeEnd;
       else if (event.action === 'delete') return permissions.delete;
       if (!allowed) return false;
+      if ((event.action === 'move' || event.action === 'resize-end')
+        && event.after?.end > Date.now()) throw new Error('Time entries cannot end in the future.');
       if (event.action !== 'move' && event.after && event.before && event.after.end - event.after.start < 60_000) return false;
       if (event.after) {
         const proposed = timeline.tasks.map(task => task._key === String(event.instanceId)
