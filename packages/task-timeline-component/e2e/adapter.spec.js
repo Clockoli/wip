@@ -463,16 +463,23 @@ test('Timeline keeps the original minimum widths and task spacing in a weekly vi
 });
 
 test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const base = today.getTime();
+  await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+  const base = await page.evaluate(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today.getTime();
+  });
   await mount(page, { items: [
     { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 10 * HOUR, endedAt: base + 11 * HOUR, isEditable: true },
     { id: 'entry:b', url: 'https://example.com/b', startedAt: base + 13 * HOUR, endedAt: base + 13 * HOUR + 5 * 60_000, isEditable: true },
     { id: 'entry:c', url: 'https://example.com/c', startedAt: base + 11 * HOUR + 40 * 60_000, endedAt: base + 12 * HOUR, isEditable: true },
   ], view: { start: base, end: base + 24 * HOUR, focusedAt: base + 11 * HOUR } });
-  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.evaluate(base => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.setCalendarRange({ start: base, end: base + 24 * 60 * 60_000 });
+  }, base);
   const source = page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first();
+  await expect(source).toBeVisible();
   await source.evaluate(element => element.scrollIntoView({ block: 'center' }));
   const geometry = () => page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
@@ -481,6 +488,7 @@ test('Calendar keeps its hour grid and stationary entries fixed while moving a s
   });
   const before = await geometry();
   const from = await source.boundingBox();
+  expect(from).not.toBeNull();
   const destination = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     const rect = timeline.calendarCanvas.getBoundingClientRect();
