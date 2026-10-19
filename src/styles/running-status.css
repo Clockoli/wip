@@ -54,7 +54,7 @@
 .running-status{background:var(--bgColor-muted)}
 .running-status.is-idle .running-status-row,
 .running-status.is-active .running-status-row{
-  width:min(1510px,calc(100% - 48px));
+  width:min(1600px,calc(100% - 48px));
   min-height:66px;
   margin:10px auto 12px;
   padding:10px 16px;
