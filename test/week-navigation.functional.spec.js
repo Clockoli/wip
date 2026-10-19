@@ -671,3 +671,72 @@ test('Activity Calendar focuses daytime records after disabling and re-enabling 
     await rm(profile, { recursive: true, force: true });
   }
 });
+
+
+test('Activity follows the theme switch in every shadow-root surface without a reload', async () => {
+  test.setTimeout(45000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-theme-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-theme-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest) + '\n');
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replaceAll(
+      'configured: true, active, ', 'configured: true, active: null, '));
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: false,
+      args: ['--disable-extensions-except=' + extension, '--load-extension=' + extension],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const errors = [];
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    const id = new URL(worker.url()).host;
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto('chrome-extension://' + id + '/src/times/times.html');
+    const switcher = page.locator('.page-theme-toggle');
+    await expect(switcher).toHaveAttribute('aria-label', 'Switch to dark theme');
+    await expect(page.locator('.running-status.is-idle .running-status-row')).toBeVisible();
+    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const activity = page.locator('#clockoli-times-root');
+    const panel = page.locator('.running-status.is-idle .running-status-row');
+    const card = activity.locator('.activity-weekly-card').first();
+    const calendar = activity.locator('.calendar-viewport');
+    await expect(calendar).toBeVisible();
+    await expect(card).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(calendar).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(panel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+
+    await switcher.click();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
+    await expect(activity).toHaveAttribute('data-clockoli-theme', 'dark');
+    await expect(card).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+    await expect(calendar).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+    await expect(panel).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+    await expect(activity.locator('.times-page')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+    await expect(activity.locator('.calendar-day-header').first()).toHaveCSS('background-color', 'rgb(21, 27, 35)');
+    await expect(page.locator('.running-status-recent-task').first()).toBeVisible();
+
+    // A manual light selection must override a dark OS preference as well.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await switcher.click();
+    await expect(card).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(calendar).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(panel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await switcher.click();
+    await page.reload();
+    await expect(switcher).toHaveAttribute('aria-label', 'Switch to light theme');
+    await expect(page.locator('#clockoli-times-root .times-page')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
