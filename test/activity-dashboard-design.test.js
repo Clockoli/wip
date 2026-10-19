@@ -59,3 +59,31 @@ test('Calendar days use one empty-state label and task action icons', () => {
   assert.match(adapter, /button\.prepend\(actionIcon\('play'\)\)/);
   assert.match(read('src/times/times.html'), /page-add-time"[\s\S]*class="page-action-icon"/);
 });
+
+test('weekly summary counts compact task identities and a just-started timer', () => {
+  const summarize = weeklySummary();
+  const start = Date.parse('2026-10-12T00:00:00Z');
+  const now = start + 3600000, end = start + 7 * 86400000;
+  const running = { startedAt: now, endedAt: null, isRunning: true, taskIdentity: 'acme/site/work-42' };
+  assert.deepEqual({ ...summarize([running], start, end, now) },
+    { total: '0m', average: '0m', entries: 1, tasks: 1 });
+  const completed = { startedAt: start, endedAt: start + 60000, taskIdentity: 'acme/site/work-42' };
+  assert.deepEqual({ ...summarize([completed, running], start, end, now) },
+    { total: '1m', average: '0m', entries: 2, tasks: 1 });
+});
+
+test('calendar does not show an empty-day marker behind a newly started timer', () => {
+  const adapter = read('packages/task-timeline-component/src/clockoli-adapter.js');
+  assert.match(adapter, /node\\.classList\\.contains\\('running'\\)/);
+  const bundled = read('src/content/task-timeline-component.js');
+  assert.match(bundled, /node\\.classList\\.contains\\('running'\\)/);
+});
+
+test('manual themes control select arrows and print reports stay light', () => {
+  for (const file of ['src/tasks/tasks.css', 'src/reports/reports.css']) {
+    const css = read(file);
+    assert.match(css, /:root:not\\(\\[data-clockoli-theme="light"\\]\\)/);
+    assert.match(css, /:root\\[data-clockoli-theme="dark"\\]/);
+  }
+  assert.match(read('src/reports/reports.css'), /@media print\\s*\\{[\\s\\S]*?:root:root\\{color-scheme:light/);
+});

@@ -5115,7 +5115,11 @@
         const next = new Date(start);
         next.setDate(next.getDate() + 1); // Local midnight: accounts for daylight-saving transitions.
         const end = next.getTime();
-        const hasEntry = segments.some(node => Number(node.dataset.segmentStart) < end && Number(node.dataset.segmentEnd) > start);
+        // The first rendered frame of a running timer may have zero duration.
+        const hasEntry = segments.some(node => {
+          const from = Number(node.dataset.segmentStart), to = Number(node.dataset.segmentEnd);
+          return from < end && (to > start || (node.classList.contains('running') && from >= start));
+        });
         const key = String(start);
         const existing = markers.get(key);
         if (hasEntry) { existing?.remove(); markers.delete(key); continue; }

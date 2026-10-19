@@ -2352,6 +2352,7 @@
         id,
         rowId: projectRowId(projectName),
         url: taskUrlOf(entry),
+        taskIdentity: storedTaskIdentityOf(entry),
         title: taskTitleOf(entry) || storedTaskIdentityOf(entry) || 'Untitled task',
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),

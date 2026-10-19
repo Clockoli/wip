@@ -15,10 +15,12 @@
     for (const item of items) {
       const from = Math.max(start, Number(item.startedAt));
       const to = Math.min(end, item.isRunning ? now : Number(item.endedAt));
-      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) continue;
+      // A newly started running timer is a record even before one millisecond has elapsed.
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to < from || (to === from && !item.isRunning)) continue;
       totalMs += to - from;
       entries++;
-      if (item.url) taskUrls.add(item.url);
+      const identity = item.taskIdentity || item.url;
+      if (identity) taskUrls.add(identity);
     }
     const minutes = Math.floor(totalMs / 60000);
     return {
