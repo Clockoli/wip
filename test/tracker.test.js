@@ -273,6 +273,25 @@ test('active-only task merge safely updates the running timer with an index guar
     [{ url: source, title: 'Old active' }]);
 });
 
+test('long-range task merge reads only existing months and guards the discovered branch head', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const source = 'https://example.test/old', target = 'https://example.test/new';
+  const monthPath = 'times/2021-02/alice.jsonl';
+  const original = entry('2021-02-03T09:00:00.000Z', '2021-02-03T10:00:00.000Z', { taskUrl: source });
+  seedText(github, monthPath, serializeMonthlyRecords([original]), 'old-month-sha');
+  const tracker = service({ github, store });
+  const result = await tracker.mergeTasks({
+    pairs: [{ sourceTaskUrl: source, targetTaskUrl: target, targetTaskTitle: 'New task' }],
+    startDate: '1970-01-01', endDate: '2026-08-18',
+  });
+  assert.deepEqual(result, { mergedEntries: 1, mergedActive: false });
+  assert.deepEqual(github.reads.filter(path => path.startsWith('times/')), [monthPath],
+    'All time should not query every missing month from 1970 onwards');
+  assert.equal(github.atomicWrites[0].expectedHeadSha, 'discovery-head',
+    'a new file added after listing the snapshot must trigger a write conflict');
+  assert.equal(parseMonthlyRecords(github.files.get(monthPath).text, { user: 'alice', month: '2021-02' })[0].taskUrl, target);
+});
+
 test('task merge replaces an imported identity with a URL and rejects an imported replacement', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const source = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
