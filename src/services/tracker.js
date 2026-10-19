@@ -1987,6 +1987,9 @@ export class TrackerService {
       if (replacements.has(sourceUrl)) throw new Error('Each task can be replaced only once');
       replacements.set(sourceUrl, { taskUrl: targetUrl, taskTitle: String(pair?.targetTaskTitle || '').trim().slice(0, 300) });
     }
+    if ([...replacements.values()].some(replacement => replacements.has(replacement.taskUrl))) {
+      throw new Error('A task cannot be both a merge source and a replacement');
+    }
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('Sync pending changes before merging tasks.');
     const files = new Map();
