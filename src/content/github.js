@@ -3808,7 +3808,7 @@
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
 
-    // On trusted extension pages, inherit Primer tokens from the document instead
+    // On trusted extension pages, inherit Primer colors from the document instead
     // of pinning the light/dark values used to isolate the widget on GitHub.
     // Custom properties inherit across both shadow boundaries into Calendar.
     if (extensionPageMode) style.textContent += `
