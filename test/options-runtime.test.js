@@ -647,6 +647,56 @@ test('a second explicit Check is queued after an in-flight inspection without ap
   assert.equal(page.nodes.get('repository-confirmation-title').textContent, 'Connect acme/second?');
 });
 
+test('Merge tasks fetches only after expansion, caches across reopen, and refreshes on selection changes', async () => {
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks: [], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  const panel = page.nodes.get('merge-tasks');
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const loads = () => page.requests.filter(request => request.type === 'LOAD_TASKS');
+  assert.equal(panel.open, false);
+  assert.equal(loads().length, 0);
+  await page.context.refreshMergeTasks();
+  assert.equal(loads().length, 0);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 1);
+  assert.equal(loads()[0].payload.includeAllUsers, false);
+  panel.open = false; await panel.listeners.toggle();
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 1, 'reopening retains the loaded tasks');
+  page.nodes.get('merge-task-period').value = 'three-months';
+  await page.nodes.get('merge-task-period').listeners.change();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loads().length, 2);
+  panel.open = false; await panel.listeners.toggle();
+  page.nodes.get('merge-all-people').checked = true;
+  await page.nodes.get('merge-all-people').listeners.change();
+  assert.equal(loads().length, 2, 'changing scope while closed must not request data');
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 3);
+  assert.equal(loads()[2].payload.includeAllUsers, true);
+});
+
+test('Merge tasks retries failed initial loading on subsequent expansion', async () => {
+  let attempts = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? ++attempts === 1 ? new Error('Transient GitHub error')
+      : { tasks: [], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Transient GitHub error/);
+  panel.open = false; await panel.listeners.toggle();
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(attempts, 2);
+  assert.doesNotMatch(page.nodes.get('merge-tasks-feedback').textContent, /Transient GitHub error/);
+});
+
 test('Merge tasks offers an imported identity as a source, with replacement choices only after source selection', async () => {
   const imported = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
   const page = harness({ reply: request => request.type === 'LOAD_TASKS' ? { tasks: [
@@ -657,6 +707,7 @@ test('Merge tasks offers an imported identity as a source, with replacement choi
     'github:1': { owner: 'acme', repo: 'time-data' },
   } } });
   page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-tasks').open = true;
   page.nodes.get('merge-task-period').value = 'one-month';
   await page.context.refreshMergeTasks();
   const read = page.requests.find(request => request.type === 'LOAD_TASKS');
@@ -725,6 +776,7 @@ test('changing the merge repository clears stale candidates and scopes the next 
     } },
   });
   page.nodes.get('merge-task-period').value = 'one-month';
+  page.nodes.get('merge-tasks').open = true;
   page.context.renderMergeTasks([{ taskUrl: 'https://example.test/stale', title: 'Stale task', destinationIds: ['github:1'] }]);
   vm.runInContext("mergePairs = [{ source: { taskUrl: 'https://example.test/old' }, target: { taskUrl: 'https://example.test/new' } }]; renderMergeQueue();", page.context);
   page.nodes.get('merge-task-destination').value = 'github:2';
@@ -779,6 +831,7 @@ test('all-people merge requires an explicit checkbox; changing scope clears queu
     'github:1': { owner: 'acme', repo: 'time' },
   } } });
   page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-tasks').open = true;
   page.nodes.get('merge-task-period').value = 'one-month';
   await page.context.refreshMergeTasks();
   const scope = page.nodes.get('merge-all-people');

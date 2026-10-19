@@ -60,7 +60,7 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
 test('Settings provides sequential merge selection with an opt-in all-people scope', () => {
   const optionsHtml = fs.readFileSync(new URL('../src/options/options.html', import.meta.url), 'utf8');
   const optionsJs = fs.readFileSync(new URL('../src/options/options.js', import.meta.url), 'utf8');
-  assert.match(optionsHtml, /id="merge-tasks"[\s\S]*<h2[^>]*>Merge tasks<\/h2>/);
+  assert.match(optionsHtml, /<details id="merge-tasks"[^>]*[\s\S]*<summary class="card-heading merge-task-summary"[\s\S]*<h2[^>]*>Merge tasks<\/h2>/);
   assert.match(optionsHtml, /id="merge-task-period"[\s\S]*one-month[\s\S]*three-months[\s\S]*all-time/);
   assert.match(optionsHtml, /id="merge-task-period"[\s\S]*id="merge-task-destination"[\s\S]*id="merge-all-people" type="checkbox"/);
   assert.doesNotMatch(optionsHtml, /merge-people-select/);
@@ -73,6 +73,8 @@ test('Settings provides sequential merge selection with an opt-in all-people sco
   assert.match(optionsJs, /allUsers, pairs/);
   assert.match(optionsJs, /function mergeTaskIdentity\(task\)/);
   assert.match(optionsJs, /function renderMergeTaskList\(side\)/);
+  assert.match(optionsJs, /!\$\('merge-tasks'\)\.open/);
+  assert.match(optionsJs, /!mergeTasksLoaded && !mergeTasksLoading/);
   assert.match(optionsJs, /mergePairs\.push/);
   assert.match(optionsJs, /destinationIds:\s*\[\$\('merge-task-destination'\)\.value\]/);
   assert.match(optionsJs, /remove\.textContent = '✕'/);
