@@ -713,6 +713,7 @@ test('a changed account invalidates an in-flight merge load even if the reposito
   } });
   const firstState = { ...connectedState, destinationRegistry };
   page.render(firstState);
+  page.nodes.get('merge-task-period').value = 'one-month';
   const panel = page.nodes.get('merge-tasks');
   panel.open = true;
   const initialLoad = panel.listeners.toggle();
@@ -742,6 +743,7 @@ test('closing during a successful all-people merge invalidates the list and reop
     : request.type === 'MERGE_TASKS' ? new Promise(resolve => { resolveMerge = resolve; }) : {} });
   page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
     destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
   const panel = page.nodes.get('merge-tasks');
   panel.open = true; await panel.listeners.toggle();
   const all = page.nodes.get('merge-all-people');
@@ -775,6 +777,7 @@ test('partially applied merge cannot leave a stale, resubmittable pair in a clos
     : request.type === 'MERGE_TASKS' ? new Promise((_, reject) => { failMerge = reject; }) : {} });
   page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
     destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
   const panel = page.nodes.get('merge-tasks');
   panel.open = true; await panel.listeners.toggle();
   page.context.selectMergeTask('source', tasks[0].taskUrl);
@@ -795,6 +798,7 @@ test('changing repository coordinates invalidates cached tasks even when its id 
     ? { tasks: [task], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
   const first = { ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
     destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } };
+  page.nodes.get('merge-task-period').value = 'one-month';
   const panel = page.nodes.get('merge-tasks');
   page.render(first);
   panel.open = true; await panel.listeners.toggle();
@@ -819,6 +823,7 @@ test('successful merge reports a refresh failure as a warning without claiming t
     : request.type === 'MERGE_TASKS' ? { mergedEntries: 1, mergedActive: false, destinationCount: 1 } : {} });
   page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
     destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
   const panel = page.nodes.get('merge-tasks');
   panel.open = true; await panel.listeners.toggle();
   page.context.selectMergeTask('source', tasks[0].taskUrl);
