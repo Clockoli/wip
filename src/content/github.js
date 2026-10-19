@@ -2747,6 +2747,7 @@
     timelineWindow = { historyStart, now };
     if (timesMode) activityTimelineView ||= activityPeriodTimelineView(now);
     else timelineView ||= activityPeriodTimelineView(now);
+    const initialView = timesMode ? activityTimelineView : timelineView;
     const { items, rows, byId } = popupTimelineItems(historyStart, now);
     timelineEntriesById = byId;
     const host = el('div', undefined, 'task-timeline-host'); timelineShell.prepend(host);
@@ -2768,9 +2769,10 @@
         now,
         domainStart: periodStart,
         totalRange: activityTotalRange(),
-        view: timesMode ? activityTimelineView : timelineView,
+        view: initialView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
+        toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
           if (timesMode) {
@@ -3827,13 +3829,18 @@
     refreshPopupTask().then(async () => {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
       renderUi();
+      let recentReady = false;
       if (pageState.configured) {
-        try { await refreshRecent(); }
+        try { recentReady = (await refreshRecent())?.configured === true; }
         catch (error) { setError(error); }
       }
-      try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
-      catch (error) { setError(error); return; }
-      renderUi();
+      // LOAD_RECENT already refreshes the records, active timer and pending writes.
+      // Do not block the editable full-week view on a second remote state refresh.
+      if (!recentReady) {
+        try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
+        catch (error) { setError(error); return; }
+        renderUi();
+      }
       if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
   } else if (actionSurfaceMode) {

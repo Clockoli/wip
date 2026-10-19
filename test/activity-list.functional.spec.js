@@ -192,9 +192,12 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
       await page.mouse.up();
     };
     const timelineNeighborItem = page.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    const timelineSource = page.locator('.task-timeline-host .task[data-task-key="entry:record"]');
     await expect(timelineNeighborItem).toBeVisible();
+    await timelineSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    await timelineNeighborItem.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
     const timelineNeighbor = await timelineNeighborItem.boundingBox();
-    await drag(page.locator('.task-timeline-host .task[data-task-key="entry:record"]'),
+    await drag(timelineSource,
       { x: timelineNeighbor.x - timelineNeighbor.width, y: timelineNeighbor.y + timelineNeighbor.height / 2 });
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
@@ -239,7 +242,9 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
-      .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: recent.filter(entry => entry.id === 'record') } });\n  else if (message.type === 'SEARCH_ACTIVITY')");
+      .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });\n  else if (message.type === 'SEARCH_ACTIVITY')")
+      .replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+        "else if (message.type === 'GET_PAGE_STATE') { if (message.refresh) (globalThis.pageRefreshReplies ||= []).push(respond); else respond({ ok: true, data: state() }); return true; }");
     await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
     context = await chromium.launchPersistentContext(profile, {
       channel: 'chromium', headless: false,
@@ -255,8 +260,25 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const root = page.locator('#clockoli-popup-root');
     const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
     const neighbor = root.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
+    const visibleWeekend = () => root.locator('.task-timeline-host .viewport').evaluate(viewport => {
+      const bounds = viewport.getBoundingClientRect();
+      const bands = [...viewport.querySelectorAll('.day-band')].slice(-2);
+      const line = viewport.querySelector('.timeline-now-line').getBoundingClientRect();
+      return { days: bands.map(band => {
+        const rect = band.getBoundingClientRect();
+        return rect.left < bounds.right && rect.right > bounds.left;
+      }), nowVisible: line.left >= bounds.left && line.left <= bounds.right };
+    });
     await expect.poll(() => worker.evaluate(() => globalThis.weekReplies?.length ?? 0)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.pageRefreshReplies?.length ?? 0)).toBe(0);
     await expect(source).toBeVisible();
+    let initialDayWidth;
+    await expect.poll(async () => { initialDayWidth = await root.locator('.task-timeline-host .day-band').first().evaluate(band => band.getBoundingClientRect().width); return initialDayWidth; }).toBeGreaterThan(100);
+    expect(await visibleWeekend()).toEqual({ days: [true, true], nowVisible: true });
+    await expect.poll(() => root.locator('.task-timeline-host .day-band').first().evaluate(band => band.getBoundingClientRect().width)).toBeGreaterThan(100);
+    const pendingDayWidth = await root.locator('.task-timeline-host .day-band').first().evaluate(band => band.getBoundingClientRect().width);
+    expect(pendingDayWidth).toBeLessThan(initialDayWidth * 1.02);
+    expect(await visibleWeekend()).toEqual({ days: [true, true], nowVisible: true });
     const preliminary = await source.evaluate(element => element.getBoundingClientRect().toJSON());
     await page.mouse.move(preliminary.x + preliminary.width / 2, preliminary.y + preliminary.height / 2);
     await page.mouse.down();
@@ -268,6 +290,18 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
       for (const respond of globalThis.weekReplies.splice(0)) respond({ ok: true, data: { configured: true, active, recent, pendingWrites: [], pendingCount: 0 } });
     });
     await expect(neighbor).toBeVisible();
+    const loadedDayWidth = await root.locator('.task-timeline-host .day-band').first().evaluate(band => band.getBoundingClientRect().width);
+    expect(loadedDayWidth).toBeLessThan(initialDayWidth * 1.02);
+    expect(await visibleWeekend()).toEqual({ days: [true, true], nowVisible: true });
+    const popupViewport = await root.locator('.task-timeline-host .viewport').evaluate(viewport => {
+      const bounds = viewport.getBoundingClientRect();
+      const line = viewport.querySelector('.timeline-now-line').getBoundingClientRect();
+      return { nowPosition: (line.left - bounds.left) / bounds.width,
+        availableScroll: viewport.scrollWidth - viewport.clientWidth };
+    });
+    expect(popupViewport.nowPosition).toBeGreaterThan(0);
+    expect(popupViewport.nowPosition).toBeLessThan(1.05);
+    expect(popupViewport.availableScroll).toBeGreaterThan(0);
     await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await expect(source).toBeVisible();
     const from = await source.boundingBox();
@@ -315,6 +349,13 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const panelNeighbor = panel.locator('.task-timeline-host .task[data-task-key="entry:same-day"]');
     await expect(panelSource).toBeVisible();
     await expect(panelNeighbor).toBeVisible();
+    const panelNowPosition = await panel.locator('.task-timeline-host .viewport').evaluate(viewport => {
+      const bounds = viewport.getBoundingClientRect();
+      const line = viewport.querySelector('.timeline-now-line').getBoundingClientRect();
+      return (line.left - bounds.left) / bounds.width;
+    });
+    expect(panelNowPosition).toBeGreaterThan(0);
+    expect(panelNowPosition).toBeLessThan(1.05);
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await panelNeighbor.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
     const { panelFrom, panelTo, panelViewport } = await panelSource.evaluate(element => {
@@ -332,6 +373,60 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await github.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
+    await github.close();
+    await worker.evaluate(() => {
+      globalThis.editPayloads = [];
+      const first = Date.now() - 3 * 60 * 60_000;
+      recent.splice(0, recent.length, ...Array.from({ length: 28 }, (_, index) => {
+        const start = new Date(first + index * 6 * 60_000);
+        return { id: `dense-${index}`, taskUrl: `https://example.com/dense-${index}`,
+          taskTitle: 'Synthetic task', entryDate: start.toISOString().slice(0, 10), timezone: 'UTC',
+          startedAt: start.toISOString(), endedAt: new Date(start.getTime() + 5 * 60_000).toISOString(),
+          durationSeconds: 300, destinationId: 'github:1',
+          _path: `times/${start.toISOString().slice(0, 7)}/alice.jsonl`, _sha: 'fixture', _index: index };
+      }));
+    });
+    const priorWeekLoads = await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'LOAD_WEEK').length);
+    const densePopup = await context.newPage();
+    await densePopup.addInitScript(() => {
+      globalThis.fullWeekReady = false;
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = (message, callback) => send(message, response => {
+        callback?.(response);
+        if (message?.type === 'LOAD_WEEK' && response?.ok && !response?.data?.partial) {
+          requestAnimationFrame(() => requestAnimationFrame(() => { globalThis.fullWeekReady = true; }));
+        }
+      });
+    });
+    await densePopup.setViewportSize({ width: 420, height: 650 });
+    await densePopup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const denseRoot = densePopup.locator('#clockoli-popup-root');
+    const denseSource = denseRoot.locator('.task-timeline-host .task[data-task-key="entry:dense-22"]');
+    await expect(denseSource).toBeVisible();
+    await expect.poll(() => denseRoot.locator('.task-timeline-host .task').count()).toBe(28);
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'LOAD_WEEK').length)).toBeGreaterThan(priorWeekLoads);
+    await expect.poll(() => densePopup.evaluate(() => globalThis.fullWeekReady)).toBe(true);
+    await denseSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    let grip;
+    await expect.poll(async () => { grip = await denseSource.evaluate(element => {
+      if (!element.isConnected) return null;
+      const bounds = element.getBoundingClientRect();
+      const left = element.querySelector('.resize-handle.left').getBoundingClientRect();
+      const right = element.querySelector('.resize-handle.right').getBoundingClientRect();
+      return { moveTarget: bounds.left + 11 >= left.right && bounds.left + 11 < right.left,
+        resizeTarget: bounds.left + 4 >= left.left && bounds.left + 4 < left.right,
+        bounds: bounds.toJSON() };
+    }).catch(() => null); return grip?.bounds.width ?? 0; }).toBeGreaterThan(0);
+    expect(grip.bounds.width).toBeLessThan(46);
+    expect({ moveTarget: grip.moveTarget, resizeTarget: grip.resizeTarget }).toEqual({ moveTarget: true, resizeTarget: true });
+    const denseFrom = grip.bounds;
+    await densePopup.mouse.move(denseFrom.x + 11, denseFrom.y + denseFrom.height / 2);
+    await densePopup.mouse.down();
+    await densePopup.mouse.move(denseFrom.x + 11 - 75, denseFrom.y + denseFrom.height / 2, { steps: 8 });
+    await densePopup.mouse.up();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('dense-22');
+    expect(await worker.evaluate(() => 'endedAt' in globalThis.editPayloads[0].edits)).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

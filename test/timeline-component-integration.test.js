@@ -39,7 +39,8 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
   ]);
   assert.ok(!manifest.web_accessible_resources[0].resources.includes('src/content/elastic-timeline-editor.css'));
   assert.match(content, /globalThis\.ClockoliTaskTimeline\?\.createTimeline/);
-  assert.match(content, /items,\s*rows,\s*now,\s*domainStart: periodStart,\s*totalRange: activityTotalRange\(\),\s*view: timesMode \? activityTimelineView : timelineView,\s*viewMode: timesMode \? .* : timelineGraphicViewMode/);
+  assert.match(content, /const initialView = timesMode \? activityTimelineView : timelineView/);
+  assert.match(content, /items,\s*rows,\s*now,\s*domainStart: periodStart,\s*totalRange: activityTotalRange\(\),\s*view: initialView,\s*viewMode: timesMode \? .* : timelineGraphicViewMode/);
   assert.match(content, /timelineInstance\.update\(\{ items, rows, now: timelineWindow\.now,\s*domainStart: periodStart,\s*totalRange: activityTotalRange\(\)/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.TaskTimeline = TaskTimeline/);
   assert.match(read('src/content/task-timeline-component.js'), /global\.ClockoliTaskTimeline = Object\.freeze/);

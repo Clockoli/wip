@@ -235,7 +235,10 @@
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
-    style.textContent = CLOCKOLI_STYLE + (initialProps.weeklyCalendar
+    style.textContent = CLOCKOLI_STYLE + (initialProps.toolbarPopup
+      ? '\n.task.short .resize-handle, .task.short .resize-handle::after { width:6px }'
+        + '\n.task.short .resize-handle::after { background-size:1px 14px, 1px 14px; background-position:2px center, 4px center }'
+      : '') + (initialProps.weeklyCalendar
       ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '');
 
     function sourceItem(instanceId) {
@@ -275,7 +278,7 @@
     function viewFromComponent() {
       const start = timeline._visibleStartTime?.() ?? timeline.domainStart;
       const end = timeline._visibleEndTime?.() ?? timeline.domainEnd;
-      return { start, end, focusedAt: start + (end - start) / 2 };
+      return { start, end, focusedAt: start + (end - start) / 2, visibleDays: timeline.getVisibleDays() };
     }
 
     function notifyView() {
@@ -397,7 +400,8 @@
       domainStart,
       domainEnd,
       totalRange: initialProps.totalRange ?? initialProps.view,
-      visibleDays: Math.max(1 / 24, Math.min(7, ((initialProps.view?.end ?? now) - (initialProps.view?.start ?? now - DAY_MS)) / DAY_MS)),
+      visibleDays: Math.max(1 / 24, Math.min(7, Number(initialProps.view?.visibleDays)
+        || ((initialProps.view?.end ?? now) - (initialProps.view?.start ?? now - DAY_MS)) / DAY_MS)),
       minVisibleDays: 1 / 24,
       maxVisibleDays: 7,
       minTaskWidth: MINIMUM_ITEM_WIDTH,
@@ -510,7 +514,7 @@
         if (running) timeline._scrollCalendarTaskIntoView?.(running);
         return;
       }
-      timeline.setVisibleDays(Math.max(1 / 24, Math.min(7, (view.end - view.start) / DAY_MS)));
+      timeline.setVisibleDays(Math.max(1 / 24, Math.min(7, Number(view.visibleDays) || (view.end - view.start) / DAY_MS)));
       timeline._setScrollLeft?.(timeline.timeToX(view.start));
       timeline._updateTimelineMeta?.();
       timeline._updateRowLabelPositions?.();
