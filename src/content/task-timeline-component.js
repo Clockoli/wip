@@ -4601,7 +4601,7 @@
       --tt-radius: 0;
       --tt-inverse-bg: var(--fgColor-default, var(--ck-fg, #172033));
       --tt-inverse-fg: var(--bgColor-default, var(--ck-bg, #fff));
-      color-scheme: light dark;
+      color-scheme: inherit;
       font: var(--text-body-shorthand-medium, 400 14px/1.5 "Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
     }
     .shell { border: 0; border-radius: 0; box-shadow: none; background: var(--tt-panel); }
@@ -4729,6 +4729,17 @@
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
     .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; white-space:pre-line; }
+    
+    /* Shared task actions, with accessible text labels kept intact. */
+    .clockoli-timeline-action { display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;border-radius:8px;white-space:nowrap }
+    .clockoli-timeline-icon { flex:none;width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round }
+    .clockoli-timeline-icon[data-action="play"] { fill:currentColor;stroke:none }
+    /* The same empty-state copy is used on weekdays and weekends. */
+    .clockoli-calendar-empty { position:absolute;z-index:2;display:flex;flex-direction:column;align-items:center;gap:5px;box-sizing:border-box;padding:6px 8px;pointer-events:none;text-align:center;color:var(--tt-muted);font-size:11px;line-height:1.4 }
+    .clockoli-calendar-empty-icon { width:23px;height:23px;margin-bottom:5px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.7 }
+    .clockoli-calendar-empty-title { color:var(--tt-text);font-weight:700 }
+    .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
+
     .history-controls { display: none; }
     .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: center; gap: 8px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
@@ -5085,6 +5096,74 @@
       timeline._updateRowLabelPositions?.();
     }
 
+    function positionEmptyCalendarDays() {
+      const viewport = timeline.calendarViewport;
+      const canvas = timeline.calendarCanvas;
+      if (!viewport || !canvas) return;
+      const top = Math.min(canvas.offsetHeight - 90, Math.max(100, viewport.scrollTop + viewport.clientHeight * .42));
+      for (const marker of canvas.querySelectorAll('.clockoli-calendar-empty')) marker.style.top = `${top}px`;
+    }
+
+    function renderEmptyCalendarDays() {
+      if (timeline.getViewMode() !== 'calendar') return;
+      const canvas = timeline.calendarCanvas;
+      if (!canvas) return;
+      const segments = [...canvas.querySelectorAll('.calendar-task[data-segment-start]')];
+      const markers = new Map([...canvas.querySelectorAll('.clockoli-calendar-empty')].map(node => [node.dataset.start, node]));
+      for (const header of canvas.querySelectorAll('.calendar-day-header[data-start]')) {
+        const start = Number(header.dataset.start);
+        const next = new Date(start);
+        next.setDate(next.getDate() + 1); // Local midnight: accounts for daylight-saving transitions.
+        const end = next.getTime();
+        const hasEntry = segments.some(node => Number(node.dataset.segmentStart) < end && Number(node.dataset.segmentEnd) > start);
+        const key = String(start);
+        const existing = markers.get(key);
+        if (hasEntry) { existing?.remove(); markers.delete(key); continue; }
+        let marker = existing;
+        if (!marker) {
+          marker = document.createElement('div');
+          marker.className = 'clockoli-calendar-empty';
+          marker.dataset.start = key;
+          const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          icon.classList.add('clockoli-calendar-empty-icon');
+          icon.setAttribute('viewBox', '0 0 24 24');
+          icon.setAttribute('aria-hidden', 'true');
+          for (const pathData of ['M4 5h16v16H4z', 'M8 3v4', 'M16 3v4', 'M4 10h16']) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', pathData);
+            icon.append(path);
+          }
+          const title = document.createElement('span');
+          title.className = 'clockoli-calendar-empty-title';
+          title.textContent = 'No time entries';
+          const help = document.createElement('span');
+          help.className = 'clockoli-calendar-empty-help';
+          help.textContent = 'Add time or use quick start';
+          marker.append(icon, title, help);
+          canvas.append(marker);
+        }
+        marker.style.left = header.style.left;
+        marker.style.width = header.style.width;
+        markers.delete(key);
+      }
+      for (const stale of markers.values()) stale.remove();
+      positionEmptyCalendarDays();
+    }
+
+    function actionIcon(kind) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.classList.add('clockoli-timeline-icon');
+      svg.setAttribute('data-action', kind);
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', kind === 'delete'
+        ? 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 10v8m4-8v8'
+        : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
+      svg.append(path);
+      return svg;
+    }
+
     function styleTasks() {
       if (destroyed) return;
       for (const element of timeline.shadow.querySelectorAll('.task[data-task-key], .calendar-task[data-task-key]')) {
@@ -5137,6 +5216,7 @@
           }
         }
       }
+      if (typeof renderEmptyCalendarDays === 'function') renderEmptyCalendarDays();
     }
 
     function resizeDescription(field) {
@@ -5243,7 +5323,7 @@
       }
       if (typeof props.onDelete === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete';
+        button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete'; button.prepend(actionIcon('delete'));
         button.disabled = !permissions.delete;
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
         actions.append(button);
@@ -5251,13 +5331,13 @@
       if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'clockoli-timeline-action primary';
-        button.textContent = 'Stop and save';
+        button.textContent = 'Stop and save'; button.prepend(actionIcon('stop'));
         button.disabled = !permissions.stop;
         button.addEventListener('click', () => runAction(button, 'stop', () => props.onStop(sourceItem(key))));
         actions.append(button);
       } else if (typeof props.onStart === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Track time';
+        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Track time'; button.prepend(actionIcon('play'));
         button.disabled = !permissions.start;
         button.addEventListener('click', () => runAction(button, 'start', () => props.onStart(sourceItem(key))));
         actions.append(button);
@@ -5321,6 +5401,7 @@
     host.addEventListener('timeline:viewmodechange', () => props.onViewModeChange?.(timeline.getViewMode()));
     styleObserver = new MutationObserver(styleTasks);
     styleObserver.observe(timeline.shadow, { childList: true, subtree: true });
+    timeline.calendarViewport?.addEventListener('scroll', positionEmptyCalendarDays, { passive: true });
     detailsObserver = new MutationObserver(renderActions);
     detailsObserver.observe(timeline.detailsInfo, { childList: true, subtree: true });
     hydrateExternalState();
@@ -5440,6 +5521,7 @@
         if (destroyed) return;
         destroyed = true;
         styleObserver?.disconnect();
+        timeline.calendarViewport?.removeEventListener('scroll', positionEmptyCalendarDays);
         detailsObserver?.disconnect();
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
         global.removeEventListener('pointerup', onGestureEnd);
