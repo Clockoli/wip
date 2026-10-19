@@ -1585,6 +1585,8 @@ function mergeTaskIdentity(task) {
 const mergeSelection = { source: '', target: '' };
 let mergePairs = [];
 let mergeLoadGeneration = 0;
+let mergeTasksLoaded = false;
+let mergeTasksLoading = false;
 let mergeSubmitting = false;
 function renderMergeDestinationOptions() {
   const select = $('merge-task-destination'), destinations = configuredDestinations();
@@ -1598,8 +1600,10 @@ function renderMergeDestinationOptions() {
   select.disabled = destinations.length < 2;
   if (previous && next !== previous) {
     mergeLoadGeneration++;
+    mergeTasksLoaded = false; mergeTasksLoading = false;
     mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
     $('merge-all-people').checked = false; updateMergeScope(); renderMergeTasks([]);
+    if ($('merge-tasks').open) void refreshMergeTasks();
   }
 }
 function mergeTasksVisible(side) {
@@ -1702,27 +1706,43 @@ function selectMergeTask(side, taskUrl) {
   renderMergeTaskList('source'); renderMergeTaskList('target'); renderMergeQueue();
 }
 async function refreshMergeTasks() {
-  if ($('merge-tasks').hidden) return;
+  if ($('merge-tasks').hidden || !$('merge-tasks').open) return;
   const generation = ++mergeLoadGeneration;
-  const range = taskPeriodRange($('merge-task-period').value, currentDateValue());
+  mergeTasksLoading = true;
+  $('merge-tasks-feedback').textContent = 'Loading tasks…';
   try {
+    const range = taskPeriodRange($('merge-task-period').value, currentDateValue());
     const destinationId = $('merge-task-destination').value;
     if (!destinationId) throw new Error('Choose a time repository before merging tasks.');
     const payload = { ...range, destinationIds: [destinationId], includeAllUsers: $('merge-all-people').checked === true, requestId: `merge-tasks-${Date.now()}` };
     const result = await send({ type: 'LOAD_TASKS', payload });
     if (generation !== mergeLoadGeneration) return;
     if (result.partial || result.conflicts?.length) {
+      mergeTasksLoaded = false;
       renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
     }
     const unavailable = renderMergeTasks(result.tasks || []);
+    mergeTasksLoaded = true;
     const imported = mergeTasks.filter(task => !isMergeTarget(task)).length;
     $('merge-tasks-feedback').textContent = unavailable
       ? `${unavailable} invalid task ${unavailable === 1 ? 'identity was' : 'identities were'} excluded.`
       : imported ? 'Imported task identities can be replaced with a tracked URL; replacement tasks must have a URL.'
         : mergeTasks.length ? '' : 'No tasks match the selected period.';
   } catch (error) {
-    if (generation === mergeLoadGeneration) { renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message; }
+    if (generation === mergeLoadGeneration) {
+      mergeTasksLoaded = false;
+      renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message;
+    }
+  } finally {
+    if (generation === mergeLoadGeneration) mergeTasksLoading = false;
   }
+}
+
+function resetMergeTaskCandidates() {
+  mergeLoadGeneration++;
+  mergeTasksLoaded = false; mergeTasksLoading = false;
+  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
+  renderMergeTasks([]);
 }
 
 function ratesPayload() {
@@ -2430,19 +2450,20 @@ $('import-settings-file').addEventListener('change', async () => {
 });
 
 for (const side of ['source', 'target']) $(`merge-${side}-filter`).addEventListener('input', () => renderMergeTaskList(side));
+$('merge-tasks').addEventListener('toggle', () => {
+  if ($('merge-tasks').open && !mergeTasksLoaded && !mergeTasksLoading) return refreshMergeTasks();
+});
 $('merge-task-period').addEventListener('change', () => {
-  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs(); void refreshMergeTasks();
+  resetMergeTaskCandidates();
+  void refreshMergeTasks();
 });
 $('merge-task-destination').addEventListener('change', async () => {
-  mergeLoadGeneration++;
-  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
-  $('merge-all-people').checked = false; updateMergeScope(); renderMergeTasks([]);
+  resetMergeTaskCandidates();
+  $('merge-all-people').checked = false; updateMergeScope();
   await refreshMergeTasks();
 });
 $('merge-all-people').addEventListener('change', () => {
-  mergeLoadGeneration++;
-  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
-  updateMergeScope(); renderMergeTasks([]);
+  resetMergeTaskCandidates();
   void refreshMergeTasks();
 });
 $('merge-tasks-submit').addEventListener('click', async () => {
@@ -2486,6 +2507,6 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).catch(error => message(error.message, 'error'));
 
 mountRunningStatus($('running-status'), { send });

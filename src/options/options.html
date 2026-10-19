@@ -212,10 +212,10 @@
     </form>
   </section>
 
-  <section id="merge-tasks" class="card" aria-labelledby="merge-tasks-title" hidden>
-    <div class="card-heading">
-      <div><h2 id="merge-tasks-title">Merge tasks</h2><p>Choose a task, then choose its replacement. By default, only your time entries are changed in the selected time repository and period.</p></div>
-    </div>
+  <details id="merge-tasks" class="card merge-task-disclosure" aria-labelledby="merge-tasks-title" hidden>
+    <summary class="card-heading merge-task-summary">
+      <div><h2 id="merge-tasks-title">Merge tasks</h2><p>Choose a task, then its replacement. Only your time entries are changed by default.</p></div>
+    </summary>
     <div class="merge-task-settings">
       <label>Period<select id="merge-task-period"><option value="one-month" selected>Last 30 days</option><option value="three-months">Last 3 months</option><option value="all-time">All time</option></select></label>
       <label>Time repository<select id="merge-task-destination"></select></label>
@@ -228,7 +228,7 @@
     </div>
     <section class="merge-queue" aria-labelledby="merge-queue-title"><div class="section-heading"><h3 id="merge-queue-title">Merge list</h3><span id="merge-queue-count" class="badge">0 pairs</span></div><div id="merge-queue-list"></div><p id="merge-queue-empty" class="help">Select one task in each list to add a merge pair.</p></section>
     <div class="actions merge-task-actions"><button id="merge-tasks-submit" type="button" disabled>Merge my tasks</button><p id="merge-tasks-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
-  </section>
+  </details>
 
   <section id="addons-settings" class="card" aria-labelledby="addons-title">
     <div class="card-heading"><div><h2 id="addons-title">Add-ons</h2><p>Enable packaged integrations only after reviewing their requested access.</p></div></div>
