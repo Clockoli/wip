@@ -69,7 +69,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
       }
       requests.push(request);
       const result = reply(request);
-      const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message } } : { ok: true, data: value });
+      const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message, code: value.code } } : { ok: true, data: value });
       if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message } }));
       else respond(result);
 
@@ -695,6 +695,97 @@ test('Merge tasks retries failed initial loading on subsequent expansion', async
   panel.open = true; await panel.listeners.toggle();
   assert.equal(attempts, 2);
   assert.doesNotMatch(page.nodes.get('merge-tasks-feedback').textContent, /Transient GitHub error/);
+});
+
+
+test('a changed account invalidates an in-flight merge load even if the repository id is unchanged', async () => {
+  const oldUrl = 'https://example.test/old-account', newUrl = 'https://example.test/new-account';
+  const destinationRegistry = { defaultDestinationId: 'github:1', destinations: { 'github:1': { owner: 'acme', repo: 'time' } } };
+  let releaseFirst, loads = 0;
+  const page = harness({ reply: request => {
+    if (request.type !== 'LOAD_TASKS') return {};
+    if (++loads === 1) return new Promise(resolve => {
+      releaseFirst = () => resolve({ tasks: [{ taskUrl: oldUrl, title: 'Old account task', destinationIds: ['github:1'] }],
+        currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] });
+    });
+    return { tasks: [{ taskUrl: newUrl, title: 'New account task', destinationIds: ['github:1'] }],
+      currentUsers: { 'github:1': 'alice' }, availableUsers: ['alice'] };
+  } });
+  const firstState = { ...connectedState, destinationRegistry };
+  page.render(firstState);
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true;
+  const initialLoad = panel.listeners.toggle();
+  assert.equal(loads, 1);
+  page.render({ ...firstState, auth: { ...connectedState.auth, githubLogin: 'alice' } });
+  assert.equal(panel.open, false, 'switching identity closes a potentially stale merge panel');
+  releaseFirst();
+  await initialLoad;
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === oldUrl), false);
+  panel.open = true;
+  await panel.listeners.toggle();
+  assert.equal(loads, 2);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === newUrl), true);
+  page.render({ ...firstState, auth: null });
+  assert.equal(panel.hidden, true, 'merge controls must be hidden after sign-out');
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === newUrl), false);
+});
+
+test('closing during a successful all-people merge invalidates the list and reopens in personal scope', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let resolveMerge;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['alice', 'octocat'] }
+    : request.type === 'MERGE_TASKS' ? new Promise(resolve => { resolveMerge = resolve; }) : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  const all = page.nodes.get('merge-all-people');
+  all.checked = true; await all.listeners.change();
+  await new Promise(resolve => setImmediate(resolve));
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  const pendingMerge = page.nodes.get('merge-tasks-submit').listeners.click();
+  panel.open = false; await panel.listeners.toggle();
+  resolveMerge({ mergedEntries: 1, mergedActive: false, destinationCount: 1 });
+  await pendingMerge;
+  assert.equal(Boolean(all.checked), false);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === tasks[0].taskUrl), false);
+  const loadsBeforeReopen = page.requests.filter(request => request.type === 'LOAD_TASKS').length;
+  panel.open = true; await panel.listeners.toggle();
+  const loads = page.requests.filter(request => request.type === 'LOAD_TASKS');
+  assert.equal(loads.length, loadsBeforeReopen + 1);
+  assert.equal(loads.at(-1).payload.includeAllUsers, false);
+});
+
+test('partially applied merge cannot leave a stale, resubmittable pair in a closed panel', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let failMerge;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] }
+    : request.type === 'MERGE_TASKS' ? new Promise((_, reject) => { failMerge = reject; }) : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  const pendingMerge = page.nodes.get('merge-tasks-submit').listeners.click();
+  panel.open = false; await panel.listeners.toggle();
+  failMerge(Object.assign(new Error('Some task entries were merged before a failure'), { code: 'partial_task_merge' }));
+  await pendingMerge;
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Some task entries were merged/);
 });
 
 test('Merge tasks offers an imported identity as a source, with replacement choices only after source selection', async () => {
