@@ -463,37 +463,69 @@ test('Timeline keeps the original minimum widths and task spacing in a weekly vi
 });
 
 test('Calendar keeps its hour grid and stationary entries fixed while moving a short entry', async ({ page }) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const base = today.getTime();
+  await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+  const base = await page.evaluate(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today.getTime();
+  });
   await mount(page, { items: [
     { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 10 * HOUR, endedAt: base + 11 * HOUR, isEditable: true },
     { id: 'entry:b', url: 'https://example.com/b', startedAt: base + 13 * HOUR, endedAt: base + 13 * HOUR + 5 * 60_000, isEditable: true },
     { id: 'entry:c', url: 'https://example.com/c', startedAt: base + 11 * HOUR + 40 * 60_000, endedAt: base + 12 * HOUR, isEditable: true },
   ], view: { start: base, end: base + 24 * HOUR, focusedAt: base + 11 * HOUR } });
-  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.evaluate(base => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.setCalendarRange({ start: base, end: base + 24 * 60 * 60_000 });
+  }, base);
   const source = page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first();
-  await source.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  await expect(source).toBeVisible();
+  const initial = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const moving = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:b"]');
+    moving.scrollIntoView({ block: 'center' });
+    const from = moving.getBoundingClientRect().toJSON();
+    const sourceX = from.x + from.width / 2, sourceY = from.y + from.height / 2;
+    const fixed = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+    const rect = timeline.calendarCanvas.getBoundingClientRect();
+    const day = timeline._calendarDayIndexForTime(timeline._findTask('entry:b').start);
+    return {
+      from,
+      hitKey: timeline.shadow.elementFromPoint(sourceX, sourceY)?.closest('.calendar-task')?.dataset.taskKey,
+      viewport: { width: innerWidth, height: innerHeight },
+      before: { hour: timeline._calendarMetrics.verticalMap.toY(12 * 60), fixedTop: Number.parseFloat(fixed.style.top) },
+      destination: { x: rect.left + timeline._calendarMetrics.timeAxisWidth + (day + 0.5) * timeline._calendarMetrics.dayWidth,
+        y: rect.top + timeline._calendarMetrics.headerHeight + timeline._calendarMetrics.verticalMap.toY(11 * 60 + 30) },
+    };
+  });
+  const { from, before, destination, viewport, hitKey } = initial;
+  expect(from.width).toBeGreaterThan(0);
+  expect(from.height).toBeGreaterThan(0);
+  expect(hitKey).toBe('entry:b');
+  expect(from.x + from.width / 2).toBeGreaterThan(0);
+  expect(from.x + from.width / 2).toBeLessThan(viewport.width);
+  expect(from.y + from.height / 2).toBeGreaterThan(0);
+  expect(from.y + from.height / 2).toBeLessThan(viewport.height);
+  expect(destination.x).toBeGreaterThan(0);
+  expect(destination.x).toBeLessThan(viewport.width);
+  expect(destination.y).toBeGreaterThan(0);
+  expect(destination.y).toBeLessThan(viewport.height);
   const geometry = () => page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     const fixed = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:a"]');
     return { hour: timeline._calendarMetrics.verticalMap.toY(12 * 60), fixedTop: Number.parseFloat(fixed.style.top) };
   });
-  const before = await geometry();
-  const from = await source.boundingBox();
-  const destination = await page.evaluate(() => {
-    const timeline = window.__timeline.__timeline;
-    const rect = timeline.calendarCanvas.getBoundingClientRect();
-    const day = timeline._calendarDayIndexForTime(timeline._findTask('entry:b').start);
-    return { x: rect.left + timeline._calendarMetrics.timeAxisWidth + (day + 0.5) * timeline._calendarMetrics.dayWidth,
-      y: rect.top + timeline._calendarMetrics.headerHeight + timeline._calendarMetrics.verticalMap.toY(11 * 60 + 30) };
-  });
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
   await page.mouse.move(destination.x, destination.y, { steps: 8 });
   expect(await geometry()).toEqual(before);
-  const boxes = await Promise.all(['b', 'c'].map(async key => page.locator(`#timeline .calendar-task[data-task-key="entry:${key}"]`).first().boundingBox()));
-  expect(boxes[0].y + boxes[0].height).toBeLessThanOrEqual(boxes[1].y);
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start)).toBeLessThan(base + 13 * HOUR);
+  const boxes = await page.evaluate(() => {
+    const canvas = window.__timeline.__timeline.calendarCanvas;
+    return ['b', 'c'].map(key => canvas.querySelector(`.calendar-task[data-task-key="entry:${key}"]`)
+      .getBoundingClientRect().toJSON());
+  });
+  expect(boxes[0].bottom).toBeLessThanOrEqual(boxes[1].top);
   await page.mouse.up();
   expect((await geometry()).fixedTop).toBe(before.fixedTop);
 });
