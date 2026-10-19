@@ -499,16 +499,19 @@ test('Calendar keeps its hour grid and stationary entries fixed while moving a s
 });
 
 test('Calendar recomputes short-entry spacing after pointer release and a same-week refresh', async ({ page }) => {
-  const day = new Date(); day.setHours(0, 0, 0, 0);
+  await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+  const day = new Date('2026-10-16T16:00:00Z'); day.setHours(0, 0, 0, 0);
   const base = day.getTime();
   const original = { id: 'entry:a', url: 'https://example.com/a', startedAt: base + 15 * HOUR,
     endedAt: base + 15 * HOUR + 60_000, isEditable: true };
   await mount(page, { items: [original], view: { start: base, end: base + 24 * HOUR, focusedAt: original.startedAt } });
-  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.evaluate(base => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.__timeline.setCalendarRange({ start: base, end: base + 24 * 60 * 60_000 });
+  }, base);
   const a = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
-  await a.evaluate(element => element.scrollIntoView({ block: 'center' }));
-  const box = await a.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(a).toBeVisible();
+  await a.hover();
   await page.mouse.down();
   expect(await page.evaluate(() => Boolean(window.__timeline.__timeline._calendarPinnedVerticalMap))).toBe(true);
   await page.mouse.up();
