@@ -1403,7 +1403,7 @@
     set('box-sizing', 'border-box');
     set('position', fullWidth ? 'fixed' : 'relative');
     set('display', fullWidth || wide ? 'block' : 'inline-flex');
-    if (wide) set('width', '100%');
+    if (wide) { set('width', '100%'); set('color-scheme', 'inherit'); }
     if (fullWidth) {
       set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
       set('width', '100vw'); set('pointer-events', 'none');
@@ -2234,7 +2234,9 @@
     }
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
-    body.append(overview, views, weeklySummary, toolbar, weekNavigation(), listTotal);
+    const headingRow = el('div', undefined, 'activity-heading-row');
+    headingRow.append(overview, views);
+    body.append(headingRow, weeklySummary, toolbar, weekNavigation(), listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -3806,35 +3808,46 @@
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
 
+    // On trusted extension pages, inherit Primer tokens from the document instead
+    // of pinning the light/dark values used to isolate the widget on GitHub.
+    // Custom properties inherit across both shadow boundaries into Calendar.
+    if (extensionPageMode) style.textContent += `
+      :host(.times-surface), :host(.popup-surface) {
+        --fgColor-default:inherit; --fgColor-muted:inherit; --fgColor-accent:inherit; --fgColor-danger:inherit; --bgColor-default:inherit; --bgColor-muted:inherit; --bgColor-inset:inherit; --bgColor-attention-muted:inherit; --bgColor-danger-muted:inherit; --borderColor-default:inherit; --borderColor-muted:inherit; --borderColor-danger-muted:inherit; --focus-outlineColor:inherit; --button-default-borderColor-rest:inherit; --button-default-bgColor-rest:inherit; --button-default-fgColor-rest:inherit; --button-default-bgColor-hover:inherit; --button-default-bgColor-active:inherit; --button-default-bgColor-selected:inherit; --button-default-borderColor-disabled:inherit; --button-default-bgColor-disabled:inherit; --button-default-fgColor-disabled:inherit; --button-primary-borderColor-rest:inherit; --button-primary-bgColor-rest:inherit; --button-primary-fgColor-rest:inherit; --button-primary-bgColor-hover:inherit; --button-primary-bgColor-active:inherit; --button-primary-borderColor-disabled:inherit; --button-primary-bgColor-disabled:inherit; --button-primary-fgColor-disabled:inherit; --button-danger-borderColor-rest:inherit; --button-danger-bgColor-rest:inherit; --button-danger-fgColor-rest:inherit; --button-danger-borderColor-hover:inherit; --button-danger-bgColor-hover:inherit; --button-danger-fgColor-hover:inherit; --button-danger-borderColor-active:inherit; --button-danger-bgColor-active:inherit; --button-danger-fgColor-active:inherit; --button-danger-bgColor-disabled:inherit; --button-danger-fgColor-disabled:inherit; --button-invisible-borderColor-rest:inherit; --button-invisible-bgColor-rest:inherit; --button-invisible-iconColor-rest:inherit; --button-invisible-fgColor-rest:inherit; --button-invisible-borderColor-hover:inherit; --button-invisible-bgColor-hover:inherit; --button-invisible-iconColor-hover:inherit; --button-invisible-bgColor-active:inherit; --button-invisible-borderColor-disabled:inherit; --button-invisible-bgColor-disabled:inherit; --button-invisible-fgColor-disabled:inherit; --control-borderColor-rest:inherit; --control-bgColor-rest:inherit; --control-fgColor-rest:inherit; --control-fgColor-placeholder:inherit; --control-bgColor-hover:inherit; --control-bgColor-active:inherit; --control-borderColor-disabled:inherit; --control-bgColor-disabled:inherit; --control-fgColor-disabled:inherit; --shadow-floating-small:inherit; --fontStack-sansSerif:inherit; --fontStack-monospace:inherit; --text-body-shorthand-medium:inherit; --text-caption-shorthand:inherit;
+        color-scheme:inherit;
+      }
+    `;
     if (timesMode) style.textContent += `
       /* Activity dashboard: one compact information hierarchy above the calendar. */
       :host(.times-surface) { color-scheme:inherit }
       :host(.times-surface) .times-page { width:min(1600px,calc(100% - 48px));min-height:calc(100vh - 116px);margin:16px auto 24px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:12px;overflow:hidden;box-shadow:var(--shadow-resting-small) }
       :host(.times-surface[data-clockoli-width="full"]) .times-page {width:100%;margin:0;border:0;border-radius:0}
       :host(.times-surface) .times-body {padding:20px 24px 30px}
-      :host(.times-surface) .activity-overview-heading {display:flex;align-items:center;gap:13px;margin-bottom:14px}
+      :host(.times-surface) .activity-heading-row {display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:65px;margin:0 0 14px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
+      :host(.times-surface) .activity-overview-heading {grid-column:1;display:flex;align-items:center;gap:13px;margin:0 0 10px}
       :host(.times-surface) .activity-overview-icon {display:grid;flex:none;width:42px;height:42px;place-items:center;border-radius:11px;background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
       :host(.times-surface) .activity-overview-copy h2 {margin:0;font-size:22px;font-weight:750;line-height:1.2}
       :host(.times-surface) .activity-overview-copy .muted {margin:3px 0 0;font-size:12px}
-      :host(.times-surface) .times-view-modes {margin:0 0 12px}
+      :host(.times-surface) .times-view-modes {grid-column:2;align-self:end;margin:0;border-bottom:0}
       :host(.times-surface) .times-view-button {border-radius:8px 8px 0 0}
       :host(.times-surface) .times-view-button[aria-pressed="true"] {background:var(--bgColor-success-muted,var(--ck-bg-muted))}
-      :host(.times-surface) .activity-weekly-summary {margin:0 0 16px;padding:0 0 16px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
+      :host(.times-surface) .activity-weekly-summary {margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
       :host(.times-surface) .activity-weekly-summary[hidden] {display:none}
       :host(.times-surface) .activity-weekly-heading {display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:10px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:11px}
       :host(.times-surface) .activity-weekly-label {font-weight:750}
       :host(.times-surface) .activity-weekly-cards {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-      :host(.times-surface) .activity-weekly-card {display:flex;align-items:center;gap:12px;min-width:0;min-height:76px;padding:12px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-default,var(--ck-bg));box-shadow:var(--shadow-resting-small)}
-      :host(.times-surface) .activity-weekly-icon {display:grid;flex:none;width:38px;height:38px;place-items:center;border-radius:50%;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .activity-weekly-card {display:flex;align-items:center;gap:10px;min-width:0;min-height:66px;padding:10px 12px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-default,var(--ck-bg));box-shadow:var(--shadow-resting-small)}
+      :host(.times-surface) .activity-weekly-icon {display:grid;flex:none;width:34px;height:34px;place-items:center;border-radius:50%;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
       :host(.times-surface) .activity-weekly-card:nth-child(2) .activity-weekly-icon {background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
       :host(.times-surface) .activity-weekly-copy {display:flex;flex-direction:column;min-width:0;gap:2px}
-      :host(.times-surface) .activity-weekly-value {font-size:19px;font-weight:750;line-height:1.25;font-variant-numeric:tabular-nums;color:var(--fgColor-default,var(--ck-fg))}
+      :host(.times-surface) .activity-weekly-value {font-size:18px;font-weight:750;line-height:1.25;font-variant-numeric:tabular-nums;color:var(--fgColor-default,var(--ck-fg))}
       :host(.times-surface) .activity-weekly-name {font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
-      :host(.times-surface) .times-toolbar.times-visual {margin:0 0 12px}
+      :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
       :host(.times-surface) .popup-timeline-section {margin-bottom:16px}
       :host(.times-surface) .week-navigation {margin:0 0 6px}
       :host(.times-surface) .week-navigation-button {border-radius:8px}
       @media(max-width:940px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:790px){:host(.times-surface) .activity-heading-row{grid-template-columns:1fr;justify-items:center;gap:0}:host(.times-surface) .activity-overview-heading{grid-column:1;justify-self:start}:host(.times-surface) .times-view-modes{grid-column:1}}
       @media(max-width:700px){:host(.times-surface) .times-page{width:100%;margin:0;border:0;border-radius:0}:host(.times-surface) .times-body{padding:16px 12px 24px}}
       @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:1fr}:host(.times-surface) .activity-overview-copy h2{font-size:18px}}
     `;
