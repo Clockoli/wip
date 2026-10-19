@@ -13,6 +13,12 @@
   const apply = () => {
     const current = read() || (media.matches ? 'dark' : 'light');
     document.documentElement.dataset.clockoliTheme = current;
+    // Extension Activity and popup each contain a separate shadow surface.
+    // Mirror the active preference onto those hosts without rebuilding their UI.
+    for (const id of ['clockoli-times-root', 'clockoli-popup-root']) {
+      const host = document.getElementById(id);
+      if (host) host.dataset.clockoliTheme = current;
+    }
     const control = document.querySelector('.page-theme-toggle');
     if (control) {
       const label = `Switch to ${current === 'dark' ? 'light' : 'dark'} theme`;
