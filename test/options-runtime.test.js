@@ -70,7 +70,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
       requests.push(request);
       const result = reply(request);
       const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message, code: value.code } } : { ok: true, data: value });
-      if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message } }));
+      if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message, code: error.code } }));
       else respond(result);
 
     } } },
