@@ -321,10 +321,25 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await expect(source).toBeVisible();
     const from = await source.boundingBox();
+    await source.evaluate(element => {
+      window.__clockoliPointerTrace = [];
+      element.addEventListener('pointerdown', event => {
+        window.__clockoliPointerTrace.push({ type: 'down', target: event.target.className,
+          width: element.getBoundingClientRect().width, x: event.clientX, y: event.clientY });
+      }, true);
+    });
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
     await page.mouse.up();
+    const dragDebug = await source.evaluate(element => {
+      const root = element.getRootNode();
+      const hit = root.elementFromPoint(from.x + from.width / 2, from.y + from.height / 2);
+      return { trace: window.__clockoliPointerTrace, width: element.getBoundingClientRect().width,
+        className: element.className, elementAtStart: hit?.className,
+        scroll: root.querySelector('.viewport')?.scrollLeft };
+    }, from);
+    console.log('CLOCKOLI_DRAG_DEBUG', JSON.stringify(dragDebug));
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
     expect(await worker.evaluate(() => globalThis.editPayloads[0].edits.endedAt <= recent[1].startedAt)).toBe(true);
