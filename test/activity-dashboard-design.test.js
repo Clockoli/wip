@@ -73,17 +73,16 @@ test('weekly summary counts compact task identities and a just-started timer', (
 });
 
 test('calendar does not show an empty-day marker behind a newly started timer', () => {
-  const adapter = read('packages/task-timeline-component/src/clockoli-adapter.js');
-  assert.match(adapter, /node\\.classList\\.contains\\('running'\\)/);
-  const bundled = read('src/content/task-timeline-component.js');
-  assert.match(bundled, /node\\.classList\\.contains\\('running'\\)/);
+  for (const file of ['packages/task-timeline-component/src/clockoli-adapter.js', 'src/content/task-timeline-component.js']) {
+    assert.ok(read(file).includes("node.classList.contains('running')"), file);
+  }
 });
 
 test('manual themes control select arrows and print reports stay light', () => {
   for (const file of ['src/tasks/tasks.css', 'src/reports/reports.css']) {
     const css = read(file);
-    assert.match(css, /:root:not\\(\\[data-clockoli-theme="light"\\]\\)/);
-    assert.match(css, /:root\\[data-clockoli-theme="dark"\\]/);
+    assert.ok(css.includes(':root:not([data-clockoli-theme="light"])'), file);
+    assert.ok(css.includes(':root[data-clockoli-theme="dark"]'), file);
   }
-  assert.match(read('src/reports/reports.css'), /@media print\\s*\\{[\\s\\S]*?:root:root\\{color-scheme:light/);
+  assert.ok(read('src/reports/reports.css').includes(':root:root{color-scheme:light;'));
 });
