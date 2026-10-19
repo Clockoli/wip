@@ -1617,7 +1617,7 @@ function isMergeTarget(task) {
   catch { return false; }
 }
 function updateMergeScope() {
-  const allPeople = $('merge-all-people').checked;
+  const allPeople = $('merge-all-people').checked === true;
   $('merge-scope-note').textContent = allPeople
     ? 'Changes everyone’s time entries in this repository and period.'
     : 'Only your time entries will change.';
@@ -1708,7 +1708,7 @@ async function refreshMergeTasks() {
   try {
     const destinationId = $('merge-task-destination').value;
     if (!destinationId) throw new Error('Choose a time repository before merging tasks.');
-    const payload = { ...range, destinationIds: [destinationId], includeAllUsers: $('merge-all-people').checked, requestId: `merge-tasks-${Date.now()}` };
+    const payload = { ...range, destinationIds: [destinationId], includeAllUsers: $('merge-all-people').checked === true, requestId: `merge-tasks-${Date.now()}` };
     const result = await send({ type: 'LOAD_TASKS', payload });
     if (generation !== mergeLoadGeneration) return;
     if (result.partial || result.conflicts?.length) {
@@ -2449,7 +2449,7 @@ $('merge-tasks-submit').addEventListener('click', async () => {
   if (!mergePairs.length || mergeSubmitting) return;
   mergeSubmitting = true; renderMergeQueue();
   for (const id of ['merge-all-people', 'merge-task-period', 'merge-task-destination']) $(id).disabled = true;
-  const allUsers = $('merge-all-people').checked;
+  const allUsers = $('merge-all-people').checked === true;
   formFeedback('merge-tasks-feedback', 'Merging tasks…');
   try {
     const range = taskPeriodRange($('merge-task-period').value, currentDateValue());

@@ -1359,11 +1359,11 @@ async function handle(message, sender) {
       }
       if (failures.length) {
         const labels = failures.map(({ destination }) => destination.label || `${destination.owner}/${destination.repo}`).join(', ');
-        const completedLabel = `${completedDestinations} time ${completedDestinations === 1 ? 'repository' : 'repositories'}`;
-        const error = new Error(completedDestinations
-          ? `The merge finished in ${completedLabel} but could not finish in ${labels}. Retry to finish the remaining entries.`
+        const partial = completedDestinations > 0 || mergedEntries > 0 || mergedActive;
+        const error = new Error(partial
+          ? `Some task entries were merged before a failure in ${labels}. Retry to finish the remaining entries. ${failures[0].error.message}`
           : `Could not merge tasks in ${labels}. ${failures[0].error.message}`);
-        error.code = completedDestinations ? 'partial_task_merge' : failures[0].error.code;
+        error.code = partial ? 'partial_task_merge' : failures[0].error.code;
         throw error;
       }
       return { mergedEntries, mergedActive, destinationCount: completedDestinations };

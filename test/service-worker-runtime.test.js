@@ -396,6 +396,33 @@ test('MERGE_TASKS includes other-user storage branches only when explicitly requ
   assert.deepEqual(calls.map(call => [call.destinationId, call.user]), [['github:1', 'alice'], ['github:1', 'bob']]);
 });
 
+test('MERGE_TASKS identifies partially applied multi-person merges so they can be retried', async () => {
+  const request = {
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], allUsers: true,
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new' }],
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  };
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    destinationUser: async () => 'alice',
+    githubForConfig: destination => ({ destinationId: destination.id }),
+    discoverUserStorageBranches: async github => [{ id: 42, login: 'bob', github: { destinationId: github.destinationId } }],
+    TrackerService: class {
+      async mergeTasks() { throw new Error('Cannot write Bob’s time branch'); }
+    },
+    trackerForDestination: async () => ({
+      getState: async () => ({ pendingWrites: [] }),
+      mergeTasks: async () => ({ mergedEntries: 1, mergedActive: false }),
+    }),
+  });
+  await assert.rejects(context.handle(request, extensionSender), error => {
+    assert.equal(error.code, 'partial_task_merge');
+    assert.match(error.message, /Some task entries were merged.*Retry to finish/);
+    assert.match(error.message, /Cannot write Bob/);
+    return true;
+  });
+});
+
 test('MERGE_TASKS rejects non-boolean allUsers to avoid ambiguous scope', async () => {
   const context = handlerContext({ configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }) });
   await assert.rejects(context.handle({
