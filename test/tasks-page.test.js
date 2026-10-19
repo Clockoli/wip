@@ -161,12 +161,12 @@ test('background timer sync never blocks actions or animates a passive refresh i
   assert.match(worker, /retryableConflict && \(\(first\.stage === 'startNext'[\s\S]*?\['editEntry', 'editEntries', 'deleteEntry'\]\.includes\(operation\) && first\.conflictReason !== 'queued_entry_missing'/);
   assert.doesNotMatch(worker, /sync-pending-now/);
   assert.match(js, /const retryableConflict = !String\(first\.conflictReason \|\| ''\)\.startsWith\('queued_write_'\)/);
-  assert.match(js, /const busy = state\.loading \|\| hasRunnablePending\(\)/);
+  assert.match(js, /const busy = state\.loading;/);
   assert.match(js, /hadPending[\s\S]*!hasRunnablePending\(\)[\s\S]*await load\(\)/,
     'pending completion or transition to a blocking conflict must reload task aggregates');
-  assert.match(js, /function updateRefreshControl\(\)[\s\S]*state\.loading \|\| hasRunnablePending\(\)[\s\S]*refresh\.disabled = busy/);
+  assert.match(js, /function updateRefreshControl\(\)[\s\S]*const busy = state\.loading;[\s\S]*refresh\.disabled = busy/);
   assert.match(css, /\.icon-button\.syncing svg\{[^}]*animation:/);
-  assert.match(content, /refresh\.disabled = syncing/);
+  assert.match(content, /refresh\.disabled = loadingRecent/);
   assert.doesNotMatch(content, /refresh\.classList\.toggle\('syncing', syncing\)/);
   assert.match(js, /refresh\.classList\.toggle\('syncing', state\.loading\)/);
   assert.doesNotMatch(content, /stop\.disabled = pageState\.pendingCount > 0/);
@@ -210,7 +210,7 @@ test('tracking panel gives Top tasks and Reports matching header icons', () => {
 
 test('background reconciliation preserves an already-fresh editable Recent snapshot', () => {
   assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
-  assert.match(content, /const disabled = Boolean\(loadingRecent \|\| !recentFresh\)/);
+  assert.match(content, /const disabled = Boolean\(\(loadingRecent \|\| !recentFresh\) && !entry\._pending\)/);
   assert.doesNotMatch(content, /inlineMutation/);
 });
 
@@ -364,7 +364,7 @@ for (const pending of [false, true]) test(`shared strip Stop reconciles Top task
   assert.equal(page.nodes['running-status'].querySelector('.running-status-idle').hidden, false);
   assert.equal(page.rows()[0].querySelector('.timer-button').textContent, 'Start');
   assert.equal(page.rows()[0].classList.contains('running'), false);
-  assert.equal(page.nodes['refresh-tasks'].disabled, pending);
+  assert.equal(page.nodes['refresh-tasks'].disabled, false, 'background GitHub writes never disable manual refresh');
   assert.equal(page.timeouts.size, pending ? 1 : 0, 'only existing pending-write polling is scheduled');
   await page.advance(60);
   assert.equal(page.rows()[0].querySelector('.tracked-time').textContent, '1h 0m', 'completed time must stop counting');

@@ -188,7 +188,6 @@
   `;
 
   function permissionsFor(item) {
-    const pending = Boolean(item?.isPending);
     const editable = item?.isEditable !== false;
     const running = Boolean(item?.isRunning || item?.endedAt == null);
     return {
@@ -197,7 +196,7 @@
       resizeEnd: editable && !running,
       start: !item?.isStartDisabled,
       stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
-      delete: running ? !item?.isDeleteDisabled : !pending && !item?.isDeleteDisabled,
+      delete: !item?.isDeleteDisabled,
     };
   }
 

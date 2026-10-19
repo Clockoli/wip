@@ -142,7 +142,7 @@ export function mountRunningStatus(container, { send, onChange }) {
       if (destroyed) return;
       // The accepted local timer is immediately available, even before GitHub sync.
       state = { ...state, active }; readAt = Date.now(); reportDate = localDate(); render();
-      await onChange?.();
+      await onChange?.({ type: 'START', active });
     } catch (cause) { failure = cause; }
     finally {
       if (!destroyed) {
@@ -165,8 +165,8 @@ export function mountRunningStatus(container, { send, onChange }) {
       if (!state.active) return;
       const hours = (Date.now() - new Date(state.active.startedAt).getTime()) / HOUR_MS;
       if (hours > LONG_ENTRY_HOURS && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
-      await send({ type: 'STOP' });
-      if (!destroyed) await onChange?.();
+      const completion = await send({ type: 'STOP' });
+      if (!destroyed) await onChange?.({ type: 'STOP', completion });
     } catch (cause) { failure = cause; }
     finally {
       if (!destroyed) {
@@ -201,4 +201,9 @@ if (activityContainer) mountRunningStatus(activityContainer, {
     if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
     resolve(response.data);
   })),
+  onChange: detail => {
+    // Activity's Timeline is a separate renderer. Forward the *locally accepted*
+    // mutation directly; never wait for its next GitHub history refresh.
+    document.dispatchEvent(new CustomEvent('clockoli:local-tracking-changed', { detail }));
+  },
 });

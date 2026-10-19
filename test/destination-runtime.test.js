@@ -80,6 +80,32 @@ test('sync processes every runnable destination and resumes a target after sourc
   assert.deepEqual(queues, { 'github:1': [], 'github:2': [], 'github:3': [] });
 });
 
+test('a new local change while one destination syncs defers untouched destinations until the next idle window', async () => {
+  const queues = {
+    'github:1': [{ id: 'earlier', operation: 'editEntry', status: 'pending' }],
+    'github:2': [{ id: 'later', operation: 'editEntry', status: 'pending' }],
+  };
+  const calls = [];
+  let idle = true;
+  const store = {
+    getPendingDestinationIds: async () => Object.keys(queues).filter(id => queues[id].length),
+    getTrackingSnapshot: async () => ({ destinationStates: { entries: Object.fromEntries(
+      Object.entries(queues).map(([id, pendingWrites]) => [id, { pendingWrites: structuredClone(pendingWrites) }]),
+    ) } }),
+  };
+  await syncPendingAll({
+    store, canSync: async () => idle,
+    trackerForDestination: async id => ({ syncPending: async () => {
+      calls.push(id);
+      queues[id].shift();
+      if (id === 'github:1') idle = false; // User changed something while the first GitHub request was in flight.
+      return queues[id];
+    } }),
+  });
+  assert.deepEqual(calls, ['github:1'], 'a newer local edit postpones GitHub writes not yet started');
+  assert.equal(queues['github:2'].length, 1, 'later destination stays durably queued');
+});
+
 test('source conflict keeps a cross-destination target blocked across sync attempts', async () => {
   const queues = {
     'github:1': [{ id: 'source-op', operation: 'completeTimer', stage: 'verifyActive', status: 'conflict' }],
