@@ -129,7 +129,7 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
         "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: recent.slice(0, 4) } });");
     await writeFile(join(extension, 'test-worker.js'), denseWeek);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -188,7 +188,7 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -227,6 +227,18 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
     const calendarRecord = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
     const calendarNeighbor = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
     await calendarRecord.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    await calendarRecord.evaluate(element => {
+      const viewport = element.getRootNode().querySelector('.calendar-viewport');
+      const target = element.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]');
+      const from = element.getBoundingClientRect(), to = target.getBoundingClientRect(), bounds = viewport.getBoundingClientRect();
+      viewport.scrollTop += (from.bottom + to.top) / 2 - (bounds.top + bounds.bottom) / 2;
+    });
+    await expect.poll(async () => {
+      const from = await calendarRecord.boundingBox(), to = await calendarNeighbor.boundingBox();
+      const bounds = await page.locator('.task-timeline-host .calendar-viewport').boundingBox();
+      return Boolean(from && to && bounds && from.y >= bounds.y && to.y >= bounds.y
+        && from.y + from.height <= bounds.y + bounds.height && to.y + to.height <= bounds.y + bounds.height);
+    }).toBe(true);
     const neighbor = await calendarNeighbor.boundingBox();
     await drag(calendarRecord, { x: neighbor.x + neighbor.width / 2, y: neighbor.y - 20 });
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
@@ -263,7 +275,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
         "else if (message.type === 'GET_PAGE_STATE') { if (message.refresh) (globalThis.pageRefreshReplies ||= []).push(respond); else respond({ ok: true, data: state() }); return true; }");
     await writeFile(join(extension, 'test-worker.js'), popupWorkerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -423,6 +435,13 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'LOAD_WEEK').length)).toBeGreaterThan(priorWeekLoads);
     await expect.poll(() => densePopup.evaluate(() => globalThis.fullWeekReady)).toBe(true);
     await denseSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    await expect.poll(() => denseSource.evaluate(element => {
+      if (!element.isConnected) return false;
+      const viewport = element.getRootNode().querySelector('.viewport');
+      if (!viewport) return false;
+      viewport.scrollLeft += element.getBoundingClientRect().left - viewport.getBoundingClientRect().left - viewport.clientWidth / 2;
+      return true;
+    })).toBe(true);
     let grip;
     await expect.poll(async () => { grip = await denseSource.evaluate(element => {
       if (!element.isConnected) return null;
@@ -475,7 +494,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -717,7 +736,7 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest) + '\n');
     await writeFile(join(extension, 'test-worker.js'), workerSource);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

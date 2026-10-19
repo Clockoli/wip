@@ -63,7 +63,7 @@ async function openOptions() {
       writeFile(join(extensionDirectory, 'test-worker.js'), testWorker),
     ]);
     context = await chromium.launchPersistentContext(profileDirectory, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

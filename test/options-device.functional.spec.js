@@ -41,7 +41,7 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), testWorker);
     context = await chromium.launchPersistentContext(profile, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -55,11 +55,14 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
     await page.setViewportSize({ width: 320, height: 700 });
     await expect(page.locator('#authorize')).toBeVisible();
-    await expect(page.locator('#device-initial-paste-shortcut')).toHaveText('Ctrl+V');
+    const isMac = await page.evaluate(() => /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform));
+    const pasteShortcut = isMac ? '⌘V' : 'Ctrl+V';
+    const copyShortcut = isMac ? '⌘C' : 'Ctrl+C';
+    await expect(page.locator('#device-initial-paste-shortcut')).toHaveText(pasteShortcut);
     await page.locator('#authorize').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
     const instruction = page.locator('#device-handoff-status');
-    await expect(instruction).toHaveText('Next: When GitHub opens, press Ctrl+V to paste the code.');
+    await expect(instruction).toHaveText(`Next: When GitHub opens, press ${pasteShortcut} to paste the code.`);
     const style = await instruction.evaluate(node => {
       const css = getComputedStyle(node);
       return { fontWeight: Number(css.fontWeight), leftBorder: parseFloat(css.borderLeftWidth),
@@ -84,7 +87,7 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6000 }).toBeGreaterThan(0);
-    await expect(instruction).toHaveText('Next: On GitHub, press Ctrl+V to paste the code.');
+    await expect(instruction).toHaveText(`Next: On GitHub, press ${pasteShortcut} to paste the code.`);
     expect((await worker.evaluate(() => globalThis.openedAt)) - visibleAt).toBeGreaterThanOrEqual(3900);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     expect(await code.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
@@ -107,14 +110,14 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     await expect(page.locator('#open-device-page')).toBeVisible();
     await page.locator('#copy-code').click();
-    await expect(page.locator('#device-copy-status')).toContainText('Ctrl+C');
+    await expect(page.locator('#device-copy-status')).toContainText(copyShortcut);
     await expect(page.locator('#device-handoff-status')).toHaveText('Next: Copy the selected code, then open GitHub.');
     const selection = await page.locator('#device-code').evaluate(node => ({ value: node.value, start: node.selectionStart, end: node.selectionEnd }));
     expect(selection.end - selection.start).toBe(selection.value.length);
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.testCopiedCode = text; }; });
     await page.locator('#copy-code').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Open GitHub, then press Ctrl+V to paste the code.');
+    await expect(page.locator('#device-handoff-status')).toHaveText(`Next: Open GitHub, then press ${pasteShortcut} to paste the code.`);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.rejectOpen = true; });

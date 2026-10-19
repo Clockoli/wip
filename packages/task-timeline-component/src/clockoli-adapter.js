@@ -73,6 +73,14 @@
     .details a { color: var(--fgColor-accent, var(--ck-accent, #315ecf)); }
     .details-pointer { background: var(--fgColor-accent, var(--ck-accent, #0969da)); }
     .details-pointer::after { border-right-color: var(--fgColor-accent, var(--ck-accent, #0969da)); border-bottom-color: var(--fgColor-accent, var(--ck-accent, #0969da)); }
+    .clockoli-week-drag-ghost {
+      position: fixed; z-index: 2147483647; pointer-events: none;
+      padding: 6px 10px; border-radius: 6px; max-width: 200px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: var(--fgColor-accent, var(--ck-accent, #315ecf));
+      color: var(--tt-inverse-fg); box-shadow: 0 3px 12px #0004;
+    }
+    .task.clockoli-week-preview, .calendar-task.clockoli-week-preview { opacity: .72; pointer-events: none; }
     .task {
       --clockoli-task-background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel));
       --clockoli-task-accent: color-mix(in srgb, var(--clockoli-task-background) 78%, black);
@@ -236,6 +244,7 @@
     let deferredUpdate = null;
     let deferredFlushTimer = null;
     let timelineApi = null;
+    let weekDrag = null;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -286,7 +295,7 @@
     }
 
     function notifyView() {
-      if (destroyed) return;
+      if (destroyed || weekDrag?.zoomVisibleDays != null) return;
       const view = viewFromComponent();
       props = { ...props, view };
       if (typeof props.onViewChange === 'function') props.onViewChange(view);
@@ -771,6 +780,208 @@
       return Boolean(timeline.editState || timeline.calendarEditState || timeline.dragState || pendingEdits.size);
     }
 
+    // Hand off a move to the week loader only after a sustained edge hover.
+    // The component's normal edit remains in charge until that point; its
+    // setTasks() cannot survive a week read, so the handoff owns the drop.
+    let edgeTimer = null, edgeDirection = 0, edgePointer = null;
+    const clearEdge = () => {
+      if (edgeTimer !== null) clearTimeout(edgeTimer);
+      edgeTimer = null;
+      edgeDirection = 0;
+      edgePointer = null;
+    };
+    const ghost = document.createElement('div');
+    ghost.className = 'clockoli-week-drag-ghost';
+    const placeGhost = event => {
+      ghost.style.left = `${event.clientX + 12}px`;
+      ghost.style.top = `${event.clientY + 12}px`;
+    };
+    const edgeOf = event => {
+      const viewport = timeline.getViewMode() === 'calendar' ? timeline.calendarViewport : timeline.viewport;
+      const rect = viewport.getBoundingClientRect();
+      if (event.clientY < rect.top || event.clientY > rect.bottom) return 0;
+      if (event.clientX <= 32 || (event.clientX >= rect.left && event.clientX <= rect.left + 32)) return -1;
+      if (event.clientX >= global.innerWidth - 32
+        || (event.clientX <= rect.right && event.clientX >= rect.right - 32)) return 1;
+      return 0;
+    };
+    const weekPlacement = (event, drag) => {
+      if (!drag.ready || drag.loading) return null;
+      const range = props.totalRange;
+      if (!range?.start || !range?.end) return null;
+      const viewport = timeline.getViewMode() === 'calendar' ? timeline.calendarViewport : timeline.viewport;
+      const rect = viewport.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right
+        || event.clientY < rect.top || event.clientY > rect.bottom) return null;
+      const pointerTime = timeline.getViewMode() === 'calendar'
+        ? timeline._calendarPointerToTime(event.clientX, event.clientY)
+        : timeline.xToTime(timeline._scrollLeftNow() + event.clientX - rect.left);
+      const step = timeline.getViewMode() === 'calendar' ? 60_000 : 5 * 60_000;
+      const start = Math.round((pointerTime - drag.offset) / step) * step;
+      const end = start + drag.end - drag.start;
+      if (!Number.isFinite(start) || start < range.start || end > range.end
+        || timeline.tasks.some(task => task._key !== String(drag.item.id) && start < task.end && end > task.start)) return null;
+      return { start, end };
+    };
+    const clearWeekPreview = drag => {
+      if (drag.previewStart == null) return;
+      drag.previewStart = null;
+      drag.previewEnd = null;
+      reconcile(props);
+    };
+    const markWeekPreview = drag => {
+      if (drag.previewStart == null) return;
+      for (const element of timeline.shadow.querySelectorAll('[data-task-key]')) {
+        if (element.dataset.taskKey === String(drag.item.id)) {
+          element.classList.add('clockoli-week-preview');
+          element.dataset.previewStart = String(drag.previewStart);
+        }
+      }
+    };
+    const fitDraggedWeek = drag => {
+      if (drag.zoomVisibleDays == null) return;
+      // Minimum task width otherwise expands short records and clips Sunday.
+      timeline.setMinTaskWidth(1);
+      const weekDays = Math.max(7, (props.totalRange.end - props.totalRange.start) / DAY_MS);
+      timeline.options.maxVisibleDays = Math.max(drag.maxVisibleDays, weekDays);
+      timeline.setVisibleDays(weekDays);
+      timeline._setScrollLeft(timeline.timeToX(props.totalRange.start));
+    };
+    const restoreDraggedZoom = (drag, placement) => {
+      if (drag.zoomVisibleDays == null) return;
+      const range = props.totalRange;
+      const focus = placement ? (placement.start + placement.end) / 2
+        : (range.start + range.end) / 2;
+      timeline.setVisibleDays(drag.zoomVisibleDays);
+      timeline.options.maxVisibleDays = drag.maxVisibleDays;
+      timeline.setMinTaskWidth(drag.minTaskWidth);
+      timeline._setScrollLeft(timeline.timeToX(focus) - timeline._viewportWidthNow() / 2);
+      markWeekPreview(drag);
+      notifyView();
+    };
+    const showWeekPreview = (event, drag) => {
+      const placement = weekPlacement(event, drag);
+      ghost.hidden = Boolean(placement);
+      if (!placement) { clearWeekPreview(drag); return; }
+      if (drag.previewStart === placement.start && timeline._findTask(String(drag.item.id))) {
+        drag.previewX = event.clientX;
+        drag.previewY = event.clientY;
+        return;
+      }
+      const preview = { ...drag.item, startedAt: placement.start, endedAt: placement.end, isEditable: false };
+      try {
+        reconcile({ ...props, items: [...props.items.filter(item => item.id !== drag.item.id), preview] });
+        drag.previewStart = placement.start;
+        drag.previewEnd = placement.end;
+        drag.previewX = event.clientX;
+        drag.previewY = event.clientY;
+        markWeekPreview(drag);
+      } catch (error) {
+        drag.previewStart = null;
+        ghost.hidden = false;
+        props.onError?.(error, { action: 'week-preview', source: 'clockoli-adapter' });
+      }
+    };
+    const weekPointerMove = event => {
+      if (!props.weeklyCalendar || typeof props.onWeekEdgeNavigate !== 'function') return;
+      const state = timeline.getViewMode() === 'calendar' ? timeline.calendarEditState : timeline.editState;
+      if (weekDrag) {
+        if (event.pointerId !== weekDrag.pointerId) return;
+        placeGhost(event);
+        showWeekPreview(event, weekDrag);
+      } else if (!state || event.pointerId !== state.pointerId) return;
+      else if (state.mode !== 'move' || !state.didMutate) {
+        clearEdge(); return;
+      }
+      const direction = edgeOf(event);
+      if (direction === edgeDirection) return;
+      clearEdge();
+      if (!direction || weekDrag?.loading) return;
+      edgeDirection = direction;
+      edgePointer = event.pointerId;
+      edgeTimer = setTimeout(async () => {
+        edgeTimer = null;
+        if (edgeDirection !== direction) return;
+        if (props.canNavigateWeekEdge?.(direction) === false) { clearEdge(); return; }
+        if (!weekDrag) {
+          const current = timeline.getViewMode() === 'calendar' ? timeline.calendarEditState : timeline.editState;
+          if (!current || current.pointerId !== edgePointer || current.mode !== 'move') return;
+          if (pendingEdits.size) {
+            timeline.editCanvasWidth = 0;
+            timeline.calendarEditState = null;
+            timeline._calendarPinnedVerticalMap = null;
+            timeline._restoreState(current.beforeState);
+            styleTasks();
+            clearEdge();
+            props.onError?.(new Error('Wait for the previous edit to finish before moving to another week.'),
+              { action: 'week-navigation', source: 'clockoli-adapter' });
+            return;
+          }
+          const item = sourceItem(current.key);
+          if (!item || !permissionsFor(item).move) return;
+          const originalStart = Number(item.originalStartedAt ?? item.startedAt);
+          const originalEnd = Number(item.originalEndedAt ?? item.endedAt);
+          weekDrag = { pointerId: current.pointerId, item, start: originalStart,
+            end: originalEnd,
+            offset: Math.max(0, Math.min(originalEnd - originalStart - 1,
+              current.pointerTime - originalStart)), loading: false, ready: false,
+            zoomVisibleDays: timeline.getViewMode() === 'timeline' ? timeline.getTargetVisibleDays() : null,
+            minTaskWidth: timeline.minTaskWidth, maxVisibleDays: timeline.options.maxVisibleDays };
+          timeline.editState = null;
+          timeline.editCanvasWidth = 0;
+          timeline.calendarEditState = null;
+          timeline._calendarPinnedVerticalMap = null;
+          ghost.textContent = item.title || 'Moving entry';
+          timeline.shadow.append(ghost);
+          placeGhost(event);
+          timelineApi.update({ items: props.items });
+        }
+        const drag = weekDrag;
+        drag.loading = true;
+        drag.ready = false;
+        clearEdge();
+        try {
+          drag.ready = await props.onWeekEdgeNavigate(direction) === true;
+          if (weekDrag === drag && drag.ready) fitDraggedWeek(drag);
+        } catch (error) {
+          props.onError?.(error, { action: 'week-navigation', source: 'clockoli-adapter' });
+        } finally {
+          drag.loading = false;
+          if (weekDrag === drag && !drag.ready) {
+            ghost.remove(); weekDrag = null;
+            restoreDraggedZoom(drag, null);
+          }
+        }
+      }, 650);
+    };
+    const weekPointerEnd = event => {
+      if (event.pointerId !== (weekDrag?.pointerId ?? edgePointer)) return;
+      clearEdge();
+      if (!weekDrag) return;
+      const drag = weekDrag;
+      weekDrag = null;
+      ghost.remove();
+      const placement = event.type === 'pointercancel' || drag.loading || !drag.ready ? null
+        : drag.previewStart != null && event.clientX === drag.previewX && event.clientY === drag.previewY
+          ? { start: drag.previewStart, end: drag.previewEnd } : weekPlacement(event, drag);
+      if (!placement) {
+        clearWeekPreview(drag);
+        restoreDraggedZoom(drag, null);
+        return;
+      }
+      restoreDraggedZoom(drag, placement);
+      void Promise.resolve().then(() => props.onEditCommit({ id: drag.item.id,
+        startedAt: placement.start, endedAt: placement.end, kind: 'move' }))
+        .then(value => { if (value === false) throw new Error('The entry could not be moved. Reload the week and try again.'); })
+        .catch(error => {
+          clearWeekPreview(drag);
+          props.onError?.(error, { action: 'edit', source: 'clockoli-adapter' });
+        });
+    };
+    global.addEventListener('pointermove', weekPointerMove);
+    global.addEventListener('pointerup', weekPointerEnd);
+    global.addEventListener('pointercancel', weekPointerEnd);
+
     function scheduleDeferredFlush() {
       if (destroyed || !deferredUpdate || deferredFlushTimer !== null) return;
       // The component processes pointerup before us; commit callbacks then
@@ -801,7 +1012,7 @@
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const rememberedCenter = Number(props.view?.focusedAt);
       const anchorTime = previousMode === 'timeline'
-        ? previousScroll > 1 && timeline.segments.length
+        ? timeline.segments.length && (previousScroll > 1 || weekDrag?.zoomVisibleDays != null)
           ? timeline.xToTime(previousScroll + previousWidth / 2)
           : Number.isFinite(rememberedCenter) && rememberedCenter > 0
             ? rememberedCenter
@@ -883,6 +1094,12 @@
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
         global.removeEventListener('pointerup', onGestureEnd);
         global.removeEventListener('pointercancel', onGestureEnd);
+        global.removeEventListener('pointermove', weekPointerMove);
+        global.removeEventListener('pointerup', weekPointerEnd);
+        global.removeEventListener('pointercancel', weekPointerEnd);
+        clearEdge();
+        ghost.remove();
+        weekDrag = null;
         deferredUpdate = null;
         timeline.destroy();
       },

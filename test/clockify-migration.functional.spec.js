@@ -87,7 +87,7 @@ test('mock Clockify report injects the real migration controls and arms capture 
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
       channel: 'chromium',
-      headless: false,
+      headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const page = await context.newPage();
@@ -143,7 +143,7 @@ test('migration preview recovers a pending job and shows its final outcome witho
   let context;
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -184,7 +184,7 @@ test('a live partial result keeps the error heading after completed progress ren
   let context;
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -205,7 +205,7 @@ test('real extension IndexedDB atomically claims and checkpoints a migration acr
   let context;
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -279,7 +279,7 @@ test(`blocked migration (${reason}) offers explicit repair and reloads the resto
   let context;
   try {
     context = await chromium.launchPersistentContext(profileDirectory, {
-      channel: 'chromium', headless: false,
+      channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

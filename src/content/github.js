@@ -814,6 +814,33 @@
     return navigation;
   }
 
+  function updateWeekNavigationLabel() {
+    const { startDate, endDate } = timesRange();
+    for (const scope of [shadow, fullWidthPopupShadow]) {
+      const navigation = scope?.querySelector('.week-navigation');
+      const label = navigation?.querySelector('.week-navigation-label');
+      if (label) label.textContent = `${startDate} – ${endDate}`;
+      const next = navigation?.querySelector('[aria-label="Next week"]');
+      if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
+    }
+  }
+
+  async function navigateDraggedWeek(direction) {
+    const target = new Date(weekWindow().start);
+    target.setDate(target.getDate() + 7 * direction);
+    if (target.getTime() > weekWindow(Date.now()).start) return false;
+    const start = target.getTime();
+    const end = new Date(target);
+    end.setDate(end.getDate() + 7);
+    const range = { start, end: end.getTime() };
+    suppressCalendarNavigate = true;
+    try { timelineInstance?.setCalendarRange?.(range); }
+    finally { suppressCalendarNavigate = false; }
+    const loaded = await loadActivityCalendarWeek(range);
+    updateWeekNavigationLabel();
+    return loaded === true && weekWindow().start === start;
+  }
+
   function updateCalendarWeekLoading() {
     const active = calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null;
     for (const scope of [shadow, fullWidthPopupShadow]) {
@@ -988,7 +1015,7 @@
       if (!refreshed || (timesMode && activityViewMode === 'list')) renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
       if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
-      return true;
+      return !data.partial;
     } catch (error) {
       if (loadId === activityCalendarLoadId) {
         selectedWeekStart = previousWeek;
@@ -2307,6 +2334,8 @@
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
         savedDescription: entry.description || '',
+        originalStartedAt: new Date(entry.startedAt).getTime(),
+        originalEndedAt: entry._active ? null : new Date(entry.endedAt).getTime(),
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
@@ -2814,6 +2843,8 @@
         weeklyCalendar: true,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
+        canNavigateWeekEdge: direction => direction < 0 || weekWindow().start < weekWindow(Date.now()).start,
+        onWeekEdgeNavigate: direction => navigateDraggedWeek(direction),
         onViewModeChange: mode => {
           if (timesMode) {
             activityViewMode = mode;
@@ -2874,8 +2905,9 @@
         },
         onEditCommit: async edit => {
           if (!timesMode && completeVisualWeekStart !== weekWindow().start) return false;
-          const entry = timelineEntriesById.get(edit.id);
-          if (!entry) return;
+          const entry = timelineEntriesById.get(edit.id)
+            || recent.find(item => !item._active && `entry:${item.id}` === edit.id);
+          if (!entry) return false;
           if (entry._active) {
             if (edit.kind !== 'resize-left') return;
             try {

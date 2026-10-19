@@ -37,6 +37,23 @@ async function mount(page, overrides = {}) {
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
       totalRange: overrides.totalRange,
       weeklyCalendar: overrides.weeklyCalendar,
+      onWeekEdgeNavigate: overrides.edgeNavigation ? async direction => {
+        window.__calls.push(['edge', direction]);
+        if (overrides.deferSecondEdge && window.__calls.filter(call => call[0] === 'edge').length === 2) {
+          await new Promise(resolve => (window.__edgeNavigationResolves ||= []).push(resolve));
+        }
+        const week = window.__timeline.getCalendarRange();
+        const start = new Date(week.start);
+        start.setDate(start.getDate() + 7 * direction);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 7);
+        window.__timeline.update({ items: overrides.targetItems || [],
+          domainStart: start.getTime(), totalRange: { start: start.getTime(), end: end.getTime() },
+          view: { start: start.getTime(), end: end.getTime(), focusedAt: start.getTime(),
+            visibleDays: overrides.targetVisibleDays ?? 2 } });
+        window.__timeline.setCalendarRange({ start: start.getTime(), end: end.getTime() });
+        return true;
+      } : undefined,
       onCalendarNavigate: overrides.trackCalendarNavigation ? range => window.__calls.push(['navigate', range.start, range.end]) : undefined,
       onStart(item) {
         window.__lastStartedTitle = item.title;
@@ -51,6 +68,7 @@ async function mount(page, overrides = {}) {
       },
       onEditCommit(edit) {
         window.__calls.push(['edit', edit.id, edit.kind]);
+        if (overrides.edgeNavigation) window.__edgeEdit = edit;
         if (overrides.deferEdit) return new Promise((resolve, reject) => window.__editSettlers.push({ resolve, reject }));
         if (overrides.persistPending) {
           window.__items = window.__items.map(item => item.id === edit.id ? { ...item, isPending: true } : item);
@@ -71,6 +89,407 @@ async function mount(page, overrides = {}) {
     return now;
   }, { hour: HOUR, overrides });
 }
+
+test('holding a dragged Calendar entry at a week edge navigates and drops in the loaded week', async ({ page }) => {
+  const now = new Date(2026, 9, 16, 16).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(now) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart } });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const viewport = page.locator('#timeline .calendar-viewport');
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+  const box = await source.boundingBox();
+  const edge = await viewport.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await page.evaluate(() => dispatchEvent(new PointerEvent('pointermove', {
+    pointerId: 78, clientX: 0, clientY: 0, bubbles: true,
+  })));
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([]);
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+    { timeout: 1000 }).toBe(true);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([['edge', -1]]);
+  await expect(page.locator('#timeline .calendar-task[data-task-key="entry:b"]')).toBeVisible();
+  await page.mouse.move(edge.x + edge.width / 2, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .calendar-task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  expect(await page.evaluate(() => window.__edgeEdit)).toBeUndefined();
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit').length)).toBe(1);
+  const edit = await page.evaluate(() => window.__edgeEdit);
+  expect(edit.id).toBe('entry:a');
+  expect(edit.endedAt - edit.startedAt).toBe(HOUR);
+  expect(edit.startedAt).toBeGreaterThanOrEqual(new Date(2026, 9, 5).getTime());
+  expect(edit.endedAt).toBeLessThanOrEqual(monday);
+  expect(edit.endedAt <= neighborStart || edit.startedAt >= neighborStart + HOUR).toBe(true);
+  expect(await page.evaluate(() => window.__timeline.getCalendarRange().start)).toBe(new Date(2026, 9, 5).getTime());
+});
+
+test('holding a Timeline move at the left edge loads the previous week before committing', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const previous = new Date(2026, 9, 5).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
+  expect(await page.evaluate(() => window.__timeline.__timeline.getVisibleDays())).toBe(2);
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const edge = await page.locator('#timeline .viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+    { timeout: 1100 }).toBe(true);
+  await expect(page.locator('#timeline .task[data-task-key="entry:b"]')).toBeVisible();
+  const overview = await page.evaluate(() => ({ days: window.__timeline.__timeline.getVisibleDays(),
+    view: window.__timeline.getView() }));
+  expect(overview.days).toBe(7);
+  expect(overview.view.start).toBeCloseTo(previous, -3);
+  expect(overview.view.end).toBeCloseTo(monday, -3);
+  await page.mouse.move(edge.x + edge.width * 0.7, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__edgeEdit?.id)).toBe('entry:a');
+  const edit = await page.evaluate(() => window.__edgeEdit);
+  const restoredView = await page.evaluate(() => window.__timeline.getView());
+  expect(await page.evaluate(() => window.__timeline.__timeline.getVisibleDays())).toBe(2);
+  expect(restoredView.start).toBeLessThanOrEqual(edit.startedAt);
+  expect(restoredView.end).toBeGreaterThanOrEqual(edit.endedAt);
+  expect(edit.startedAt).toBeGreaterThanOrEqual(previous);
+  expect(edit.endedAt).toBeLessThanOrEqual(monday);
+  expect(edit.endedAt - edit.startedAt).toBe(HOUR);
+  expect(edit.endedAt <= neighborStart || edit.startedAt >= neighborStart + HOUR).toBe(true);
+});
+
+test('cancelling a Timeline cross-week drag restores its original zoom without saving', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.getVisibleDays()),
+    { timeout: 1100 }).toBe(7);
+  await expect(page.locator('#timeline .task[data-task-key="entry:b"]')).toBeVisible();
+  await page.mouse.move(viewport.x + viewport.width * 0.7, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.move(viewport.x + viewport.width + 20, box.y + box.height / 2);
+  await page.mouse.up();
+  expect(await page.evaluate(() => ({ days: window.__timeline.__timeline.getVisibleDays(),
+    minWidth: window.__timeline.__timeline.minTaskWidth }))).toEqual({ days: 2, minWidth: 30 });
+  expect(await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    return { reserved: timeline.editCanvasWidth,
+      excess: timeline.totalWidth - Math.max(timeline.viewport.clientWidth, timeline.segments.at(-1).x1) };
+  })).toEqual({ reserved: 0, excess: 0 });
+  await expect(page.locator('#timeline .task[data-task-key="entry:a"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__edgeEdit)).toBeUndefined();
+});
+
+test('cross-week drag retains the full duration of an entry clipped at the displayed Monday', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const originalStart = monday - HOUR;
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Overnight', startedAt: monday, endedAt: monday + HOUR,
+      originalStartedAt: originalStart, originalEndedAt: monday + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart,
+      endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: monday, visibleDays: 2 } });
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+    { timeout: 1100 }).toBe(true);
+  await expect(page.locator('#timeline .task[data-task-key="entry:b"]')).toBeVisible();
+  await page.mouse.move(viewport.x + viewport.width * 0.7, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__edgeEdit?.id)).toBe('entry:a');
+  const edit = await page.evaluate(() => window.__edgeEdit);
+  expect(edit.endedAt - edit.startedAt).toBe(2 * HOUR);
+  expect(edit.endedAt).toBeLessThanOrEqual(monday);
+});
+
+test('releasing on a cached preview while the next week loads never queues a move', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true, deferSecondEdge: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart,
+      endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const viewport = await page.locator('#timeline .viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .task[data-task-key="entry:b"]')).toBeVisible();
+  await page.mouse.move(viewport.x + 24, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edge').length),
+    { timeout: 1100 }).toBe(2);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__edgeEdit)).toBeUndefined();
+  await page.evaluate(() => window.__edgeNavigationResolves[0]());
+  await expect.poll(() => page.evaluate(() => window.__timeline.getCalendarRange().start))
+    .toBe(new Date(2026, 8, 28).getTime());
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toEqual([]);
+});
+
+test('a pending edit cannot hand off a drag before the destination week is applied', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const editingStart = new Date(2026, 9, 16, 10).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true, deferEdit: true,
+    items: [
+      { id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true },
+      { id: 'entry:b', title: 'Saving', startedAt: editingStart, endedAt: editingStart + HOUR, isEditable: true },
+    ],
+    targetItems: [],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart, visibleDays: 2 } });
+  await page.locator('#timeline .task[data-task-key="entry:b"]').click();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  const pendingStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start);
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+  await source.click();
+  const box = await source.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await page.waitForTimeout(850);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([]);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edit').map(call => call[1])))
+    .toEqual(['entry:b']);
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(sourceStart);
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start)).toBe(pendingStart);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'error').map(call => call[1])))
+    .toEqual(['week-navigation']);
+  await page.evaluate(() => window.__editSettlers[0].resolve(true));
+});
+
+test('Calendar cancels a cross-week drag while an earlier edit is pending', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const editingStart = new Date(2026, 9, 16, 10).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true, deferEdit: true,
+    items: [
+      { id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true },
+      { id: 'entry:b', title: 'Saving', startedAt: editingStart, endedAt: editingStart + HOUR, isEditable: true },
+    ],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart } });
+  await page.locator('#timeline .task[data-task-key="entry:b"]').click();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  const pendingStart = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+  const box = await source.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await page.waitForTimeout(850);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([]);
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edit').map(call => call[1])))
+    .toEqual(['entry:b']);
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').start)).toBe(sourceStart);
+  expect(await page.evaluate(() => window.__timeline.__timeline._findTask('entry:b').start)).toBe(pendingStart);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'error').map(call => call[1])))
+    .toEqual(['week-navigation']);
+  await page.evaluate(() => window.__editSettlers[0].resolve(true));
+});
+
+test.describe('Timeline fall-back week', () => {
+  test.use({ timezoneId: 'Europe/Berlin' });
+
+  test('fits the extra DST hour during a drag and restores the normal zoom on release', async ({ page }) => {
+    const monday = new Date('2026-10-26T00:00:00+01:00').getTime();
+    const previous = new Date('2026-10-19T00:00:00+02:00').getTime();
+    const sourceStart = new Date('2026-10-28T10:00:00+01:00').getTime();
+    await page.clock.install({ time: new Date('2026-10-29T16:00:00+01:00') });
+    await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+      items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+      targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: previous + 3 * 24 * HOUR,
+        endedAt: previous + 3 * 24 * HOUR + HOUR, isEditable: true }],
+      view: { start: monday, end: new Date('2026-11-02T00:00:00+01:00').getTime(),
+        focusedAt: sourceStart, visibleDays: 2 } });
+    const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+    await source.scrollIntoViewIfNeeded();
+    const box = await source.boundingBox();
+    const viewport = await page.locator('#timeline .viewport').boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+    await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+      { timeout: 1100 }).toBe(true);
+    await expect(page.locator('#timeline .task[data-task-key="entry:b"]')).toBeVisible();
+    const overview = await page.evaluate(() => ({ days: window.__timeline.__timeline.getVisibleDays(),
+      view: window.__timeline.getView() }));
+    expect(overview.days).toBeCloseTo((monday - previous) / (24 * HOUR), 5);
+    expect(overview.view.start).toBeCloseTo(previous, -3);
+    expect(overview.view.end).toBeGreaterThanOrEqual(monday - 1_000);
+    await page.mouse.move(viewport.x + viewport.width * 0.7, box.y + box.height / 2, { steps: 5 });
+    await expect(page.locator('#timeline .task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__edgeEdit?.id)).toBe('entry:a');
+    expect(await page.evaluate(() => ({ days: window.__timeline.__timeline.getVisibleDays(),
+      maximum: window.__timeline.__timeline.options.maxVisibleDays }))).toEqual({ days: 2, maximum: 7 });
+  });
+});
+
+test('holding a Calendar move at the right edge loads the next week', async ({ page }) => {
+  const previous = new Date(2026, 9, 5).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 7, 10).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    view: { start: previous, end: monday, focusedAt: sourceStart } });
+  await page.evaluate(([start, end]) => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.setCalendarRange({ start, end });
+  }, [previous, monday]);
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(await page.evaluate(() => innerWidth - 1), box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.find(call => call[0] === 'edge')?.[1]),
+    { timeout: 1100 }).toBe(1);
+  await page.mouse.move(edge.x + edge.width * 0.35, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .calendar-task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__edgeEdit?.id)).toBe('entry:a');
+  const edit = await page.evaluate(() => window.__edgeEdit);
+  expect(edit.startedAt).toBeGreaterThanOrEqual(monday);
+  expect(edit.endedAt).toBeLessThanOrEqual(new Date(2026, 9, 19).getTime());
+});
+
+test('dropping outside the loaded week after edge navigation does not save', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart } });
+  await page.evaluate(([start, end]) => {
+    window.__timeline.setViewMode('calendar');
+    window.__timeline.setCalendarRange({ start, end });
+  }, [monday, new Date(2026, 9, 19).getTime()]);
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await source.scrollIntoViewIfNeeded();
+  const box = await source.boundingBox();
+  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + 5, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+    { timeout: 5000 }).toBe(true);
+  await page.mouse.move(edge.x + edge.width * 0.5, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .calendar-task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.move(edge.x + edge.width + 20, box.y + box.height / 2);
+  await page.mouse.up();
+  await expect(page.locator('#timeline .clockoli-week-drag-ghost')).toHaveCount(0);
+  await expect(page.locator('#timeline .calendar-task[data-task-key="entry:a"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__edgeEdit)).toBeUndefined();
+});
+
+test('a rejected cross-week drop removes the preview without changing the destination week', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const sourceStart = new Date(2026, 9, 14, 10).getTime();
+  const neighborStart = new Date(2026, 9, 7, 14).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true, deferEdit: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: sourceStart, endedAt: sourceStart + HOUR, isEditable: true }],
+    targetItems: [{ id: 'entry:b', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: sourceStart } });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const source = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await source.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+  const box = await source.boundingBox();
+  const edge = await page.locator('#timeline .calendar-viewport').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(1, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge'))).toBe(true);
+  await page.mouse.move(edge.x + edge.width / 2, box.y + box.height / 2, { steps: 5 });
+  await expect(page.locator('#timeline .calendar-task.clockoli-week-preview[data-task-key="entry:a"]')).toBeVisible();
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__editSettlers.length)).toBe(1);
+  await page.evaluate(() => window.__editSettlers[0].reject(new Error('Rejected move')));
+  await expect(page.locator('#timeline .calendar-task[data-task-key="entry:a"]')).toHaveCount(0);
+  await expect(page.locator('#timeline .calendar-task[data-task-key="entry:b"]')).toBeVisible();
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'error'))).toEqual([['error', 'edit', 'Rejected move']]);
+});
+
+test('Timeline edge hover requires a held move and pointer cancellation does not save', async ({ page }) => {
+  const now = new Date(2026, 9, 16, 16).getTime();
+  const monday = new Date(2026, 9, 12).getTime();
+  const start = new Date(2026, 9, 16, 10).getTime();
+  await page.clock.install({ time: new Date(now) });
+  await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: start, endedAt: start + HOUR, isEditable: true }],
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: start } });
+  const viewport = page.locator('#timeline .viewport');
+  const block = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await block.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const box = await block.boundingBox();
+  const edge = await viewport.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + 5, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.move(edge.x + edge.width / 2, box.y + box.height / 2);
+  await page.waitForTimeout(800);
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([]);
+  await page.mouse.move(edge.x + 5, box.y + box.height / 2, { steps: 5 });
+  await expect.poll(() => page.evaluate(() => window.__calls.some(call => call[0] === 'edge')),
+    { timeout: 5000 }).toBe(true);
+  await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    dispatchEvent(new PointerEvent('pointercancel', { pointerId: timeline.editState?.pointerId ?? 1, bubbles: true }));
+  });
+  expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edit'))).toEqual([]);
+  await page.mouse.up();
+});
 
 for (const mode of ['timeline', 'calendar']) {
   test(`drags a completed entry through its neighbor into free space in ${mode}`, async ({ page }) => {
