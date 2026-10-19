@@ -720,7 +720,8 @@ test('Activity follows the theme switch in every shadow-root surface without a r
     await expect(panel).toHaveCSS('background-color', 'rgb(13, 17, 23)');
     await expect(activity.locator('.times-page')).toHaveCSS('background-color', 'rgb(13, 17, 23)');
     await expect(activity.locator('.calendar-day-header:not(.today)').first()).toHaveCSS('background-color', 'rgb(21, 27, 35)');
-    await expect(page.locator('.running-status-recent-task').first()).toBeVisible();
+    await expect(page.locator('.running-status-quick-label')).toBeVisible();
+    await expect(page.locator('.running-status-idle')).toHaveText('Not tracking');
 
     // A manual light selection must override a dark OS preference as well.
     await page.emulateMedia({ colorScheme: 'dark' });
