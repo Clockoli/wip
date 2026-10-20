@@ -905,11 +905,28 @@
     return `Total: ${minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`}`;
   }
 
+  function updateActivityWeekSummary() {
+    if (!timesMode || !shadow) return;
+    const section = shadow.querySelector('.activity-weekly-summary');
+    if (!section) return;
+    const range = timesRange();
+    const span = section.querySelector('.activity-weekly-range');
+    if (span) span.textContent = `${range.startDate} – ${range.endDate}`;
+    const week = weekWindow(), now = Math.min(timelineNow(), week.end - 1);
+    const summary = recentLoaded && !loadingRecent
+      ? globalThis.ClockoliWeeklySummary?.summarize(popupTimelineItems(week.start, now).items, week.start, week.end, now)
+      : null;
+    for (const element of section.querySelectorAll('[data-stat]')) {
+      element.textContent = summary ? String(summary[element.getAttribute('data-stat')]) : '—';
+    }
+  }
+
   function updateListWeekTotal() {
     for (const scope of [shadow, fullWidthPopupShadow]) {
       const total = scope?.querySelector('.times-list-total,.popup-list-total');
       if (total) total.textContent = listWeekTotalText();
     }
+    updateActivityWeekSummary();
   }
 
   function focusActivityCalendarPeriod() {
@@ -1387,7 +1404,7 @@
     set('box-sizing', 'border-box');
     set('position', fullWidth ? 'fixed' : 'relative');
     set('display', fullWidth || wide ? 'block' : 'inline-flex');
-    if (wide) set('width', '100%');
+    if (wide) { set('width', '100%'); set('color-scheme', 'inherit'); }
     if (fullWidth) {
       set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
       set('width', '100vw'); set('pointer-events', 'none');
@@ -2161,6 +2178,36 @@
     });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
+    const overview = el('div', undefined, 'activity-overview-heading');
+    const overviewBadge = el('span', undefined, 'activity-overview-icon');
+    overviewBadge.append(icon('calendar', 'M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM1.5 6v7.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6h-13Z', 20));
+    const overviewCopy = el('div', undefined, 'activity-overview-copy');
+    overviewCopy.append(el('h2', 'Activity'), el('p', 'Track time and manage your work', 'muted'));
+    overview.append(overviewBadge, overviewCopy);
+    const weeklySummary = el('section', undefined, 'activity-weekly-summary');
+    weeklySummary.setAttribute('aria-label', 'Weekly summary');
+    weeklySummary.hidden = activityViewMode !== 'calendar';
+    const summaryHeading = el('div', undefined, 'activity-weekly-heading');
+    summaryHeading.append(el('span', 'WEEKLY SUMMARY', 'activity-weekly-label'), el('span', undefined, 'activity-weekly-range'));
+    weeklySummary.append(summaryHeading);
+    const stats = el('div', undefined, 'activity-weekly-cards');
+    const definitions = [
+      ['total', 'Total tracked', STOPWATCH_PATH],
+      ['average', 'Daily average', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 8 3Zm.75 1.5h-1.5V8c0 .2.08.39.22.53l2.25 2.25a.75.75 0 0 0 1.06-1.06L8.75 7.69V4.5Z'],
+      ['entries', 'Time entries', 'M4 1h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2Zm0 1.5a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V3a.5.5 0 0 0-.5-.5H4ZM5 5h6v1.5H5V5Zm0 3h6v1.5H5V8Zm0 3h4v1.5H5V11Z'],
+      ['tasks', 'Tasks worked on', 'M2 2h12v12H2V2Zm1.5 1.5v9h9v-9h-9Zm2 2h5V7h-5V5.5Zm0 3h5V10h-5V8.5Z'],
+    ];
+    for (const [key, label, shape] of definitions) {
+      const card = el('div', undefined, 'activity-weekly-card');
+      const badge = el('span', undefined, 'activity-weekly-icon');
+      badge.append(icon(key, shape, 19));
+      const copy = el('div', undefined, 'activity-weekly-copy');
+      const value = el('strong', '—', 'activity-weekly-value');
+      value.setAttribute('data-stat', key);
+      copy.append(value, el('span', label, 'activity-weekly-name'));
+      card.append(badge, copy); stats.append(card);
+    }
+    weeklySummary.append(stats);
     const views = el('div', undefined, 'times-view-modes');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
     for (const mode of ['timeline', 'calendar', 'list']) {
@@ -2190,7 +2237,9 @@
     }
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
-    body.append(views, toolbar, weekNavigation(), listTotal);
+    const headingRow = el('div', undefined, 'activity-heading-row');
+    headingRow.append(overview, views);
+    body.append(headingRow, weeklySummary, toolbar, weekNavigation(), listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2306,6 +2355,7 @@
         id,
         rowId: projectRowId(projectName),
         url: taskUrlOf(entry),
+        taskIdentity: storedTaskIdentityOf(entry),
         title: taskTitleOf(entry) || storedTaskIdentityOf(entry) || 'Untitled task',
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
@@ -3762,6 +3812,52 @@
       @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
+
+    // On trusted extension pages, inherit Primer colors from the document instead
+    // of pinning the light/dark values used to isolate the widget on GitHub.
+    // Custom properties inherit across both shadow boundaries into Calendar.
+    if (extensionPageMode) style.textContent += `
+      :host(.times-surface), :host(.popup-surface),
+      :host(.times-surface) > :not(style), :host(.popup-surface) > :not(style),
+      :host(.times-surface) .times-page, :host(.popup-surface) .menu {
+        --fgColor-default:inherit; --fgColor-muted:inherit; --fgColor-accent:inherit; --fgColor-danger:inherit; --bgColor-default:inherit; --bgColor-muted:inherit; --bgColor-inset:inherit; --bgColor-attention-muted:inherit; --bgColor-danger-muted:inherit; --borderColor-default:inherit; --borderColor-muted:inherit; --borderColor-danger-muted:inherit; --focus-outlineColor:inherit; --button-default-borderColor-rest:inherit; --button-default-bgColor-rest:inherit; --button-default-fgColor-rest:inherit; --button-default-bgColor-hover:inherit; --button-default-bgColor-active:inherit; --button-default-bgColor-selected:inherit; --button-default-borderColor-disabled:inherit; --button-default-bgColor-disabled:inherit; --button-default-fgColor-disabled:inherit; --button-primary-borderColor-rest:inherit; --button-primary-bgColor-rest:inherit; --button-primary-fgColor-rest:inherit; --button-primary-bgColor-hover:inherit; --button-primary-bgColor-active:inherit; --button-primary-borderColor-disabled:inherit; --button-primary-bgColor-disabled:inherit; --button-primary-fgColor-disabled:inherit; --button-danger-borderColor-rest:inherit; --button-danger-bgColor-rest:inherit; --button-danger-fgColor-rest:inherit; --button-danger-borderColor-hover:inherit; --button-danger-bgColor-hover:inherit; --button-danger-fgColor-hover:inherit; --button-danger-borderColor-active:inherit; --button-danger-bgColor-active:inherit; --button-danger-fgColor-active:inherit; --button-danger-bgColor-disabled:inherit; --button-danger-fgColor-disabled:inherit; --button-invisible-borderColor-rest:inherit; --button-invisible-bgColor-rest:inherit; --button-invisible-iconColor-rest:inherit; --button-invisible-fgColor-rest:inherit; --button-invisible-borderColor-hover:inherit; --button-invisible-bgColor-hover:inherit; --button-invisible-iconColor-hover:inherit; --button-invisible-bgColor-active:inherit; --button-invisible-borderColor-disabled:inherit; --button-invisible-bgColor-disabled:inherit; --button-invisible-fgColor-disabled:inherit; --control-borderColor-rest:inherit; --control-bgColor-rest:inherit; --control-fgColor-rest:inherit; --control-fgColor-placeholder:inherit; --control-bgColor-hover:inherit; --control-bgColor-active:inherit; --control-borderColor-disabled:inherit; --control-bgColor-disabled:inherit; --control-fgColor-disabled:inherit; --shadow-floating-small:inherit;
+        color-scheme:inherit;
+      }
+    `;
+    if (timesMode) style.textContent += `
+      /* Activity dashboard: one compact information hierarchy above the calendar. */
+      :host(.times-surface) { color-scheme:inherit }
+      :host(.times-surface) .times-page { width:min(1600px,calc(100% - 48px));min-height:calc(100vh - 116px);margin:16px auto 24px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:12px;overflow:hidden;box-shadow:var(--shadow-resting-small) }
+      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:100%;margin:0;border:0;border-radius:0}
+      :host(.times-surface) .times-body {padding:20px 24px 30px}
+      :host(.times-surface) .activity-heading-row {display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:65px;margin:0 0 14px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
+      :host(.times-surface) .activity-overview-heading {grid-column:1;display:flex;align-items:center;gap:13px;margin:0 0 10px}
+      :host(.times-surface) .activity-overview-icon {display:grid;flex:none;width:42px;height:42px;place-items:center;border-radius:11px;background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
+      :host(.times-surface) .activity-overview-copy h2 {margin:0;font-size:22px;font-weight:750;line-height:1.2}
+      :host(.times-surface) .activity-overview-copy .muted {margin:3px 0 0;font-size:12px}
+      :host(.times-surface) .times-view-modes {grid-column:2;align-self:end;margin:0;border-bottom:0}
+      :host(.times-surface) .times-view-button {border-radius:8px 8px 0 0}
+      :host(.times-surface) .times-view-button[aria-pressed="true"] {background:var(--bgColor-success-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .activity-weekly-summary {margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
+      :host(.times-surface) .activity-weekly-summary[hidden] {display:none}
+      :host(.times-surface) .activity-weekly-heading {display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:10px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:11px}
+      :host(.times-surface) .activity-weekly-label {font-weight:750}
+      :host(.times-surface) .activity-weekly-cards {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+      :host(.times-surface) .activity-weekly-card {display:flex;align-items:center;gap:10px;min-width:0;min-height:66px;padding:10px 12px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-default,var(--ck-bg));box-shadow:var(--shadow-resting-small)}
+      :host(.times-surface) .activity-weekly-icon {display:grid;flex:none;width:34px;height:34px;place-items:center;border-radius:50%;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .activity-weekly-card:nth-child(2) .activity-weekly-icon {background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
+      :host(.times-surface) .activity-weekly-copy {display:flex;flex-direction:column;min-width:0;gap:2px}
+      :host(.times-surface) .activity-weekly-value {font-size:18px;font-weight:750;line-height:1.25;font-variant-numeric:tabular-nums;color:var(--fgColor-default,var(--ck-fg))}
+      :host(.times-surface) .activity-weekly-name {font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
+      :host(.times-surface) .popup-timeline-section {margin-bottom:16px}
+      :host(.times-surface) .week-navigation {margin:0 0 2px}
+      :host(.times-surface) .week-navigation-button {border-radius:8px}
+      @media(max-width:940px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:790px){:host(.times-surface) .activity-heading-row{grid-template-columns:1fr;justify-items:center;gap:0}:host(.times-surface) .activity-overview-heading{grid-column:1;justify-self:start}:host(.times-surface) .times-view-modes{grid-column:1}}
+      @media(max-width:700px){:host(.times-surface) .times-page{width:100%;margin:0;border:0;border-radius:0}:host(.times-surface) .times-body{padding:16px 12px 24px}}
+      @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:1fr}:host(.times-surface) .activity-overview-copy h2{font-size:18px}}
+    `;
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
       :host(.popup-surface) .tracker-toolbar { flex-direction:column; align-items:stretch; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
@@ -3838,6 +3934,7 @@
     if (!shadow || !root?.isConnected) return;
     if (timesMode) {
       shadow.append(style, renderTimesPage(preservedActivityTimeline));
+      updateActivityWeekSummary();
       if (preservedActivityTimeline) {
         refreshMountedTimeline();
         timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);

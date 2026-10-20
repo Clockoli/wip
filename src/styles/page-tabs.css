@@ -18,3 +18,18 @@
 @media print{.page-tabs-shell{display:none}}
 /* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
 @media(prefers-color-scheme:dark){.page-brand img{filter:saturate(1.4) brightness(2.1)}}
+
+/* Shared desktop actions: consistent theme switcher and icon-labelled primary action. */
+.page-tab-actions{grid-column:3;justify-self:end;display:flex;align-items:center;gap:12px}
+.page-tab-actions .page-add-time{grid-column:auto;justify-self:auto;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;border-radius:8px;font-size:13px}
+.page-action-icon{width:16px;height:16px;flex:none}
+.page-theme-toggle{display:grid;place-items:center;width:36px;height:36px;padding:7px;border:1px solid var(--borderColor-muted);border-radius:9px;background:var(--bgColor-default);color:var(--fgColor-muted);cursor:pointer}
+.page-theme-toggle:hover{background:var(--bgColor-muted);color:var(--fgColor-default)}
+.page-theme-toggle:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
+.page-theme-toggle svg{display:block;width:18px;height:18px}
+:root[data-clockoli-theme="dark"] .page-theme-sun,:root[data-clockoli-theme="light"] .page-theme-moon{display:none}
+.page-tab[aria-current="page"]{background:var(--bgColor-success-muted);color:var(--fgColor-default)}
+@media(max-width:640px){.page-tab-actions{margin-left:auto;order:1;gap:8px}.page-tab-actions .page-add-time{margin-left:0;order:initial}}
+/* Keep the original dark wordmark adjustment only when the effective theme is dark. */
+:root[data-clockoli-theme="light"] .page-brand img{filter:none}
+:root[data-clockoli-theme="dark"] .page-brand img{filter:saturate(1.4) brightness(2.1)}

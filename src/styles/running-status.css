@@ -48,3 +48,105 @@
 @media(max-width:640px){.running-status-description-field{order:2;flex-basis:100%;max-width:none;min-width:0}.running-status-metrics{order:3}.running-status .running-status-stop{order:4}}
 @media(prefers-color-scheme:dark){.running-status.is-idle .running-status-row{box-shadow:0 2px 10px rgba(0,0,0,.15)}.running-status.is-active .running-status-row{background:linear-gradient(105deg,rgba(63,185,80,.12),var(--bgColor-default) 42%);box-shadow:0 2px 10px rgba(0,0,0,.15)}.running-status-live{background:rgba(63,185,80,.16)}.running-status-live::before{box-shadow:0 0 0 3px rgba(63,185,80,.18)}}
 @media print{.running-status{display:none}}
+
+/* Compact tracking surface shared by Activity, Top tasks, Reports and Settings.
+   It uses the same Primer colors in light and dark mode. */
+.running-status{background:var(--bgColor-muted)}
+.running-status.is-idle .running-status-row,
+.running-status.is-active .running-status-row{
+  width:min(1600px,calc(100% - 48px));
+  min-height:66px;
+  margin:10px auto 12px;
+  padding:10px 16px;
+  gap:14px;
+  border:1px solid var(--borderColor-muted);
+  border-radius:12px;
+  background:var(--bgColor-default);
+  box-shadow:var(--shadow-resting-small)
+}
+.running-status.is-active{background:var(--bgColor-muted)}
+.running-status.is-active .running-status-row{
+  background:linear-gradient(100deg,color-mix(in srgb,var(--fgColor-open) 5%,var(--bgColor-default)),var(--bgColor-default) 45%)
+}
+.running-status-idle-group{
+  display:flex;
+  flex:none;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:3px;
+  min-width:160px;
+  padding-right:16px;
+  border-right:1px solid var(--borderColor-muted)
+}
+.running-status-idle-hint{
+  padding-left:9px;
+  color:var(--fgColor-muted);
+  font-size:11px;
+  line-height:1.35;
+  white-space:nowrap
+}
+.running-status.is-active .running-status-idle-group{display:none}
+.running-status.is-idle .running-status-idle{
+  padding:4px 9px;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.035em;
+  background:var(--bgColor-muted);
+  color:var(--fgColor-muted)
+}
+.running-status.is-idle .running-status-idle::before{
+  background:var(--fgColor-open);
+  opacity:1;
+  box-shadow:0 0 0 3px var(--bgColor-success-muted)
+}
+.running-status-quick-start{gap:14px;padding-left:0;border-left:0}
+.running-status-quick-label{font-size:13px;white-space:nowrap}
+.running-status-recent{gap:12px}
+.running-status-recent-task{
+  flex:1 1 0;
+  max-width:none;
+  min-height:40px;
+  padding:7px 12px;
+  border-radius:9px;
+  transition:border-color .12s,background-color .12s
+}
+.running-status-recent-task:nth-child(3n+1){
+  border-color:color-mix(in srgb,#31b764 40%,var(--borderColor-muted));
+  background:color-mix(in srgb,#31b764 10%,var(--bgColor-default))
+}
+.running-status-recent-task:nth-child(3n+2){
+  border-color:color-mix(in srgb,#fa6074 40%,var(--borderColor-muted));
+  background:color-mix(in srgb,#fa6074 10%,var(--bgColor-default))
+}
+.running-status-recent-task:nth-child(3n+3){
+  border-color:color-mix(in srgb,#3b92ef 40%,var(--borderColor-muted));
+  background:color-mix(in srgb,#3b92ef 9%,var(--bgColor-default))
+}
+.running-status-recent-task:hover:not(:disabled){
+  border-color:var(--fgColor-open);
+  filter:brightness(.98)
+}
+.running-status-task{flex:0 1 340px}
+.running-status-description-field{flex:1 1 320px;max-width:none}
+.running-status-metrics{gap:12px}
+.running-status .running-status-stop{border-radius:8px;min-height:36px}
+@media(max-width:1100px){
+  .running-status-idle-group{min-width:0;padding-right:0;border-right:0}
+  .running-status.is-idle .running-status-row{gap:12px}
+  .running-status-quick-start{flex-basis:100%}
+}
+@media(max-width:640px){
+  .running-status.is-idle .running-status-row,
+  .running-status.is-active .running-status-row{width:calc(100% - 24px);padding:12px}
+  .running-status-idle-hint{font-size:10px}
+  .running-status-quick-start{gap:8px}
+  .running-status-recent-task{flex:0 0 172px}
+  .running-status-task{flex-basis:100%}
+  .running-status-description-field{flex-basis:100%;min-width:0}
+}
+
+/* The tracking badge follows Clockoli's explicit theme, not the OS theme. */
+:root[data-clockoli-theme="light"] .running-status-live{background:rgba(46,160,67,.13)}
+:root[data-clockoli-theme="light"] .running-status-live::before{box-shadow:0 0 0 3px rgba(46,160,67,.16)}
+:root[data-clockoli-theme="dark"] .running-status-live{background:rgba(63,185,80,.16)}
+:root[data-clockoli-theme="dark"] .running-status-live::before{box-shadow:0 0 0 3px rgba(63,185,80,.18)}

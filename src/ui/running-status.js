@@ -36,7 +36,11 @@ export function mountRunningStatus(container, { send, onChange }) {
   moreLines.textContent = '↓ More lines — scroll'; moreLines.hidden = true;
   descriptionField.append(description, saveDescription, saved, moreLines);
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
-  row.append(idle, quickStart);
+  const idleGroup = make('div', 'running-status-idle-group');
+  const idleHint = make('span', 'running-status-idle-hint');
+  idleHint.textContent = 'Start a task to begin';
+  idleGroup.append(idle, idleHint);
+  row.append(idleGroup, quickStart);
   const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today, stop });
   for (const node of [live, task, descriptionField, metrics, stop]) node.hidden = true;
   container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
