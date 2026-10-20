@@ -10,7 +10,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
 | Work actors | Human and agent identities use the same work-record schema |
 | Descriptions | Optional, maximum 2,000 characters |
-| Manual entries | Add one completed or running URL task on the Activity or Top tasks page; all-or-nothing bulk creation of completed dated URL tasks remains on Activity |
+| Manual entries | Add one completed or running task with a selected local date on the Activity or Top tasks page; Add time intervals are limited to 24 hours at creation; all-or-nothing bulk creation of completed dated URL tasks remains on Activity |
 | Offline behavior | Start is accepted durably in extension-local storage and reconciled to GitHub; Stop is queued and retried |
 | Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly JSONL read per represented month; globally sorted; maximum 50 returned |
 | Storage | Multiple private personal or organization time repositories; one explicit default destination plus ordered project URL routing; each repository keeps its shared marker on the default branch and work records on marked `clockoli/users/{stable-user-id}` branches |
