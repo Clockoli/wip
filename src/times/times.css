@@ -1,2 +1,4 @@
 @import url("../styles/github-primer.css");
 html,body{min-width:320px;min-height:100%;margin:0;background:var(--bgColor-muted);color:var(--fgColor-default);color-scheme:light dark}body{display:block}
+
+:root[data-clockoli-theme] body{color-scheme:inherit}

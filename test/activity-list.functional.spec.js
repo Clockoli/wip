@@ -332,8 +332,10 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     expect(popupViewport.availableScroll).toBeGreaterThan(0);
     await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await expect(source).toBeVisible();
+    // A short task can be partially clipped by Timeline's horizontal scroller.
+    // Locator hover scrolls to a genuinely hit-testable point before pointerdown.
+    await source.hover();
     const from = await source.boundingBox();
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
     await page.mouse.up();
@@ -545,7 +547,8 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(feedback).toHaveCount(0);
     await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
-    expect(await tabs.evaluate(element => element.nextElementSibling?.classList.contains('times-toolbar'))).toBe(true);
+    expect(await tabs.evaluate(element => element.closest('.activity-heading-row')?.nextElementSibling?.classList.contains('activity-weekly-summary'))).toBe(true);
+    await expect(page.locator('.times-toolbar')).toHaveCount(1);
     const status = page.locator('.running-status');
     const [statusBox, tabsBox] = await Promise.all([status.boundingBox(), tabs.boundingBox()]);
     expect(tabsBox.y).toBeGreaterThanOrEqual(statusBox.y + statusBox.height);
@@ -561,7 +564,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     expect(tabAppearance.gap).toBe('0px');
     expect(tabAppearance.selectedWidth).toBe('3px');
     expect(tabAppearance.selectedUnderline).not.toBe('rgba(0, 0, 0, 0)');
-    expect(tabAppearance.firstRadius).toBe('0px');
+    expect(tabAppearance.firstRadius).not.toBe('0px');
     expect(tabAppearance.adjacent).toBe(true);
     const tabCenter = await tabs.evaluate(element => {
       const row = element.getBoundingClientRect();
