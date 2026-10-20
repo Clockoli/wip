@@ -285,7 +285,7 @@ test('timeline and panel STOP share one single-flight acceptance across a deferr
   const helperEnd = content.indexOf('\n\n  function refreshMountedTimelineAtRightEdge', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart);
   const helpers = content.slice(helperStart, helperEnd);
-  const timelineHandlerStart = content.indexOf('  async function stopTimelineEntry(activeEntry)');
+  const timelineHandlerStart = content.indexOf('  async function stopTimelineEntry(activeEntry,');
   const timelineHandlerEnd = content.indexOf('\n  async function restartTimelineEntry', timelineHandlerStart);
   const timelineHandler = content.slice(timelineHandlerStart, timelineHandlerEnd);
   assert.match(timelineHandler, /!beginTimelineStop\(\)/);
@@ -463,12 +463,12 @@ test('routine full-width UI updates never destroy the mounted timeline', () => {
 
 test('timeline STOP keeps the completed block and its connectors visible through queue sync', () => {
   const content = read('src/content/github.js');
-  const start = content.indexOf('async function stopTimelineEntry(activeEntry)');
+  const start = content.indexOf('async function stopTimelineEntry(activeEntry,');
   const end = content.indexOf('\n  async function restartTimelineEntry', start);
   assert.ok(start >= 0 && end > start);
   const handler = content.slice(start, end);
 
-  assert.match(handler, /const result = await send\(\{ type: 'STOP'/);
+  assert.match(handler, /const result = await send\(preserveSavedDescription \? \{ type: 'STOP' \} : \{ type: 'STOP'/);
   assert.match(handler, /rememberCompletedLocally\(result, result\.destinationId\)/);
   assert.match(content, /function rememberCompletedLocally\(completion, destinationId\)[\s\S]*timelineOptimisticCompletions\.set\(completion\.entry\.id/);
   assert.match(handler, /pageState = \{ \.\.\.pageState, active: null \}/);
@@ -515,7 +515,7 @@ test('timeline exposes Delete and current-page tracking through durable handlers
 
   assert.match(timeline, /clockoli-timeline-action danger/);
   assert.match(content, /popup-timeline-track/);
-  assert.match(content, /await trackCurrentTimelineTask\(\)/);
+  assert.match(content, /await trackCurrentTimelineTask\(\{ preserveSavedDescription: true \}\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
   assert.match(content, /onDelete: async item =>/);
   assert.match(content, /return queueTimelineEntryDelete\(entry\)/);

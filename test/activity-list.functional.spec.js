@@ -344,6 +344,17 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     expect(mobile.fields).toBe(true);
     expect(errors).toEqual([]);
     await expect(description).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 800 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
+    const settingsStrip = page.locator('#running-status.is-active .running-status-row');
+    await expect(settingsStrip.locator('.running-status-start')).toBeVisible();
+    const settingsStart = await settingsStrip.locator('.running-status-start').evaluate(node => ({
+      marginTop: getComputedStyle(node).marginTop,
+      startTop: node.getBoundingClientRect().top,
+      durationTop: node.closest('.running-status-stats').querySelector('.running-status-metric-value').getBoundingClientRect().top,
+    }));
+    expect(settingsStart.marginTop).toBe('0px');
+    expect(Math.abs(settingsStart.startTop - settingsStart.durationTop)).toBeLessThan(6);
   } finally {
     await context?.close();
     await rm(extension, { recursive: true, force: true });

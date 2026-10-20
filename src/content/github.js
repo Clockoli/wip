@@ -744,6 +744,9 @@
     const minutes = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000));
     return [Math.floor(minutes / 60), minutes % 60].map(value => String(value).padStart(2, '0')).join(':');
   }
+  function formatElapsedCard(startedAt) {
+    return formatDuration(Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000)) * 60);
+  }
 
   function formatDuration(seconds) {
     const minutes = Math.round(seconds / 60), hours = Math.floor(minutes / 60), rest = minutes % 60;
@@ -2640,7 +2643,7 @@
     if (!refreshMountedTimeline()) renderUi();
   }
 
-  async function trackCurrentTimelineTask() {
+  async function trackCurrentTimelineTask({ preserveSavedDescription = false } = {}) {
     if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
     timelineStartInFlight = true;
     refreshMountedTimeline();
@@ -2652,9 +2655,13 @@
       const switching = Boolean(pageState.active);
       if (switching && !confirmLongEntry()) return;
       const previousDescription = activeDescriptionValue();
+      const hasDraft = Boolean(descriptionDraft && pageState.active
+        && descriptionDraft.id === (pageState.active.id || pageState.active.startedAt)
+        && descriptionDraft.taskUrl === taskUrlOf(pageState.active));
       startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task', previousDescription });
       const result = await send(switching
-        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '', description: previousDescription }
+        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '',
+          ...(preserveSavedDescription && !hasDraft ? {} : { description: previousDescription }) }
         : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
       if (switching) rememberCompletedLocally(result?.stopped, result?.destinationId);
       const active = switching ? result?.active : result;
@@ -2782,6 +2789,7 @@
     const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
     const optimisticEditGeneration = {};
     const edits = { ...(previousOptimisticEdit || {}), ...requestedEdits };
+    if (requestedEdits.startedAt !== undefined && requestedEdits.description === undefined) delete edits.description;
     const acceptVisualEdit = () => {
       timelineOptimisticEditStates.set(optimisticEditGeneration, {
         previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
@@ -2800,8 +2808,8 @@
     try {
       const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
         original: { id: entry.id, startedAt: entry.startedAt },
-        ...(edits.startedAt !== undefined ? { startedAt: edits.startedAt } : {}),
-        ...(edits.description !== undefined ? { description: edits.description } : {}),
+        ...(requestedEdits.startedAt !== undefined ? { startedAt: requestedEdits.startedAt } : {}),
+        ...(requestedEdits.description !== undefined ? { description: requestedEdits.description } : {}),
       } });
       if (waitForAcceptance) {
         if (requestOrder < (timelineAcceptedEditOrders.get(entry.id) || 0)) return;
@@ -2867,11 +2875,11 @@
     return true;
   }
 
-  async function stopTimelineEntry(activeEntry) {
+  async function stopTimelineEntry(activeEntry, { preserveSavedDescription = false } = {}) {
     if (!activeEntry || timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return false;
     try {
       if (!confirmLongEntry(activeEntry)) return false;
-      const result = await send({ type: 'STOP', description: activeDescriptionValue(activeEntry) });
+      const result = await send(preserveSavedDescription ? { type: 'STOP' } : { type: 'STOP', description: activeDescriptionValue(activeEntry) });
       if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
       if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
       rememberCompletedLocally(result, result.destinationId);
@@ -3137,7 +3145,10 @@
     if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
     for (const scope of [shadow, fullWidthPopupShadow]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
-      for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) value.textContent = formatElapsed(pageState.active.startedAt);
+      for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
+        value.textContent = value.classList?.contains?.('running-status-metric-value') || value.className?.includes?.('running-status-metric-value')
+          ? formatElapsedCard(pageState.active.startedAt) : formatElapsed(pageState.active.startedAt);
+      }
       for (const value of scope?.querySelectorAll?.('.task-tracked-total') ?? []) value.textContent = taskTrackedText();
     }
   }
@@ -3223,7 +3234,7 @@
 
   function refreshCompactSurface() {
     if (!compactSurface) return;
-    const { strip, today, feedback } = compactSurface;
+    const { strip, switchAction, today, feedback } = compactSurface;
     const activeElement = fullWidthPopupShadow?.activeElement || shadow?.activeElement;
     const actionKey = activeElement?.getAttribute?.('data-panel-action');
     const scroll = fullWidthPopupShadow?.querySelector?.('.full-width-popup');
@@ -3241,7 +3252,6 @@
     }
     if (active && !preserveActiveDescription) {
       const copy = el('div', undefined, 'strip-task-copy');
-      copy.append(siteFavicon(active, 'strip-favicon'));
       copy.append(taskResult(active, 'strip-task'));
       const description = el('textarea');
       description.rows = 1;
@@ -3301,11 +3311,11 @@
         updateDescriptionSave();
       });
       description.addEventListener('keydown', event => {
-        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !start.disabled) {
           event.preventDefault();
-          // Blur may trigger an immediate timeline render before focus reaches Stop.
+          // Blur may trigger an immediate timeline render before focus reaches Start.
           strip.setAttribute('data-moving-focus-to-stop', '');
-          try { stop.focus({ preventScroll: true }); }
+          try { start.focus({ preventScroll: true }); }
           finally { strip.removeAttribute('data-moving-focus-to-stop'); }
           return;
         }
@@ -3314,35 +3324,132 @@
         return saveActiveDescription().catch(setError);
       });
       description.addEventListener('blur', () => saveActiveDescription().catch(setError));
-      descriptionField.append(description, saveDescription, savedIndicator, descriptionMore); copy.append(descriptionField);
-      const elapsed = el('span', formatElapsed(active.startedAt), 'running-status-elapsed running-elapsed');
+      descriptionField.append(description, saveDescription, savedIndicator, descriptionMore);
+      const elapsed = el('span', undefined, 'running-status-elapsed');
       elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
+      elapsed.append(el('span', 'Duration', 'running-status-metric-label'),
+        el('span', formatElapsedCard(active.startedAt), 'running-status-metric-value running-elapsed'));
       const todayTotal = el('span', undefined, 'running-status-today');
-      const todayValue = el('strong', trackedTotalText('todayTrackedMs'));
+      const todayValue = el('strong', trackedTotalText('todayTrackedMs'), 'running-status-metric-value');
       todayValue.setAttribute('data-tracked-total', 'todayTrackedMs');
-      todayTotal.append(document.createTextNode('Today '), todayValue);
+      todayTotal.append(el('span', 'Today', 'running-status-metric-label'), todayValue);
+      const startField = el('div', undefined, 'running-status-start-field');
+      const startLabel = el('label', undefined, 'running-status-start-label');
+      startLabel.append(el('span', 'Start', 'running-status-start-caption'));
+      const startValue = el('span', undefined, 'running-status-start-value');
+      const start = el('input', undefined, 'running-status-start');
+      start.type = 'text'; start.inputMode = 'numeric'; start.maxLength = 5;
+      start.autocomplete = 'off'; start.setAttribute('aria-label', 'Start');
+      start.value = new Date(active.startedAt).toTimeString().slice(0, 5);
+      let displayedStartAt = active.startedAt;
+      const editIcon = el('span', '✎', 'running-status-start-edit-icon');
+      editIcon.setAttribute('aria-hidden', 'true');
+      startValue.append(start, editIcon); startLabel.append(startValue);
+      const saveStart = el('button', '✓', 'running-status-start-save');
+      saveStart.type = 'button'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
+      saveStart.hidden = true;
+      const startSaved = el('span', '✓ Saved', 'running-status-start-saved');
+      startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
+      startField.append(startLabel, saveStart, startSaved);
+      const updateStartDraft = async () => {
+        const { parseTime, timeValue } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        const current = currentActive();
+        if (!start.isConnected || !current) return;
+        saveStart.hidden = parseTime(start.value) === timeValue(new Date(current.startedAt));
+        editIcon.hidden = !saveStart.hidden || !startSaved.hidden;
+      };
+      start.addEventListener('click', () => start.select());
+      editIcon.addEventListener('click', () => { start.focus(); start.select(); });
+      start.addEventListener('input', () => { startSaved.hidden = true; void updateStartDraft().catch(setError); });
+      start.addEventListener('blur', async () => {
+        const { parseTime } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        const normalized = parseTime(start.value);
+        if (start.isConnected && normalized) start.value = normalized;
+        await updateStartDraft();
+      });
+      let savingStart = false;
+      const commitStart = async () => {
+        const current = currentActive();
+        if (savingStart || !current) return;
+        const { parseTime, timeValue, localTimestamp } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        if (!start.isConnected) return;
+        const clock = parseTime(start.value);
+        const timestamp = clock && localTimestamp(localDateValue(new Date(current.startedAt)), clock);
+        if (!timestamp) { setError(new Error('Enter a valid Start time (HH:MM or 1000).')); return; }
+        if (clock === timeValue(new Date(current.startedAt)) && current.startedAt === displayedStartAt) return;
+        if (timestamp.getTime() > Date.now()) { setError(new Error('Start cannot be in the future.')); return; }
+        savingStart = true; start.disabled = true;
+        try {
+          const latest = await send({ type: 'GET_PAGE_STATE', refresh: true });
+          if (!start.isConnected || !currentActive()) return;
+          if (!latest.active || latest.active.id !== current.id || taskUrlOf(latest.active) !== taskUrlOf(current)
+            || latest.active.startedAt !== displayedStartAt || currentActive().startedAt !== displayedStartAt) {
+            applyPageState(latest);
+            setError(new Error('Start changed elsewhere. Reopen the panel before editing it.'));
+            return;
+          }
+          await queueActiveStartEdit(current, timestamp);
+          if (!currentActive() || !start.isConnected) return;
+          const confirmed = await send({ type: 'GET_PAGE_STATE', refresh: true });
+          if (!start.isConnected || !currentActive()) return;
+          if (!confirmed.active || confirmed.active.id !== current.id || confirmed.active.startedAt !== timestamp.toISOString()
+            || (pageState.active.startedAt !== displayedStartAt && pageState.active.startedAt !== timestamp.toISOString())) {
+            applyPageState(confirmed);
+            setError(new Error('Start changed elsewhere. Reopen the panel before editing it.'));
+            return;
+          }
+          applyPageState(confirmed);
+          active.startedAt = timestamp.toISOString();
+          displayedStartAt = timestamp.toISOString();
+          start.value = clock; saveStart.hidden = true; editIcon.hidden = true; startSaved.hidden = false;
+          setTimeout(() => { if (startSaved.isConnected) { startSaved.hidden = true; editIcon.hidden = false; } }, 3000);
+        } catch (error) { setError(error); }
+        finally { savingStart = false; start.disabled = false; }
+      };
+      start.addEventListener('keydown', event => {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+          event.preventDefault();
+          strip.setAttribute('data-moving-focus-to-stop', '');
+          try { stop.focus({ preventScroll: true }); }
+          finally { strip.removeAttribute('data-moving-focus-to-stop'); }
+          return;
+        }
+        if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault(); void commitStart();
+      });
+      saveStart.addEventListener('click', () => void commitStart());
       const stop = button('Stop and save', 'danger', async () => {
-        try { await stopTimelineEntry({ ...pageState.active, description: description.value }); } catch {}
+        const current = pageState.active;
+        if (!current) return;
+        const hasDraft = descriptionDraft?.id === (current?.id || current?.startedAt)
+          && descriptionDraft.taskUrl === taskUrlOf(current);
+        try { await stopTimelineEntry({ ...current, description: description.value }, { preserveSavedDescription: !hasDraft }); } catch {}
       });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, elapsed, today: todayTotal, stop });
+      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: todayTotal, stop });
+      const stats = el('div', undefined, 'running-status-stats'); stats.append(startField, metrics);
+      strip.insertBefore(stats, stop);
     }
     if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
       const track = button('Track this task', 'primary popup-timeline-track', async () => {
         if (timelineTrackActionDisabled()) return;
-        try { await trackCurrentTimelineTask(); } catch {}
+        try { await trackCurrentTimelineTask({ preserveSavedDescription: true }); } catch {}
       });
       if (active) { track.textContent = 'Switch to this task'; track.className = 'secondary popup-timeline-track'; }
       else track.setAttribute('data-strip-primary', 'true');
       track.setAttribute('data-testid', 'popup-timeline-track'); track.setAttribute('data-panel-action', 'track');
-      track.disabled = timelineTrackActionDisabled(); strip.append(track);
+      track.disabled = timelineTrackActionDisabled();
+      if (active) switchAction.replaceChildren(track);
+      else { switchAction.replaceChildren(); strip.append(track); }
+    } else if (!preserveActiveDescription) {
+      switchAction.replaceChildren();
     }
     if (preserveActiveDescription) {
-      const elapsed = strip.querySelector('.running-elapsed'); if (elapsed) elapsed.textContent = formatElapsed(active.startedAt);
+      const elapsed = strip.querySelector('.running-elapsed'); if (elapsed) elapsed.textContent = formatElapsedCard(active.startedAt);
       const stop = strip.querySelector('[data-panel-action="stop"]');
       if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      const track = strip.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
+      const track = switchAction.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
     }
     // Queue reconciliation may refresh the panel while an unsaved List editor is
     // focused. Keep that input mounted; the next normal render can show updates.
@@ -3424,7 +3531,8 @@
       if (compact) {
         const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list activity-list');
         const feedback = el('div', undefined, 'panel-feedback'), overlaps = el('div', undefined, 'timeline-overlaps');
-        compactSurface = { strip, today, feedback, overlaps, timeline: null, body, host: null };
+        const switchAction = el('div', undefined, 'popup-switch-action');
+        compactSurface = { strip, switchAction, today, feedback, overlaps, timeline: null, body, host: null };
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
         const modeButton = (mode, label) => {
@@ -3436,7 +3544,7 @@
         const viewModes = el('div', undefined, 'timeline-view-modes');
         viewModes.setAttribute('role', 'group');
         viewModes.setAttribute('aria-label', 'Timeline view');
-        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'));
+        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'), switchAction);
         body.append(strip, viewModes);
         body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
@@ -4008,13 +4116,16 @@
       :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
       :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
-      .timeline-view-modes { display:flex; justify-content:center; align-items:stretch; gap:0; margin:0 var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .timeline-view-modes { position:relative; display:flex; justify-content:center; align-items:stretch; gap:0; margin:0 var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .popup-switch-action:not(:empty) { position:absolute; right:0; align-self:center }
+      .popup-switch-action .popup-timeline-track { padding:6px 10px; font-size:12px }
       .timeline-view-button { min-height:40px; margin-bottom:-1px; padding:8px 16px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:600 }
       .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
       .timeline-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
       :host(.popup-surface) .timeline-view-button { flex:1; padding-inline:4px }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
+      @media(max-width:800px) { .timeline-view-modes:has(.popup-switch-action:not(:empty)) { flex-wrap:wrap } .popup-switch-action:not(:empty) { position:static; display:flex; justify-content:flex-end; flex-basis:100%; padding-bottom:6px } }
       :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
       @media(max-width:520px) {
         :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
@@ -4032,24 +4143,40 @@
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip.is-active { gap:16px; margin:10px var(--clockoli-gutter) 0; padding:12px 18px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-left:4px solid var(--ck-success); border-radius:12px; background:linear-gradient(105deg,color-mix(in srgb,var(--ck-success) 9%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 42%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
+      .active-task-strip.is-active { box-sizing:border-box; width:min(1600px,calc(100% - 2 * var(--clockoli-gutter))); gap:14px; margin:10px auto 0; padding:10px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 45%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
       .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:8px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap }
       .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,var(--ck-success) 16%,transparent) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
       .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
-      .strip-task-copy { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:2px 8px; flex:1; min-width:0 } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
-      .strip-task .task-title,.strip-task.task-result-untitled .task-url { margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650 }
-      .strip-description-field { grid-column:2 }
+      .strip-task-copy { display:block; flex:0 1 auto; min-width:0; max-width:340px } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
+      .strip-task .task-title,.strip-task.task-result-untitled .task-url { display:block; overflow:hidden; margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650; text-overflow:ellipsis; white-space:nowrap }
+      .strip-description-field { flex:0 1 230px; min-width:160px; max-width:250px }
       .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 96px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
-      .strip-description { min-height:30px; resize:vertical; max-height:180px; overflow-y:auto; white-space:pre-wrap }
-      .strip-description:hover,.strip-description:focus,.today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
+      .strip-description { box-sizing:border-box; min-height:36px; margin:0; padding:6px 78px 6px 10px; border:1px solid var(--control-borderColor-rest,var(--ck-border)); border-radius:8px; background:var(--control-bgColor-rest,var(--ck-bg)); resize:none; max-height:180px; overflow-y:auto; white-space:pre-wrap }
+      .strip-description:hover { background:var(--control-bgColor-hover,var(--ck-bg-muted)) }
+      .strip-description:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
+      .today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
       .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-metrics { display:flex; align-items:center; gap:18px; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-elapsed { font-size:18px; font-weight:700; line-height:1.2 }
-      .active-task-strip .running-status-today { padding-left:18px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
-      .active-task-strip .running-status-today strong { color:inherit }
-      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } .active-task-strip .running-status-metrics { margin-left:auto } }
-      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .running-status-metrics { order:2; margin-left:0; gap:10px } .active-task-strip .running-status-elapsed { font-size:16px } .active-task-strip .running-status-today { padding-left:10px } .active-task-strip > .danger { order:3; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:4; flex-basis:100% } }
+      .active-task-strip .running-status-stats { display:flex; flex:none; max-width:100%; margin-left:auto; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:9px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .active-task-strip .running-status-start-field { box-sizing:border-box; position:relative; display:flex; align-items:center; flex:none; min-width:100px; padding:5px 8px 5px 11px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .active-task-strip .running-status-start-field:focus-within { box-shadow:inset 0 0 0 2px var(--fgColor-accent,var(--ck-accent)) }
+      .active-task-strip .running-status-start-label { display:flex; flex-direction:column; gap:2px; margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:600; line-height:1.2; white-space:nowrap }
+      .active-task-strip .running-status-start-value { display:inline-flex; align-items:center; gap:4px; height:24px }
+      .active-task-strip .running-status-start-edit-icon { color:var(--fgColor-accent,var(--ck-accent)); font-size:14px; line-height:11px; cursor:pointer }
+      .active-task-strip .running-status-start { box-sizing:border-box; width:52px; height:24px; margin:0; padding:2px 0; border:0; border-radius:4px; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font:650 14px/20px var(--fontStack-sansSerif); font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-start:focus-visible { outline:none }
+      .active-task-strip .running-status-start-save,.active-task-strip .running-status-start-saved { position:absolute; right:3px; bottom:4px; display:grid; width:24px; height:26px; place-items:center }
+      .active-task-strip .running-status-start-save { padding:0; border:0; border-radius:5px; background:transparent; color:var(--fgColor-success,var(--ck-success)); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
+      .active-task-strip .running-status-start-saved { color:var(--fgColor-success,var(--ck-success)); font-size:0 }
+      .active-task-strip .running-status-start-saved::before { content:'✓'; font-size:17px; font-weight:800 }
+      .active-task-strip .running-status-start-save[hidden],.active-task-strip .running-status-start-saved[hidden],.active-task-strip .running-status-start-edit-icon[hidden] { display:none }
+      .active-task-strip .running-status-metrics { display:flex; align-items:stretch; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-elapsed,.active-task-strip .running-status-today { display:flex; flex-direction:column; gap:2px; min-width:0; padding:5px 11px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:650; line-height:1.2 }
+      .active-task-strip .running-status-today { border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .active-task-strip .running-status-metric-label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:600; line-height:1.2 }
+      .active-task-strip .running-status-metric-value { min-height:24px; line-height:24px }
+      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } }
+      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .strip-description-field { order:2; flex-basis:100%; max-width:none; min-width:0 } .active-task-strip .running-status-stats { order:3; margin-left:0 } .active-task-strip > .danger { order:4; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:5; flex-basis:100% } }
       @media(prefers-color-scheme:dark) { .active-task-strip.is-active { box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 15%,transparent) } }
       .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
       .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
