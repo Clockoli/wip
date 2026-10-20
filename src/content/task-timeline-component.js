@@ -1570,7 +1570,7 @@
       if (patch && Object.prototype.hasOwnProperty.call(patch, 'data')) task.data = patch.data;
       if (patch && patch.start != null) task.start = toMs(patch.start);
       if (patch && patch.end != null) task.end = toMs(patch.end);
-      if (!Number.isFinite(task.start) || !Number.isFinite(task.end) || task.end <= task.start) {
+      if (!Number.isFinite(task.start) || !Number.isFinite(task.end) || task.end < task.start) {
         this._restoreState(beforeState);
         throw new RangeError('TaskTimeline.updateTask(): invalid start/end');
       }
@@ -1697,7 +1697,7 @@
       }
       const start = toMs(raw.start);
       const end = toMs(raw.end);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || (end === start && !raw.running)) {
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
         throw new RangeError(`TaskTimeline: invalid start/end for task at index ${index}`);
       }
       const instanceId = raw.instanceId != null
@@ -3026,7 +3026,7 @@
       const rangeEnd = this._calendarEndDay();
       const segments = [];
       for (const task of this.tasks) {
-        if (task.running && task.end === task.start && task.start >= rangeStart && task.start < rangeEnd) {
+        if (task.end === task.start && task.start >= rangeStart && task.start < rangeEnd) {
           const day = this._floorDay(task.start);
           const dayIndex = this._calendarDayIndexForTime(task.start);
           if (dayIndex >= 0) {
@@ -4635,14 +4635,6 @@
     .details a { color: var(--fgColor-accent, var(--ck-accent, #315ecf)); }
     .details-pointer { background: var(--fgColor-accent, var(--ck-accent, #0969da)); }
     .details-pointer::after { border-right-color: var(--fgColor-accent, var(--ck-accent, #0969da)); border-bottom-color: var(--fgColor-accent, var(--ck-accent, #0969da)); }
-    .clockoli-week-drag-ghost {
-      position: fixed; z-index: 2147483647; pointer-events: none;
-      padding: 6px 10px; border-radius: 6px; max-width: 200px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      background: var(--fgColor-accent, var(--ck-accent, #315ecf));
-      color: var(--tt-inverse-fg); box-shadow: 0 3px 12px #0004;
-    }
-    .task.clockoli-week-preview, .calendar-task.clockoli-week-preview { opacity: .72; pointer-events: none; }
     .task {
       --clockoli-task-background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel));
       --clockoli-task-accent: color-mix(in srgb, var(--clockoli-task-background) 78%, black);
@@ -4750,7 +4742,8 @@
     .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
 
     .history-controls { display: none; }
-    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: flex-start; gap: 8px; }
+    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 0 0 auto; min-width: 0; align-items: center; gap: 8px; }
+    .clockoli-timeline-actions.has-description { flex: 1 1 340px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
     .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 6px 94px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
     .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
@@ -4776,9 +4769,12 @@
     const editable = item?.isEditable !== false;
     const running = Boolean(item?.isRunning || item?.endedAt == null);
     return {
-      move: editable && !running,
+      move: editable && !running
+        && (item.originalStartedAt == null || Number(item.originalStartedAt) === Number(item.startedAt))
+        && (item.originalEndedAt == null || Number(item.originalEndedAt) === Number(item.endedAt)),
       resizeStart: editable || running,
       resizeEnd: editable && !running,
+      edit: editable || running,
       start: !item?.isStartDisabled,
       stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
       delete: !item?.isDeleteDisabled,
@@ -4817,7 +4813,6 @@
     let deferredUpdate = null;
     let deferredFlushTimer = null;
     let timelineApi = null;
-    let weekDrag = null;
 
     const style = document.createElement('style');
     style.dataset.clockoliTaskTimeline = 'true';
@@ -4868,7 +4863,7 @@
     }
 
     function notifyView() {
-      if (destroyed || weekDrag?.zoomVisibleDays != null) return;
+      if (destroyed) return;
       const view = viewFromComponent();
       props = { ...props, view };
       if (typeof props.onViewChange === 'function') props.onViewChange(view);
@@ -4883,6 +4878,8 @@
       else if (event.action === 'resize-end') allowed = permissions.resizeEnd;
       else if (event.action === 'delete') return permissions.delete;
       if (!allowed) return false;
+      if (event.action === 'move' && props.totalRange && event.after
+        && (event.after.start < props.totalRange.start || event.after.end > props.totalRange.end)) return false;
       if ((event.action === 'move' || event.action === 'resize-end')
         && event.after?.end > Date.now()) throw new Error('Time entries cannot end in the future.');
       if (event.action !== 'move' && event.after && event.before && event.after.end - event.after.start < 60_000) return false;
@@ -5175,7 +5172,8 @@
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', kind === 'delete'
         ? 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 10v8m4-8v8'
-        : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
+        : kind === 'edit' ? 'M4 20l4.5-1 11-11a2.12 2.12 0 0 0-3-3l-11 11L4 20zM14 6l4 4'
+          : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
       svg.append(path);
       return svg;
     }
@@ -5271,8 +5269,10 @@
         }
         const deletion = existing.querySelector('.danger');
         const primary = existing.querySelector('.primary');
+        const edit = existing.querySelector('.clockoli-entry-edit');
         if (deletion) deletion.disabled = !permissions.delete;
         if (primary) primary.disabled = mode === 'completed' ? !permissions.start : !permissions.stop;
+        if (edit) edit.disabled = !permissions.edit;
         return;
       }
       existing?.remove();
@@ -5280,7 +5280,7 @@
       actions.className = 'clockoli-timeline-actions';
       actions.dataset.itemId = String(key);
       actions.dataset.mode = mode;
-      if (typeof props.onDescriptionCommit === 'function') {
+      if (typeof props.onDescriptionCommit === 'function' && (String(item.description || '').trim() || String(savedDescription).trim())) {
         const field = document.createElement('div');
         field.className = 'clockoli-description-field';
         const description = document.createElement('textarea');
@@ -5334,7 +5334,7 @@
         });
         save.addEventListener('pointerdown', event => event.preventDefault());
         save.addEventListener('click', commit);
-        field.append(description, save, saved, more); actions.append(field);
+        field.append(description, save, saved, more); actions.classList.add('has-description'); actions.append(field);
         resizeDescription(description);
       }
       if (typeof props.onDelete === 'function') {
@@ -5342,6 +5342,13 @@
         button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete'; button.prepend(actionIcon('delete'));
         button.disabled = !permissions.delete;
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
+        actions.append(button);
+      }
+      if (typeof props.onEntryEdit === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'clockoli-timeline-action clockoli-entry-edit'; button.textContent = 'Edit'; button.prepend(actionIcon('edit'));
+        button.disabled = !permissions.edit;
+        button.addEventListener('click', () => runAction(button, 'edit-form', () => props.onEntryEdit(sourceItem(key), button)));
         actions.append(button);
       }
       if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
@@ -5429,208 +5436,6 @@
       return Boolean(timeline.editState || timeline.calendarEditState || timeline.dragState || pendingEdits.size);
     }
 
-    // Hand off a move to the week loader only after a sustained edge hover.
-    // The component's normal edit remains in charge until that point; its
-    // setTasks() cannot survive a week read, so the handoff owns the drop.
-    let edgeTimer = null, edgeDirection = 0, edgePointer = null;
-    const clearEdge = () => {
-      if (edgeTimer !== null) clearTimeout(edgeTimer);
-      edgeTimer = null;
-      edgeDirection = 0;
-      edgePointer = null;
-    };
-    const ghost = document.createElement('div');
-    ghost.className = 'clockoli-week-drag-ghost';
-    const placeGhost = event => {
-      ghost.style.left = `${event.clientX + 12}px`;
-      ghost.style.top = `${event.clientY + 12}px`;
-    };
-    const edgeOf = event => {
-      const viewport = timeline.getViewMode() === 'calendar' ? timeline.calendarViewport : timeline.viewport;
-      const rect = viewport.getBoundingClientRect();
-      if (event.clientY < rect.top || event.clientY > rect.bottom) return 0;
-      if (event.clientX <= 32 || (event.clientX >= rect.left && event.clientX <= rect.left + 32)) return -1;
-      if (event.clientX >= global.innerWidth - 32
-        || (event.clientX <= rect.right && event.clientX >= rect.right - 32)) return 1;
-      return 0;
-    };
-    const weekPlacement = (event, drag) => {
-      if (!drag.ready || drag.loading) return null;
-      const range = props.totalRange;
-      if (!range?.start || !range?.end) return null;
-      const viewport = timeline.getViewMode() === 'calendar' ? timeline.calendarViewport : timeline.viewport;
-      const rect = viewport.getBoundingClientRect();
-      if (event.clientX < rect.left || event.clientX > rect.right
-        || event.clientY < rect.top || event.clientY > rect.bottom) return null;
-      const pointerTime = timeline.getViewMode() === 'calendar'
-        ? timeline._calendarPointerToTime(event.clientX, event.clientY)
-        : timeline.xToTime(timeline._scrollLeftNow() + event.clientX - rect.left);
-      const step = timeline.getViewMode() === 'calendar' ? 60_000 : 5 * 60_000;
-      const start = Math.round((pointerTime - drag.offset) / step) * step;
-      const end = start + drag.end - drag.start;
-      if (!Number.isFinite(start) || start < range.start || end > range.end
-        || timeline.tasks.some(task => task._key !== String(drag.item.id) && start < task.end && end > task.start)) return null;
-      return { start, end };
-    };
-    const clearWeekPreview = drag => {
-      if (drag.previewStart == null) return;
-      drag.previewStart = null;
-      drag.previewEnd = null;
-      reconcile(props);
-    };
-    const markWeekPreview = drag => {
-      if (drag.previewStart == null) return;
-      for (const element of timeline.shadow.querySelectorAll('[data-task-key]')) {
-        if (element.dataset.taskKey === String(drag.item.id)) {
-          element.classList.add('clockoli-week-preview');
-          element.dataset.previewStart = String(drag.previewStart);
-        }
-      }
-    };
-    const fitDraggedWeek = drag => {
-      if (drag.zoomVisibleDays == null) return;
-      // Minimum task width otherwise expands short records and clips Sunday.
-      timeline.setMinTaskWidth(1);
-      const weekDays = Math.max(7, (props.totalRange.end - props.totalRange.start) / DAY_MS);
-      timeline.options.maxVisibleDays = Math.max(drag.maxVisibleDays, weekDays);
-      timeline.setVisibleDays(weekDays);
-      timeline._setScrollLeft(timeline.timeToX(props.totalRange.start));
-    };
-    const restoreDraggedZoom = (drag, placement) => {
-      if (drag.zoomVisibleDays == null) return;
-      const range = props.totalRange;
-      const focus = placement ? (placement.start + placement.end) / 2
-        : (range.start + range.end) / 2;
-      timeline.setVisibleDays(drag.zoomVisibleDays);
-      timeline.options.maxVisibleDays = drag.maxVisibleDays;
-      timeline.setMinTaskWidth(drag.minTaskWidth);
-      timeline._setScrollLeft(timeline.timeToX(focus) - timeline._viewportWidthNow() / 2);
-      markWeekPreview(drag);
-      notifyView();
-    };
-    const showWeekPreview = (event, drag) => {
-      const placement = weekPlacement(event, drag);
-      ghost.hidden = Boolean(placement);
-      if (!placement) { clearWeekPreview(drag); return; }
-      if (drag.previewStart === placement.start && timeline._findTask(String(drag.item.id))) {
-        drag.previewX = event.clientX;
-        drag.previewY = event.clientY;
-        return;
-      }
-      const preview = { ...drag.item, startedAt: placement.start, endedAt: placement.end, isEditable: false };
-      try {
-        reconcile({ ...props, items: [...props.items.filter(item => item.id !== drag.item.id), preview] });
-        drag.previewStart = placement.start;
-        drag.previewEnd = placement.end;
-        drag.previewX = event.clientX;
-        drag.previewY = event.clientY;
-        markWeekPreview(drag);
-      } catch (error) {
-        drag.previewStart = null;
-        ghost.hidden = false;
-        props.onError?.(error, { action: 'week-preview', source: 'clockoli-adapter' });
-      }
-    };
-    const weekPointerMove = event => {
-      if (!props.weeklyCalendar || typeof props.onWeekEdgeNavigate !== 'function') return;
-      const state = timeline.getViewMode() === 'calendar' ? timeline.calendarEditState : timeline.editState;
-      if (weekDrag) {
-        if (event.pointerId !== weekDrag.pointerId) return;
-        placeGhost(event);
-        showWeekPreview(event, weekDrag);
-      } else if (!state || event.pointerId !== state.pointerId) return;
-      else if (state.mode !== 'move' || !state.didMutate) {
-        clearEdge(); return;
-      }
-      const direction = edgeOf(event);
-      if (direction === edgeDirection) return;
-      clearEdge();
-      if (!direction || weekDrag?.loading) return;
-      edgeDirection = direction;
-      edgePointer = event.pointerId;
-      edgeTimer = setTimeout(async () => {
-        edgeTimer = null;
-        if (edgeDirection !== direction) return;
-        if (props.canNavigateWeekEdge?.(direction) === false) { clearEdge(); return; }
-        if (!weekDrag) {
-          const current = timeline.getViewMode() === 'calendar' ? timeline.calendarEditState : timeline.editState;
-          if (!current || current.pointerId !== edgePointer || current.mode !== 'move') return;
-          if (pendingEdits.size) {
-            timeline.editCanvasWidth = 0;
-            timeline.calendarEditState = null;
-            timeline._calendarPinnedVerticalMap = null;
-            timeline._restoreState(current.beforeState);
-            styleTasks();
-            clearEdge();
-            props.onError?.(new Error('Wait for the previous edit to finish before moving to another week.'),
-              { action: 'week-navigation', source: 'clockoli-adapter' });
-            return;
-          }
-          const item = sourceItem(current.key);
-          if (!item || !permissionsFor(item).move) return;
-          const originalStart = Number(item.originalStartedAt ?? item.startedAt);
-          const originalEnd = Number(item.originalEndedAt ?? item.endedAt);
-          weekDrag = { pointerId: current.pointerId, item, start: originalStart,
-            end: originalEnd,
-            offset: Math.max(0, Math.min(originalEnd - originalStart - 1,
-              current.pointerTime - originalStart)), loading: false, ready: false,
-            zoomVisibleDays: timeline.getViewMode() === 'timeline' ? timeline.getTargetVisibleDays() : null,
-            minTaskWidth: timeline.minTaskWidth, maxVisibleDays: timeline.options.maxVisibleDays };
-          timeline.editState = null;
-          timeline.editCanvasWidth = 0;
-          timeline.calendarEditState = null;
-          timeline._calendarPinnedVerticalMap = null;
-          ghost.textContent = item.title || 'Moving entry';
-          timeline.shadow.append(ghost);
-          placeGhost(event);
-          timelineApi.update({ items: props.items });
-        }
-        const drag = weekDrag;
-        drag.loading = true;
-        drag.ready = false;
-        clearEdge();
-        try {
-          drag.ready = await props.onWeekEdgeNavigate(direction) === true;
-          if (weekDrag === drag && drag.ready) fitDraggedWeek(drag);
-        } catch (error) {
-          props.onError?.(error, { action: 'week-navigation', source: 'clockoli-adapter' });
-        } finally {
-          drag.loading = false;
-          if (weekDrag === drag && !drag.ready) {
-            ghost.remove(); weekDrag = null;
-            restoreDraggedZoom(drag, null);
-          }
-        }
-      }, 650);
-    };
-    const weekPointerEnd = event => {
-      if (event.pointerId !== (weekDrag?.pointerId ?? edgePointer)) return;
-      clearEdge();
-      if (!weekDrag) return;
-      const drag = weekDrag;
-      weekDrag = null;
-      ghost.remove();
-      const placement = event.type === 'pointercancel' || drag.loading || !drag.ready ? null
-        : drag.previewStart != null && event.clientX === drag.previewX && event.clientY === drag.previewY
-          ? { start: drag.previewStart, end: drag.previewEnd } : weekPlacement(event, drag);
-      if (!placement) {
-        clearWeekPreview(drag);
-        restoreDraggedZoom(drag, null);
-        return;
-      }
-      restoreDraggedZoom(drag, placement);
-      void Promise.resolve().then(() => props.onEditCommit({ id: drag.item.id,
-        startedAt: placement.start, endedAt: placement.end, kind: 'move' }))
-        .then(value => { if (value === false) throw new Error('The entry could not be moved. Reload the week and try again.'); })
-        .catch(error => {
-          clearWeekPreview(drag);
-          props.onError?.(error, { action: 'edit', source: 'clockoli-adapter' });
-        });
-    };
-    global.addEventListener('pointermove', weekPointerMove);
-    global.addEventListener('pointerup', weekPointerEnd);
-    global.addEventListener('pointercancel', weekPointerEnd);
-
     function scheduleDeferredFlush() {
       if (destroyed || !deferredUpdate || deferredFlushTimer !== null) return;
       // The component processes pointerup before us; commit callbacks then
@@ -5661,7 +5466,7 @@
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const rememberedCenter = Number(props.view?.focusedAt);
       const anchorTime = previousMode === 'timeline'
-        ? timeline.segments.length && (previousScroll > 1 || weekDrag?.zoomVisibleDays != null)
+        ? timeline.segments.length && previousScroll > 1
           ? timeline.xToTime(previousScroll + previousWidth / 2)
           : Number.isFinite(rememberedCenter) && rememberedCenter > 0
             ? rememberedCenter
@@ -5744,12 +5549,6 @@
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
         global.removeEventListener('pointerup', onGestureEnd);
         global.removeEventListener('pointercancel', onGestureEnd);
-        global.removeEventListener('pointermove', weekPointerMove);
-        global.removeEventListener('pointerup', weekPointerEnd);
-        global.removeEventListener('pointercancel', weekPointerEnd);
-        clearEdge();
-        ghost.remove();
-        weekDrag = null;
         deferredUpdate = null;
         timeline.destroy();
       },

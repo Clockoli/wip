@@ -10,11 +10,13 @@ const monday = new Date(now); monday.setHours(0, 0, 0, 0);
 monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
 const source = new Date(monday); source.setHours(10);
 const target = new Date(monday); target.setDate(target.getDate() - 4); target.setHours(14);
+const boundary = new Date(monday); boundary.setDate(boundary.getDate() - 1); boundary.setHours(23);
 const day = value => [value.getFullYear(), String(value.getMonth() + 1).padStart(2, '0'), String(value.getDate()).padStart(2, '0')].join('-');
 const record = (id, start, title) => ({ id, taskUrl: 'https://github.com/acme/app/issues/42', taskTitle: title,
   entryDate: day(start), timezone: 'UTC', startedAt: start.toISOString(), endedAt: new Date(start.getTime() + 3600000).toISOString(),
   durationSeconds: 3600, _path: 'times/' + day(start).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 0, destinationId: 'fixture' });
-const entries = [record('source', source, 'Drag me'), record('neighbor', target, 'Leave me')];
+const entries = [record('source', source, 'Drag me'), record('neighbor', target, 'Leave me'),
+  record('boundary', boundary, 'Ends at Monday')];
 globalThis.edits = [];
 globalThis.reads = [];
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
@@ -32,7 +34,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
-for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} drags to the screen edge, loads the adjacent week, and queues one move`, async () => {
+for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} does not navigate weeks when dragging to the screen edge`, async () => {
   test.setTimeout(45000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-edge-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-edge-profile-'));
@@ -84,39 +86,31 @@ for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} drags to the
     const edgeViewport = await root.locator(`.${viewportClass}`).boundingBox();
     const edgeY = edgeViewport.y + edgeViewport.height / 2;
     await page.mouse.move(1, edgeY, { steps: 8 });
-    await expect(root.locator('.week-navigation-label')).not.toHaveText(before, { timeout: 7000 });
+    await page.waitForTimeout(850);
+    await expect(root.locator('.week-navigation-label')).toHaveText(before);
+    await expect(root.locator(`.${taskClass}[data-task-key="entry:neighbor"]`)).toHaveCount(0);
+    await page.mouse.up();
+    await expect(root.locator('.week-navigation-label')).toHaveText(before);
+    const outcome = await worker.evaluate(() => ({ edits: globalThis.edits, weekStart: monday.getTime() }));
+    const nextWeek = new Date(outcome.weekStart);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    for (const edit of outcome.edits) {
+      expect(new Date(edit.edits.startedAt).getTime()).toBeGreaterThanOrEqual(outcome.weekStart);
+      expect(new Date(edit.edits.endedAt).getTime()).toBeLessThanOrEqual(nextWeek.getTime());
+    }
+    await root.getByRole('button', { name: 'Previous week' }).click();
+    await expect(root.locator('.week-navigation-label')).not.toHaveText(before);
     await expect(root.locator(`.${taskClass}[data-task-key="entry:neighbor"]`)).toBeVisible();
     if (view === 'Timeline') {
-      const days = await root.locator('.day-band').evaluateAll(bands => {
-        const viewport = bands[0]?.closest('.viewport')?.getBoundingClientRect();
-        return bands.filter(band => { const rect = band.getBoundingClientRect();
-          return viewport && rect.width > 0 && rect.left >= viewport.left - 2 && rect.right <= viewport.right + 2;
-        }).length;
-      });
-      expect(days, 'the destination Monday–Sunday week should fit in the viewport while dragging').toBeGreaterThanOrEqual(7);
+      const lastHour = root.locator('.task[data-task-key="entry:boundary"]');
+      await lastHour.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+      await lastHour.click();
+      await page.keyboard.press('ArrowLeft');
+      await expect.poll(() => worker.evaluate(() => globalThis.edits.filter(edit => edit.original.id === 'boundary').length))
+        .toBe(1);
+      const edit = await worker.evaluate(() => globalThis.edits.find(edit => edit.original.id === 'boundary'));
+      expect(new Date(edit.edits.endedAt) - new Date(edit.edits.startedAt)).toBe(3600000);
     }
-    const destination = await root.locator(`.${viewportClass}`).boundingBox();
-    await page.mouse.move(destination.x + destination.width * 0.75, destination.y + destination.height / 2, { steps: 8 });
-    const preview = root.locator(`.${taskClass}[data-task-key="entry:source"]`).first();
-    await expect(preview, 'the dragged record should appear in the destination grid before release').toBeVisible();
-    await expect(preview).toHaveClass(/clockoli-week-preview/);
-    expect(await worker.evaluate(() => globalThis.edits.length)).toBe(0);
-    const previewStart = Number(await preview.getAttribute('data-preview-start'));
-    await page.mouse.up();
-    await expect.poll(() => worker.evaluate(() => globalThis.edits.length)).toBe(1);
-    await expect(preview, 'the accepted move should stay visible without reloading').toBeVisible();
-    if (view === 'Timeline') {
-      const width = await root.locator('.day-band').first().evaluate(band => band.getBoundingClientRect().width);
-      const viewportWidth = (await root.locator('.viewport').boundingBox()).width;
-      expect(width, 'releasing should restore the original, closer Timeline zoom').toBeGreaterThan(viewportWidth / 7);
-    }
-    const outcome = await worker.evaluate(() => ({ edit: globalThis.edits[0], neighbor: entries[1], reads: globalThis.reads.length }));
-    expect(outcome.edit.original.id).toBe('source');
-    expect(new Date(outcome.edit.edits.startedAt).getTime()).toBe(previewStart);
-    expect(new Date(outcome.edit.edits.endedAt) - new Date(outcome.edit.edits.startedAt)).toBe(3600000);
-    expect(new Date(outcome.edit.edits.endedAt) <= new Date(outcome.neighbor.startedAt)
-      || new Date(outcome.edit.edits.startedAt) >= new Date(outcome.neighbor.endedAt)).toBe(true);
-    expect(outcome.reads).toBeGreaterThan(1);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

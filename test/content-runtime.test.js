@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { formatClockDuration } from '../src/domain/reporting.js';
 import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
+import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local-time.js';
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
@@ -1152,6 +1153,7 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
     _path: 'times/2026-08/alice.jsonl', _sha: 'one', _index: 0,
   };
   const issueTitleNode = new FakeNode('bdi'); issueTitleNode.textContent = 'Make ranking deterministic';
+  const form = { openEdit(value, onEdit) { this.value = value; this.onEdit = onEdit; } };
   const document = {
     documentElement: new FakeNode('html'), activeElement: null,
     createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
@@ -1159,7 +1161,7 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
     querySelector: selector => selector === '.AppHeader-actions' ? actions : selector.includes('issue-title') ? issueTitleNode : null, addEventListener() {},
   };
   const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
+    location, document, ClockoliTimeEntryForm: form, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
       messages.push(structuredClone(message));
       if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
       else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
@@ -1176,14 +1178,13 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
   const descriptionControl = createdNodes.findLast(node => node.className.includes('entry-description-editable'));
   assert.equal(descriptionControl.textContent, 'Original note');
   await descriptionControl.onclick({ isTrusted: true });
-  const urlDraft = createdNodes.findLast(node => node.className.includes('inline-task-url'));
-  const titleDraft = createdNodes.findLast(node => node.className.includes('inline-task-title'));
-  const descriptionDraft = createdNodes.findLast(node => node.className.includes('inline-description'));
-  assert.equal(urlDraft.value, entry.issue.url); assert.equal(titleDraft.value, entry.issueTitle); assert.equal(descriptionDraft.value, 'Original note');
-  assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4).length, 4,
-    'a description click also exposes the direct time fields');
-  assert.match(source, /function beginRecordEdit\(entry\) \{ beginMetadataEdit\(entry, \{ focusTime: true \}\); \}/);
-  assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(\) => revealTimeEditor\(\)\)/);
+  assert.equal(form.value.taskUrl, entry.issue.url);
+  assert.equal(form.value.taskTitle, entry.issueTitle);
+  assert.equal(form.value.description, 'Original note');
+  assert.equal(form.value.startedAt, entry.startedAt);
+  assert.equal(form.value.endedAt, entry.endedAt);
+  assert.equal(typeof form.onEdit, 'function');
+  assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
 });
 
 test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
@@ -3735,6 +3736,25 @@ test('completion of an older operation cannot clear a newer optimistic generatio
   assert.equal(harness.optimisticEdit('active'), undefined);
 });
 
+test('a historical move stays unaccepted until the overlap preflight responds', async () => {
+  const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC',
+    startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z',
+    _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
+  let respondEdit;
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [completed], now: Date.parse('2026-09-05T14:00:00Z'), respond(message, callback) {
+      if (message.type === 'QUEUE_ENTRY_EDIT') respondEdit = callback;
+      else callback({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
+    } });
+  const move = harness.queueCalendarEntry(completed, { startedAt: '2026-09-05T12:15:00Z' });
+  assert.equal(harness.recentEntry('entry').startedAt, completed.startedAt);
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+  respondEdit({ ok: false, error: { message: 'This edit would overlap another entry.' } });
+  await assert.rejects(move, /overlap/);
+  assert.equal(harness.recentEntry('entry').startedAt, completed.startedAt);
+  assert.equal(harness.optimisticEdit('entry'), undefined);
+});
+
 test('reverse responses sharing one compacted operation reconcile the newest generation', async () => {
   const now = Date.parse('2026-09-05T14:00:00Z');
   const completed = { id: 'entry', taskUrl: 'https://example.com/work', entryDate: '2026-09-05', timezone: 'UTC', startedAt: '2026-09-05T12:00:00Z', endedAt: '2026-09-05T13:00:00Z', _path: 'times/entry.jsonl', _sha: 'sha', _index: 0 };
@@ -4139,8 +4159,10 @@ async function runningStatusHarness(initial) {
   };
   const context = vm.createContext({
     document, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    dateValue, timeValue, parseTime, localTimestamp,
     Date: class extends Date { static now() { return now; } },
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
+    setTimeout: () => 1, clearTimeout: () => {},
     confirm: text => { confirmations.push(text); return confirmed; },
   });
   vm.runInContext(trackingCardSource, context);
@@ -4281,12 +4303,15 @@ test('shared running status ticks without replacing controls and rereads after S
   assert.equal(h.find('running-status-live').textContent, 'Tracking now');
   assert.equal(h.find('running-status-live').hidden, false);
   assert.equal(h.find('running-status-metrics').children.length, 2);
-  assert.equal(link.textContent, '<img> Fix tracking'); assert.equal(link.children.length, 0);
+  assert.equal(h.find('running-status-stats').hidden, false);
+  assert.equal(link.textContent, '<img> Fix tracking', h.find('running-status-error').textContent); assert.equal(link.children.length, 0);
   assert.equal(link.href, 'https://github.com/acme/app/issues/7');
   assert.equal(link.rel, 'noreferrer'); assert.equal(stop.textContent, 'Stop and save');
-  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m');
+  assert.equal(h.find('running-status-elapsed').children[0].textContent, 'Duration');
+  assert.equal(h.find('running-status-elapsed').getAttribute('aria-label'), 'Duration');
+  assert.equal(h.find('running-status-elapsed').children[1].textContent, '1h 0m');
   h.advance(1_000); h.timers.get(1_000)();
-  assert.equal(h.find('running-status-elapsed').textContent, '1h 0m');
+  assert.equal(h.find('running-status-elapsed').children[1].textContent, '1h 0m');
   assert.equal(h.find('running-status-stop'), stop);
   await stop.onclick(); await h.settle();
   const stopIndex = h.calls.findIndex(call => call.type === 'STOP');
@@ -4348,10 +4373,11 @@ test('shared running status ignores late reads and accepts only one concurrent S
 test('shared running status updates Today only for a timer assigned to today', async () => {
   const h = await runningStatusHarness(runningStatusState());
   h.advance(60_000); h.timers.get(1_000)();
-  assert.equal(h.find('running-status-today').textContent, 'Today 2h 1m');
+  assert.equal(h.find('running-status-today').children[0].textContent, 'Today');
+  assert.equal(h.find('running-status-today').children[1].textContent, '2h 1m');
   h.setState({ ...runningStatusState(), active: { ...runningStatusState().active, entryDate: '2026-09-04' } });
   await h.events.get('visibilitychange')(); h.advance(60_000); h.timers.get(1_000)();
-  assert.equal(h.find('running-status-today').textContent, 'Today 2h 0m');
+  assert.equal(h.find('running-status-today').children[1].textContent, '2h 0m');
   const reads = h.calls.length;
   h.document.hidden = true; h.timers.get(5_000)(); assert.equal(h.calls.length, reads);
   h.document.hidden = false; h.setState({ configured: true, active: null, todayTrackedMs: 0 });
