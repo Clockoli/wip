@@ -700,16 +700,45 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     })).toBe(30 * 60_000);
     await root.getByRole('button', { name: 'Calendar', exact: true }).click();
     const calendarSource = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
-    const calendarNeighbor = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
     await expect(calendarSource).toBeVisible();
-    await calendarSource.evaluate(element => element.scrollIntoView({ block: 'center' }));
-    const calendarFrom = await calendarSource.boundingBox(), calendarBefore = await calendarNeighbor.boundingBox();
+    let calendarGeometry;
+    await expect.poll(async () => {
+      calendarGeometry = await calendarSource.evaluate(async element => {
+        if (!element.isConnected) return null;
+        const shadow = element.getRootNode();
+        const neighbor = shadow.querySelector('.calendar-task[data-task-key="entry:record"]');
+        const viewport = shadow.querySelector('.calendar-viewport');
+        if (!neighbor || !viewport) return null;
+        element.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const from = element.getBoundingClientRect(), to = neighbor.getBoundingClientRect();
+        const bounds = viewport.getBoundingClientRect();
+        viewport.scrollTop += (from.bottom + to.top) / 2 - (bounds.top + bounds.bottom) / 2;
+        await new Promise(requestAnimationFrame);
+        const source = shadow.querySelector('.calendar-task[data-task-key="entry:same-day"]');
+        const target = shadow.querySelector('.calendar-task[data-task-key="entry:record"]');
+        if (!source || !target) return null;
+        return { from: source.getBoundingClientRect().toJSON(), to: target.getBoundingClientRect().toJSON(),
+          bounds: viewport.getBoundingClientRect().toJSON(), pageWidth: innerWidth, pageHeight: innerHeight };
+      });
+      if (!calendarGeometry) return false;
+      const { from, to, bounds, pageWidth, pageHeight } = calendarGeometry;
+      return from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0
+        && from.y >= bounds.y && to.y >= bounds.y
+        && from.y + from.height <= bounds.y + bounds.height
+        && to.y + to.height <= bounds.y + bounds.height
+        && to.y - 20 >= bounds.y + 4 && to.y - 20 < bounds.y + bounds.height
+        && from.x + from.width / 2 >= 0 && from.x + from.width / 2 < pageWidth
+        && from.y + from.height / 2 >= 0 && from.y + from.height / 2 < pageHeight;
+    }).toBe(true);
+    const { from: calendarFrom, to: calendarBefore } = calendarGeometry;
     await page.mouse.move(calendarFrom.x + calendarFrom.width / 2, calendarFrom.y + calendarFrom.height / 2);
     await page.mouse.down();
     await page.mouse.move(calendarBefore.x + calendarBefore.width / 2, calendarBefore.y - 20, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
     expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
+    expect(await worker.evaluate(() => globalThis.editPayloads[1].edits.startedAt
+      !== globalThis.editPayloads[1].original.startedAt)).toBe(true);
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
