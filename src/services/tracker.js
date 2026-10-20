@@ -64,7 +64,20 @@ function sameTimer(a, b) { return Boolean(a?.id && b?.id) && a.id === b.id; }
 function timerStartedAt(value) { return new Date(value?.startedAt).getTime(); }
 function assertNoActiveOverlap(entries, active) {
   if (active && entries.some(entry => entry.id !== active.id && new Date(entry.endedAt).getTime() > timerStartedAt(active))) {
-    throw new Error('This edit would overlap the running timer. Set the entry End no later than the timer Start.');
+    throw new TrackerConflictError('This edit would overlap the running timer. Set the entry End no later than the timer Start.');
+  }
+}
+function assertNoCompletedOverlap(updated, entries) {
+  const start = new Date(updated.startedAt).getTime(), end = new Date(updated.endedAt).getTime();
+  if (entries.some(entry => entry.id !== updated.id
+      && new Date(entry.startedAt).getTime() < end && new Date(entry.endedAt).getTime() > start)) {
+    throw new TrackerConflictError('This edit would overlap another entry. Choose a free time range before moving it.');
+  }
+}
+function assertNoRunningCompletedOverlap(active, entries) {
+  const start = new Date(active.startedAt).getTime();
+  if (entries.some(entry => new Date(entry.endedAt).getTime() > start)) {
+    throw new TrackerConflictError('Timer start would overlap another time entry. Choose a start after that entry ends.');
   }
 }
 function isNewerTimer(candidate, current) { return timerStartedAt(candidate) > timerStartedAt(current); }
@@ -1729,11 +1742,30 @@ export class TrackerService {
   async queueEntryEdit({ path, originalSha, index, original, edits }) {
     const queuedAt = this.clock();
     const historical = await this.historicalQueueEntries([{ path, originalSha, index, original }]);
+    const before = await this.store.getState();
+    const candidate = this.queuedEntry(before, { path, original }, historical);
+    if (!candidate) throw new TrackerConflictError('This time entry is no longer available locally. Reload before editing.');
+    const proposed = applyEntryEdits(candidate, edits, editClock(this.clock, candidate));
+    const changedTime = proposed.startedAt !== candidate.startedAt || proposed.endedAt !== candidate.endedAt;
+    const remoteActive = changedTime ? await this.readRemoteActive() : null;
+    const overlapFiles = changedTime ? await this.readEditOverlapFiles([proposed], { path, sha: candidate._sha }) : null;
+    if (overlapFiles && candidate._sha && overlapFiles.files.find(file => file.path === path)?.sha !== candidate._sha) {
+      throw new TrackerConflictError('This monthly time file changed after you opened it. Reload before saving.');
+    }
     return this.mutateState(state => {
       const cached = this.queuedEntry(state, { path, original }, historical);
       if (!cached) throw new TrackerConflictError('This time entry is no longer available locally. Reload before editing.');
       const updated = applyEntryEdits(cached, edits, editClock(this.clock, cached));
-      if (updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt) assertNoActiveOverlap([updated], state.activeCache);
+      if (updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt) {
+        assertNoActiveOverlap([updated], state.activeCache);
+        assertNoActiveOverlap([updated], remoteActive);
+        if (!overlapFiles || updated.startedAt !== proposed.startedAt || updated.endedAt !== proposed.endedAt) {
+          throw new TrackerConflictError('The time entry changed while checking its destination. Reload and try again.');
+        }
+        assertNoCompletedOverlap(updated, overlayPendingEntries([
+          ...(state.recentCache ?? []), ...overlapFiles.files.flatMap(file => file.entries),
+        ], state.pendingWrites ?? []));
+      }
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editEntry'
         && operation.request?.path === path && operation.request?.original?.id === original.id);
@@ -1780,6 +1812,18 @@ export class TrackerService {
     const queuedAt = this.clock();
     if (!Array.isArray(entries) || entries.length < 1 || entries.length > 50) throw new Error('One to fifty linked time entries are required');
     const historical = await this.historicalQueueEntries(entries);
+    const before = await this.store.getState();
+    const candidates = entries.map(request => this.queuedEntry(before, request, historical));
+    if (candidates.some(item => !item)) throw new TrackerConflictError('A linked time entry is no longer available locally. Reload before editing.');
+    const proposed = entries.map((request, index) => applyEntryEdits(candidates[index], request.edits, editClock(this.clock, candidates[index])));
+    const changed = proposed.filter((item, index) => item.startedAt !== candidates[index].startedAt || item.endedAt !== candidates[index].endedAt);
+    const remoteActive = changed.length ? await this.readRemoteActive() : null;
+    const overlapFiles = changed.length ? await this.readEditOverlapFiles(changed,
+      entries.map((request, index) => ({ path: request.path, sha: candidates[index]._sha }))) : null;
+    if (overlapFiles && entries.some((request, index) => candidates[index]._sha
+      && overlapFiles.files.find(file => file.path === request.path)?.sha !== candidates[index]._sha)) {
+      throw new TrackerConflictError('A monthly time file changed after the panel loaded. Reload before saving.');
+    }
     return this.mutateState(state => {
       const cachedByIdentity = new Map(entries.map(request => [
         `${request?.path}\u0000${request?.original?.id}`, this.queuedEntry(state, request, historical),
@@ -1795,10 +1839,23 @@ export class TrackerService {
         const cached = cachedByIdentity.get(`${request.path}\u0000${request.original.id}`);
         return [`${request.path}\u0000${request.original.id}`, applyEntryEdits(cached, request.edits, editClock(this.clock, cached))];
       }));
-      assertNoActiveOverlap(requestEntries.flatMap(request => {
+      const changedTimes = requestEntries.flatMap(request => {
         const key = `${request.path}\u0000${request.original.id}`, cached = cachedByIdentity.get(key), updated = updatedByIdentity.get(key);
         return updated.startedAt !== cached.startedAt || updated.endedAt !== cached.endedAt ? [updated] : [];
-      }), state.activeCache);
+      });
+      assertNoActiveOverlap(changedTimes, state.activeCache);
+      assertNoActiveOverlap(changedTimes, remoteActive);
+      if (changedTimes.length) {
+        if (!overlapFiles || changedTimes.length !== changed.length || changedTimes.some((item, index) =>
+          item.id !== changed[index].id || item.startedAt !== changed[index].startedAt || item.endedAt !== changed[index].endedAt)) {
+          throw new TrackerConflictError('A linked time entry changed while checking its destination. Reload and try again.');
+        }
+        const updated = [...updatedByIdentity.values()];
+        const ids = new Set(updated.map(item => item.id));
+        const others = overlayPendingEntries([...(state.recentCache ?? []), ...overlapFiles.files.flatMap(file => file.entries)],
+          state.pendingWrites ?? []).filter(item => !ids.has(item.id));
+        for (const item of changedTimes) assertNoCompletedOverlap(item, [...others, ...updated.filter(other => other.id !== item.id)]);
+      }
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const existing = pendingWrites.at(-1)?.operation === 'editEntries' && !pendingWrites.at(-1).syncInFlight
       ? pendingWrites.at(-1) : null;
@@ -1825,6 +1882,14 @@ export class TrackerService {
 
   async queueActiveStartEdit({ original, startedAt, description }) {
     const queuedAt = this.clock();
+    const snapshot = await this.store.getState();
+    const current = snapshot.activeCache;
+    if (!current || current.id !== original?.id || current.startedAt !== original?.startedAt) {
+      throw new TrackerConflictError('The active timer changed before its edit was queued. Reload before trying again.');
+    }
+    const proposed = applyActiveEdits(current, { startedAt, description }, queuedAt);
+    const overlap = proposed.startedAt !== current.startedAt
+      ? await this.readEditOverlapFiles([{ ...proposed, endedAt: queuedAt.toISOString() }]) : null;
     return this.mutateState(state => {
       const active = state.activeCache;
       if (!active || active.id !== original?.id || active.startedAt !== original?.startedAt) throw new TrackerConflictError('The active timer changed before its edit was queued. Reload before trying again.');
@@ -1834,6 +1899,10 @@ export class TrackerService {
       };
       const updated = applyActiveEdits(active, edits, queuedAt);
       const pendingWrites = [...(state.pendingWrites ?? [])];
+      if (overlap) {
+        const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])], pendingWrites);
+        assertNoRunningCompletedOverlap(updated, [...overlap.files.flatMap(file => file.entries), ...known]);
+      }
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editActiveStart'
         && operation.original?.id === active.id);
       const operation = existing ?? {
@@ -1865,12 +1934,25 @@ export class TrackerService {
     const guards = timeChanged ? [{ path: activeRecordPath(this.user), sha: active?._sha ?? null }] : [];
     updated.entryDate = startDate(updated);
     const destinationPath = monthlyRecordsPath(this.user, updated.entryDate);
+    let overlap = null;
+    if (timeChanged) {
+      overlap = await this.readEditOverlapFiles([updated]);
+      assertNoCompletedOverlap(updated, overlap.files.flatMap(file => file.entries));
+      for (const file of overlap.files) {
+        if (file.path === path && file.sha !== source.sha) {
+          throw new TrackerConflictError('Time data changed while checking the destination. Reload and try again.');
+        }
+        if (file.path !== path && file.path !== destinationPath) guards.push({ path: file.path, sha: file.sha });
+      }
+    }
     try {
       if (destinationPath === path) {
         const entries = source.entries.with(position, updated);
         const { blobShas } = await this.updateCompletedRecords([
           { path: source.path, sha: source.sha, text: serializeMonthlyRecords(entries) },
-        ], `time: edit ${this.user} ${source.month}`, { remove: [source.entries[position]], add: [updated], guards });
+        ], `time: edit ${this.user} ${source.month}`, {
+          remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null,
+        });
         const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: blobShas[path] });
         if (updateCache) {
           const state = await this.store.getState();
@@ -1879,13 +1961,17 @@ export class TrackerService {
         return saved[position];
       }
       const destination = await this.readMonthly(destinationPath);
+      const checkedDestination = overlap?.files.find(file => file.path === destinationPath);
+      if (checkedDestination && destination.sha !== checkedDestination.sha) {
+        throw new TrackerConflictError('Time data changed while checking the destination. Reload and try again.');
+      }
       const sourceEntries = source.entries.filter((_, current) => current !== position), destinationEntries = [...destination.entries, updated];
       const changes = [
         { path: source.path, sha: source.sha, text: serializeMonthlyRecords(sourceEntries) || null },
         { path: destination.path, sha: destination.sha, text: serializeMonthlyRecords(destinationEntries) },
       ];
       const result = await this.updateCompletedRecords(changes, `time: move edited entry ${this.user}`, {
-        remove: [source.entries[position]], add: [updated], guards,
+        remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null,
       });
       const savedSource = parseMonthlyRecords(serializeMonthlyRecords(sourceEntries), { user: this.user, month: source.month, path: source.path, sha: result.blobShas[source.path] ?? null });
       const savedDestination = parseMonthlyRecords(serializeMonthlyRecords(destinationEntries), { user: this.user, month: destination.month, path: destination.path, sha: result.blobShas[destination.path] });
@@ -1914,10 +2000,18 @@ export class TrackerService {
     if (!matchesOriginal(active, original) || active.startedAt !== original?.startedAt) {
       throw new TrackerConflictError('The running timer changed after the timeline loaded. Reload before saving.');
     }
-    const updated = applyActiveEdits(active, { startedAt, description }, this.clock());
+    const now = this.clock();
+    const updated = applyActiveEdits(active, { startedAt, description }, now);
+    const path = activeRecordPath(this.user);
+    const overlap = updated.startedAt !== active.startedAt
+      ? await this.readEditOverlapFiles([{ ...updated, endedAt: now.toISOString() }]) : null;
+    if (overlap) assertNoRunningCompletedOverlap(updated, overlap.files.flatMap(file => file.entries));
     try {
-      const result = await this.github.putText(activeRecordPath(this.user), serializeActiveRecord(updated), `timer: edit start ${this.user}`, active._sha);
-      const cached = { ...updated, _path: activeRecordPath(this.user), _sha: result.sha };
+      const result = overlap
+        ? await this.github.updateTextsAtomic([{ path, sha: active._sha, text: serializeActiveRecord(updated) }],
+          `timer: edit start ${this.user}`, { guards: overlap.files.map(file => ({ path: file.path, sha: file.sha })), expectedHeadSha: overlap.headSha })
+        : await this.github.putText(path, serializeActiveRecord(updated), `timer: edit start ${this.user}`, active._sha);
+      const cached = { ...updated, _path: path, _sha: overlap ? result.blobShas[path] : result.sha };
       if (updateCache) await this.store.patchState({ activeCache: cached });
       return cached;
     } catch (error) {
@@ -1952,8 +2046,21 @@ export class TrackerService {
     const active = changedTimes.length ? await this.readRemoteActive() : null;
     assertNoActiveOverlap(changedTimes, active);
     const guards = changedTimes.length ? [{ path: activeRecordPath(this.user), sha: active?._sha ?? null }] : [];
+    const overlap = changedTimes.length ? await this.readEditOverlapFiles(changedTimes) : null;
     const targetPaths = updated.map(entry => monthlyRecordsPath(this.user, entry.entryDate));
     for (const targetPath of targetPaths) if (!files.has(targetPath)) files.set(targetPath, await this.readMonthly(targetPath));
+    if (overlap) {
+      const ids = new Set(updated.map(entry => entry.id));
+      const others = overlap.files.flatMap(file => file.entries).filter(entry => !ids.has(entry.id));
+      for (const entry of changedTimes) assertNoCompletedOverlap(entry, [...others, ...updated.filter(other => other.id !== entry.id)]);
+      for (const file of overlap.files) {
+        if (files.has(file.path)) {
+          if (files.get(file.path).sha !== file.sha) {
+            throw new TrackerConflictError('Time data changed while checking the destination. Reload and try again.');
+          }
+        } else guards.push({ path: file.path, sha: file.sha });
+      }
+    }
     for (const request of requests) {
       const source = files.get(request.path);
       source.entries = source.entries.filter(entry => entry !== request.originalEntry);
@@ -1966,7 +2073,7 @@ export class TrackerService {
     try {
       const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
       const { blobShas } = await this.updateCompletedRecords(changes, `time: edit linked entries ${this.user}`, {
-        remove: requests.map(request => request.originalEntry), add: updated, guards,
+        remove: requests.map(request => request.originalEntry), add: updated, guards, expectedHeadSha: overlap?.headSha ?? null,
       });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null,
@@ -2035,6 +2142,33 @@ export class TrackerService {
       if (isConflict(error)) throw new TrackerConflictError('Time data changed while tasks were being merged. Reload and try again.');
       throw error;
     }
+  }
+
+  async readEditOverlapFiles(entries, source = null) {
+    const snapshot = await this.github.listTextFilesSnapshot('times/');
+    const cachedSources = new Map((Array.isArray(source) ? source : source ? [source] : [])
+      .map(item => [item.path, item.sha]));
+    // Another record may use a timezone up to a day ahead of this entry's UTC end.
+    const latestMonth = entries.map(entry => new Date(new Date(entry.endedAt).getTime() + 86_400_000)
+      .toISOString().slice(0, 7)).sort().at(-1);
+    const paths = new Set(snapshot.files.map(file => file.path).filter(path =>
+      /^times\/\d{4}-(?:0[1-9]|1[0-2])\//.test(path)
+      && path.endsWith(`/${this.user}.jsonl`) && path.slice(6, 13) <= latestMonth));
+    for (const entry of entries) paths.add(monthlyRecordsPath(this.user, entry.entryDate));
+    for (const path of cachedSources.keys()) paths.add(path);
+    const shas = new Map(snapshot.files.map(file => [file.path, file.sha]));
+    const files = [], selectedPaths = [...paths];
+    for (let offset = 0; offset < selectedPaths.length; offset += 4) {
+      files.push(...await Promise.all(selectedPaths.slice(offset, offset + 4).map(async path => {
+        const sha = shas.get(path);
+        if (sha && (!cachedSources.has(path) || sha === cachedSources.get(path))) {
+          const cached = await this.reports?.cachedMonthly(path, sha);
+          if (cached) return cached;
+        }
+        return this.readMonthly(path);
+      })));
+    }
+    return { files, headSha: snapshot.headSha || null };
   }
 
   async readAddTimeOverlapFiles(day, now, endDay = null) {

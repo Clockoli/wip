@@ -180,7 +180,8 @@
     .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
 
     .history-controls { display: none; }
-    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 1 1 340px; min-width: 0; align-items: flex-start; gap: 8px; }
+    .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 0 0 auto; min-width: 0; align-items: center; gap: 8px; }
+    .clockoli-timeline-actions.has-description { flex: 1 1 340px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
     .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 6px 94px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
     .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
@@ -206,9 +207,12 @@
     const editable = item?.isEditable !== false;
     const running = Boolean(item?.isRunning || item?.endedAt == null);
     return {
-      move: editable && !running,
+      move: editable && !running
+        && (item.originalStartedAt == null || Number(item.originalStartedAt) === Number(item.startedAt))
+        && (item.originalEndedAt == null || Number(item.originalEndedAt) === Number(item.endedAt)),
       resizeStart: editable || running,
       resizeEnd: editable && !running,
+      edit: editable || running,
       start: !item?.isStartDisabled,
       stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
       delete: !item?.isDeleteDisabled,
@@ -312,6 +316,8 @@
       else if (event.action === 'resize-end') allowed = permissions.resizeEnd;
       else if (event.action === 'delete') return permissions.delete;
       if (!allowed) return false;
+      if (event.action === 'move' && props.totalRange && event.after
+        && (event.after.start < props.totalRange.start || event.after.end > props.totalRange.end)) return false;
       if ((event.action === 'move' || event.action === 'resize-end')
         && event.after?.end > Date.now()) throw new Error('Time entries cannot end in the future.');
       if (event.action !== 'move' && event.after && event.before && event.after.end - event.after.start < 60_000) return false;
@@ -604,7 +610,8 @@
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', kind === 'delete'
         ? 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 10v8m4-8v8'
-        : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
+        : kind === 'edit' ? 'M4 20l4.5-1 11-11a2.12 2.12 0 0 0-3-3l-11 11L4 20zM14 6l4 4'
+          : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
       svg.append(path);
       return svg;
     }
@@ -700,8 +707,10 @@
         }
         const deletion = existing.querySelector('.danger');
         const primary = existing.querySelector('.primary');
+        const edit = existing.querySelector('.clockoli-entry-edit');
         if (deletion) deletion.disabled = !permissions.delete;
         if (primary) primary.disabled = mode === 'completed' ? !permissions.start : !permissions.stop;
+        if (edit) edit.disabled = !permissions.edit;
         return;
       }
       existing?.remove();
@@ -709,7 +718,7 @@
       actions.className = 'clockoli-timeline-actions';
       actions.dataset.itemId = String(key);
       actions.dataset.mode = mode;
-      if (typeof props.onDescriptionCommit === 'function') {
+      if (typeof props.onDescriptionCommit === 'function' && (String(item.description || '').trim() || String(savedDescription).trim())) {
         const field = document.createElement('div');
         field.className = 'clockoli-description-field';
         const description = document.createElement('textarea');
@@ -763,7 +772,7 @@
         });
         save.addEventListener('pointerdown', event => event.preventDefault());
         save.addEventListener('click', commit);
-        field.append(description, save, saved, more); actions.append(field);
+        field.append(description, save, saved, more); actions.classList.add('has-description'); actions.append(field);
         resizeDescription(description);
       }
       if (typeof props.onDelete === 'function') {
@@ -771,6 +780,13 @@
         button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete'; button.prepend(actionIcon('delete'));
         button.disabled = !permissions.delete;
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
+        actions.append(button);
+      }
+      if (typeof props.onEntryEdit === 'function') {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'clockoli-timeline-action clockoli-entry-edit'; button.textContent = 'Edit'; button.prepend(actionIcon('edit'));
+        button.disabled = !permissions.edit;
+        button.addEventListener('click', () => runAction(button, 'edit-form', () => props.onEntryEdit(sourceItem(key), button)));
         actions.append(button);
       }
       if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
@@ -888,7 +904,7 @@
       const wasRightPinned = previousMode === 'timeline' && previousMaxScroll - previousScroll <= 1;
       const rememberedCenter = Number(props.view?.focusedAt);
       const anchorTime = previousMode === 'timeline'
-        ? previousScroll > 1 && timeline.segments.length
+        ? timeline.segments.length && previousScroll > 1
           ? timeline.xToTime(previousScroll + previousWidth / 2)
           : Number.isFinite(rememberedCenter) && rememberedCenter > 0
             ? rememberedCenter

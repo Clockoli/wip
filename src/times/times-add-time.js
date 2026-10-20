@@ -8,7 +8,7 @@ function send(message) {
   }));
 }
 
-mountAddTime(document.getElementById('add-time-button'), {
+const dialog = mountAddTime(document.getElementById('add-time-button'), {
   send,
   onAdded: result => {
     // The background worker already committed to IndexedDB; notify Activity
@@ -16,3 +16,4 @@ mountAddTime(document.getElementById('add-time-button'), {
     document.dispatchEvent(new CustomEvent('clockoli:local-time-added', { detail: result }));
   },
 });
+globalThis.ClockoliTimeEntryForm = dialog;

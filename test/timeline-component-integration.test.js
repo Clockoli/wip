@@ -61,11 +61,13 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
   assert.match(content, /original: \{ id: entry\.id, startedAt: entry\.startedAt \}/);
 });
 
-test('timeline applies edits immediately and shows a non-blocking durable queue badge', () => {
+test('timeline accepts completed edits after preflight and shows a non-blocking durable queue badge', () => {
   const content = read('src/content/github.js');
 
   assert.match(content, /async function queueCalendarEntry/);
-  assert.match(content, /timelineOptimisticEdits\.set\(entry\.id, edits\);\s*applyTimelineOptimisticEntry\(entry, edits\);\s*refreshMountedTimeline\(\);\s*const acceptanceId = beginTimelineQueueAcceptance\(\);/);
+  const edit = content.slice(content.indexOf('async function queueCalendarEntry'), content.indexOf('async function queueActiveEdit'));
+  assert.ok(edit.indexOf("type: 'QUEUE_ENTRY_EDIT'") >= 0
+    && edit.indexOf('applyTimelineOptimisticEntry(entry, edits)') > edit.indexOf("type: 'QUEUE_ENTRY_EDIT'"));
   assert.match(content, /isPending: Boolean\(entry\._pending \|\| optimistic\)/);
   assert.match(content, /isEditable: !entry\._active/);
   assert.doesNotMatch(content, /timeline-queue-count/);
@@ -536,7 +538,8 @@ test('timeline exposes Delete and current-page tracking through durable handlers
   assert.match(content, /\} else if \(!compact\) \{\s*const startButton = button\(current \? 'Start tracking this task'/,
     'the legacy bottom start button is absent from the full-width compact panel');
   assert.doesNotMatch(content, /if \(!items\.length\).*No tracked time in the last 24 hours/);
-  assert.match(content, /Timeline cannot display invalid overlapping entries\. Fix them in Activity/);
+  assert.match(content, /Overlapping entries prevent this week from being displayed\./);
+  assert.match(content, /Go to List for this week and resolve the overlapping time entries manually\./);
 });
 
 test('tracking panel exposes a safe, bounded queue diagnostics log', () => {

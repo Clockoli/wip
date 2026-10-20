@@ -143,7 +143,17 @@ function activityReloadFixture() {
       return this.getState();
     },
   };
-  const github = {};
+  const github = {
+    async listTextFilesSnapshot() { return { files: [{ path, sha }], headSha: 'fixture-head' }; },
+    async assertDestinationReachable() { return true; },
+    async getText(requestPath) {
+      if (requestPath === 'active/alice.json') {
+        const error = new Error('No running timer'); error.status = 404; throw error;
+      }
+      assert.equal(requestPath, path);
+      return { text: serializeMonthlyRecords([original]), sha };
+    },
+  };
   const makeTracker = () => new TrackerService({
     github, store, user: 'alice', clock: () => new Date('2026-10-13T10:00:00.000Z'),
   });
@@ -418,6 +428,10 @@ function pageStateFixture() {
     getLocalPreferences: async () => ({ projects: [] }),
   };
   const github = {
+    listTextFilesSnapshot: async () => ({
+      files: [...files.keys()].filter(path => path.startsWith('times/')).map(path => ({ path, sha: 'remote-sha' })),
+      headSha: 'fixture-head',
+    }),
     getText: async path => {
       if (!files.has(path)) throw Object.assign(new Error('not found'), { status: 404 });
       return { text: files.get(path), sha: 'remote-sha', path };

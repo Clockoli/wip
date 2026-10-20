@@ -28,6 +28,7 @@ async function mount(page, overrides = {}) {
     ];
     window.__calls = [];
     window.__descriptionResolves = [];
+    window.__edits = [];
     window.__editSettlers = [];
     window.__items = items;
     window.__timeline = ClockoliTaskTimeline.createTimeline(document.querySelector('#timeline'), {
@@ -37,6 +38,8 @@ async function mount(page, overrides = {}) {
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
       totalRange: overrides.totalRange,
       weeklyCalendar: overrides.weeklyCalendar,
+      onWeekEdgeNavigate: overrides.edgeNavigation
+        ? direction => { window.__calls.push(['edge', direction]); return true; } : undefined,
       onCalendarNavigate: overrides.trackCalendarNavigation ? range => window.__calls.push(['navigate', range.start, range.end]) : undefined,
       onStart(item) {
         window.__lastStartedTitle = item.title;
@@ -44,6 +47,7 @@ async function mount(page, overrides = {}) {
         return overrides.startResult !== false;
       },
       onStop(item) { window.__calls.push(['stop', item.id]); return overrides.stopResult !== false; },
+      onEntryEdit: overrides.entryForm ? item => { window.__calls.push(['edit-form', item.id]); return true; } : undefined,
       onDelete(item) {
         window.__calls.push(['delete', item.id]);
         if (overrides.deleteReject) return Promise.reject(new Error('delete failed'));
@@ -51,6 +55,7 @@ async function mount(page, overrides = {}) {
       },
       onEditCommit(edit) {
         window.__calls.push(['edit', edit.id, edit.kind]);
+        window.__edits.push(edit);
         if (overrides.deferEdit) return new Promise((resolve, reject) => window.__editSettlers.push({ resolve, reject }));
         if (overrides.persistPending) {
           window.__items = window.__items.map(item => item.id === edit.id ? { ...item, isPending: true } : item);
@@ -71,6 +76,95 @@ async function mount(page, overrides = {}) {
     return now;
   }, { hour: HOUR, overrides });
 }
+
+async function dragGeometry(page, sourceSelector, viewportSelector) {
+  let geometry;
+  await expect.poll(async () => {
+    geometry = await page.locator(sourceSelector).first().evaluate(async (element, [sourceSelector, viewportSelector]) => {
+      const root = element.getRootNode();
+      element.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const source = root.querySelector(sourceSelector.replace('#timeline ', ''))?.getBoundingClientRect();
+      const viewport = root.querySelector(viewportSelector.replace('#timeline ', ''))?.getBoundingClientRect();
+      if (!source || !viewport) return null;
+      const left = Math.max(source.left, viewport.left, 0);
+      const right = Math.min(source.right, viewport.right, innerWidth);
+      const top = Math.max(source.top, viewport.top, 0);
+      const bottom = Math.min(source.bottom, viewport.bottom, innerHeight);
+      if (right <= left || bottom <= top) return null;
+      return { box: { x: left, y: top, width: right - left, height: bottom - top },
+        viewport: { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height } };
+    }, [sourceSelector, viewportSelector]);
+    return geometry !== null;
+  }, { timeout: 5000 }).toBe(true);
+  return geometry;
+}
+
+for (const mode of ['timeline', 'calendar']) {
+  test(`${mode} holds a move at the edge without navigating to another week`, async ({ page }) => {
+    const monday = new Date(2026, 9, 12).getTime();
+    const start = new Date(2026, 9, 14, 10).getTime();
+    await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+    await mount(page, { weeklyCalendar: true, edgeNavigation: true,
+      items: [{ id: 'entry:a', title: 'Source', startedAt: start, endedAt: start + HOUR, isEditable: true }],
+      view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: start, visibleDays: 2 },
+      totalRange: { start: monday, end: new Date(2026, 9, 19).getTime() } });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const selector = `#timeline .${mode === 'calendar' ? 'calendar-task' : 'task'}[data-task-key="entry:a"]`;
+    const { box } = await dragGeometry(page, selector,
+      `#timeline .${mode === 'calendar' ? 'calendar-viewport' : 'viewport'}`);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(1, box.y + box.height / 2, { steps: 6 });
+    await page.waitForTimeout(850);
+    expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'edge'))).toEqual([]);
+    await page.mouse.up();
+    expect(await page.evaluate(() => window.__timeline.getCalendarRange().start)).toBe(monday);
+    expect(await page.evaluate(() => window.__timeline.__timeline.getVisibleDays())).toBe(2);
+    for (const edit of await page.evaluate(() => window.__edits)) {
+      expect(edit.startedAt).toBeGreaterThanOrEqual(monday);
+      expect(edit.endedAt).toBeLessThanOrEqual(new Date(2026, 9, 19).getTime());
+    }
+  });
+}
+
+test('move validation rejects a different week but accepts free time in the selected week', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  const nextMonday = new Date(2026, 9, 19).getTime();
+  const start = new Date(2026, 9, 14, 10).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true,
+    items: [{ id: 'entry:a', title: 'Source', startedAt: start, endedAt: start + HOUR, isEditable: true }],
+    totalRange: { start: monday, end: nextMonday },
+    view: { start: monday, end: nextMonday, focusedAt: start } });
+  expect(await page.evaluate(({ monday, nextMonday, start, hour }) => {
+    const timeline = window.__timeline.__timeline;
+    const allowed = (from, to) => timeline.canChange({ action: 'move', instanceId: 'entry:a',
+      task: timeline._findTask('entry:a'),
+      after: { start: from, end: to } });
+    return [allowed(monday - hour, monday), allowed(nextMonday - hour / 2, nextMonday + hour / 2),
+      allowed(start + hour, start + 2 * hour)];
+  }, { monday, nextMonday, start, hour: HOUR })).toEqual([false, false, true]);
+});
+
+test('a block clipped at Monday cannot be moved with a shortened duration', async ({ page }) => {
+  const monday = new Date(2026, 9, 12).getTime();
+  await page.clock.install({ time: new Date(2026, 9, 16, 16) });
+  await mount(page, { weeklyCalendar: true,
+    items: [{ id: 'entry:a', title: 'Overnight', originalStartedAt: monday - HOUR,
+      startedAt: monday, endedAt: monday + HOUR, originalEndedAt: monday + HOUR, isEditable: true }],
+    totalRange: { start: monday, end: new Date(2026, 9, 19).getTime() },
+    view: { start: monday, end: new Date(2026, 9, 19).getTime(), focusedAt: monday } });
+  const result = await page.evaluate(hour => {
+    const timeline = window.__timeline.__timeline;
+    const after = { start: timeline._findTask('entry:a').start + hour, end: timeline._findTask('entry:a').end + hour };
+    return { allowed: timeline.canChange({ action: 'move', instanceId: 'entry:a',
+      task: timeline._findTask('entry:a'), after }),
+      times: [timeline._findTask('entry:a').start, timeline._findTask('entry:a').end] };
+  }, HOUR);
+  expect(result).toEqual({ allowed: false, times: [monday, monday + HOUR] });
+  expect(await page.evaluate(() => window.__edits)).toEqual([]);
+});
 
 for (const mode of ['timeline', 'calendar']) {
   test(`restores a completed entry after dragging it into the future in ${mode}`, async ({ page }) => {
@@ -394,6 +488,7 @@ test('Timeline keeps the current time at the right edge after moving an older en
   await page.evaluate(() => window.__timeline.scrollToEnd());
   const source = page.locator('#timeline .task[data-task-key="entry:b"]');
   await expect(source).toBeVisible();
+  await source.hover();
   const box = await source.boundingBox();
   const viewport = await page.locator('#timeline .viewport').boundingBox();
   expect(box).not.toBeNull();
@@ -715,6 +810,54 @@ test('a completed record of the running task offers Stop and save rather than di
   await expect(action).toHaveText('Track time');
   await expect(action).toBeEnabled();
 });
+
+test('completed details expose Edit even when the task is currently running', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { entryForm: true, items: [
+    { id: 'entry:old', url: 'https://example.com/c', title: 'Task C', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true, isCurrentTask: true },
+    { id: 'active:now', url: 'https://example.com/c', title: 'Task C', startedAt: now - 120_000, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
+  ] });
+  await page.locator('#timeline .task[data-task-key="entry:old"]').click();
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(0);
+  const edit = page.locator('#timeline .clockoli-entry-edit');
+  await expect(edit).toBeEnabled();
+  await expect(edit).toHaveText('Edit');
+  const icon = edit.locator('svg.clockoli-timeline-icon[data-action="edit"]');
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute('aria-hidden', 'true');
+  await edit.click();
+  expect(await page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:old']);
+  await page.locator('#timeline .task[data-task-key="active:now"]').click();
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(0);
+  await expect(edit).toBeEnabled();
+  await expect(edit.locator('svg.clockoli-timeline-icon[data-action="edit"]')).toBeVisible();
+  await edit.click();
+  expect(await page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'active:now']);
+});
+
+for (const mode of ['timeline', 'calendar']) {
+  test(`details without a description keep action buttons at the right edge in ${mode}`, async ({ page }) => {
+    const now = Date.now();
+    await mount(page, { entryForm: true, items: [
+      { id: 'entry:old', url: 'https://example.com/old', title: 'Old', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
+      { id: 'active:now', url: 'https://example.com/now', title: 'Now', startedAt: now - HOUR, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
+    ] });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    for (const width of [1600, 420]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
+      for (const id of ['entry:old', 'active:now']) {
+        await page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="${id}"]`).first().click();
+        const gap = await page.locator('#timeline .clockoli-timeline-actions').evaluate(actions => {
+          const details = actions.closest('.details');
+          const last = actions.querySelector('.clockoli-timeline-action:last-child');
+          return details.getBoundingClientRect().right - parseFloat(getComputedStyle(details).paddingRight) - last.getBoundingClientRect().right;
+        });
+        expect(Math.abs(gap)).toBeLessThanOrEqual(2);
+      }
+    }
+  });
+}
 
 test('hides the sole project label across Timeline, Calendar and details, restoring it for multiple projects', async ({ page }) => {
   const now = Date.now();
@@ -1536,6 +1679,10 @@ for (const mode of ['timeline', 'calendar']) {
 
   test('Track time stays on one line and description fills the remaining details width in ' + mode, async ({ page }) => {
     await mount(page, { weeklyCalendar: true });
+    await page.evaluate(() => {
+      window.__items[0].description = 'Existing note';
+      window.__timeline.update({ items: window.__items });
+    });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     await page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first().click();
 
@@ -2763,6 +2910,48 @@ test('a zero-duration running task survives rollback state restoration', async (
   expect(state.geometry.height).toBe(state.geometry.minimumHeight);
   expect(state.geometry.segmentStart).toBe(String(state.start));
   expect(state.geometry.segmentEnd).toBe(String(state.end));
+});
+
+test('completed zero-duration entries remain visible in Timeline and Calendar without changing their times', async ({ page }) => {
+  const now = new Date(2026, 9, 20, 10).getTime();
+  const zero = new Date(2026, 9, 20, 9, 30).getTime();
+  await page.clock.setFixedTime(now);
+  await mount(page, {
+    items: [
+      { id: 'entry:yesterday', url: 'https://example.com/yesterday', title: 'Yesterday', startedAt: new Date(2026, 9, 19, 11).getTime(), endedAt: new Date(2026, 9, 19, 12).getTime(), rowId: 'one' },
+      { id: 'entry:earlier', url: 'https://example.com/earlier', title: 'Earlier', startedAt: new Date(2026, 9, 20, 8, 30).getTime(), endedAt: new Date(2026, 9, 20, 9, 10).getTime(), rowId: 'one' },
+      { id: 'entry:zero', url: 'https://example.com/zero', title: 'Zero', startedAt: zero, endedAt: zero, rowId: 'one', isEditable: true },
+      { id: 'active:later', url: 'https://example.com/later', title: 'Later', startedAt: new Date(2026, 9, 20, 9, 45).getTime(), endedAt: null, rowId: 'one', isRunning: true },
+    ],
+    view: { start: new Date(2026, 9, 19).getTime(), end: now, focusedAt: zero },
+  });
+  const card = page.locator('#timeline .task[data-task-key="entry:zero"]');
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute('aria-label', 'Zero: 20.10.2026 09:30 — 20.10.2026 09:30');
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const calendarCard = page.locator('#timeline .calendar-task[data-task-key="entry:zero"]');
+  await expect(calendarCard).toBeVisible();
+  await expect.poll(() => calendarCard.evaluate(element => Number.parseFloat(getComputedStyle(element).height)))
+    .toBeGreaterThan(0);
+  const geometry = await calendarCard.evaluate(element => ({
+    height: Number.parseFloat(getComputedStyle(element).height),
+    minimum: window.__timeline.__timeline.options.calendarMinTaskHeight,
+    start: element.dataset.segmentStart,
+    end: element.dataset.segmentEnd,
+  }));
+  expect(geometry).toEqual({ height: geometry.minimum, minimum: geometry.minimum, start: String(zero), end: String(zero) });
+  await calendarCard.click();
+  await expect(page.locator('#timeline .details-value')).toContainText(['Start09:30', 'End09:30', 'Duration0m']);
+  expect(await page.evaluate(() => {
+    const task = window.__timeline.__timeline._findTask('entry:zero');
+    const updated = window.__timeline.__timeline.updateTask('entry:zero', { name: 'Renamed zero' });
+    let rejectedNegative = false;
+    try { window.__timeline.__timeline.updateTask('entry:zero', { end: task.start - 1 }); }
+    catch (error) { rejectedNegative = error instanceof RangeError; }
+    return { times: [updated.start, updated.end], rejectedNegative,
+      after: window.__timeline.__timeline._findTask('entry:zero').end };
+  })).toEqual({ times: [zero, zero], rejectedNegative: true, after: zero });
+  await expect(calendarCard).toBeVisible();
 });
 
 test('manual Timeline scroll survives later data refreshes', async ({ page }) => {

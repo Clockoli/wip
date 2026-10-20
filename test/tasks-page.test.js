@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
 import { formatClockDuration } from '../src/domain/reporting.js';
 import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
+import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local-time.js';
 
 const html = fs.readFileSync(new URL('../src/tasks/tasks.html', import.meta.url), 'utf8');
 const js = fs.readFileSync(new URL('../src/tasks/tasks.js', import.meta.url), 'utf8');
@@ -251,7 +252,8 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
-    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue, mountRunningStatus() {}, mountAddTime() {},
+    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    dateValue, timeValue, parseTime, localTimestamp, mountRunningStatus() {}, mountAddTime() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
     setInterval: callback => { intervals.set(++timerId, callback); return timerId; }, clearInterval: id => intervals.delete(id),
@@ -368,8 +370,8 @@ test('Tracking now adds multiline Description to a completed Top tasks timer wit
   await page.advance(5);
   assert.equal(description.value, 'First line\nSecond line', 'polling must not discard the unsaved draft');
   const tab = await description.dispatch('keydown', { key: 'Tab', isTrusted: true });
-  assert.equal(tab.defaultPrevented, true, 'Tab should move directly to Stop and save');
-  assert.equal(page.document.activeElement, strip.querySelector('.running-status-stop'));
+  assert.equal(tab.defaultPrevented, true, 'Tab should move to Start');
+  assert.equal(page.document.activeElement, strip.querySelector('.running-status-start'));
   assert.equal(page.messages.some(message => message.type === 'STOP'), false, 'Tab must not stop the timer');
   await strip.querySelector('.running-status-stop').click();
   assert.equal(page.messages.find(message => message.type === 'STOP')?.description, 'First line\nSecond line');

@@ -34,14 +34,25 @@ let pendingWrites = [];
 let locallyStopped = [];
 globalThis.trackingMessages = [];
 globalThis.editPayloads = [];
+globalThis.failEdit = false;
+globalThis.activeEditPayloads = [];
+globalThis.deferActiveEdit = false;
+globalThis.pendingActiveEditRespond = null;
+globalThis.includeOverlap = false;
 globalThis.searchMode = 'ok';
 let viewMode = 'timeline';
 globalThis.bulkAddFailure = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.trackingMessages.push(message.type);
-  const state = () => ({ configured: true, active, recent: [...locallyStopped, ...recent],
+  const state = () => ({ configured: true, active, recent: [...locallyStopped, ...recent,
+    ...(globalThis.includeOverlap ? [
+      { ...recent[0], id: 'overlap-a', taskTitle: 'Conflicting task A',
+        startedAt: date + 'T12:15:00Z', endedAt: date + 'T12:45:00Z' },
+      { ...recent[0], id: 'overlap-b', taskTitle: 'Conflicting task B',
+        startedAt: date + 'T12:30:00Z', endedAt: date + 'T13:00:00Z' },
+    ] : [])],
     pendingWrites, pendingCount: pendingWrites.length });
-  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });
+  if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
     else respond({ ok: true, data: { ...state(), recent: history, partial: globalThis.searchMode === 'partial' } });
@@ -51,6 +62,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   else if (message.type === 'SET_ACTIVITY_VIEW_MODE') { viewMode = message.mode; respond({ ok: true, data: { mode: viewMode } }); }
   else if (message.type === 'QUEUE_ENTRY_EDIT') {
     globalThis.editPayloads.push(message.payload);
+    if (globalThis.failEdit) { respond({ ok: false, error: { message: 'This edit would overlap another entry. Choose a free time range before moving it.' } }); return; }
     for (const entry of recent) if (entry.id === message.payload.original.id) Object.assign(entry, message.payload.edits);
     respond({ ok: true, data: { operationId: 'edit-' + globalThis.editPayloads.length, pending: true } });
   }
@@ -65,10 +77,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     respond({ ok: true, data: { operationId: 'local-description-edit' } });
   }
   else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+    globalThis.activeEditPayloads.push(message.payload);
     if (!active || active.id !== message.payload.original.id) {
       respond({ ok: false, error: { message: 'No matching running timer' } });
+    } else if (globalThis.deferActiveEdit) {
+      globalThis.pendingActiveEditRespond = respond;
+      return true;
     } else {
-      active = { ...active, description: message.payload.description };
+      active = { ...active, ...('startedAt' in message.payload ? { startedAt: message.payload.startedAt } : {}),
+        ...('description' in message.payload ? { description: message.payload.description } : {}) };
       respond({ ok: true, data: { operationId: 'local-running-description' } });
     }
   }
@@ -123,7 +140,7 @@ for (let dayOffset = 0; dayOffset < 5; dayOffset++) {
 let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle: 'Synthetic running task',
   startedAt: new Date(2026, 9, 16, 11, 30).toISOString(), entryDate: '2026-10-16', timezone: 'UTC',
   destinationId: 'github:1' };`)
-      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });",
+      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_TIMES') { setTimeout(() => respond({ ok: true, data: { ...state(), recent } }), 500); return true; }\n  if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });")
       .replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
         "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: recent.slice(0, 4) } });");
@@ -167,6 +184,303 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
       maxScroll: el.scrollWidth - el.clientWidth }));
     expect(afterManualScroll.maxScroll).toBeGreaterThan(100);
     expect(afterManualScroll.scroll).toBeLessThan(afterManualScroll.maxScroll * 0.75);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Tracking now keeps Description compact and edits only Start without a Date control', async () => {
+  test.setTimeout(45000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-status-start-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-status-start-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let active = null;', `let active = {
+      id: 'running', taskUrl, taskTitle: 'Running task', startedAt: date + 'T12:00:17Z',
+      entryDate: date, timezone: 'UTC', description: 'Existing description' };`)
+      .replace('pendingWrites, pendingCount: pendingWrites.length });',
+        'pendingWrites, pendingCount: pendingWrites.length, todayTrackedMs: 7 * 3600000 + 11 * 60000 });'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const errors = [];
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    const day = await worker.evaluate(() => date);
+    await page.clock.install({ time: new Date(`${day}T15:00:00Z`) });
+    await page.setViewportSize({ width: 1440, height: 800 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const strip = page.locator('.running-status.is-active .running-status-row');
+    const description = strip.getByRole('textbox', { name: 'Description' });
+    const start = strip.getByRole('textbox', { name: 'Start' });
+    await expect(start).toHaveValue('12:00');
+    const editIcon = strip.locator('.running-status-start-edit-icon');
+    await expect(editIcon).toBeVisible();
+    await expect(editIcon).toHaveText('✎');
+    await expect(editIcon).toHaveAttribute('aria-hidden', 'true');
+    const iconPlacement = await start.evaluate(input => {
+      const icon = input.parentElement.querySelector('.running-status-start-edit-icon');
+      return { followsTime: input.nextElementSibling === icon,
+        gap: icon.getBoundingClientRect().left - input.getBoundingClientRect().right };
+    });
+    expect(iconPlacement.followsTime).toBe(true);
+    expect(iconPlacement.gap).toBeGreaterThanOrEqual(0);
+    expect(iconPlacement.gap).toBeLessThan(12);
+    await expect(strip.getByLabel('Date')).toHaveCount(0);
+    const stats = strip.locator('.running-status-stats');
+    await expect(stats).toBeVisible();
+    await expect(stats.locator('.running-status-metric-label')).toHaveText(['Duration', 'Today']);
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    const widths = await strip.evaluate(row => ({ row: row.getBoundingClientRect().width,
+      description: row.querySelector('.running-status-description-field').getBoundingClientRect().width }));
+    expect(widths.description).toBeLessThan(290);
+    expect(widths.description).toBeLessThan(widths.row / 3);
+    const measureControls = () => strip.evaluate(row => {
+      const rect = selector => row.querySelector(selector).getBoundingClientRect();
+      const startField = rect('.running-status-start-field');
+      const metrics = rect('.running-status-metrics');
+      const stop = rect('.running-status-stop');
+      const title = document.createRange();
+      title.selectNodeContents(row.querySelector('.running-status-task'));
+      const values = [...row.querySelectorAll('.running-status-start,.running-status-metric-value')]
+        .map(node => node.getBoundingClientRect().top);
+      return { rightInset: row.getBoundingClientRect().right - stop.right,
+        titleToDescription: rect('.running-status-description-field').left - title.getBoundingClientRect().right,
+        startToMetrics: metrics.left - startField.right,
+        metricsToStop: stop.left - metrics.right,
+        valueOffset: Math.max(...values) - Math.min(...values),
+        statsBackground: getComputedStyle(row.querySelector('.running-status-stats')).backgroundColor,
+        resize: getComputedStyle(row.querySelector('.running-status-description')).resize };
+    });
+    const desktop = await measureControls();
+    expect(desktop.titleToDescription).toBeLessThan(35);
+    expect(desktop.rightInset).toBeLessThan(30);
+    expect(desktop.startToMetrics).toBeGreaterThanOrEqual(0);
+    expect(desktop.startToMetrics).toBeLessThan(3);
+    expect(desktop.metricsToStop).toBeLessThan(24);
+    expect(desktop.valueOffset).toBeLessThan(6);
+    expect(desktop.statsBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(desktop.resize).toBe('none');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const narrowDesktop = await measureControls();
+    expect(narrowDesktop.startToMetrics).toBeLessThan(26);
+    expect(narrowDesktop.rightInset).toBeLessThan(30);
+    await start.click();
+    expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
+    const focusedStyle = await start.evaluate(node => ({ outline: getComputedStyle(node).outlineStyle,
+      ring: getComputedStyle(node.closest('.running-status-start-field')).boxShadow }));
+    expect(focusedStyle.outline).toBe('none');
+    expect(focusedStyle.ring).not.toBe('none');
+    await page.screenshot({ path: join(tmpdir(), 'clockoli-start-focused.png') });
+    await editIcon.click();
+    await expect(start).toBeFocused();
+    expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
+    await start.evaluate(node => node.blur());
+    await page.setViewportSize({ width: 390, height: 740 });
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    const narrow = await strip.evaluate(row => {
+      const bounds = row.getBoundingClientRect();
+      return [...row.querySelectorAll('.running-status-stats,.running-status-stop')]
+        .every(node => node.getBoundingClientRect().right <= bounds.right);
+    });
+    expect(narrow).toBe(true);
+    await page.screenshot({ path: join(tmpdir(), 'clockoli-stats-realistic-mobile.png') });
+    await page.setViewportSize({ width: 1440, height: 800 });
+    await start.fill('1000');
+    await expect(editIcon).toBeHidden();
+    await page.clock.runFor(5000);
+    await expect(start).toHaveValue('1000');
+    await start.press('Tab');
+    await expect(start).toHaveValue('10:00');
+    await expect(strip.getByRole('button', { name: 'Save start' })).toBeFocused();
+    await worker.evaluate(() => { globalThis.deferActiveEdit = true; });
+    await strip.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${day}T12:00:17Z`);
+    await expect(start).toHaveValue('10:00');
+    await worker.evaluate(() => {
+      globalThis.deferActiveEdit = false;
+      globalThis.pendingActiveEditRespond({ ok: false, error: { message: 'Timer start would overlap another time entry.' } });
+      globalThis.pendingActiveEditRespond = null;
+    });
+    await expect(page.locator('.running-status-error')).toContainText('overlap another time entry');
+    await expect(start).toHaveValue('10:00');
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${day}T12:00:17Z`);
+    await strip.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => active.startedAt)).toBe(`${day}T10:00:00.000Z`);
+    await expect(strip.locator('.running-status-start-saved')).toHaveText('✓ Saved');
+    await expect(editIcon).toBeHidden();
+    const payloads = await worker.evaluate(() => globalThis.activeEditPayloads);
+    expect(payloads.at(-1)).toEqual({ original: { id: 'running', startedAt: `${day}T12:00:17Z` }, startedAt: `${day}T10:00:00.000Z` });
+    await start.fill('0900');
+    await strip.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(3);
+    expect((await worker.evaluate(() => globalThis.activeEditPayloads.at(-1)))).toEqual({
+      original: { id: 'running', startedAt: `${day}T10:00:00.000Z` },
+      startedAt: `${day}T09:00:00.000Z`,
+    });
+    expect(await worker.evaluate(() => active.entryDate)).toBe(day);
+    await start.fill('2500');
+    await strip.getByRole('button', { name: 'Save start' }).click();
+    await expect(page.locator('.running-status-error')).toContainText('valid Start time');
+    expect(await worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(3);
+    await start.fill('0900');
+    await expect(strip.getByRole('button', { name: 'Save start' })).toBeHidden();
+    await expect(editIcon).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 740 });
+    const mobile = await strip.evaluate(row => ({ row: row.getBoundingClientRect().right,
+      fields: [...row.querySelectorAll('input,textarea,button')].filter(node => !node.hidden)
+        .every(node => node.getBoundingClientRect().right <= window.innerWidth) }));
+    expect(mobile.row).toBeLessThanOrEqual(390);
+    expect(mobile.fields).toBe(true);
+    expect(errors).toEqual([]);
+    await expect(description).toBeVisible();
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity Timeline and Calendar edit a running timer start without exposing other fields or moving on rejection', async () => {
+  test.setTimeout(45000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-running-edit-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-running-edit-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let active = null;', `let active = {
+  id: 'running', taskUrl, taskTitle: 'Running task', startedAt: date + 'T12:00:00Z',
+  entryDate: date, timezone: 'UTC', destinationId: 'github:1', description: 'Existing description' };`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    const fixtureDate = await worker.evaluate(() => date);
+    await page.clock.install({ time: new Date(`${fixtureDate}T15:00:00Z`) });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const running = page.locator('.task-timeline-host .task[data-task-key="active:running"]');
+    await expect(running).toBeVisible();
+    await running.click();
+    await page.locator('.task-timeline-host .clockoli-entry-edit').click();
+    const dialog = page.getByRole('dialog', { name: 'Edit timer start' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Start', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('Date', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('End (optional)')).toBeHidden();
+    await expect(dialog.getByLabel('Description (optional)')).toBeHidden();
+    await worker.evaluate(() => { globalThis.deferActiveEdit = true; });
+    await dialog.getByLabel('Start', { exact: true }).fill('1100');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect.poll(() => worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${fixtureDate}T12:00:00Z`);
+    await expect(running).toHaveAttribute('data-task-key', 'active:running');
+    await worker.evaluate(() => {
+      globalThis.deferActiveEdit = false;
+      globalThis.pendingActiveEditRespond({ ok: false, error: { message: 'Timer start would overlap another time entry.' } });
+      globalThis.pendingActiveEditRespond = null;
+    });
+    await expect(dialog.getByRole('alert')).toContainText('overlap');
+    await expect(running).toBeVisible();
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${fixtureDate}T12:00:00Z`);
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await worker.evaluate(() => ({ active, payloads: globalThis.activeEditPayloads })))
+      .toMatchObject({ active: { startedAt: `${fixtureDate}T11:00:00.000Z`, description: 'Existing description' },
+        payloads: [{ startedAt: `${fixtureDate}T11:00:00.000Z` }, { startedAt: `${fixtureDate}T11:00:00.000Z` }] });
+    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const calendarRunning = page.locator('.task-timeline-host .calendar-task[data-task-key="active:running"]').first();
+    await expect(calendarRunning).toBeVisible();
+    await calendarRunning.click();
+    await page.locator('.task-timeline-host .clockoli-entry-edit').click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue('11:00');
+    await dialog.getByLabel('Start', { exact: true }).fill('1000');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${fixtureDate}T10:00:00.000Z`);
+    const popup = await context.newPage();
+    popup.on('pageerror', error => errors.push(error.message));
+    await popup.clock.install({ time: new Date(`${fixtureDate}T15:00:00Z`) });
+    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    await popup.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const popupRunning = popup.locator('.task-timeline-host .task[data-task-key="active:running"]');
+    await expect(popupRunning).toBeVisible();
+    await popupRunning.click();
+    await popup.locator('.task-timeline-host .clockoli-entry-edit').click();
+    const popupDialog = popup.getByRole('dialog', { name: 'Edit timer start' });
+    await expect(popupDialog).toBeVisible();
+    await expect(popupDialog.getByLabel('End (optional)')).toBeHidden();
+    await popupDialog.getByLabel('Start', { exact: true }).fill('0930');
+    await popupDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(popupDialog).toBeHidden();
+    expect(await worker.evaluate(() => active.startedAt)).toBe(`${fixtureDate}T09:30:00.000Z`);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity displays a persisted zero-duration entry in List, Timeline and Calendar', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-zero-duration-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-zero-duration-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let active = null;', `
+recent.push({ id: 'zero', taskUrl: 'https://example.com/zero', taskTitle: 'Zero-duration task', entryDate: date,
+  timezone: 'UTC', startedAt: date + 'T08:45:00Z', endedAt: date + 'T08:45:00Z',
+  durationSeconds: 0, destinationId: 'github:1', description: '',
+  _path: 'times/' + date.slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 3 });
+let active = null;`));
+    context = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.getByRole('button', { name: mode, exact: true }).click();
+      await page.getByRole('button', { name: 'Previous week' }).click();
+      if (mode === 'List') {
+        await expect(page.locator('#clockoli-times-root')).toContainText('Zero-duration task');
+        await expect(page.locator('#clockoli-times-root')).toContainText('0m');
+      } else {
+        const selector = mode === 'Timeline' ? '.task' : '.calendar-task';
+        await expect(page.locator(`.task-timeline-host ${selector}[data-task-key="entry:zero"]`)).toBeVisible();
+        await expect(page.locator('.task-timeline-host')).not.toContainText('Timeline cannot display');
+      }
+    }
+    expect(errors).toEqual([]);
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
   } finally {
     await context?.close();
     await rm(extension, { recursive: true, force: true });
@@ -227,11 +541,61 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
     const calendarRecord = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
     const calendarNeighbor = page.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
     await calendarRecord.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    await calendarRecord.evaluate(element => {
+      const viewport = element.getRootNode().querySelector('.calendar-viewport');
+      const target = element.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]');
+      const from = element.getBoundingClientRect(), to = target.getBoundingClientRect(), bounds = viewport.getBoundingClientRect();
+      viewport.scrollTop += (from.bottom + to.top) / 2 - (bounds.top + bounds.bottom) / 2;
+    });
+    await expect.poll(async () => {
+      const from = await calendarRecord.boundingBox(), to = await calendarNeighbor.boundingBox();
+      const bounds = await page.locator('.task-timeline-host .calendar-viewport').boundingBox();
+      return Boolean(from && to && bounds && from.y >= bounds.y && to.y >= bounds.y
+        && from.y + from.height <= bounds.y + bounds.height && to.y + to.height <= bounds.y + bounds.height);
+    }).toBe(true);
     const neighbor = await calendarNeighbor.boundingBox();
+    await worker.evaluate(() => { globalThis.failEdit = true; });
     await drag(calendarRecord, { x: neighbor.x + neighbor.width / 2, y: neighbor.y - 20 });
-    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
-    expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
-    expect(await worker.evaluate(() => globalThis.editPayloads[1].edits.endedAt <= recent[0].startedAt)).toBe(true);
+    await expect(page.locator('.timeline-edit-error')).toContainText('Go to List');
+    await expect(calendarRecord).toBeVisible();
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
+    await worker.evaluate(() => { globalThis.failEdit = false; });
+    const retryNeighbor = await calendarNeighbor.boundingBox();
+    await drag(calendarRecord, { x: retryNeighbor.x + retryNeighbor.width / 2, y: retryNeighbor.y - 20 });
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(3);
+    expect(await worker.evaluate(() => globalThis.editPayloads[2].original.id)).toBe('same-day');
+    expect(await worker.evaluate(() => globalThis.editPayloads[2].edits.endedAt <= recent[0].startedAt)).toBe(true);
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    for (const mode of ['Timeline', 'Calendar']) {
+      await worker.evaluate(() => { globalThis.includeOverlap = false; });
+      await page.getByRole('button', { name: mode, exact: true }).click();
+      await expect(page.locator('.task-timeline-host')).toBeVisible();
+      await worker.evaluate(() => { globalThis.includeOverlap = true; });
+      await page.getByRole('button', { name: 'Previous week' }).click();
+      const warning = page.locator('.timeline-week-error');
+      await expect(warning).toContainText('Overlapping entries');
+      await expect(warning).toContainText('List');
+      await warning.getByRole('button', { name: 'Go to List' }).click();
+      await expect(page.locator('.activity-list .entry-record.entry-overlap')).toHaveCount(2);
+    }
+    const popup = await context.newPage();
+    popup.on('pageerror', error => errors.push(error.message));
+    await popup.setViewportSize({ width: 450, height: 700 });
+    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    await popup.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await popup.getByRole('button', { name: 'Previous week' }).click();
+    const popupWarning = popup.locator('.timeline-week-error');
+    await expect(popupWarning).toContainText('Overlapping entries');
+    await popupWarning.getByRole('button', { name: 'Go to List' }).click();
+    await expect(popup.locator('.today-list .entry-record.entry-overlap')).toHaveCount(2);
+    const initiallyConflicted = await context.newPage();
+    initiallyConflicted.on('pageerror', error => errors.push(error.message));
+    const fixedDay = await worker.evaluate(() => recent[0].entryDate);
+    await initiallyConflicted.clock.install({ time: new Date(`${fixedDay}T15:00:00Z`) });
+    await worker.evaluate(() => { viewMode = 'timeline'; });
+    await initiallyConflicted.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await initiallyConflicted.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await expect(initiallyConflicted.locator('.timeline-week-error')).toContainText('Overlapping entries');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
@@ -256,7 +620,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
-      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: { ...state(), recent: [...locallyStopped, ...recent] } });",
+      .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
       .replace("else if (message.type === 'SEARCH_ACTIVITY')", "else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { ...state(), recent } });\n  else if (message.type === 'SEARCH_ACTIVITY')")
       .replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
@@ -336,16 +700,45 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     })).toBe(30 * 60_000);
     await root.getByRole('button', { name: 'Calendar', exact: true }).click();
     const calendarSource = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:same-day"]').first();
-    const calendarNeighbor = root.locator('.task-timeline-host .calendar-task[data-task-key="entry:record"]').first();
     await expect(calendarSource).toBeVisible();
-    await calendarSource.evaluate(element => element.scrollIntoView({ block: 'center' }));
-    const calendarFrom = await calendarSource.boundingBox(), calendarBefore = await calendarNeighbor.boundingBox();
+    let calendarGeometry;
+    await expect.poll(async () => {
+      calendarGeometry = await calendarSource.evaluate(async element => {
+        if (!element.isConnected) return null;
+        const shadow = element.getRootNode();
+        const neighbor = shadow.querySelector('.calendar-task[data-task-key="entry:record"]');
+        const viewport = shadow.querySelector('.calendar-viewport');
+        if (!neighbor || !viewport) return null;
+        element.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const from = element.getBoundingClientRect(), to = neighbor.getBoundingClientRect();
+        const bounds = viewport.getBoundingClientRect();
+        viewport.scrollTop += (from.bottom + to.top) / 2 - (bounds.top + bounds.bottom) / 2;
+        await new Promise(requestAnimationFrame);
+        const source = shadow.querySelector('.calendar-task[data-task-key="entry:same-day"]');
+        const target = shadow.querySelector('.calendar-task[data-task-key="entry:record"]');
+        if (!source || !target) return null;
+        return { from: source.getBoundingClientRect().toJSON(), to: target.getBoundingClientRect().toJSON(),
+          bounds: viewport.getBoundingClientRect().toJSON(), pageWidth: innerWidth, pageHeight: innerHeight };
+      });
+      if (!calendarGeometry) return false;
+      const { from, to, bounds, pageWidth, pageHeight } = calendarGeometry;
+      return from.width > 0 && from.height > 0 && to.width > 0 && to.height > 0
+        && from.y >= bounds.y && to.y >= bounds.y
+        && from.y + from.height <= bounds.y + bounds.height
+        && to.y + to.height <= bounds.y + bounds.height
+        && to.y - 20 >= bounds.y + 4 && to.y - 20 < bounds.y + bounds.height
+        && from.x + from.width / 2 >= 0 && from.x + from.width / 2 < pageWidth
+        && from.y + from.height / 2 >= 0 && from.y + from.height / 2 < pageHeight;
+    }).toBe(true);
+    const { from: calendarFrom, to: calendarBefore } = calendarGeometry;
     await page.mouse.move(calendarFrom.x + calendarFrom.width / 2, calendarFrom.y + calendarFrom.height / 2);
     await page.mouse.down();
     await page.mouse.move(calendarBefore.x + calendarBefore.width / 2, calendarBefore.y - 20, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(2);
     expect(await worker.evaluate(() => globalThis.editPayloads[1].original.id)).toBe('same-day');
+    expect(await worker.evaluate(() => globalThis.editPayloads[1].edits.startedAt
+      !== globalThis.editPayloads[1].original.startedAt)).toBe(true);
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
@@ -391,6 +784,12 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await github.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
+    await panelSource.click();
+    await panel.locator('.clockoli-entry-edit').click();
+    const panelDialog = github.getByRole('dialog', { name: 'Edit time' });
+    await expect(panelDialog).toBeVisible();
+    await expect(panelDialog.getByLabel('Description')).toHaveValue('');
+    await panelDialog.getByRole('button', { name: 'Cancel' }).click();
     await github.close();
     await worker.evaluate(() => {
       globalThis.editPayloads = [];
@@ -425,6 +824,13 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'LOAD_WEEK').length)).toBeGreaterThan(priorWeekLoads);
     await expect.poll(() => densePopup.evaluate(() => globalThis.fullWeekReady)).toBe(true);
     await denseSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    await expect.poll(() => denseSource.evaluate(element => {
+      if (!element.isConnected) return false;
+      const viewport = element.getRootNode().querySelector('.viewport');
+      if (!viewport) return false;
+      viewport.scrollLeft += element.getBoundingClientRect().left - viewport.getBoundingClientRect().left - viewport.clientWidth / 2;
+      return true;
+    })).toBe(true);
     let grip;
     await expect.poll(async () => { grip = await denseSource.evaluate(element => {
       if (!element.isConnected) return null;
@@ -580,20 +986,21 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     const edited = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
     await edited.hover();
     await edited.locator('.entry-edit').click();
-    const description = edited.locator('.inline-description');
+    const editDialog = page.getByRole('dialog', { name: 'Edit time' });
+    const description = editDialog.getByLabel('Description');
     await expect(description).toHaveJSProperty('tagName', 'TEXTAREA');
     await description.fill(['One', 'Two', 'Three', 'Four', 'Five', 'Six'].join('\n'));
     await expect.poll(() => description.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(2);
     await description.fill(Array.from({ length: 18 }, (_, index) => `Note ${index + 1}`).join('\n'));
-    await expect(edited.locator('.description-overflow-hint')).toBeVisible();
+    await expect(editDialog.locator('.add-time-description-more')).toBeVisible();
     await description.fill('First line');
     await description.press('Shift+Enter');
     await description.pressSequentially('Second line');
     await expect(description).toHaveValue('First line\nSecond line');
     await description.press('Enter');
-    await expect(edited.locator('.entry-description-saved')).toHaveText('✓ Saved');
+    await expect(editDialog).toBeHidden();
     expect(await edited.locator('.entry-description-link').textContent()).toBe('First line\nSecond line');
-    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ENTRIES_EDIT'))).toEqual(['QUEUE_ENTRIES_EDIT']);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ENTRY_EDIT'))).toEqual(['QUEUE_ENTRY_EDIT']);
     const start = page.locator('.activity-list').getByRole('button', { name: 'Start tracking Activity test task' });
     await expect(start).toBeVisible({ timeout: 5000 });
     await expect.poll(async () => {
@@ -635,6 +1042,8 @@ test('Activity List icon switches from Start to Stop and back in the extension p
         .map(group => ({ right: group.getBoundingClientRect().right, width: group.getBoundingClientRect().width })) }));
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
     await runningDescription.press('Tab');
+    await expect(strip.getByRole('textbox', { name: 'Start' })).toBeFocused();
+    await page.keyboard.press('Tab');
     const saveTime = strip.getByRole('button', { name: 'Stop and save' });
     await expect(saveTime).toBeFocused();
     await page.keyboard.press('Enter');
@@ -751,6 +1160,182 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
       type => type === 'START' || type === 'STOP'))).toEqual(['START', 'STOP']);
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await expect(page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' })).toHaveCount(1);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('List, Timeline and Calendar Edit open the shared time form', async () => {
+  test.setTimeout(60000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-form-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-form-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    const row = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
+    await row.locator('.entry-edit').click();
+    const dialog = page.getByRole('dialog', { name: 'Edit time' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Description (optional)', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('Task title', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('combobox', { name: 'Task' })).toHaveValue('Activity test task');
+    const originalRange = await worker.evaluate(() => {
+      const record = recent.find(entry => entry.id === 'record');
+      return [record.startedAt, record.endedAt];
+    });
+    const visibleRange = await page.evaluate(range => {
+      const format = value => {
+        const date = new Date(value);
+        return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
+          + ' ' + [date.getHours(), date.getMinutes()].map(value => String(value).padStart(2, '0')).join(':');
+      };
+      return range.map(format);
+    }, originalRange);
+    await expect(dialog.getByLabel('Date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
+    await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue(visibleRange[0].slice(11));
+    await expect(dialog.getByLabel('End (optional)')).toHaveValue(visibleRange[1].slice(11));
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
+    await row.locator('.entry-edit').click();
+    await dialog.getByLabel('Description').fill('Edited from form');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
+    expect(await worker.evaluate(() => globalThis.editPayloads[0].edits.description)).toBe('Edited from form');
+    await row.hover();
+    await row.locator('.entry-edit').click();
+    const startInput = dialog.getByLabel('Start', { exact: true });
+    const endInput = dialog.getByLabel('End (optional)');
+    await startInput.fill('08:00');
+    await endInput.fill('25:59');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('valid date and start/end time');
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    await startInput.fill('00:00');
+    await endInput.fill('23:59');
+    await worker.evaluate(() => { globalThis.failEdit = true; });
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('overlap another entry');
+    await expect(dialog.getByRole('alert')).toContainText('Go to List');
+    await expect(dialog).toBeVisible();
+    expect(await worker.evaluate(() => recent.find(entry => entry.id === 'record').description)).toBe('Edited from form');
+    await expect(row).toContainText('08:00');
+    await worker.evaluate(() => { globalThis.failEdit = false; });
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    for (const mode of ['Timeline', 'Calendar']) {
+      await page.getByRole('button', { name: mode, exact: true }).click();
+      await page.getByRole('button', { name: 'Previous week' }).click();
+      const block = page.locator(`.task-timeline-host ${mode === 'Timeline' ? '.task' : '.calendar-task'}[data-task-key="entry:record"]`).first();
+      await block.click();
+      await page.locator('.task-timeline-host .clockoli-timeline-action').filter({ hasText: 'Edit' }).click();
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByLabel('Description')).toHaveValue('Edited from form');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+    }
+    const popup = await context.newPage();
+    popup.on('pageerror', error => errors.push(error.message));
+    await popup.setViewportSize({ width: 450, height: 700 });
+    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    await popup.getByRole('button', { name: 'List', exact: true }).click();
+    await popup.getByRole('button', { name: 'Previous week' }).click();
+    const popupRow = popup.locator('.today-list .entry-record').filter({ hasText: 'Activity test task' });
+    await popupRow.locator('.entry-edit').click();
+    const popupDialog = popup.getByRole('dialog', { name: 'Edit time' });
+    await expect(popupDialog).toBeVisible();
+    await expect(popupDialog.getByLabel('Description')).toHaveValue('Edited from form');
+    await popupDialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(() => {
+      window.__editValues = [];
+      const end = new Date(); end.setDate(end.getDate() - 1);
+      end.setHours(12, 0, 0, 0);
+      const start = new Date(end); start.setDate(start.getDate() - 2);
+      window.__longEntry = { taskUrl: 'https://example.com/long', taskTitle: 'Long task',
+        startedAt: start.toISOString(), endedAt: end.toISOString(), description: 'Before' };
+      window.__zeroEntry = { ...window.__longEntry, startedAt: end.toISOString(), taskTitle: 'Zero task' };
+      window.__openFixtureEdit = entry => window.ClockoliTimeEntryForm.openEdit(entry, async value => {
+        window.__editValues.push(value);
+      });
+      window.__openFixtureEdit(window.__longEntry);
+    });
+    await dialog.getByLabel('Description').fill('Long entry updated');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.__editValues[0])).toMatchObject({
+      startedAt: await page.evaluate(() => window.__longEntry.startedAt),
+      endedAt: await page.evaluate(() => window.__longEntry.endedAt), description: 'Long entry updated',
+    });
+    await page.evaluate(() => window.__openFixtureEdit(window.__zeroEntry));
+    expect(await startInput.inputValue()).toBe(await endInput.inputValue());
+    expect(await startInput.inputValue()).toBe(await page.evaluate(() => {
+      const value = new Date(window.__zeroEntry.startedAt);
+      return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+    }));
+    await dialog.getByLabel('Description').fill('Zero entry updated');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.__editValues[1])).toMatchObject({
+      startedAt: await page.evaluate(() => window.__zeroEntry.startedAt),
+      endedAt: await page.evaluate(() => window.__zeroEntry.endedAt), description: 'Zero entry updated', taskTitle: 'Zero task',
+    });
+    await page.evaluate(() => window.__openFixtureEdit(window.__zeroEntry));
+    await dialog.getByRole('combobox', { name: 'Task' }).fill('https://example.com/other');
+    expect(await startInput.inputValue()).toBe(await endInput.inputValue());
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.__editValues[2])).toMatchObject({
+      taskUrl: 'https://example.com/other', taskTitle: '',
+    });
+    await page.evaluate(() => window.__openFixtureEdit(window.__zeroEntry));
+    const dateInput = dialog.getByLabel('Date', { exact: true });
+    const originalDay = await dateInput.inputValue();
+    const previousDay = day => {
+      const date = new Date(`${day}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() - 1);
+      return date.toISOString().slice(0, 10);
+    };
+    const nextDay = previousDay(originalDay), followingDay = originalDay;
+    await dateInput.fill(nextDay);
+    await expect(endInput).toHaveValue('12:00');
+    await startInput.fill('11:00');
+    await expect(endInput).toHaveValue('12:00');
+    await startInput.fill('13:00');
+    await expect(endInput).toHaveValue('12:00', 'changing only Start time must not overwrite End');
+    await dateInput.fill(followingDay);
+    await expect(endInput).toHaveValue('12:00');
+    await endInput.fill('15:00');
+    await startInput.fill('14:00');
+    await expect(endInput).toHaveValue('15:00', 'manual End remains editable');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.__editValues[3].endedAt)).toBe(new Date(`${followingDay}T15:00`).toISOString());
+    await page.evaluate(() => window.__openFixtureEdit({ taskUrl: 'https://example.com/overnight', taskTitle: 'Overnight',
+      startedAt: new Date(2024, 1, 28, 23, 30).toISOString(),
+      endedAt: new Date(2024, 1, 29, 0, 15).toISOString(), description: '' }));
+    await dateInput.fill('2024-03-31');
+    await expect(startInput).toHaveValue('23:30');
+    await expect(endInput).toHaveValue('00:15');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.__editValues[4].endedAt))
+      .toBe(await page.evaluate(() => new Date(2024, 3, 1, 0, 15).toISOString()));
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

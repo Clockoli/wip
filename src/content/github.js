@@ -86,6 +86,7 @@
   let timelineOptimisticEdits = new Map();
   const timelineOptimisticEditGenerations = new Map();
   const timelineOptimisticEditStates = new WeakMap();
+  const timelineAcceptedEditOrders = new Map();
   const timelineQueuedOperationIds = new Map();
   const timelineQueueAcceptances = new Set();
   let timelineQueueAcceptanceSequence = 0;
@@ -159,6 +160,7 @@
   let compactSurface = null;
   let popupReturnFocus = null;
   let popupFocusPending = false;
+  let timeEntryFormLoad = null;
 
   const LONG_ENTRY_HOURS = 12;
   const HOUR_MS = 3_600_000;
@@ -815,6 +817,17 @@
     return navigation;
   }
 
+  function updateWeekNavigationLabel() {
+    const { startDate, endDate } = timesRange();
+    for (const scope of [shadow, fullWidthPopupShadow]) {
+      const navigation = scope?.querySelector('.week-navigation');
+      const label = navigation?.querySelector('.week-navigation-label');
+      if (label) label.textContent = `${startDate} – ${endDate}`;
+      const next = navigation?.querySelector('[aria-label="Next week"]');
+      if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
+    }
+  }
+
   function updateCalendarWeekLoading() {
     const active = calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null;
     for (const scope of [shadow, fullWidthPopupShadow]) {
@@ -974,6 +987,7 @@
       selectedTimesCalendarLoadingId = null;
     }
     const nextWeek = weekWindow(range.start).start;
+    (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
     if (selectedWeekStart !== nextWeek) {
@@ -1006,7 +1020,7 @@
       if (!refreshed || (timesMode && activityViewMode === 'list')) renderUi();
       setStatus(data.partial ? 'Some records could not be loaded.' : '');
       if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
-      return true;
+      return !data.partial;
     } catch (error) {
       if (loadId === activityCalendarLoadId) {
         selectedWeekStart = previousWeek;
@@ -1831,6 +1845,52 @@
 
   function beginRecordEdit(entry) { beginMetadataEdit(entry, { focusTime: true }); }
 
+  async function openTimeEntryForm(entry, trigger) {
+    let form = globalThis.ClockoliTimeEntryForm;
+    if (!form?.openEdit && !extensionPageMode) {
+      timeEntryFormLoad ||= (async () => {
+        const { mountAddTime } = await import(chrome.runtime.getURL('src/ui/add-time.js'));
+        const host = document.createElement('div');
+        host.style.position = 'fixed'; host.style.zIndex = '2147483647';
+        const container = host.attachShadow({ mode: 'closed' });
+        const stylesheet = document.createElement('link');
+        stylesheet.rel = 'stylesheet'; stylesheet.href = chrome.runtime.getURL('src/ui/add-time.css');
+        const anchor = document.createElement('button'); anchor.hidden = true;
+        container.append(stylesheet, anchor);
+        document.body.append(host);
+        return mountAddTime(anchor, { container, send: async () => ({ configured: true, recent: [] }) });
+      })().catch(error => { timeEntryFormLoad = null; throw error; });
+      form = await timeEntryFormLoad;
+    }
+    if (!form?.openEdit) {
+      if (entry._active) throw new Error('Edit timer start is unavailable. Reload the page and try again.');
+      beginRecordEdit(entry); return;
+    }
+    if (entry._active) {
+      if (pageState.active?.id !== entry.id) throw new Error('The running timer changed. Reload before editing it.');
+      form.openEdit({ ...entry, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) }, async value => {
+        if (value.startedAt !== entry.startedAt) await queueActiveStartEdit(entry, value.startedAt);
+      }, trigger);
+      return;
+    }
+    const current = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId) || entry;
+    form.openEdit({ taskUrl: storedTaskIdentityOf(current), taskTitle: taskTitleOf(current),
+      destinationId: current.destinationId, startedAt: current.startedAt,
+      endedAt: current.endedAt, description: current.description || '' }, async value => {
+        const identity = value.taskUrl === storedTaskIdentityOf(current)
+          ? value.taskUrl : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
+        if (!identity) throw new Error('Enter a valid HTTP(S) task URL.');
+        const edits = { ...(identity === storedTaskIdentityOf(current) && !taskUrlOf(current) ? {} : { taskUrl: identity }),
+          taskTitle: value.taskTitle, startedAt: value.startedAt,
+          endedAt: value.endedAt, description: value.description };
+        if (identity === storedTaskIdentityOf(current) && value.taskTitle === taskTitleOf(current)
+            && value.startedAt === current.startedAt && value.endedAt === current.endedAt
+            && value.description === (current.description || '')) return;
+        await queueCalendarEntry(current, edits);
+        renderUi();
+      }, trigger);
+  }
+
   function recentRecord(entry, overlaps) {
     const key = entryKey(entry), overlapping = overlaps.has(key), draft = inlineDrafts.get(key);
     const record = el('div', undefined, 'entry-record');
@@ -1851,8 +1911,8 @@
     const timeRow = el('div', undefined, 'entry-time-row');
     const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'), day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
-      const revealTimeEditor = () => beginRecordEdit(entry);
-      const edit = button('Edit time', 'link-button entry-edit', async () => revealTimeEditor());
+      const revealTimeEditor = trigger => openTimeEntryForm(entry, trigger).catch(setError);
+      const edit = button('Edit time', 'link-button entry-edit', async (_event, node) => revealTimeEditor(node));
       const remove = button('Delete', 'danger-outline entry-delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
       const disabled = Boolean((loadingRecent || !recentFresh) && !entry._pending);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
@@ -1910,7 +1970,7 @@
         }
         record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
       } else {
-        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async () => revealTimeEditor());
+        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async (_event, node) => revealTimeEditor(node));
         description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
@@ -2345,6 +2405,7 @@
   function popupTimelineItems(historyStart, now) {
     const byId = new Map();
     const entries = popupTimelineEntries(historyStart, now);
+    const completedDisplayEnd = weekWindow().end <= Date.now() ? weekWindow().end : now;
     const rows = popupTimelineRows(entries);
     const items = entries.map((entry) => {
       const stableId = entry.id || `${entry._path}:${entry._index}`;
@@ -2360,8 +2421,10 @@
         faviconUrl: siteFaviconUrl(entry),
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
         savedDescription: entry.description || '',
+        originalStartedAt: new Date(entry.startedAt).getTime(),
+        originalEndedAt: entry._active ? null : new Date(entry.endedAt).getTime(),
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
-        endedAt: entry._active ? null : Math.min(now, new Date(entry.endedAt).getTime()),
+        endedAt: entry._active ? null : Math.min(completedDisplayEnd, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
         isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
@@ -2416,6 +2479,44 @@
     }, fallback);
   }
 
+  function openTimelineList() {
+    if (timesMode) { activityViewMode = 'list'; saveActivityViewMode('list'); renderUi(); }
+    else { timelineViewMode = 'list'; saveActivityViewMode('list'); applyCompactViewMode(); refreshCompactSurface(); }
+  }
+
+  function timelineWeekError(error) {
+    if (!(error instanceof RangeError) || !/overlap/i.test(error.message)) return null;
+    const warning = el('div', undefined, 'timeline-week-error error');
+    warning.setAttribute('role', 'alert');
+    warning.append(el('strong', 'Overlapping entries prevent this week from being displayed.'),
+      el('div', 'Go to List for this week and resolve the overlapping time entries manually.'));
+    warning.append(button('Go to List', 'secondary', openTimelineList));
+    return warning;
+  }
+
+  function showTimelineEditConflict(error) {
+    if (!/overlap/i.test(error?.message || '')) return false;
+    const section = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section');
+    if (!section) return false;
+    section.querySelector('.timeline-edit-error')?.remove();
+    const warning = el('div', undefined, 'timeline-edit-error error');
+    warning.setAttribute('role', 'alert');
+    warning.append(el('strong', 'Time entry was not moved.'),
+      el('div', `${error.message} Go to List for this week and resolve the overlapping entries manually.`),
+      button('Go to List', 'secondary', openTimelineList));
+    section.insertBefore(warning, section.querySelector('.timeline-shell'));
+    return true;
+  }
+
+  function showTimelineWeekError(error) {
+    const warning = timelineWeekError(error);
+    if (!warning) return false;
+    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null;
+    const shell = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section .timeline-shell');
+    shell?.replaceChildren(warning);
+    return Boolean(shell);
+  }
+
   function refreshMountedTimeline() {
     if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
     const periodStart = weekWindow().start;
@@ -2428,10 +2529,15 @@
       if (timesMode) activityTimelineView = activityPeriodTimelineView(timelineWindow.now);
       else timelineView = activityPeriodTimelineView(timelineWindow.now);
     }
-    timelineInstance.update({ items, rows, now: timelineWindow.now,
-      domainStart: periodStart, totalRange: activityTotalRange(),
-      ...(refocus && timelineInstance.getViewMode?.() !== 'calendar'
-        ? { view: timesMode ? activityTimelineView : timelineView } : {}) });
+    try {
+      timelineInstance.update({ items, rows, now: timelineWindow.now,
+        domainStart: periodStart, totalRange: activityTotalRange(),
+        ...(refocus && timelineInstance.getViewMode?.() !== 'calendar'
+          ? { view: timesMode ? activityTimelineView : timelineView } : {}) });
+    } catch (error) {
+      if (showTimelineWeekError(error)) return true;
+      throw error;
+    }
     if (timesMode && activityInitialFocusPending && recentFresh
         && periodStart === weekWindow(Date.now()).start && timelineInstance.getViewMode?.() === 'timeline') {
       timelineInstance.scrollToEnd();
@@ -2633,32 +2739,33 @@
   }
 
   async function queueCalendarEntry(entry, edits) {
-    const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId);
-    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
-    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
-    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
-    const optimisticEditGeneration = {};
-    timelineOptimisticEditStates.set(optimisticEditGeneration, {
-      previousEntry, hadPreviousOptimisticEdit, previousOptimisticEdit,
-      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
-    });
-    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
-    timelineOptimisticEdits.set(entry.id, edits);
-    applyTimelineOptimisticEntry(entry, edits);
-    refreshMountedTimeline();
     const acceptanceId = beginTimelineQueueAcceptance();
+    const requestOrder = timelineQueueAcceptanceSequence;
     refreshTimelineQueueIndicator();
-    recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
-    if (!timelineInstance) renderUi();
     try {
       const result = await send({ type: 'QUEUE_ENTRY_EDIT', payload: {
         destinationId: entry.destinationId,
         path: entry._path, originalSha: entry._sha, index: entry._index,
         original: originalRecord(entry), edits,
       } });
+      // A slower earlier acceptance must not replace a newer accepted edit.
+      if (requestOrder < (timelineAcceptedEditOrders.get(entry.id) || 0)) return;
+      timelineAcceptedEditOrders.set(entry.id, requestOrder);
+      const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId);
+      const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+      const optimisticEditGeneration = {};
+      timelineOptimisticEditStates.set(optimisticEditGeneration, {
+        previousEntry, hadPreviousOptimisticEdit: timelineOptimisticEdits.has(entry.id),
+        previousOptimisticEdit: timelineOptimisticEdits.get(entry.id),
+        previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+      });
+      timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+      timelineOptimisticEdits.set(entry.id, edits);
+      applyTimelineOptimisticEntry(entry, edits);
       trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+      (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
+      recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
     } catch (error) {
-      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, true);
       recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
       throw error;
     } finally {
@@ -2674,17 +2781,21 @@
     const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
     const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
     const optimisticEditGeneration = {};
-    timelineOptimisticEditStates.set(optimisticEditGeneration, {
-      previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
-      previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
-    });
-    timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
     const edits = { ...(previousOptimisticEdit || {}), ...requestedEdits };
-    timelineOptimisticEdits.set(entry.id, edits);
-    refreshMountedTimeline();
+    const acceptVisualEdit = () => {
+      timelineOptimisticEditStates.set(optimisticEditGeneration, {
+        previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
+        previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+      });
+      timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+      timelineOptimisticEdits.set(entry.id, edits);
+      refreshMountedTimeline();
+    };
+    const waitForAcceptance = requestedEdits.startedAt !== undefined;
+    if (!waitForAcceptance) acceptVisualEdit();
     const acceptanceId = beginTimelineQueueAcceptance();
+    const requestOrder = timelineQueueAcceptanceSequence;
     refreshTimelineQueueIndicator();
-    recordTimelineQueueDiagnostic(`${diagnostic}: accepted locally and queued for GitHub.`);
     if (!timelineInstance) renderUi();
     try {
       const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
@@ -2692,9 +2803,15 @@
         ...(edits.startedAt !== undefined ? { startedAt: edits.startedAt } : {}),
         ...(edits.description !== undefined ? { description: edits.description } : {}),
       } });
+      if (waitForAcceptance) {
+        if (requestOrder < (timelineAcceptedEditOrders.get(entry.id) || 0)) return;
+        timelineAcceptedEditOrders.set(entry.id, requestOrder);
+        acceptVisualEdit();
+      }
       trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+      recordTimelineQueueDiagnostic(`${diagnostic}: accepted locally and queued for GitHub.`);
     } catch (error) {
-      rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, false);
+      if (!waitForAcceptance) rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, false);
       recordTimelineQueueDiagnostic(`${diagnostic}: local queue rejected the change.`);
       throw error;
     } finally {
@@ -2877,6 +2994,11 @@
         },
         onViewChange: view => { if (timesMode) activityTimelineView = view; else timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
         onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
+        onError: (error, context) => {
+          if (!host.isConnected) return;
+          if (context?.action === 'edit' && showTimelineEditConflict(error)) return;
+          if (!showTimelineWeekError(error)) setError(error);
+        },
         onStop: item => {
           const entry = timelineEntriesById.get(item.id);
           return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
@@ -2907,6 +3029,12 @@
           return true;
         },
         onStart: item => restartTimelineEntry(timelineEntriesById.get(item.id)),
+        onEntryEdit: async (item, trigger) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return false;
+          await openTimeEntryForm(entry, trigger);
+          return true;
+        },
         onDescriptionInput: (item, value) => {
           const entry = timelineEntriesById.get(item.id);
           if (!entry) return;
@@ -2927,8 +3055,9 @@
         },
         onEditCommit: async edit => {
           if (!timesMode && completeVisualWeekStart !== weekWindow().start) return false;
-          const entry = timelineEntriesById.get(edit.id);
-          if (!entry) return;
+          const entry = timelineEntriesById.get(edit.id)
+            || recent.find(item => !item._active && `entry:${item.id}` === edit.id);
+          if (!entry) return false;
           if (entry._active) {
             if (edit.kind !== 'resize-left') return;
             try {
@@ -2957,7 +3086,8 @@
       } catch (error) {
         timelineInstance = null;
         const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
-        timelineShell.replaceChildren(el('div', `Timeline cannot display invalid overlapping entries. Fix them in Activity. ${message}`, 'error'));
+        timelineShell.replaceChildren(timelineWeekError(error)
+          || el('div', `Timeline could not be displayed. ${message}`, 'error'));
         return;
       }
       refreshTimelineOverlaps();
@@ -3744,6 +3874,7 @@
       :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr); margin-bottom:22px }
       :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr; justify-items:end }
       .timeline-shell { position:relative }
+      .timeline-week-error,.timeline-edit-error { display:grid; justify-items:start; gap:8px; padding:12px 14px; border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger)); border-radius:8px; background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
       .timeline-shell:has(>.calendar-week-loading:not([hidden])) { min-height:240px }
       .calendar-week-loading { position:absolute; z-index:5; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:240px; background:color-mix(in srgb,var(--bgColor-default,var(--ck-bg)) 90%,transparent); color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; pointer-events:none }
       .calendar-week-loading[hidden] { display:none }
@@ -4028,7 +4159,7 @@
           _pending: Boolean(detail.completion.pending),
         }]);
         pageState = { ...pageState, active: null };
-      } else if (detail.type === 'START' && detail.active?.id) {
+      } else if (['START', 'EDIT_ACTIVE_START'].includes(detail.type) && detail.active?.id) {
         pageState = { ...pageState, active: detail.active };
       } else return;
       if (!refreshMountedTimeline() || activityViewMode === 'list') renderUi();

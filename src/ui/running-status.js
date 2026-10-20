@@ -1,5 +1,6 @@
 import { formatClockDuration } from '../domain/reporting.js';
 import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../domain/values.js';
+import { dateValue, timeValue, parseTime, localTimestamp } from './local-time.js';
 import './tracking-card.js';
 
 const SECOND_MS = 1_000;
@@ -20,8 +21,12 @@ export function mountRunningStatus(container, { send, onChange }) {
   const recentList = make('div', 'running-status-recent');
   quickStart.append(quickLabel, recentList); quickStart.hidden = true;
   const task = make('a', 'running-status-task'); task.target = '_blank'; task.rel = 'noreferrer';
-  const elapsed = make('span', 'running-status-elapsed'); elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
+  const elapsed = make('span', 'running-status-elapsed'); elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Duration');
   const today = make('span', 'running-status-today');
+  const elapsedLabel = make('span', 'running-status-metric-label'); elapsedLabel.textContent = 'Duration';
+  const elapsedValue = make('span', 'running-status-metric-value'); elapsed.append(elapsedLabel, elapsedValue);
+  const todayLabel = make('span', 'running-status-metric-label'); todayLabel.textContent = 'Today';
+  const todayValue = make('span', 'running-status-metric-value'); today.append(todayLabel, todayValue);
   const stop = make('button', 'running-status-stop'); stop.type = 'button'; stop.textContent = 'Stop and save';
   const descriptionField = make('div', 'running-status-description-field');
   const description = make('textarea', 'running-status-description');
@@ -35,6 +40,21 @@ export function mountRunningStatus(container, { send, onChange }) {
   const moreLines = make('small', 'running-status-description-more');
   moreLines.textContent = '↓ More lines — scroll'; moreLines.hidden = true;
   descriptionField.append(description, saveDescription, saved, moreLines);
+  const startField = make('div', 'running-status-start-field');
+  const startLabel = make('label', 'running-status-start-label');
+  const startCaption = make('span', 'running-status-start-caption'); startCaption.textContent = 'Start';
+  const editIcon = make('span', 'running-status-start-edit-icon'); editIcon.textContent = '✎';
+  editIcon.setAttribute('aria-hidden', 'true');
+  const start = make('input', 'running-status-start'); start.type = 'text'; start.inputMode = 'numeric';
+  start.placeholder = 'HH:MM'; start.maxLength = 5; start.autocomplete = 'off'; start.value = '';
+  const startValue = make('span', 'running-status-start-value'); startValue.append(start, editIcon);
+  startLabel.append(startCaption, startValue);
+  editIcon.addEventListener('click', event => { event.preventDefault(); start.focus(); start.select(); });
+  const saveStart = make('button', 'running-status-start-save'); saveStart.type = 'button';
+  saveStart.textContent = '✓'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
+  const startSaved = make('span', 'running-status-start-saved');
+  startSaved.textContent = '✓ Saved'; startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
+  startField.append(startLabel, saveStart, startSaved);
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
   const idleGroup = make('div', 'running-status-idle-group');
   const idleHint = make('span', 'running-status-idle-hint');
@@ -42,12 +62,15 @@ export function mountRunningStatus(container, { send, onChange }) {
   idleGroup.append(idle, idleHint);
   row.append(idleGroup, quickStart);
   const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today, stop });
-  for (const node of [live, task, descriptionField, metrics, stop]) node.hidden = true;
+  const stats = make('div', 'running-status-stats'); stats.append(startField, metrics);
+  row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
+  for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
   container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
   let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
   let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
+  let shownStartTimer = '', acceptedStartedAt = '', pendingAcceptedStart = null, savingStart = false, hideStartSavedTimer = null;
   const localDate = () => entryDateValue(localDateParts(new Date(Date.now())));
   const timerKey = active => active ? String(active.id || active.startedAt) : '';
   const normalizedDescription = value => String(value || '').replace(/\r\n?/g, '\n').replace(/\t/g, ' ')
@@ -103,6 +126,71 @@ export function mountRunningStatus(container, { send, onChange }) {
     updateDescriptionSave();
   }
 
+  function updateStartSave() {
+    const initial = new Date(acceptedStartedAt);
+    saveStart.hidden = !acceptedStartedAt || parseTime(start.value) === timeValue(initial);
+    editIcon.hidden = !saveStart.hidden || !startSaved.hidden;
+  }
+
+  function renderStart(active) {
+    startField.hidden = !active;
+    const key = timerKey(active);
+    if (key !== shownStartTimer) {
+      shownStartTimer = key; acceptedStartedAt = ''; pendingAcceptedStart = null;
+      if (hideStartSavedTimer !== null) clearTimeout(hideStartSavedTimer);
+      hideStartSavedTimer = null; startSaved.hidden = true;
+    }
+    if (!active) return;
+    const current = new Date(acceptedStartedAt);
+    const dirty = acceptedStartedAt && parseTime(start.value) !== timeValue(current);
+    const latest = active.startedAt;
+    if (!savingStart && (!dirty || !acceptedStartedAt)
+      && (pendingAcceptedStart === null || latest === pendingAcceptedStart)) {
+      acceptedStartedAt = latest; pendingAcceptedStart = null;
+      start.value = timeValue(new Date(latest));
+    }
+    updateStartSave();
+  }
+
+  function updateStartDraft() { startSaved.hidden = true; updateStartSave(); }
+  start.addEventListener('click', () => start.select());
+  start.addEventListener('input', updateStartDraft);
+  start.addEventListener('blur', () => {
+    const normalized = parseTime(start.value);
+    if (normalized) start.value = normalized;
+    updateStartSave();
+  });
+  async function commitStart() {
+    if (savingStart || !state?.active) return;
+    const active = state.active, key = timerKey(active);
+    const clock = parseTime(start.value);
+    const timestamp = clock && localTimestamp(dateValue(new Date(active.startedAt)), clock);
+    if (!timestamp) { showError(new Error('Enter a valid Start time (HH:MM or 1000).')); return; }
+    const unchanged = clock === timeValue(new Date(active.startedAt));
+    const startedAt = unchanged ? active.startedAt : timestamp.toISOString();
+    if (new Date(startedAt).getTime() > Date.now()) { showError(new Error('Start cannot be in the future.')); return; }
+    if (unchanged) return;
+    savingStart = true; start.disabled = true; saveStart.disabled = true; showError();
+    try {
+      await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+        original: { id: active.id, startedAt: active.startedAt }, startedAt,
+      } });
+      if (destroyed || timerKey(state?.active) !== key) return;
+      state = { ...state, active: { ...state.active, startedAt } };
+      acceptedStartedAt = startedAt; pendingAcceptedStart = startedAt;
+      start.value = clock; updateClocks();
+      clearTimeout(hideStartSavedTimer); startSaved.hidden = false;
+      hideStartSavedTimer = setTimeout(() => { startSaved.hidden = true; updateStartSave(); }, 3000);
+      await onChange?.({ type: 'EDIT_ACTIVE_START', active: state.active });
+    } catch (cause) { if (!destroyed) showError(cause); }
+    finally { savingStart = false; start.disabled = false; saveStart.disabled = false; updateStartSave(); }
+  }
+  start.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault(); void commitStart();
+  });
+  saveStart.addEventListener('click', () => void commitStart());
+
   function commitDescription() {
     const key = shownTimer;
     if (savingDescription) {
@@ -145,9 +233,9 @@ export function mountRunningStatus(container, { send, onChange }) {
     updateDescriptionSave();
   });
   description.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+    if (event.key === 'Tab' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
-      stop.focus({ preventScroll: true });
+      start.focus({ preventScroll: true });
       return;
     }
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
@@ -209,10 +297,10 @@ export function mountRunningStatus(container, { send, onChange }) {
     const total = state.todayTrackedMs;
     const totalText = total == null || state.summaryError || reportDate !== currentDate ? '…'
       : formatClockDuration((total + (ticking ? Math.max(0, Date.now() - readAt) : 0)) / SECOND_MS);
-    today.textContent = `Today ${totalText}`;
+    todayValue.textContent = totalText;
     if (state.active) {
       const seconds = Math.max(0, Math.floor((Date.now() - new Date(state.active.startedAt).getTime()) / SECOND_MS));
-      elapsed.textContent = formatClockDuration(Math.floor(seconds / 60) * 60);
+      elapsedValue.textContent = formatClockDuration(Math.floor(seconds / 60) * 60);
     }
   }
 
@@ -224,8 +312,9 @@ export function mountRunningStatus(container, { send, onChange }) {
     idle.hidden = Boolean(active);
     quickStart.hidden = !state.configured || Boolean(active);
     if (!quickStart.hidden) renderRecent();
-    for (const node of [live, task, metrics, stop]) node.hidden = !active;
+    for (const node of [live, task, stats, stop]) node.hidden = !active;
     renderDescription(active);
+    renderStart(active);
     stop.disabled = busy;
     if (active) {
       const url = active.taskUrl || active.issue?.url || '';

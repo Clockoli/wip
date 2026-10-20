@@ -1569,7 +1569,7 @@
       if (patch && Object.prototype.hasOwnProperty.call(patch, 'data')) task.data = patch.data;
       if (patch && patch.start != null) task.start = toMs(patch.start);
       if (patch && patch.end != null) task.end = toMs(patch.end);
-      if (!Number.isFinite(task.start) || !Number.isFinite(task.end) || task.end <= task.start) {
+      if (!Number.isFinite(task.start) || !Number.isFinite(task.end) || task.end < task.start) {
         this._restoreState(beforeState);
         throw new RangeError('TaskTimeline.updateTask(): invalid start/end');
       }
@@ -1696,7 +1696,7 @@
       }
       const start = toMs(raw.start);
       const end = toMs(raw.end);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || (end === start && !raw.running)) {
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
         throw new RangeError(`TaskTimeline: invalid start/end for task at index ${index}`);
       }
       const instanceId = raw.instanceId != null
@@ -3025,7 +3025,7 @@
       const rangeEnd = this._calendarEndDay();
       const segments = [];
       for (const task of this.tasks) {
-        if (task.running && task.end === task.start && task.start >= rangeStart && task.start < rangeEnd) {
+        if (task.end === task.start && task.start >= rangeStart && task.start < rangeEnd) {
           const day = this._floorDay(task.start);
           const dayIndex = this._calendarDayIndexForTime(task.start);
           if (dayIndex >= 0) {

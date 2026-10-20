@@ -75,7 +75,7 @@ test('Calendar keeps unavailable resources and imported identities without favic
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), '58356ed456c7ad64aed9452961ab77c766279d69258d5dc872221a072b718536');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), '04028a3ee2cdcbfe1b5f80421f40ab20518ba3541f8307204fe9388524b54136');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
