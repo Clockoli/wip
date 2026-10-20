@@ -2078,7 +2078,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   vm.runInContext(trackingCardSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
-    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
+    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, queueActiveDescriptionEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
@@ -2090,6 +2090,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
       attachCompact(menu) { shadow = document.createElement('shadow'); shadow.append(menu); },
       overlapHost(host, entries) { compactSurface.host = host; timelineEntriesById = new Map(entries); },
       optimisticEdit(id) { return timelineOptimisticEdits.get(id); },
+      setOptimisticEdit(id, edits) { timelineOptimisticEdits.set(id, edits); },
       optimisticCompletion(id) { return timelineOptimisticCompletions.get(id); },
       recentEntry(id) { return recent.find(entry => entry.id === id); },
       descriptionDraftValue() { return descriptionDraft?.value; },
@@ -2183,7 +2184,7 @@ test('header totals-only polling preserves the description draft and updates exi
     assert.equal(total.textContent, '1m'); assert.equal(week.textContent, '1m');
   }
   assert.equal(root.querySelector('.running-elapsed'), elapsed);
-  assert.equal(elapsed.textContent, '00:01');
+  assert.equal(elapsed.textContent, '1m');
 });
 
 test('header description draft survives a required rerender without leaking to a new timer', async () => {
@@ -2280,7 +2281,7 @@ test('hostile site CSS cannot supply panel tokens or style the internal shadow s
   assert.match(source, /set\('all', 'initial'\)/);
 });
 
-test('active strip uses a favicon and saves its editable description with Stop', async () => {
+test('active strip matches the Activity card without a favicon and saves its editable description with Stop', async () => {
   const now = Date.now();
   const active = { id: 'active', taskUrl: 'https://vc.ru/story', taskTitle: 'VC story', startedAt: new Date(now - 60_000).toISOString(), description: '' };
   const state = { configured: true, active, pendingWrites: [] };
@@ -2294,11 +2295,31 @@ test('active strip uses a favicon and saves its editable description with Stop',
   assert.equal(strip.querySelector('.running-status-live').textContent, 'Tracking now');
   assert.equal(strip.querySelector('.running-status-elapsed').getAttribute('role'), 'timer');
   assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
-  assert.match(menu.querySelector('.strip-favicon').src, /^chrome-extension:\/\/clockoli\/_favicon\//);
+  assert.equal(menu.querySelector('.strip-favicon'), null);
+  assert.equal(menu.querySelector('.running-status-start').value, new Date(active.startedAt).toTimeString().slice(0, 5));
   const description = menu.querySelector('.strip-description');
   description.value = 'Published launch story'; description.oninput();
   await menu.walk().find(node => node.textContent === 'Stop and save').onclick({ isTrusted: true });
   assert.equal(harness.messages.find(message => message.type === 'STOP').description, 'Published launch story');
+});
+
+test('popup Stop without a description draft preserves the latest locally saved description', async () => {
+  const now = Date.now();
+  const active = { id: 'active', taskUrl: 'https://example.com/task', startedAt: new Date(now - 60_000).toISOString(), description: 'Earlier text' };
+  let stoppedDescription, completedDescription;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now, respond(message, callback) {
+    if (message.type === 'STOP') {
+      stoppedDescription = message.description;
+      completedDescription = message.description ?? active.description;
+      callback({ ok: true, data: { entry: { ...active, id: 'completed', description: message.description ?? active.description, endedAt: new Date(now).toISOString(), durationSeconds: 60 }, pending: true } });
+    } else callback({ ok: true, data: { configured: true, active, pendingWrites: [] } });
+  } });
+  const menu = harness.renderMenu({ compact: true });
+  active.description = 'Newer text from Activity';
+  await menu.walk().find(node => node.textContent === 'Stop and save').onclick({ isTrusted: true });
+  assert.equal(stoppedDescription, undefined, 'Stop delegates an unchanged description to the authoritative local timer');
+  assert.equal(completedDescription, 'Newer text from Activity');
+  assert.equal(harness.messages.find(message => message.type === 'STOP').description, undefined);
 });
 
 test('time descriptions preserve intentional newlines while normalizing line endings', () => {
@@ -3410,7 +3431,8 @@ for (const permissions of [[], ['favicon']]) {
     const harness = dailyPanelHarness(options);
     const menu = harness.renderMenu({ compact: true });
     const activity = dailyPanelHarness({ ...options, pageUrl: 'chrome-extension://clockoli/src/times/times.html' }).renderActivity();
-    for (const icon of [menu.querySelector('.strip-favicon'), menu.querySelector('.entry-record-favicon'), activity.querySelector('.entry-record-favicon')]) {
+    assert.equal(menu.querySelector('.strip-favicon'), null, 'running card does not use a favicon');
+    for (const icon of [menu.querySelector('.entry-record-favicon'), activity.querySelector('.entry-record-favicon')]) {
       assert.ok(icon);
       if (permissions.length) {
         assert.equal(icon.tag, 'img');
@@ -3479,6 +3501,14 @@ test('compact task switches preserve the edited active description in the comple
   assert.equal(currentSwitch.description, 'Draft for current switch');
   assert.equal(current.optimisticCompletion('active').description, 'Draft for current switch');
   assert.equal(current.surface().strip.querySelector('.strip-description').value, '', 'the previous draft does not leak into the new active task');
+
+  const unchanged = makeHarness();
+  const unchangedMenu = unchanged.renderMenu({ compact: true });
+  unchanged.mount({ update() {}, scrollToEnd() {} }, { start: now - 3_600_000, end: now, focusedAt: now });
+  active.description = 'Newer text from Activity';
+  await unchangedMenu.walk().find(node => node.textContent === 'Switch to this task').onclick({ isTrusted: true });
+  assert.equal(unchanged.messages.find(message => message.type === 'SWITCH_TASK').description, undefined,
+    'a switch without a draft preserves the latest description from the local timer');
 
   const listed = makeHarness();
   const listedMenu = listed.renderMenu({ compact: true });
@@ -3566,6 +3596,33 @@ test('timeline items keep saving state through optimistic edits and pending GitH
   assert.equal(item().isPending, true, 'server-projected pending state remains visible');
   harness.applyPageState({ ...state, pendingCount: 0, pendingWrites: [], recent: [entry] });
   assert.equal(item().isPending, false, 'confirmed save removes entry-level feedback');
+});
+
+test('adjusting Start sends no stale optimistic description to the worker', async () => {
+  const active = { id: 'active', taskUrl: 'https://example.com/active', startedAt: '2026-09-05T13:30:00Z', description: 'Original' };
+  const messages = [];
+  let stoppedDescription;
+  const harness = dailyPanelHarness({ state: { configured: true, active, pendingWrites: [] }, now: Date.parse('2026-09-05T14:00:00Z'), respond(message, callback) {
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+      messages.push(message.payload);
+      callback({ ok: true, data: { operationId: `edit-${messages.length}` } });
+    } else if (message.type === 'STOP') {
+      stoppedDescription = message.description;
+      callback({ ok: true, data: { entry: { ...active, id: 'completed', endedAt: '2026-09-05T14:00:00Z', durationSeconds: 1500 }, pending: true } });
+    } else callback({ ok: true, data: { configured: true, active, pendingWrites: [1, 2].map(id => ({ id: `edit-${id}`, status: 'pending' })) } });
+  } });
+  await harness.queueActiveDescriptionEdit(active, 'Old local description');
+  assert.equal(harness.optimisticEdit('active').description, 'Old local description');
+  active.description = 'Newer description from Activity';
+  harness.setOptimisticEdit('active', { description: 'Old local description' });
+  await harness.queueActiveStartEdit(active, '2026-09-05T13:35:00Z');
+  assert.equal(messages[1].startedAt, '2026-09-05T13:35:00.000Z');
+  assert.equal(Object.hasOwn(messages[1], 'description'), false);
+  assert.equal(active.description, 'Newer description from Activity');
+  harness.applyPageState({ configured: true, active, pendingWrites: [{ id: 'edit-2', status: 'pending' }] });
+  assert.equal(harness.optimisticEdit('active')?.description, undefined);
+  await harness.stopTimelineEntry(active);
+  assert.equal(stoppedDescription, 'Newer description from Activity');
 });
 
 test('a rejected replacement edit preserves an earlier accepted optimistic edit', async () => {

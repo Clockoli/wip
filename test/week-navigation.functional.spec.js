@@ -33,7 +33,11 @@ const crossing = { id: 'cross-week', taskUrl: 'https://github.com/acme/app/issue
   durationSeconds: (mondayEnd.getTime() - saturday.getTime()) / 1000,
   _path: 'times/' + day(saturday).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 3 };
 globalThis.weekReads = [];
+globalThis.stateReads = 0;
 globalThis.activeDescriptionEdits = [];
+globalThis.activeStartEdits = [];
+globalThis.rejectStartEdit = false;
+globalThis.holdNextStartEdit = false;
 globalThis.includeCrossWeek = false;
 globalThis.holdNextWeekRead = false;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
@@ -46,12 +50,27 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     finish();
   } else if (message.type === 'LOAD_RECENT') respond({ ok: true, data: { configured: true, active, recent: [current] } });
   else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+    if (message.payload.startedAt && globalThis.rejectStartEdit) {
+      respond({ ok: false, error: { message: 'Start would overlap another entry.' } }); return;
+    }
+    if (message.payload.startedAt && globalThis.holdNextStartEdit) {
+      globalThis.holdNextStartEdit = false;
+      const original = active.startedAt;
+      globalThis.finishHeldStartEdit = () => {
+        if (active.startedAt === original) active.startedAt = message.payload.startedAt;
+        respond({ ok: true, data: { operationId: 'held-start-edit' } });
+      };
+      return true;
+    }
     // Acknowledged edits are durable locally: page-state reads must see them
     // immediately, even while the GitHub push remains pending.
-    active.description = message.payload.description;
-    globalThis.activeDescriptionEdits.push(message.payload);
+    if ('description' in message.payload) active.description = message.payload.description;
+    if (message.payload.startedAt) active.startedAt = message.payload.startedAt;
+    if (message.payload.startedAt) globalThis.activeStartEdits.push(message.payload);
+    else globalThis.activeDescriptionEdits.push(message.payload);
     respond({ ok: true, data: { operationId: 'active-description-edit' } });
   } else if (message.type === 'GET_PAGE_STATE' || message.type === 'GET_STATE') {
+    globalThis.stateReads += 1;
     respond({ ok: true, data: { configured: true, active, pendingWrites: [], pendingCount: 0,
       projects: [{ name: 'Issue work', substrings: ['/acme/app/issues/42'] }, { name: 'Unused', substrings: ['/other/repo/'] }] } });
   } else respond({ ok: true, data: {} });
@@ -105,7 +124,7 @@ async function expectRunningCardFits(root) {
       background: style.backgroundImage, radius: style.borderRadius,
       badgeBackground: badge.backgroundColor, badgeColor: badge.color };
   });
-  expect(appearance.borderWidth).toBe('4px');
+  expect(appearance.borderWidth).toBe('1px');
   expect(appearance.borderColor).not.toBe('rgba(0, 0, 0, 0)');
   expect(appearance.background).toContain('gradient');
   expect(appearance.radius).not.toBe('0px');
@@ -246,7 +265,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
-    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replaceAll('configured: true, active,', "configured: true, interfaceWidth: 'full', active,"));
     context = await chromium.launchPersistentContext(profile, {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
@@ -434,6 +453,73 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await githubRoot.locator('.trigger-main').click();
     const popupRoot = page.locator('#clockoli-full-width-popup-root');
     await expectRunningCardFits(popupRoot);
+    const popupCard = popupRoot.locator('.active-task-strip.is-active');
+    const startField = popupCard.locator('.running-status-start-field');
+    await expect(startField.locator('.running-status-start-caption')).toHaveText('Start');
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:59');
+    await expect(popupCard.locator('.strip-favicon')).toHaveCount(0);
+    await expect(popupCard.locator('.strip-task .task-title')).toHaveCSS('max-width', 'none');
+    await expect(popupCard.locator('.running-elapsed')).toHaveText(/^\d+(?:h \d+)?m$/);
+    await expect(popupCard.getByRole('button', { name: 'Switch to this task' })).toHaveCount(0);
+    const rail = await popupCard.evaluate(node => getComputedStyle(node).borderLeftWidth);
+    expect(rail).toBe('1px');
+    await startField.locator('.running-status-start').fill('1158');
+    await startField.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:58');
+    await worker.evaluate(() => { globalThis.rejectStartEdit = true; });
+    await startField.locator('.running-status-start').fill('1157');
+    await startField.getByRole('button', { name: 'Save start' }).click();
+    await expect(popupRoot.locator('.panel-feedback')).toContainText('Start would overlap another entry.');
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:57');
+    expect(await worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
+    await worker.evaluate(() => {
+      globalThis.rejectStartEdit = false;
+      active.startedAt = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 56).toISOString();
+    });
+    const readsBeforeExternalEdit = await worker.evaluate(() => globalThis.stateReads);
+    await startField.locator('.running-status-start').press('Enter');
+    await expect.poll(() => worker.evaluate(() => globalThis.stateReads)).toBeGreaterThan(readsBeforeExternalEdit);
+    await expect(popupRoot.locator('.panel-feedback')).toContainText('Start changed elsewhere');
+    expect(await worker.evaluate(() => globalThis.activeStartEdits.length)).toBe(1);
+    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(56);
+    await popupRoot.getByRole('button', { name: 'Close Clockoli' }).click();
+    await githubRoot.locator('.trigger-main').click();
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:56');
+    await worker.evaluate(() => { globalThis.holdNextStartEdit = true; });
+    await startField.locator('.running-status-start').fill('1155');
+    await startField.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => typeof globalThis.finishHeldStartEdit)).toBe('function');
+    await worker.evaluate(() => { active.startedAt = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 54).toISOString(); });
+    const readsBeforeLateEdit = await worker.evaluate(() => globalThis.stateReads);
+    await worker.evaluate(() => { globalThis.finishHeldStartEdit(); globalThis.finishHeldStartEdit = null; });
+    await expect.poll(() => worker.evaluate(() => globalThis.stateReads)).toBeGreaterThan(readsBeforeLateEdit);
+    await expect(popupRoot.locator('.panel-feedback')).toContainText('Start changed elsewhere');
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:55');
+    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(54);
+    await popupRoot.getByRole('button', { name: 'Close Clockoli' }).click();
+    await githubRoot.locator('.trigger-main').click();
+    await expect(startField.locator('.running-status-start')).toHaveValue('11:54');
+    const popupStats = popupRoot.locator('.active-task-strip .running-status-stats');
+    await expect(popupStats.locator('.running-status-metric-label')).toHaveText(['Duration', 'Today']);
+    const popupMetrics = await popupStats.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      aligned: [...node.querySelectorAll('.running-status-metric-value')]
+        .map(value => value.getBoundingClientRect().top),
+    }));
+    expect(popupMetrics.background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(Math.max(...popupMetrics.aligned) - Math.min(...popupMetrics.aligned)).toBeLessThan(6);
+    await page.setViewportSize({ width: 1920, height: 900 });
+    const wideCard = await popupRoot.locator('.active-task-strip.is-active').boundingBox();
+    expect(wideCard.width).toBeLessThanOrEqual(1600);
+    expect(Math.abs(wideCard.x - (1920 - wideCard.width) / 2)).toBeLessThan(2);
+    const descriptionLayout = await popupRoot.locator('.strip-description-field').evaluate(node => ({
+      directChild: node.parentElement.classList.contains('active-task-strip'),
+      width: node.getBoundingClientRect().width,
+    }));
+    expect(descriptionLayout.directChild).toBe(true);
+    expect(descriptionLayout.width).toBeLessThanOrEqual(250);
+    await page.setViewportSize({ width: 1280, height: 900 });
     const runningDescription = popupRoot.locator('.strip-description');
     await expect(runningDescription).toHaveJSProperty('tagName', 'TEXTAREA');
     await expect(runningDescription).toHaveValue('First line\nSecond line\nThird line\nFourth line');
@@ -447,8 +533,17 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     expect(await worker.evaluate(() => globalThis.activeDescriptionEdits[0].description)).toBe('First line\nSecond line');
     await expect(popupRoot.locator('.description-saved')).toHaveText('✓ Saved');
     await expect(popupRoot.locator('.active-task-strip.is-active')).toBeVisible();
+    await worker.evaluate(() => { active.description = 'Newer description from Activity'; });
+    await startField.locator('.running-status-start').fill('1153');
+    await startField.getByRole('button', { name: 'Save start' }).click();
+    await expect.poll(() => worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(53);
+    const startOnlyPayload = await worker.evaluate(() => globalThis.activeStartEdits.at(-1));
+    expect(startOnlyPayload).not.toHaveProperty('description');
+    expect(await worker.evaluate(() => active.description)).toBe('Newer description from Activity');
     await runningDescription.fill('Finished work\nReviewed changes');
     await runningDescription.press('Tab');
+    await expect(startField.locator('.running-status-start')).toBeFocused();
+    await startField.locator('.running-status-start').press('Tab');
     const stopAndSave = popupRoot.getByRole('button', { name: 'Stop and save' });
     await expect(stopAndSave).toBeFocused();
     await expect.poll(() => worker.evaluate(() => globalThis.activeDescriptionEdits.length)).toBe(2);
@@ -600,6 +695,16 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await toolbar.setViewportSize({ width: 420, height: 520 });
     await expectPanelScroll(toolbar, toolbarRoot, '.menu');
     await toolbar.close();
+    const other = await context.newPage();
+    other.on('pageerror', error => errors.push(error.message));
+    await other.route('https://github.com/acme/app/issues/43', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Another issue</h1></main></body></html>' }));
+    await other.goto('https://github.com/acme/app/issues/43');
+    await other.locator('#clockoli-root .trigger-main').click();
+    const otherPopup = other.locator('#clockoli-full-width-popup-root');
+    await expect(otherPopup.locator('.active-task-strip').getByRole('button', { name: 'Switch to this task' })).toHaveCount(0);
+    await expect(otherPopup.locator('.popup-switch-action').getByRole('button', { name: 'Switch to this task' })).toBeVisible();
+    await other.screenshot({ path: join(tmpdir(), 'clockoli-different-task-card.png') });
+    await other.close();
     const reads = await worker.evaluate(() => globalThis.weekReads);
     expect(reads.some(read => read.type === 'LOAD_TIMES')).toBe(true);
     expect(reads.some(read => read.type === 'LOAD_WEEK')).toBe(true);
