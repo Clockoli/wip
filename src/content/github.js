@@ -923,7 +923,8 @@
 
   function updateActivityWeekSummary() {
     if (!timesMode || !shadow) return;
-    const section = shadow.querySelector('.activity-weekly-summary');
+    const section = document.getElementById?.('activity-summary')?.querySelector('.activity-weekly-summary')
+      ?? shadow.querySelector('.activity-weekly-summary');
     if (!section) return;
     const range = timesRange();
     const span = section.querySelector('.activity-weekly-range');
@@ -2241,23 +2242,16 @@
     });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
-    const overview = el('div', undefined, 'activity-overview-heading');
-    const overviewBadge = el('span', undefined, 'activity-overview-icon');
-    overviewBadge.append(icon('calendar', 'M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM1.5 6v7.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6h-13Z', 20));
-    const overviewCopy = el('div', undefined, 'activity-overview-copy');
-    overviewCopy.append(el('h2', 'Activity'), el('p', 'Track time and manage your work', 'muted'));
-    overview.append(overviewBadge, overviewCopy);
     const weeklySummary = el('section', undefined, 'activity-weekly-summary');
     weeklySummary.setAttribute('aria-label', 'Weekly summary');
-    weeklySummary.hidden = activityViewMode !== 'calendar';
     const summaryHeading = el('div', undefined, 'activity-weekly-heading');
     summaryHeading.append(el('span', 'WEEKLY SUMMARY', 'activity-weekly-label'), el('span', undefined, 'activity-weekly-range'));
     weeklySummary.append(summaryHeading);
     const stats = el('div', undefined, 'activity-weekly-cards');
     const definitions = [
+      ['todayTrackedMs', 'Today', STOPWATCH_PATH],
       ['total', 'Total tracked', STOPWATCH_PATH],
       ['average', 'Daily average', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 8 3Zm.75 1.5h-1.5V8c0 .2.08.39.22.53l2.25 2.25a.75.75 0 0 0 1.06-1.06L8.75 7.69V4.5Z'],
-      ['entries', 'Time entries', 'M4 1h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2Zm0 1.5a.5.5 0 0 0-.5.5v10a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V3a.5.5 0 0 0-.5-.5H4ZM5 5h6v1.5H5V5Zm0 3h6v1.5H5V8Zm0 3h4v1.5H5V11Z'],
       ['tasks', 'Tasks worked on', 'M2 2h12v12H2V2Zm1.5 1.5v9h9v-9h-9Zm2 2h5V7h-5V5.5Zm0 3h5V10h-5V8.5Z'],
     ];
     for (const [key, label, shape] of definitions) {
@@ -2265,12 +2259,13 @@
       const badge = el('span', undefined, 'activity-weekly-icon');
       badge.append(icon(key, shape, 19));
       const copy = el('div', undefined, 'activity-weekly-copy');
-      const value = el('strong', '—', 'activity-weekly-value');
-      value.setAttribute('data-stat', key);
+      const value = el('strong', key === 'todayTrackedMs' ? trackedTotalText(key) : '—', 'activity-weekly-value');
+      value.setAttribute(key === 'todayTrackedMs' ? 'data-tracked-total' : 'data-stat', key);
       copy.append(value, el('span', label, 'activity-weekly-name'));
       card.append(badge, copy); stats.append(card);
     }
     weeklySummary.append(stats);
+    const summaryHost = document.getElementById?.('activity-summary');
     const views = el('div', undefined, 'times-view-modes');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
     for (const mode of ['timeline', 'calendar', 'list']) {
@@ -2296,13 +2291,21 @@
         if (mode === 'calendar') focusActivityCalendarPeriod();
         if (mode === 'calendar') return loadActivityCalendarWeek(timelineInstance?.getCalendarRange?.());
       });
+      control.setAttribute('aria-label', mode[0].toUpperCase() + mode.slice(1));
+      control.setAttribute('title', mode[0].toUpperCase() + mode.slice(1));
+      const shapes = {
+        timeline: 'M1 12h14v1.5H1V12Zm2-3h2v2H3V9Zm3-4h2v6H6V5Zm3 2h2v4H9V7Zm3-5h2v9h-2V2Z',
+        calendar: 'M4 0a.75.75 0 0 1 .75.75V2h6V.75a.75.75 0 0 1 1.5 0V2h1A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2h1V.75A.75.75 0 0 1 4 0ZM1.5 6.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6.5h-13ZM3 9h3v1.5H3V9Zm5 0h3v1.5H8V9Z',
+        list: 'M1 2h2v2H1V2Zm4 0h10v2H5V2ZM1 7h2v2H1V7Zm4 0h10v2H5V7Zm-4 5h2v2H1v-2Zm4 0h10v2H5v-2Z',
+      };
+      control.prepend(icon(mode, shapes[mode], 18));
       control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
     }
+    if (summaryHost) summaryHost.replaceChildren(weeklySummary, views);
+    else body.append(weeklySummary, views);
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
-    const headingRow = el('div', undefined, 'activity-heading-row');
-    headingRow.append(overview, views);
-    body.append(headingRow, weeklySummary, toolbar, weekNavigation(), listTotal);
+    body.append(toolbar, weekNavigation(), listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2990,6 +2993,7 @@
         view: initialView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
+        activityDashboard: timesMode,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
@@ -3143,7 +3147,7 @@
 
   function updatePanelClocks() {
     if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow, fullWidthPopupShadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
       for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
         value.textContent = value.classList?.contains?.('running-status-metric-value') || value.className?.includes?.('running-status-metric-value')
@@ -3427,7 +3431,7 @@
       });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: todayTotal, stop });
+      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: timesMode ? null : todayTotal, stop });
       const stats = el('div', undefined, 'running-status-stats'); stats.append(startField, metrics);
       strip.insertBefore(stats, stop);
     }
@@ -3763,6 +3767,7 @@
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
+    if (timesMode) document.getElementById?.('activity-summary')?.replaceChildren();
     const style = el('style', `
       :host, :where(:host > :not(style)) {
         /* One side gutter for every full-width panel row, so they stay aligned as the viewport grows. */
@@ -4066,36 +4071,17 @@
     if (timesMode) style.textContent += `
       /* Activity dashboard: one compact information hierarchy above the calendar. */
       :host(.times-surface) { color-scheme:inherit }
-      :host(.times-surface) .times-page { width:min(1600px,calc(100% - 48px));min-height:calc(100vh - 116px);margin:16px auto 24px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:12px;overflow:hidden;box-shadow:var(--shadow-resting-small) }
-      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:100%;margin:0;border:0;border-radius:0}
-      :host(.times-surface) .times-body {padding:20px 24px 30px}
-      :host(.times-surface) .activity-heading-row {display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;min-height:65px;margin:0 0 14px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
-      :host(.times-surface) .activity-overview-heading {grid-column:1;display:flex;align-items:center;gap:13px;margin:0 0 10px}
-      :host(.times-surface) .activity-overview-icon {display:grid;flex:none;width:42px;height:42px;place-items:center;border-radius:11px;background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
-      :host(.times-surface) .activity-overview-copy h2 {margin:0;font-size:22px;font-weight:750;line-height:1.2}
-      :host(.times-surface) .activity-overview-copy .muted {margin:3px 0 0;font-size:12px}
-      :host(.times-surface) .times-view-modes {grid-column:2;align-self:end;margin:0;border-bottom:0}
-      :host(.times-surface) .times-view-button {border-radius:8px 8px 0 0}
-      :host(.times-surface) .times-view-button[aria-pressed="true"] {background:var(--bgColor-success-muted,var(--ck-bg-muted))}
-      :host(.times-surface) .activity-weekly-summary {margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted))}
-      :host(.times-surface) .activity-weekly-summary[hidden] {display:none}
-      :host(.times-surface) .activity-weekly-heading {display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:10px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:11px}
-      :host(.times-surface) .activity-weekly-label {font-weight:750}
-      :host(.times-surface) .activity-weekly-cards {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-      :host(.times-surface) .activity-weekly-card {display:flex;align-items:center;gap:10px;min-width:0;min-height:66px;padding:10px 12px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-default,var(--ck-bg));box-shadow:var(--shadow-resting-small)}
-      :host(.times-surface) .activity-weekly-icon {display:grid;flex:none;width:34px;height:34px;place-items:center;border-radius:50%;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
-      :host(.times-surface) .activity-weekly-card:nth-child(2) .activity-weekly-icon {background:var(--bgColor-success-muted,var(--ck-bg-muted));color:var(--ck-success)}
-      :host(.times-surface) .activity-weekly-copy {display:flex;flex-direction:column;min-width:0;gap:2px}
-      :host(.times-surface) .activity-weekly-value {font-size:18px;font-weight:750;line-height:1.25;font-variant-numeric:tabular-nums;color:var(--fgColor-default,var(--ck-fg))}
-      :host(.times-surface) .activity-weekly-name {font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-page {width:min(1800px,calc(100% - 80px));min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
+      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:100%;margin:0}
+      :host(.times-surface) .times-body {padding:0 0 30px}
       :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
       :host(.times-surface) .popup-timeline-section {margin-bottom:16px}
-      :host(.times-surface) .week-navigation {margin:0 0 2px}
+      :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
+      :host(.times-surface) .week-navigation-label {font-size:15px;font-weight:700}
       :host(.times-surface) .week-navigation-button {border-radius:8px}
-      @media(max-width:940px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:790px){:host(.times-surface) .activity-heading-row{grid-template-columns:1fr;justify-items:center;gap:0}:host(.times-surface) .activity-overview-heading{grid-column:1;justify-self:start}:host(.times-surface) .times-view-modes{grid-column:1}}
-      @media(max-width:700px){:host(.times-surface) .times-page{width:100%;margin:0;border:0;border-radius:0}:host(.times-surface) .times-body{padding:16px 12px 24px}}
-      @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:1fr}:host(.times-surface) .activity-overview-copy h2{font-size:18px}}
+      @media(max-width:1000px){:host(.times-surface) .activity-weekly-copy{flex-direction:column;gap:0}:host(.times-surface) .activity-weekly-cards{gap:8px}}
+      @media(max-width:700px){:host(.times-surface) .times-page{width:100%;margin:0}:host(.times-surface) .times-body{padding:0 12px 24px}}
+      @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `;
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }

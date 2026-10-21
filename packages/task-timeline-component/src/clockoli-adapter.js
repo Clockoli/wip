@@ -258,7 +258,18 @@
       ? '\n.task.short .resize-handle, .task.short .resize-handle::after { width:6px }'
         + '\n.task.short .resize-handle::after { background-size:1px 14px, 1px 14px; background-position:2px center, 4px center }'
       : '') + (initialProps.weeklyCalendar
-      ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '');
+      ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '')
+      + (initialProps.activityDashboard
+        ? `
+          .shell:has(.calendar-view:not([hidden])) .meta,
+          .shell:has(.calendar-view:not([hidden])) .details:has(.details-info .hint) { display:none }
+          .calendar-day-header { font-size:13px }
+          .calendar-day-tracked, .calendar-time-label { font-size:12px }
+          .calendar-task { font-size:11px }
+          .clockoli-calendar-empty { font-size:13px }
+          .clockoli-calendar-empty-help { font-size:12px;max-width:none }
+        `
+        : '');
 
     function sourceItem(instanceId) {
       return originalItems.get(String(instanceId)) || null;

@@ -112,6 +112,87 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
+test('Activity calendar metrics and view switcher fit the desktop and mobile layouts', async () => {
+  test.setTimeout(30000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource
+      .replace(' - 3);', ' + 1);')
+      .replace("let viewMode = 'timeline';", "let viewMode = 'calendar';")
+      .replace('pendingWrites, pendingCount: pendingWrites.length });',
+        'pendingWrites, pendingCount: pendingWrites.length, todayTrackedMs: 7 * 3600000 + 11 * 60000 });'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.setViewportSize({ width: 1774, height: 900 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const root = page.locator('#clockoli-times-root');
+    const summary = page.locator('#activity-summary');
+    await expect(root.locator('.calendar-day-header')).toHaveCount(7);
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await expect(summary.getByRole('group', { name: 'Activity view' })).toBeVisible();
+    await expect(summary.locator('.activity-weekly-card').first()).toContainText('Today');
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await expect(root.locator('.calendar-task[data-task-key="entry:record"]')).toBeVisible();
+    await expect(summary.getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary.locator('[data-stat="total"]')).not.toHaveText('—');
+    expect(await page.locator('#activity-running-status .running-status-row').evaluate(row => row.getBoundingClientRect().height)).toBeGreaterThanOrEqual(84);
+    const geometry = () => summary.evaluate(section => {
+      const cards = [...section.querySelectorAll('.activity-weekly-card')].map(el => el.getBoundingClientRect());
+      const tracking = document.querySelector('#activity-running-status .running-status-row').getBoundingClientRect();
+      const tabs = section.querySelector('.times-view-modes').getBoundingClientRect();
+      return { sameRow: cards.every(rect => rect.top === cards[0].top),
+        summaryBottom: section.getBoundingClientRect().bottom, trackingTop: tracking.top,
+        tabsTop: tabs.top, tabsBottom: tabs.bottom, cardsTop: cards[0].top,
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    const desktop = await geometry();
+    expect(desktop.sameRow).toBe(true);
+    expect(desktop.summaryBottom + 8).toBeLessThanOrEqual(desktop.trackingTop);
+    expect(desktop.tabsTop).toBe(desktop.cardsTop);
+    expect(desktop.tabsBottom).toBeLessThanOrEqual(desktop.trackingTop);
+    expect(desktop.horizontalOverflow).toBe(false);
+    if (process.env.CLOCKOLI_ACTIVITY_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_SCREENSHOT });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    const mobileCards = await summary.locator('.activity-weekly-card').evaluateAll(cards => cards.map(card => {
+      const rect = card.getBoundingClientRect();
+      return { top: rect.top, right: rect.right };
+    }));
+    expect(new Set(mobileCards.map(card => card.top)).size).toBe(2);
+    expect(mobileCards[1].right).toBeGreaterThan(mobileCards[0].right);
+    const mobile = await geometry();
+    expect(mobile.summaryBottom + 8).toBeLessThanOrEqual(mobile.trackingTop);
+    expect(mobile.tabsBottom).toBeLessThanOrEqual(mobile.trackingTop);
+    if (process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT });
+    await summary.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await summary.getByRole('button', { name: 'List', exact: true }).click();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveCount(1);
+    await expect(root.locator('.today-list-totals')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('Activity focuses the current Timeline after loading without overriding manual scroll', async () => {
   test.setTimeout(30000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-timeline-focus-extension-'));
@@ -238,8 +319,9 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     await expect(strip.getByLabel('Date')).toHaveCount(0);
     const stats = strip.locator('.running-status-stats');
     await expect(stats).toBeVisible();
-    await expect(stats.locator('.running-status-metric-label')).toHaveText(['Duration', 'Today']);
-    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    await expect(stats.locator('.running-status-metric-label')).toHaveText(['Duration']);
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
+    await expect(page.locator('#activity-summary .activity-weekly-card').first()).toContainText('7h 11m');
     const widths = await strip.evaluate(row => ({ row: row.getBoundingClientRect().width,
       description: row.querySelector('.running-status-description-field').getBoundingClientRect().width }));
     expect(widths.description).toBeLessThan(290);
@@ -286,7 +368,7 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     await start.evaluate(node => node.blur());
     await page.setViewportSize({ width: 390, height: 740 });
-    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
     const narrow = await strip.evaluate(row => {
       const bounds = row.getBoundingClientRect();
       return [...row.querySelectorAll('.running-status-stats,.running-status-stop')]
@@ -945,23 +1027,26 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(feedback).toHaveCount(0);
     await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
-    expect(await tabs.evaluate(element => element.closest('.activity-heading-row')?.nextElementSibling?.classList.contains('activity-weekly-summary'))).toBe(true);
+    await expect(page.locator('.activity-overview-heading')).toHaveCount(0);
+    await expect(page.getByText('Track time and manage your work')).toHaveCount(0);
+    await expect(page.locator('#activity-summary > .times-view-modes')).toBeVisible();
+    await expect(page.locator('#activity-summary .activity-weekly-summary')).toBeVisible();
     await expect(page.locator('.times-toolbar')).toHaveCount(1);
     const status = page.locator('.running-status');
     const [statusBox, tabsBox] = await Promise.all([status.boundingBox(), tabs.boundingBox()]);
-    expect(tabsBox.y).toBeGreaterThanOrEqual(statusBox.y + statusBox.height);
+    expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(statusBox.y);
     const tabAppearance = await tabs.evaluate(element => {
       const buttons = [...element.querySelectorAll('button')];
       const boxes = buttons.map(button => button.getBoundingClientRect());
       const selected = buttons.find(button => button.getAttribute('aria-pressed') === 'true');
-      return { gap: getComputedStyle(element).gap, selectedUnderline: getComputedStyle(selected).borderBottomColor,
-        selectedWidth: getComputedStyle(selected).borderBottomWidth,
+      return { gap: getComputedStyle(element).gap, selectedBackground: getComputedStyle(selected).backgroundColor,
+        icons: element.querySelectorAll('button svg').length,
         firstRadius: getComputedStyle(buttons[0]).borderTopLeftRadius,
-        adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right < 2) };
+        adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right <= 4) };
     });
-    expect(tabAppearance.gap).toBe('0px');
-    expect(tabAppearance.selectedWidth).toBe('3px');
-    expect(tabAppearance.selectedUnderline).not.toBe('rgba(0, 0, 0, 0)');
+    expect(tabAppearance.gap).toBe('2px');
+    expect(tabAppearance.icons).toBe(3);
+    expect(tabAppearance.selectedBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(tabAppearance.firstRadius).not.toBe('0px');
     expect(tabAppearance.adjacent).toBe(true);
     const tabCenter = await tabs.evaluate(element => {
@@ -1201,6 +1286,7 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await page.getByRole('button', { name: 'Previous week' }).click();
     const row = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
+    await row.hover();
     await row.locator('.entry-edit').click();
     const dialog = page.getByRole('dialog', { name: 'Edit time' });
     await expect(dialog).toBeVisible();

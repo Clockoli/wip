@@ -9,7 +9,7 @@ const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
 const RECENT_TASK_LIMIT = 3;
 
-export function mountRunningStatus(container, { send, onChange }) {
+export function mountRunningStatus(container, { send, onChange, showToday = true }) {
   const document = container.ownerDocument || globalThis.document;
   const row = document.createElement('div'); row.className = 'running-status-row';
   const make = (tag, className) => {
@@ -61,7 +61,7 @@ export function mountRunningStatus(container, { send, onChange }) {
   idleHint.textContent = 'Start a task to begin';
   idleGroup.append(idle, idleHint);
   row.append(idleGroup, quickStart);
-  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today, stop });
+  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today: showToday ? today : null, stop });
   const stats = make('div', 'running-status-stats'); stats.append(startField, metrics);
   row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
   for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
@@ -414,6 +414,7 @@ export function mountRunningStatus(container, { send, onChange }) {
 // Activity's content renderer is a classic script with a private message helper.
 const activityContainer = document.getElementById('activity-running-status');
 if (activityContainer) mountRunningStatus(activityContainer, {
+  showToday: false,
   send: message => new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
     if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
     if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));

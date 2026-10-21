@@ -78,6 +78,22 @@ test('calendar does not show an empty-day marker behind a newly started timer', 
   }
 });
 
+test('Activity has four compact metrics including live Today and an icon view switcher', () => {
+  const ui = read('src/content/github.js');
+  const activity = ui.slice(ui.indexOf("const weeklySummary = el('section'"), ui.indexOf("const listTotal = el('div'", ui.indexOf("const weeklySummary = el('section'")));
+  assert.match(activity, /\['todayTrackedMs', 'Today'/);
+  assert.match(activity, /\['total', 'Total tracked'/);
+  assert.match(activity, /\['average', 'Daily average'/);
+  assert.match(activity, /\['tasks', 'Tasks worked on'/);
+  assert.doesNotMatch(activity, /\['entries', 'Time entries'/);
+  assert.match(activity, /control\.setAttribute\('aria-label', mode\[0\]/);
+  assert.match(read('src/times/times.css'), /#activity-summary \.activity-weekly-cards\{display:grid;grid-template-columns:repeat\(4,/);
+  assert.match(read('src/times/times.html'), /id="activity-summary"[\s\S]*id="activity-running-status"/);
+  assert.match(ui, /\[shadow, fullWidthPopupShadow, timesMode \? document\.getElementById\?\.\('activity-summary'\) : null\]/);
+  assert.match(ui, /summaryHost\.replaceChildren\(weeklySummary, views\)/);
+  assert.match(read('src/times/times.css'), /#activity-summary \.times-view-modes\{display:flex/);
+});
+
 test('manual themes control select arrows and print reports stay light', () => {
   for (const file of ['src/tasks/tasks.css', 'src/reports/reports.css']) {
     const css = read(file);
