@@ -127,6 +127,8 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await writeFile(join(extension, 'test-worker.js'), workerSource
       .replace(' - 3);', ' + 1);')
       .replace("let viewMode = 'timeline';", "let viewMode = 'calendar';")
+      .replace("respond({ ok: true, data: state() });\n  else if (message.type === 'SEARCH_ACTIVITY')",
+        "respond({ ok: true, data: message.type === 'LOAD_TIMES' ? { configured: true, recent: state().recent } : state() });\n  else if (message.type === 'SEARCH_ACTIVITY')")
       .replace('pendingWrites, pendingCount: pendingWrites.length });',
         'pendingWrites, pendingCount: pendingWrites.length, todayTrackedMs: 7 * 3600000 + 11 * 60000 });'));
     context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
@@ -140,57 +142,347 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const root = page.locator('#clockoli-times-root');
     const summary = page.locator('#activity-summary');
+    const switcher = page.locator('#activity-view-switcher');
     await expect(root.locator('.calendar-day-header')).toHaveCount(7);
-    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
-    await expect(summary.getByRole('group', { name: 'Activity view' })).toBeVisible();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
+    await expect(summary).not.toContainText('Daily average');
+    await expect(summary).toContainText('Statistic');
+    await expect(switcher.getByRole('group', { name: 'Activity view' })).toBeVisible();
     await expect(summary.locator('.activity-weekly-card').first()).toContainText('Today');
     await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await page.reload();
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await root.getByRole('button', { name: 'Previous week' }).click();
+    await root.getByRole('button', { name: 'Next week' }).click();
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1774, height: 900 });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.popup-overview-layout .strip-idle')).toHaveText('Not tracking');
+    await expect(panel.locator('.active-task-strip .running-status-recent-task')).toHaveCount(3);
+    await expect(panel.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toHaveText('Track this task');
+    await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
+    await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
+    const idleOverview = await panel.locator('.full-width-popup').evaluate(popup => {
+      const header = popup.querySelector('.tracker-toolbar');
+      const logo = header.querySelector('.timeline-brand').getBoundingClientRect();
+      const summary = header.querySelector('.activity-weekly-summary').getBoundingClientRect();
+      const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
+      return { logoRight: logo.right, summaryLeft: summary.left, summaryBottom: summary.bottom,
+        cardTop: card.top, cardHeight: card.height, cardWidth: card.width };
+    });
+    expect(idleOverview.summaryLeft).toBeGreaterThan(idleOverview.logoRight);
+    expect(idleOverview.cardTop).toBeGreaterThan(idleOverview.summaryBottom);
+    expect(idleOverview.cardHeight).toBeLessThan(85);
+    expect(idleOverview.cardWidth).toBeGreaterThan(600);
+    const quickStartLabels = await panel.locator('.running-status-recent-task').allTextContents();
+    await panel.getByRole('button', { name: 'Previous week' }).click();
+    await panel.getByRole('button', { name: 'Next week' }).click();
+    await expect(panel.locator('.running-status-recent-task')).toHaveText(quickStartLabels);
+    if (process.env.CLOCKOLI_PANEL_SCREENSHOT) await github.screenshot({ path: process.env.CLOCKOLI_PANEL_SCREENSHOT });
+    const panelEntry = panel.locator('.calendar-task[data-task-key="entry:record"]');
+    await panelEntry.hover();
+    const panelDetails = panel.locator('.task-timeline-host .details');
+    await expect(panelDetails).toBeVisible();
+    await expect(panelDetails).toHaveClass(/clockoli-compact-entry-details/);
+    await expect(panelDetails.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(panelDetails.locator('.details-value').first()).toBeHidden();
+    const panelSkin = await panelDetails.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      radius: getComputedStyle(node).borderRadius,
+      width: node.getBoundingClientRect().width,
+    }));
+    const panelBounds = await panelDetails.evaluate(card => ({
+      card: card.getBoundingClientRect().toJSON(),
+      popup: card.getRootNode().host.getRootNode().querySelector('.full-width-popup').getBoundingClientRect().toJSON(),
+    }));
+    expect(panelBounds.card.top).toBeGreaterThanOrEqual(panelBounds.popup.top);
+    expect(panelBounds.card.bottom).toBeLessThanOrEqual(panelBounds.popup.bottom);
+    await panel.locator('.calendar-task[data-task-key="entry:same-day"]').hover();
+    await expect(panelDetails).toContainText('Same day task');
+    const sidePlacement = await panelDetails.evaluate(card => {
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:same-day"]').getBoundingClientRect();
+      const below = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      const rect = card.getBoundingClientRect();
+      return { beside: rect.left >= anchor.right + 8 || rect.right <= anchor.left - 8,
+        coversNext: rect.top < below.bottom && rect.bottom > below.top && rect.left < below.right && rect.right > below.left };
+    });
+    expect(sidePlacement).toEqual({ beside: true, coversNext: false });
+    await panelDetails.getByRole('button', { name: 'Edit' }).hover();
+    await expect(panelDetails).toContainText('Same day task');
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    const editDialog = github.locator('.add-time-dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.locator('#add-time-task')).toHaveValue('Same day task');
+    await editDialog.getByRole('button', { name: 'Close Edit time' }).click();
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await panelEntry.hover();
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    await expect(editDialog).toBeVisible();
+    await editDialog.press('Escape');
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await panelEntry.hover();
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await github.setViewportSize({ width: 600, height: 500 });
+    await panelEntry.hover();
+    const constrained = await panelDetails.evaluate(card => ({
+      card: card.getBoundingClientRect().toJSON(),
+      popup: card.getRootNode().host.getRootNode().querySelector('.full-width-popup').getBoundingClientRect().toJSON(),
+    }));
+    expect(constrained.card.left).toBeGreaterThanOrEqual(constrained.popup.left);
+    expect(constrained.card.right).toBeLessThanOrEqual(constrained.popup.right);
+    expect(constrained.card.top).toBeGreaterThanOrEqual(constrained.popup.top);
+    expect(constrained.card.bottom).toBeLessThanOrEqual(constrained.popup.bottom);
+    await github.close();
     await expect(root.locator('.calendar-task[data-task-key="entry:record"]')).toBeVisible();
-    await expect(summary.getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const calendarRecord = root.locator('.calendar-task[data-task-key="entry:record"]');
+    await calendarRecord.hover();
+    const details = root.locator('.task-timeline-host .details');
+    await expect(details).toBeVisible();
+    await expect(details).toHaveClass(/clockoli-compact-entry-details/);
+    const activitySkin = await details.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      radius: getComputedStyle(node).borderRadius,
+      width: node.getBoundingClientRect().width,
+    }));
+    expect(panelSkin).toEqual(activitySkin);
+    await expect(details.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(details.locator('.clockoli-details-time')).toContainText(/\d{2}:\d{2} – \d{2}:\d{2} · 30m/);
+    await expect(details.locator('.details-value')).toHaveCount(3);
+    await expect(details.locator('.details-value').first()).toBeHidden();
+    await expect(details.getByRole('button', { name: 'Delete' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    const activityPlacement = await details.evaluate(card => {
+      const rect = card.getBoundingClientRect();
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      return rect.left >= anchor.right + 8 || rect.right <= anchor.left - 8;
+    });
+    expect(activityPlacement).toBe(true);
+    const approach = await details.evaluate(card => {
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      const panel = card.getBoundingClientRect();
+      if (panel.left >= anchor.right || panel.right <= anchor.left) {
+        return { x: panel.left >= anchor.right ? (anchor.right + panel.left) / 2 : (anchor.left + panel.right) / 2,
+          y: Math.max(panel.top + 8, Math.min(anchor.top + anchor.height / 2, panel.bottom - 8)) };
+      }
+      return { x: Math.max(panel.left + 8, Math.min(anchor.left + anchor.width / 2, panel.right - 8)),
+        y: panel.top >= anchor.bottom ? (anchor.bottom + panel.top) / 2 : (panel.bottom + anchor.top) / 2 };
+    });
+    await page.mouse.move(approach.x, approach.y);
+    await page.waitForTimeout(350);
+    await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Edit' }).hover();
+    await expect(details).toBeVisible();
+    await calendarRecord.hover();
+    if (process.env.CLOCKOLI_ACTIVITY_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const timelineRecord = root.locator('.task[data-task-key="entry:record"]').first();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    await expect(details).toHaveClass(/clockoli-compact-entry-details/);
+    await expect(details.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(details.locator('.clockoli-details-time')).toContainText(/\d{2}:\d{2} – \d{2}:\d{2} · 30m/);
+    await expect(details.locator('.details-value').first()).toBeHidden();
+    await expect(details.getByRole('button', { name: 'Delete' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    if (process.env.CLOCKOLI_ACTIVITY_TIMELINE_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_TIMELINE_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect(switcher.getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(summary.locator('[data-stat="total"]')).not.toHaveText('—');
     expect(await page.locator('#activity-running-status .running-status-row').evaluate(row => row.getBoundingClientRect().height)).toBeGreaterThanOrEqual(84);
-    const geometry = () => summary.evaluate(section => {
+    const geometry = () => page.evaluate(() => {
+      const section = document.querySelector('#activity-summary');
       const cards = [...section.querySelectorAll('.activity-weekly-card')].map(el => el.getBoundingClientRect());
       const tracking = document.querySelector('#activity-running-status .running-status-row').getBoundingClientRect();
-      const tabs = section.querySelector('.times-view-modes').getBoundingClientRect();
-      return { sameRow: cards.every(rect => rect.top === cards[0].top),
-        summaryBottom: section.getBoundingClientRect().bottom, trackingTop: tracking.top,
-        tabsTop: tabs.top, tabsBottom: tabs.bottom, cardsTop: cards[0].top,
+      const stats = section.getBoundingClientRect();
+      const theme = document.querySelector('.page-theme-toggle').getBoundingClientRect();
+      const tabs = document.querySelector('#activity-view-switcher').getBoundingClientRect();
+      return { stackedCards: cards.every((rect, index) => !index || rect.top > cards[index - 1].top),
+        stats: { top: stats.top, right: stats.right, width: stats.width },
+        tracking: { top: tracking.top, left: tracking.left, width: tracking.width },
+        tabs: { top: tabs.top, height: tabs.height, right: tabs.right }, theme: { top: theme.top, height: theme.height, left: theme.left },
         horizontalOverflow: document.documentElement.scrollWidth > innerWidth };
     });
     const desktop = await geometry();
-    expect(desktop.sameRow).toBe(true);
-    expect(desktop.summaryBottom + 8).toBeLessThanOrEqual(desktop.trackingTop);
-    expect(desktop.tabsTop).toBe(desktop.cardsTop);
-    expect(desktop.tabsBottom).toBeLessThanOrEqual(desktop.trackingTop);
+    expect(desktop.stackedCards).toBe(true);
+    expect(desktop.stats.top).toBe(desktop.tracking.top);
+    expect(desktop.stats.right).toBeLessThan(desktop.tracking.left);
+    expect(desktop.tracking.width / desktop.stats.width).toBeCloseTo(7, 0);
+    expect(Math.abs(desktop.tabs.top + desktop.tabs.height / 2 - desktop.theme.top - desktop.theme.height / 2)).toBeLessThanOrEqual(1);
+    expect(desktop.tabs.right).toBeLessThan(desktop.theme.left);
     expect(desktop.horizontalOverflow).toBe(false);
     if (process.env.CLOCKOLI_ACTIVITY_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_SCREENSHOT });
+    const lightPanel = await details.evaluate(node => getComputedStyle(node).backgroundColor);
+    await page.locator('.page-theme-toggle').click();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
+    await calendarRecord.hover();
+    await expect(details).toBeVisible();
+    const darkPanel = await details.evaluate(node => getComputedStyle(node).backgroundColor);
+    expect(darkPanel).not.toBe(lightPanel);
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    if (process.env.CLOCKOLI_ACTIVITY_DARK_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_DARK_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    expect(await details.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(darkPanel);
+    await switcher.getByRole('button', { name: 'Calendar', exact: true }).click();
+    for (const width of [1280, 1024, 901]) {
+      await page.setViewportSize({ width, height: 900 });
+      const intermediate = await geometry();
+      expect(intermediate.stats.right).toBeLessThan(intermediate.tracking.left);
+      expect(intermediate.stats.width).toBeGreaterThanOrEqual(190);
+      expect(intermediate.horizontalOverflow).toBe(false);
+    }
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     const mobileCards = await summary.locator('.activity-weekly-card').evaluateAll(cards => cards.map(card => {
       const rect = card.getBoundingClientRect();
       return { top: rect.top, right: rect.right };
     }));
-    expect(new Set(mobileCards.map(card => card.top)).size).toBe(2);
-    expect(mobileCards[1].right).toBeGreaterThan(mobileCards[0].right);
+    expect(new Set(mobileCards.map(card => card.top)).size).toBe(3);
     const mobile = await geometry();
-    expect(mobile.summaryBottom + 8).toBeLessThanOrEqual(mobile.trackingTop);
-    expect(mobile.tabsBottom).toBeLessThanOrEqual(mobile.trackingTop);
+    expect(mobile.stats.top).toBeLessThan(mobile.tracking.top);
+    expect(mobile.tabs.right).toBeLessThan(mobile.theme.left);
+    expect(mobile.horizontalOverflow).toBe(false);
     if (process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT });
-    await summary.getByRole('button', { name: 'Timeline', exact: true }).click();
-    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    const mobilePopover = await details.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    });
+    expect(mobilePopover.left).toBeGreaterThanOrEqual(0);
+    expect(mobilePopover.right).toBeLessThanOrEqual(390);
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
-    await summary.getByRole('button', { name: 'List', exact: true }).click();
-    await expect(summary.locator('.activity-weekly-card')).toHaveCount(4);
+    await switcher.getByRole('button', { name: 'List', exact: true }).click();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveCount(1);
     await expect(root.locator('.today-list-totals')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const quickStartPage = await context.newPage();
+    quickStartPage.on('pageerror', error => errors.push(error.message));
+    await quickStartPage.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await quickStartPage.goto('https://github.com/acme/app/issues/42');
+    await quickStartPage.locator('#clockoli-root .trigger-main').click();
+    const recentTask = quickStartPage.locator('#clockoli-full-width-popup-root .running-status-recent-task');
+    await expect(recentTask).toHaveCount(3);
+    const toolbar = await context.newPage();
+    toolbar.on('pageerror', error => errors.push(error.message));
+    await toolbar.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const toolbarRoot = toolbar.locator('#clockoli-popup-root');
+    await expect(toolbarRoot.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(toolbarRoot.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toBeVisible();
+    await expect(toolbarRoot.locator('.running-status-recent-task')).toHaveCount(3);
+    await toolbarRoot.locator('.running-status-recent-task').first().click();
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'SWITCH_TASK').length)).toBe(1);
+    await expect(toolbarRoot.locator('.active-task-strip.is-active')).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
     await rm(extension, { recursive: true, force: true });
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+async function withActivityWorker(source, run) {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-review-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-review-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), source);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await run({ context, worker, extensionId: new URL(worker.url()).host });
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+}
+
+test('Activity removes view controls when its configuration disappears', async () => {
+  const source = workerSource.replace('let active = null;', 'globalThis.configured = true;\nlet active = null;')
+    .replace('const state = () => ({ configured: true, active, recent:', 'const state = () => ({ configured: globalThis.configured, active, recent:');
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    const switcher = page.locator('#activity-view-switcher');
+    await expect(switcher.getByRole('button', { name: 'Calendar' })).toBeVisible();
+    await worker.evaluate(() => { globalThis.configured = false; });
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.locator('#clockoli-times-root').getByText('Choose where Clockoli should save your time before viewing time.')).toBeVisible();
+    await expect(switcher.getByRole('button')).toHaveCount(0);
+  });
+});
+
+test('popup Quick start uses the fresh recent response rather than the older page-state snapshot', async () => {
+  const source = workerSource.replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+    "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: [] } });");
+  await withActivityWorker(source, async ({ context }) => {
+    const page = await context.newPage();
+    await page.route('https://github.com/acme/app/issues/42', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>' }));
+    await page.goto('https://github.com/acme/app/issues/42');
+    await page.locator('#clockoli-root .trigger-main').click();
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.running-status-recent-task')).toHaveCount(3);
+  });
+});
+
+for (const view of ['Timeline', 'Calendar']) test(`popup weekly total advances with a running timer in ${view}`, async () => {
+  const source = workerSource.replace('let active = null;', `let active = { id: 'running', taskUrl,
+  taskTitle: 'Running task', startedAt: new Date(Date.now() - 50000).toISOString(),
+  entryDate: new Date().toLocaleDateString('en-CA'), timezone: 'UTC' };`);
+  await withActivityWorker(source, async ({ context }) => {
+    const page = await context.newPage();
+    await page.route('https://github.com/acme/app/issues/42', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>' }));
+    await page.goto('https://github.com/acme/app/issues/42');
+    await page.locator('#clockoli-root .trigger-main').click();
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: view }).click();
+    const total = panel.locator('.tracker-toolbar [data-stat="total"]');
+    await expect(total).not.toHaveText('—');
+    const before = await total.textContent();
+    await expect.poll(() => panel.locator('.running-status-elapsed').textContent(), { timeout: 20_000 })
+      .not.toContain('Duration0m');
+    await expect(total).not.toHaveText(before);
+  });
 });
 
 test('Activity focuses the current Timeline after loading without overriding manual scroll', async () => {
@@ -272,7 +564,7 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
   }
 });
 
-test('Tracking now keeps Description compact and edits only Start without a Date control', async () => {
+test('Tracking now stacks task details and places Start, Duration and Stop on the right', async () => {
   test.setTimeout(45000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-status-start-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-status-start-profile-'));
@@ -324,38 +616,76 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     await expect(page.locator('#activity-summary .activity-weekly-card').first()).toContainText('7h 11m');
     const widths = await strip.evaluate(row => ({ row: row.getBoundingClientRect().width,
       description: row.querySelector('.running-status-description-field').getBoundingClientRect().width }));
-    expect(widths.description).toBeLessThan(290);
-    expect(widths.description).toBeLessThan(widths.row / 3);
+    expect(widths.description).toBeGreaterThan(290);
+    expect(widths.description).toBeLessThan(widths.row);
     const measureControls = () => strip.evaluate(row => {
       const rect = selector => row.querySelector(selector).getBoundingClientRect();
       const startField = rect('.running-status-start-field');
       const metrics = rect('.running-status-metrics');
       const stop = rect('.running-status-stop');
-      const title = document.createRange();
-      title.selectNodeContents(row.querySelector('.running-status-task'));
+      const live = rect('.running-status-live');
+      const title = rect('.running-status-task');
+      const description = rect('.running-status-description-field');
+      const stats = rect('.running-status-stats');
       const values = [...row.querySelectorAll('.running-status-start,.running-status-metric-value')]
         .map(node => node.getBoundingClientRect().top);
       return { rightInset: row.getBoundingClientRect().right - stop.right,
-        titleToDescription: rect('.running-status-description-field').left - title.getBoundingClientRect().right,
+        leftColumn: [live.left, title.left, description.left],
+        verticalOrder: [live.top, title.top, description.top],
+        statsRightOfTitle: stats.left > title.right,
+        stopBelowStats: stop.top >= stats.bottom,
+        descriptionBeforeStop: description.right < stop.left,
         startToMetrics: metrics.left - startField.right,
-        metricsToStop: stop.left - metrics.right,
         valueOffset: Math.max(...values) - Math.min(...values),
         statsBackground: getComputedStyle(row.querySelector('.running-status-stats')).backgroundColor,
         resize: getComputedStyle(row.querySelector('.running-status-description')).resize };
     });
     const desktop = await measureControls();
-    expect(desktop.titleToDescription).toBeLessThan(35);
+    expect(Math.max(...desktop.leftColumn) - Math.min(...desktop.leftColumn)).toBeLessThan(4);
+    expect(desktop.verticalOrder[0]).toBeLessThan(desktop.verticalOrder[1]);
+    expect(desktop.verticalOrder[1]).toBeLessThan(desktop.verticalOrder[2]);
+    expect(desktop.statsRightOfTitle).toBe(true);
+    expect(desktop.stopBelowStats).toBe(true);
+    expect(desktop.descriptionBeforeStop).toBe(true);
     expect(desktop.rightInset).toBeLessThan(30);
     expect(desktop.startToMetrics).toBeGreaterThanOrEqual(0);
     expect(desktop.startToMetrics).toBeLessThan(3);
-    expect(desktop.metricsToStop).toBeLessThan(24);
+
     expect(desktop.valueOffset).toBeLessThan(6);
     expect(desktop.statsBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(desktop.resize).toBe('none');
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1440, height: 800 });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.activity-weekly-label')).toHaveText('Statistic');
+    await expect(panel.locator('.activity-weekly-card').first()).toContainText('7h 11m');
+    await expect(panel.locator('.active-task-strip .running-status-live')).toHaveText('Tracking now');
+    await expect(panel.locator('.active-task-strip .running-status-metric-label')).toHaveText(['Duration']);
+    await expect(panel.locator('.active-task-strip .running-status-start')).toHaveValue('12:00');
+    await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
+    await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
+    const overview = await panel.locator('.full-width-popup').evaluate(popup => {
+      const summary = popup.querySelector('.tracker-toolbar .activity-weekly-summary').getBoundingClientRect();
+      const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
+      return { summaryBottom: summary.bottom, cardTop: card.top, cardHeight: card.height, cardWidth: card.width };
+    });
+    expect(overview.summaryBottom).toBeLessThan(overview.cardTop);
+    expect(overview.cardHeight).toBeLessThan(86);
+    expect(overview.cardWidth).toBeGreaterThan(600);
+    await github.close();
     await page.setViewportSize({ width: 1280, height: 800 });
     const narrowDesktop = await measureControls();
     expect(narrowDesktop.startToMetrics).toBeLessThan(26);
     expect(narrowDesktop.rightInset).toBeLessThan(30);
+    expect(narrowDesktop.stopBelowStats).toBe(true);
     await start.click();
     expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     const focusedStyle = await start.evaluate(node => ({ outline: getComputedStyle(node).outlineStyle,
@@ -371,10 +701,16 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
     const narrow = await strip.evaluate(row => {
       const bounds = row.getBoundingClientRect();
-      return [...row.querySelectorAll('.running-status-stats,.running-status-stop')]
-        .every(node => node.getBoundingClientRect().right <= bounds.right);
+      const stats = row.querySelector('.running-status-stats').getBoundingClientRect();
+      const stop = row.querySelector('.running-status-stop').getBoundingClientRect();
+      const description = row.querySelector('.running-status-description-field').getBoundingClientRect();
+      return { contained: [stats, stop].every(rect => rect.right <= bounds.right),
+        stacked: description.bottom <= stats.top && stats.bottom <= stop.top,
+        rightEdges: Math.abs(stats.right - stop.right) };
     });
-    expect(narrow).toBe(true);
+    expect(narrow.contained).toBe(true);
+    expect(narrow.stacked).toBe(true);
+    expect(narrow.rightEdges).toBeLessThan(4);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-stats-realistic-mobile.png') });
     await page.setViewportSize({ width: 1440, height: 800 });
     await start.fill('1000');
@@ -952,14 +1288,35 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
   }
 });
 
-async function expectFullWidthActivitySearch(page) {
+async function expectActivityListBounds(page) {
   const bounds = await page.getByRole('searchbox', { name: 'Search activity' }).evaluate(input => {
     const field = input.getBoundingClientRect();
     const toolbar = input.closest('.times-toolbar').getBoundingClientRect();
-    return { leftGap: field.left - toolbar.left, rightGap: toolbar.right - field.right };
+    const overview = document.querySelector('.activity-overview-layout').getBoundingClientRect();
+    const label = input.closest('label').getBoundingClientRect();
+    const root = input.getRootNode();
+    const list = root.querySelector('.times-results').getBoundingClientRect();
+    const navigation = root.querySelector('.week-navigation').getBoundingClientRect();
+    const content = root.querySelector('.times-page').getBoundingClientRect();
+    return { field: field.toJSON(), toolbar: toolbar.toJSON(), overview: overview.toJSON(),
+      list: list.toJSON(), navigation: navigation.toJSON(), content: content.toJSON(),
+      labelLeftGap: label.left - field.left, viewportWidth: innerWidth,
+      overflow: document.documentElement.scrollWidth > innerWidth };
   });
-  expect(Math.abs(bounds.leftGap)).toBeLessThan(2);
-  expect(Math.abs(bounds.rightGap)).toBeLessThan(2);
+  const aligned = bounds.viewportWidth <= 700 ? ['field', 'toolbar', 'list', 'navigation']
+    : ['field', 'toolbar', 'list', 'navigation', 'content'];
+  for (const element of aligned) {
+    expect(Math.abs(bounds[element].left - bounds.overview.left), element).toBeLessThan(2);
+    expect(Math.abs(bounds[element].right - bounds.overview.right), element).toBeLessThan(2);
+  }
+  if (bounds.viewportWidth <= 700) {
+    expect(bounds.content.left).toBe(0);
+    expect(bounds.content.right).toBe(bounds.viewportWidth);
+  }
+  expect(Math.abs(bounds.labelLeftGap)).toBeLessThan(2);
+  expect(bounds.field.left).toBeGreaterThanOrEqual(12);
+  expect(bounds.field.right).toBeLessThanOrEqual(bounds.viewportWidth - 12);
+  expect(bounds.overflow).toBe(false);
 }
 
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
@@ -1029,7 +1386,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     const tabs = page.locator('.times-view-modes');
     await expect(page.locator('.activity-overview-heading')).toHaveCount(0);
     await expect(page.getByText('Track time and manage your work')).toHaveCount(0);
-    await expect(page.locator('#activity-summary > .times-view-modes')).toBeVisible();
+    await expect(page.locator('#activity-view-switcher > .times-view-modes')).toBeVisible();
     await expect(page.locator('#activity-summary .activity-weekly-summary')).toBeVisible();
     await expect(page.locator('.times-toolbar')).toHaveCount(1);
     const status = page.locator('.running-status');
@@ -1058,7 +1415,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     });
     expect(tabCenter).toBeLessThan(2);
     await page.getByRole('button', { name: 'List', exact: true }).click();
-    await expectFullWidthActivitySearch(page);
+    await expectActivityListBounds(page);
+    await page.setViewportSize({ width: 1750, height: 900 });
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'full'; document.documentElement.dataset.clockoliWidth = 'full';
+    });
+    await expectActivityListBounds(page);
+    await page.setViewportSize({ width: 2200, height: 900 });
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'contained'; document.documentElement.dataset.clockoliWidth = 'contained';
+    });
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.getByRole('button', { name: 'Previous week' }).click();
     const groups = page.locator('.activity-list .entry');
     await expect(groups).toHaveCount(2);
@@ -1122,7 +1490,14 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await runningDescription.fill('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
-    await expectFullWidthActivitySearch(page);
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'full'; document.documentElement.dataset.clockoliWidth = 'full';
+    });
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'contained'; document.documentElement.dataset.clockoliWidth = 'contained';
+    });
     await expect(stop).toBeVisible();
     const stripBounds = await strip.evaluate(element => ({ left: element.getBoundingClientRect().left,
       right: element.getBoundingClientRect().right,

@@ -115,6 +115,7 @@
   const timelineDescriptionDrafts = new Map();
   let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
   let recent = [];
+  let quickStartRecent = [];
   let recentLoaded = false;
   let recentFresh = false;
   let recentFreshAfterPendingId = null;
@@ -161,6 +162,8 @@
   let popupReturnFocus = null;
   let popupFocusPending = false;
   let timeEntryFormLoad = null;
+  let timeEntryFormHost = null;
+  let timeEntryFormDialog = null;
 
   const LONG_ENTRY_HOURS = 12;
   const HOUR_MS = 3_600_000;
@@ -922,19 +925,20 @@
   }
 
   function updateActivityWeekSummary() {
-    if (!timesMode || !shadow) return;
-    const section = document.getElementById?.('activity-summary')?.querySelector('.activity-weekly-summary')
-      ?? shadow.querySelector('.activity-weekly-summary');
-    if (!section) return;
+    const sections = [document.getElementById?.('activity-summary')?.querySelector('.activity-weekly-summary'),
+      compactSurface?.summary].filter(section => section?.isConnected);
+    if (!sections.length) return;
     const range = timesRange();
-    const span = section.querySelector('.activity-weekly-range');
-    if (span) span.textContent = `${range.startDate} – ${range.endDate}`;
     const week = weekWindow(), now = Math.min(timelineNow(), week.end - 1);
-    const summary = recentLoaded && !loadingRecent
+    const summary = recentLoaded && !loadingRecent && (timesMode || (recentFresh && completeVisualWeekStart === week.start))
       ? globalThis.ClockoliWeeklySummary?.summarize(popupTimelineItems(week.start, now).items, week.start, week.end, now)
       : null;
-    for (const element of section.querySelectorAll('[data-stat]')) {
-      element.textContent = summary ? String(summary[element.getAttribute('data-stat')]) : '—';
+    for (const section of sections) {
+      const span = section.querySelector('.activity-weekly-range');
+      if (span) span.textContent = `${range.startDate} – ${range.endDate}`;
+      for (const element of section.querySelectorAll('[data-stat]')) {
+        element.textContent = summary ? String(summary[element.getAttribute('data-stat')]) : '—';
+      }
     }
   }
 
@@ -1124,9 +1128,9 @@
 
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
+    if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     recent = recentLoaded && (timesMode || selectedWeekStart !== null)
       ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
-    todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
     if (!Array.isArray(data)) {
       pageState = reconcileTimelineAcceptedActive({
         ...pageState, configured: data?.configured !== false,
@@ -1134,7 +1138,9 @@
         pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
         partial: Boolean(data?.partial), readStatus: data?.readStatus ?? [], readConflicts: data?.conflicts ?? [],
       });
-      applyTrackedTotals(data);
+      // Range reads contain records, not the local daily/weekly summary.
+      // Keep the last authoritative totals (and their report date) intact.
+      if (data && Object.hasOwn(data, 'todayTrackedMs') && Object.hasOwn(data, 'weekTrackedMs')) applyTrackedTotals(data);
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
       reconcileTimelineQueuedOperations(pendingIds);
@@ -1166,6 +1172,7 @@
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
     pageState = reconcileTimelineAcceptedActive(data);
+    if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     fullWidthPopupRoot?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
@@ -1862,8 +1869,11 @@
         const anchor = document.createElement('button'); anchor.hidden = true;
         container.append(stylesheet, anchor);
         document.body.append(host);
-        return mountAddTime(anchor, { container, send: async () => ({ configured: true, recent: [] }) });
-      })().catch(error => { timeEntryFormLoad = null; throw error; });
+        timeEntryFormHost = host;
+        const dialog = mountAddTime(anchor, { container, send: async () => ({ configured: true, recent: [] }) });
+        timeEntryFormDialog = dialog;
+        return dialog;
+      })().catch(error => { timeEntryFormLoad = null; timeEntryFormHost?.remove(); timeEntryFormHost = null; timeEntryFormDialog = null; throw error; });
       form = await timeEntryFormLoad;
     }
     if (!form?.openEdit) {
@@ -2156,6 +2166,31 @@
     }
   }
 
+  function createWeeklySummary() {
+    const weeklySummary = el('section', undefined, 'activity-weekly-summary');
+    weeklySummary.setAttribute('aria-label', 'Weekly summary');
+    const heading = el('div', undefined, 'activity-weekly-heading');
+    heading.append(el('span', 'Statistic', 'activity-weekly-label'), el('span', undefined, 'activity-weekly-range'));
+    weeklySummary.append(heading);
+    const cards = el('div', undefined, 'activity-weekly-cards');
+    for (const [key, label, shape] of [
+      ['todayTrackedMs', 'Today', STOPWATCH_PATH],
+      ['total', 'Total tracked', STOPWATCH_PATH],
+      ['tasks', 'Tasks worked on', 'M2 2h12v12H2V2Zm1.5 1.5v9h9v-9h-9Zm2 2h5V7h-5V5.5Zm0 3h5V10h-5V8.5Z'],
+    ]) {
+      const card = el('div', undefined, 'activity-weekly-card');
+      const badge = el('span', undefined, 'activity-weekly-icon');
+      badge.append(icon(key, shape, 19));
+      const copy = el('div', undefined, 'activity-weekly-copy');
+      const value = el('strong', key === 'todayTrackedMs' ? trackedTotalText(key) : '—', 'activity-weekly-value');
+      value.setAttribute(key === 'todayTrackedMs' ? 'data-tracked-total' : 'data-stat', key);
+      copy.append(value, el('span', label, 'activity-weekly-name'));
+      card.append(badge, copy); cards.append(card);
+    }
+    weeklySummary.append(cards);
+    return weeklySummary;
+  }
+
   function renderTimesPage(preservedTimeline = null) {
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
@@ -2242,29 +2277,7 @@
     });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
-    const weeklySummary = el('section', undefined, 'activity-weekly-summary');
-    weeklySummary.setAttribute('aria-label', 'Weekly summary');
-    const summaryHeading = el('div', undefined, 'activity-weekly-heading');
-    summaryHeading.append(el('span', 'WEEKLY SUMMARY', 'activity-weekly-label'), el('span', undefined, 'activity-weekly-range'));
-    weeklySummary.append(summaryHeading);
-    const stats = el('div', undefined, 'activity-weekly-cards');
-    const definitions = [
-      ['todayTrackedMs', 'Today', STOPWATCH_PATH],
-      ['total', 'Total tracked', STOPWATCH_PATH],
-      ['average', 'Daily average', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 8 3Zm.75 1.5h-1.5V8c0 .2.08.39.22.53l2.25 2.25a.75.75 0 0 0 1.06-1.06L8.75 7.69V4.5Z'],
-      ['tasks', 'Tasks worked on', 'M2 2h12v12H2V2Zm1.5 1.5v9h9v-9h-9Zm2 2h5V7h-5V5.5Zm0 3h5V10h-5V8.5Z'],
-    ];
-    for (const [key, label, shape] of definitions) {
-      const card = el('div', undefined, 'activity-weekly-card');
-      const badge = el('span', undefined, 'activity-weekly-icon');
-      badge.append(icon(key, shape, 19));
-      const copy = el('div', undefined, 'activity-weekly-copy');
-      const value = el('strong', key === 'todayTrackedMs' ? trackedTotalText(key) : '—', 'activity-weekly-value');
-      value.setAttribute(key === 'todayTrackedMs' ? 'data-tracked-total' : 'data-stat', key);
-      copy.append(value, el('span', label, 'activity-weekly-name'));
-      card.append(badge, copy); stats.append(card);
-    }
-    weeklySummary.append(stats);
+    const weeklySummary = createWeeklySummary();
     const summaryHost = document.getElementById?.('activity-summary');
     const views = el('div', undefined, 'times-view-modes');
     views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
@@ -2301,8 +2314,11 @@
       control.prepend(icon(mode, shapes[mode], 18));
       control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
     }
-    if (summaryHost) summaryHost.replaceChildren(weeklySummary, views);
-    else body.append(weeklySummary, views);
+    if (summaryHost) summaryHost.replaceChildren(weeklySummary);
+    else body.append(weeklySummary);
+    const viewHost = document.getElementById?.('activity-view-switcher');
+    if (viewHost) viewHost.replaceChildren(views);
+    else body.append(views);
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
     body.append(toolbar, weekNavigation(), listTotal);
@@ -2993,7 +3009,7 @@
         view: initialView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
-        activityDashboard: timesMode,
+        activityDashboard: timesMode || popupMode || fullWidthPopupOpen,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
@@ -3147,6 +3163,7 @@
 
   function updatePanelClocks() {
     if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
+    else updateActivityWeekSummary();
     for (const scope of [shadow, fullWidthPopupShadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
       for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
@@ -3333,10 +3350,6 @@
       elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
       elapsed.append(el('span', 'Duration', 'running-status-metric-label'),
         el('span', formatElapsedCard(active.startedAt), 'running-status-metric-value running-elapsed'));
-      const todayTotal = el('span', undefined, 'running-status-today');
-      const todayValue = el('strong', trackedTotalText('todayTrackedMs'), 'running-status-metric-value');
-      todayValue.setAttribute('data-tracked-total', 'todayTrackedMs');
-      todayTotal.append(el('span', 'Today', 'running-status-metric-label'), todayValue);
       const startField = el('div', undefined, 'running-status-start-field');
       const startLabel = el('label', undefined, 'running-status-start-label');
       startLabel.append(el('span', 'Start', 'running-status-start-caption'));
@@ -3431,7 +3444,7 @@
       });
       stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
       stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: timesMode ? null : todayTotal, stop });
+      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: null, stop });
       const stats = el('div', undefined, 'running-status-stats'); stats.append(startField, metrics);
       strip.insertBefore(stats, stop);
     }
@@ -3440,12 +3453,37 @@
         if (timelineTrackActionDisabled()) return;
         try { await trackCurrentTimelineTask({ preserveSavedDescription: true }); } catch {}
       });
-      if (active) { track.textContent = 'Switch to this task'; track.className = 'secondary popup-timeline-track'; }
+      if (active) track.textContent = 'Switch to this task';
       else track.setAttribute('data-strip-primary', 'true');
       track.setAttribute('data-testid', 'popup-timeline-track'); track.setAttribute('data-panel-action', 'track');
       track.disabled = timelineTrackActionDisabled();
-      if (active) switchAction.replaceChildren(track);
-      else { switchAction.replaceChildren(); strip.append(track); }
+      switchAction.replaceChildren(track);
+      if (!active) {
+        const quickStart = el('div', undefined, 'running-status-quick-start');
+        quickStart.append(el('span', 'Quick start from recent tasks:', 'running-status-quick-label'));
+        const choices = el('div', undefined, 'running-status-recent');
+        const seen = new Set();
+        for (const entry of [...quickStartRecent].sort((left, right) =>
+          Date.parse(right.endedAt || right.startedAt) - Date.parse(left.endedAt || left.startedAt))) {
+          const identity = trackableTaskIdentityOf(entry);
+          if (!identity || seen.has(identity)) continue;
+          seen.add(identity);
+          const label = taskTitleOf(entry) || identity;
+          const choice = button('', 'running-status-recent-task', async () => {
+            try { await restartTimelineEntry(entry); } catch {}
+          });
+          choice.title = identity; choice.setAttribute('aria-label', `Start tracking ${label}`);
+          choice.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+            || sameTask(entry, pageState.active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+          const play = el('span', undefined, 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true');
+          choice.append(play, el('span', label, 'running-status-recent-name'));
+          choices.append(choice);
+          if (seen.size === 3) break;
+        }
+        if (!seen.size) choices.append(el('span', 'No recent tasks yet', 'running-status-recent-empty'));
+        quickStart.append(choices);
+        strip.append(el('span', 'Not tracking', 'strip-idle'), quickStart);
+      }
     } else if (!preserveActiveDescription) {
       switchAction.replaceChildren();
     }
@@ -3460,7 +3498,6 @@
     const preserveTodayEditor = today.contains?.(activeElement) && activeElement?.matches?.('input,textarea');
     if (!preserveTodayEditor) {
     today.replaceChildren();
-    const totals = el('div', undefined, 'today-list-totals'); appendTrackedTotals(totals, true); today.append(totals);
     const { startDate, endDate } = timesRange();
     const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
       .filter(entry => entry.endedAt && ((activityRecordDate(entry) >= startDate && activityRecordDate(entry) <= endDate)
@@ -3472,7 +3509,7 @@
     const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
     refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();
     if (actionKey) {
-      const replacement = [...strip.querySelectorAll?.('[data-panel-action]') ?? [], ...today.querySelectorAll?.('[data-panel-action]') ?? []]
+      const replacement = [...strip.querySelectorAll?.('[data-panel-action]') ?? [], ...switchAction.querySelectorAll?.('[data-panel-action]') ?? [], ...today.querySelectorAll?.('[data-panel-action]') ?? []]
         .find(node => node.getAttribute('data-panel-action') === actionKey);
       replacement?.focus?.({ preventScroll: true });
     }
@@ -3504,6 +3541,7 @@
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
+    const timelineToolbarEnd = el('div', undefined, 'timeline-toolbar-end');
     const pageNavigation = el('nav', undefined, 'header-navigation');
     pageNavigation.setAttribute('aria-label', 'Clockoli pages');
     const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliWordmark());
@@ -3517,10 +3555,9 @@
       if (onClose) {
         const close = button('×', 'icon-button popup-timeline-close', onClose);
         close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
-        const timelineToolbarEnd = el('div', undefined, 'timeline-toolbar-end');
         timelineToolbarEnd.append(close);
         header.append(brand, headerActions, timelineToolbarEnd);
-      } else header.append(brand, headerActions);
+      } else header.append(brand, headerActions, timelineToolbarEnd);
       menu.append(header);
     } else {
       header.append(headerActions); menu.append(header);
@@ -3536,11 +3573,22 @@
         const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list activity-list');
         const feedback = el('div', undefined, 'panel-feedback'), overlaps = el('div', undefined, 'timeline-overlaps');
         const switchAction = el('div', undefined, 'popup-switch-action');
-        compactSurface = { strip, switchAction, today, feedback, overlaps, timeline: null, body, host: null };
+        const overview = el('div', undefined, 'popup-overview-layout');
+        const summary = createWeeklySummary();
+        overview.append(strip);
+        header.insertBefore(summary, headerActions);
+        compactSurface = { strip, summary, switchAction, today, feedback, overlaps, timeline: null, body, host: null };
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
         const modeButton = (mode, label) => {
           const control = button(label, 'timeline-view-button', () => setTimelineViewMode(mode));
+          control.setAttribute('aria-label', label); control.title = label;
+          const shapes = {
+            timeline: 'M1 12h14v1.5H1V12Zm2-3h2v2H3V9Zm3-4h2v6H6V5Zm3 2h2v4H9V7Zm3-5h2v9h-2V2Z',
+            calendar: 'M4 0a.75.75 0 0 1 .75.75V2h6V.75a.75.75 0 0 1 1.5 0V2h1A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2h1V.75A.75.75 0 0 1 4 0ZM1.5 6.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6.5h-13ZM3 9h3v1.5H3V9Zm5 0h3v1.5H8V9Z',
+            list: 'M1 2h2v2H1V2Zm4 0h10v2H5V2ZM1 7h2v2H1V7Zm4 0h10v2H5V7Zm-4 5h2v2H1v-2Zm4 0h10v2H5v-2Z',
+          };
+          control.replaceChildren(icon(mode, shapes[mode], 18));
           control.setAttribute('data-timeline-view-mode', mode);
           control.setAttribute('aria-pressed', String(timelineViewMode === mode));
           return control;
@@ -3548,8 +3596,12 @@
         const viewModes = el('div', undefined, 'timeline-view-modes');
         viewModes.setAttribute('role', 'group');
         viewModes.setAttribute('aria-label', 'Timeline view');
-        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'), switchAction);
-        body.append(strip, viewModes);
+        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'));
+        timelineToolbarEnd.prepend(viewModes);
+        const closeButton = timelineToolbarEnd.querySelector('.popup-timeline-close');
+        if (closeButton) timelineToolbarEnd.insertBefore(switchAction, closeButton);
+        else timelineToolbarEnd.append(switchAction);
+        body.append(overview);
         body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
       }
@@ -3719,6 +3771,7 @@
     const surface = el('section', undefined, 'full-width-popup');
     surface.append(renderMenu({ compact: true, onClose: closeFullWidthPopup }));
     fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
+    updateActivityWeekSummary();
     focusPopupAction();
   }
 
@@ -3767,7 +3820,10 @@
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
-    if (timesMode) document.getElementById?.('activity-summary')?.replaceChildren();
+    if (timesMode) {
+      document.getElementById?.('activity-summary')?.replaceChildren();
+      document.getElementById?.('activity-view-switcher')?.replaceChildren();
+    }
     const style = el('style', `
       :host, :where(:host > :not(style)) {
         /* One side gutter for every full-width panel row, so they stay aligned as the viewport grows. */
@@ -3994,7 +4050,7 @@
       .calendar-week-spinner { width:64px; height:64px; border:6px solid var(--borderColor-muted,var(--ck-border-muted)); border-top-color:var(--ck-success); border-radius:50%; animation:calendar-week-spin .8s linear infinite }
       @keyframes calendar-week-spin { to { transform:rotate(360deg) } }
       @media(prefers-reduced-motion:reduce) { .calendar-week-spinner { animation:none; border-top-color:var(--ck-success); border-right-color:var(--ck-success) } }
-      .week-navigation { display:grid; grid-template-columns:minmax(30px,1fr) auto minmax(30px,1fr); align-items:center; gap:8px; width:100%; margin:0; white-space:nowrap }
+      .week-navigation { box-sizing:border-box; display:grid; grid-template-columns:minmax(30px,1fr) auto minmax(30px,1fr); align-items:center; gap:8px; width:100%; margin:0; padding-inline:14px; white-space:nowrap }
       .week-navigation-label { font-size:12px; font-weight:600; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
       .week-navigation-button { min-width:30px; min-height:30px; padding:2px 7px; font-size:20px; line-height:1 }
       .week-navigation-button:first-child { justify-self:start }
@@ -4072,23 +4128,27 @@
       /* Activity dashboard: one compact information hierarchy above the calendar. */
       :host(.times-surface) { color-scheme:inherit }
       :host(.times-surface) .times-page {width:min(1800px,calc(100% - 80px));min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
-      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:100%;margin:0}
+      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:calc(100% - 80px);margin:0 auto}
       :host(.times-surface) .times-body {padding:0 0 30px}
+      :host(.times-surface) .times-toolbar:not(.times-visual) {display:block;margin:18px 0 22px}
+      :host(.times-surface) .times-filter {width:100%}
+      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:42px;margin-top:6px;border-radius:8px}
       :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
       :host(.times-surface) .popup-timeline-section {margin-bottom:16px}
       :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
       :host(.times-surface) .week-navigation-label {font-size:15px;font-weight:700}
       :host(.times-surface) .week-navigation-button {border-radius:8px}
       @media(max-width:1000px){:host(.times-surface) .activity-weekly-copy{flex-direction:column;gap:0}:host(.times-surface) .activity-weekly-cards{gap:8px}}
-      @media(max-width:700px){:host(.times-surface) .times-page{width:100%;margin:0}:host(.times-surface) .times-body{padding:0 12px 24px}}
+      @media(max-width:700px){:host(.times-surface) .times-page,:host(.times-surface[data-clockoli-width="full"]) .times-page{width:100%;margin:0}:host(.times-surface) .times-body{padding:0 12px 24px}}
       @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `;
     if (popupMode || fullWidthPopupOpen) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
-      :host(.popup-surface) .tracker-toolbar { flex-direction:column; align-items:stretch; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.popup-surface) .timeline-brand { display:flex; justify-content:center; min-width:0 }
+      :host(.popup-surface) .tracker-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; align-items:center; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .timeline-brand { grid-area:brand; display:flex; justify-content:flex-start; min-width:0 }
       :host(.popup-surface) .clockoli-wordmark { display:block; width:auto; max-width:160px; height:28px; object-fit:contain }
-      :host(.popup-surface) .header-actions { width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .timeline-toolbar-end { grid-area:end; display:flex; align-items:center }
+      :host(.popup-surface) .header-actions { grid-area:actions; width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
       :host(.popup-surface) .reports-button svg { width:14px; height:14px }
@@ -4102,16 +4162,16 @@
       :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
       :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
       :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
-      .timeline-view-modes { position:relative; display:flex; justify-content:center; align-items:stretch; gap:0; margin:0 var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .popup-switch-action:not(:empty) { position:absolute; right:0; align-self:center }
+      .timeline-view-modes { display:flex; gap:2px; padding:3px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
+      .popup-switch-action:not(:empty) { display:flex; align-self:center }
       .popup-switch-action .popup-timeline-track { padding:6px 10px; font-size:12px }
-      .timeline-view-button { min-height:40px; margin-bottom:-1px; padding:8px 16px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:600 }
+      .timeline-view-button { display:flex; align-items:center; justify-content:center; width:36px; height:36px; margin:0; padding:0; border:0; border-radius:8px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .timeline-view-button svg { width:18px; height:18px; fill:currentColor }
       .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
-      .timeline-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
-      :host(.popup-surface) .timeline-view-button { flex:1; padding-inline:4px }
+      .timeline-view-button[aria-pressed="true"] { background:var(--bgColor-success-muted,color-mix(in srgb,var(--ck-success) 14%,transparent)); color:var(--ck-success) }
+      .timeline-view-button:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
       :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
       :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
-      @media(max-width:800px) { .timeline-view-modes:has(.popup-switch-action:not(:empty)) { flex-wrap:wrap } .popup-switch-action:not(:empty) { position:static; display:flex; justify-content:flex-end; flex-basis:100%; padding-bottom:6px } }
       :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
       @media(max-width:520px) {
         :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
@@ -4130,6 +4190,30 @@
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
       .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       .active-task-strip.is-active { box-sizing:border-box; width:min(1600px,calc(100% - 2 * var(--clockoli-gutter))); gap:14px; margin:10px auto 0; padding:10px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 45%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
+      .popup-overview-layout { box-sizing:border-box; display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,3fr); align-items:stretch; gap:12px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:14px auto 0 }
+      :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) minmax(0,7fr) }
+      .popup-overview-layout .activity-weekly-summary { box-sizing:border-box; min-width:0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-muted,var(--ck-bg-muted)); font:400 14px/1.5 var(--fontStack-sansSerif) }
+      .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:700 }
+      .popup-overview-layout .activity-weekly-range,.popup-overview-layout .activity-weekly-icon { display:none }
+      .popup-overview-layout .activity-weekly-cards { display:grid; grid-template-columns:1fr }
+      .popup-overview-layout .activity-weekly-card { min-width:0; padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
+      .popup-overview-layout .activity-weekly-copy { display:flex; flex-direction:row-reverse; justify-content:space-between; align-items:baseline; gap:4px; min-width:0 }
+      .popup-overview-layout .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap }
+      .popup-overview-layout .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
+      .popup-overview-layout .activity-weekly-name { min-width:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
+      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { box-sizing:border-box; width:100%; height:100%; min-height:84px; margin:0; padding:12px 24px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 6%,var(--ck-bg)),var(--ck-bg) 65%,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg))); box-shadow:none }
+      .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
+      .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
+      .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
+      .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:min(100%,560px); max-width:none; min-width:0 }
+      .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
+      .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:end; align-self:start; min-height:36px }
+      .popup-overview-layout .active-task-strip .strip-idle { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:700 }
+      @media(max-width:1299px) { :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(190px,1fr) minmax(0,3fr) } }
+      @media(max-width:900px) { .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:1fr } }
+      :host(.popup-surface) .popup-overview-layout { grid-template-columns:1fr }
+      @media(max-width:640px) { .popup-overview-layout .active-task-strip.is-active { grid-template-columns:minmax(0,1fr); grid-template-rows:none; padding:12px; gap:10px } .popup-overview-layout .active-task-strip .running-status-live,.popup-overview-layout .active-task-strip .strip-task-copy,.popup-overview-layout .active-task-strip .strip-description-field,.popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { grid-column:1; grid-row:auto; justify-self:start } .popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { justify-self:end } }
       .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:8px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap }
       .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,var(--ck-success) 16%,transparent) }
       .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
@@ -4169,6 +4253,59 @@
       @media(max-width:520px) { .active-task-strip { flex-wrap:wrap } .strip-task-copy,.strip-idle { flex-basis:70% } }
 
       :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
+      /* Keep popup chrome compact so the week view owns the available height. */
+      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto auto minmax(0,1fr) auto; gap:12px; padding-block:6px }
+      :host(.full-width-popup-surface) .header-actions { justify-self:center }
+      :host(.full-width-popup-surface) .timeline-toolbar-end { gap:8px }
+      .tracker-toolbar .activity-weekly-summary { display:flex; align-items:center; gap:10px; min-width:0; padding:4px 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .tracker-toolbar .activity-weekly-heading { flex:none; margin:0; font-size:10px }
+      .tracker-toolbar .activity-weekly-range,.tracker-toolbar .activity-weekly-icon { display:none }
+      .tracker-toolbar .activity-weekly-cards { display:flex; align-items:center; gap:8px; min-width:0 }
+      .tracker-toolbar .activity-weekly-card { min-width:0; padding:0 0 0 8px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      .tracker-toolbar .activity-weekly-copy { display:flex; flex-direction:column; gap:0; min-width:0; white-space:nowrap }
+      .tracker-toolbar .activity-weekly-name { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:9px; line-height:1.2 }
+      .tracker-toolbar .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:11px; line-height:1.3; font-weight:700; font-variant-numeric:tabular-nums }
+      .tracker-toolbar .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
+      .popup-switch-action .popup-timeline-track { padding:6px 10px; border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)); white-space:nowrap }
+      .popup-switch-action .popup-timeline-track:hover:not(:disabled) { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) }
+      .popup-overview-layout { display:block; margin:8px auto 0 }
+      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { display:flex; align-items:center; gap:12px; width:100%; height:auto; min-height:56px; margin:0; padding:7px 12px }
+      .popup-overview-layout .active-task-strip.is-active .running-status-live,
+      .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
+      .popup-overview-layout .active-task-strip.is-active .strip-description-field,
+      .popup-overview-layout .active-task-strip.is-active .running-status-stats,
+      .popup-overview-layout .active-task-strip.is-active > .danger { grid-column:auto; grid-row:auto; justify-self:auto; align-self:center }
+      .popup-overview-layout .active-task-strip.is-active .running-status-live { padding:4px 7px; font-size:10px }
+      .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:0 1 26%; max-width:420px }
+      .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 180px; width:auto; max-width:none; min-width:120px }
+      .popup-overview-layout .active-task-strip.is-active .strip-description:not(:focus) { max-height:36px }
+      .popup-overview-layout .active-task-strip.is-active .strip-description-field:not(:focus-within) .description-overflow-hint { display:none }
+      .popup-overview-layout .active-task-strip.is-active .running-status-stats { flex:none; margin-left:auto }
+      .popup-overview-layout .active-task-strip.is-active > .danger { flex:none; min-height:36px; padding:6px 10px }
+      .popup-overview-layout .active-task-strip .running-status-quick-start { display:flex; flex:1; align-items:center; gap:12px; min-width:0 }
+      .popup-overview-layout .active-task-strip .running-status-quick-label { flex:none; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; white-space:nowrap }
+      .popup-overview-layout .active-task-strip .running-status-recent { display:flex; flex:1; gap:8px; min-width:0; overflow-x:auto }
+      .popup-overview-layout .active-task-strip .running-status-recent-task { display:inline-flex; flex:1 1 0; align-items:center; gap:8px; min-width:0; max-width:300px; min-height:36px; padding:5px 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-align:left }
+      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+1) { border-color:color-mix(in srgb,var(--ck-success) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-success) 10%,var(--ck-bg)) }
+      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+2) { border-color:color-mix(in srgb,var(--ck-danger) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-danger) 10%,var(--ck-bg)) }
+      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+3) { border-color:color-mix(in srgb,var(--ck-accent) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-accent) 9%,var(--ck-bg)) }
+      .popup-overview-layout .active-task-strip .running-status-recent-task:hover:not(:disabled) { border-color:var(--fgColor-accent,var(--ck-accent)) }
+      .popup-overview-layout .active-task-strip .running-status-recent-play::before { content:'▶'; color:var(--ck-success); font-size:11px }
+      .popup-overview-layout .active-task-strip .running-status-recent-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px }
+      .popup-overview-layout .active-task-strip .running-status-recent-empty { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
+      @media(max-width:1450px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"brand stats end" "nav nav nav"; row-gap:3px } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; justify-self:start } :host(.full-width-popup-surface) .header-actions { grid-area:nav } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
+      @media(max-width:900px) { .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap } .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none } .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 40% } .popup-overview-layout .active-task-strip.is-active .running-status-stats { margin-left:auto } }
+      :host(.popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "actions actions"; gap:4px; padding:8px 12px }
+      :host(.popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; width:100%; justify-content:space-between }
+      :host(.popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 }
+      :host(.popup-surface) .timeline-toolbar-end { grid-area:end; gap:4px }
+      :host(.popup-surface) .header-actions { grid-area:actions }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex-basis:100% }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px }
+      @media(max-width:520px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "nav nav" } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { width:100%; justify-content:space-between } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px } }
     `;
     if (fullWidthPopupOpen) {
       if (preserveFullWidthTimeline) refreshMountedTimeline();
@@ -4185,7 +4322,7 @@
       }
       return;
     }
-    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
+    if (popupMode) { shadow.append(style, renderMenu()); updateActivityWeekSummary(); restoreMenuScroll(preservedMenuScrollTop); return; }
     const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
@@ -4246,7 +4383,7 @@
 
   function handleDocumentClick(event) {
     const path = event.composedPath();
-    if (fullWidthPopupOpen && !path.includes(fullWidthPopupRoot) && !path.includes(root)) {
+    if (fullWidthPopupOpen && !path.includes(fullWidthPopupRoot) && !path.includes(root) && !path.includes(timeEntryFormHost)) {
       closeFullWidthPopup({ restoreFocus: false });
     }
     if (menuOpen && !path.includes(root)) closeMenu();
@@ -4334,7 +4471,7 @@
     });
     document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) closeFullWidthPopup();
+      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) closeFullWidthPopup();
     });
     void toggleFullWidthPopup();
   } else {
@@ -4350,7 +4487,7 @@
     });
     document.addEventListener('click', handleDocumentClick);
     document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented) { closeFullWidthPopup(); return; }
+      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) { closeFullWidthPopup(); return; }
       if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
     });
     motionPreference?.addEventListener?.('change', updateTaskAnimation);

@@ -2741,14 +2741,12 @@
 
       const left = document.createElement('div');
       left.className = 'resize-handle left';
-      left.title = 'Change start time';
       left.setAttribute('aria-label', 'Change start time');
       el.appendChild(left);
 
       if (!task.running) {
         const right = document.createElement('div');
         right.className = 'resize-handle right';
-        right.title = 'Change end time';
         right.setAttribute('aria-label', 'Change end time');
         el.appendChild(right);
       }
@@ -3449,7 +3447,6 @@
           startHandle.className = 'calendar-resize-handle start';
           startHandle.dataset.resizeMode = 'resize-left';
           startHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
-          startHandle.title = 'Change start time';
           startHandle.setAttribute('aria-label', 'Change start time');
           el.appendChild(startHandle);
         }
@@ -3458,7 +3455,6 @@
           endHandle.className = 'calendar-resize-handle end';
           endHandle.dataset.resizeMode = 'resize-right';
           endHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
-          endHandle.title = 'Change end time';
           endHandle.setAttribute('aria-label', 'Change end time');
           el.appendChild(endHandle);
         }
@@ -4627,6 +4623,8 @@
     .edit-guide.active { background: var(--tt-inverse-bg); }
     .edit-guide-label, .edit-clock, .calendar-edit-clock { background: var(--tt-inverse-bg); color: var(--tt-inverse-fg); }
     .edit-clock, .calendar-edit-clock { box-shadow: var(--shadow-floating-small, var(--ck-shadow, 0 2px 7px rgba(23,32,51,.28))); }
+    .task:hover:not(.editing) .edit-clock,
+    .calendar-task:hover:not(.editing) .calendar-edit-clock { opacity: 0; visibility: hidden; }
     .edit-guide.magnet, .calendar-magnet-guide { background: var(--fgColor-accent, var(--ck-accent, #315ecf)); }
     .edit-guide.magnet { box-shadow: 0 0 0 1px var(--bgColor-accent-muted, var(--ck-bg-accent, rgba(49,94,207,.14))); }
     .calendar-magnet-guide { box-shadow: 0 0 0 1px var(--bgColor-accent-muted, var(--ck-bg-accent, rgba(49,94,207,.12))); }
@@ -4742,6 +4740,21 @@
     .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
 
     .history-controls { display: none; }
+    .details {
+      position: fixed; z-index: 30; display: flex; width: min(380px, calc(100vw - 16px));
+      max-height: calc(100vh - 16px); overflow-y: auto; flex-direction: column;
+      align-items: stretch; gap: 10px; padding: 12px;
+      border: 1px solid color-mix(in srgb, var(--fgColor-accent, #0969da) 18%, var(--tt-border)) !important;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--tt-panel) 93%, transparent);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 12px 32px rgba(16,24,40,.16);
+    }
+    .details[hidden], .details-pointer { display: none !important; }
+    .details-info { flex: 0 0 auto; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .details-primary { grid-column: 1 / -1; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 7%, var(--tt-panel)); }
+    .details-title { white-space: normal; overflow-wrap: anywhere; }
+    .details-value { padding: 7px 8px; border-radius: 8px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 5%, var(--tt-panel)); }
     .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 0 0 auto; min-width: 0; align-items: center; gap: 8px; }
     .clockoli-timeline-actions.has-description { flex: 1 1 340px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
@@ -4759,10 +4772,14 @@
       border-radius: 6px; background: var(--button-default-bgColor-rest, var(--tt-panel));
       color: var(--button-default-fgColor-rest, var(--tt-text)); font: inherit; font-weight: 600; cursor: pointer;
     }
-    .clockoli-timeline-action:hover:not(:disabled):not(.primary) { background: var(--button-default-bgColor-hover, var(--tt-empty)); }
-    .clockoli-timeline-action.primary { border-color: var(--button-primary-borderColor-rest, #1f232826); background: var(--button-primary-bgColor-rest, #1f883d); color: var(--button-primary-fgColor-rest, #fff); }
-    .clockoli-timeline-action.danger { color: var(--button-danger-fgColor-rest, #d1242f); }
+    .details .clockoli-timeline-action { border-color: color-mix(in srgb, var(--fgColor-accent, #0969da) 19%, var(--tt-border)); background: color-mix(in srgb, var(--fgColor-accent, #0969da) 9%, var(--tt-panel)); color: var(--fgColor-accent, #0969da); }
+    .details .clockoli-timeline-action:hover:not(:disabled):not(.primary):not(.danger) { background: color-mix(in srgb, var(--fgColor-accent, #0969da) 16%, var(--tt-panel)); }
+    .details .clockoli-timeline-action.primary { border-color: color-mix(in srgb, var(--fgColor-success, #1a7f37) 30%, var(--tt-border)); background: color-mix(in srgb, var(--fgColor-success, #1a7f37) 13%, var(--tt-panel)); color: var(--fgColor-success, #1a7f37); }
+    .details .clockoli-timeline-action.danger { border-color: color-mix(in srgb, var(--fgColor-danger, #d1242f) 24%, var(--tt-border)); background: color-mix(in srgb, var(--fgColor-danger, #d1242f) 8%, var(--tt-panel)); color: var(--fgColor-danger, #d1242f); }
+    .details .clockoli-timeline-action.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--fgColor-danger, #d1242f) 16%, var(--tt-panel)); }
     .clockoli-timeline-action:disabled { opacity: .5; cursor: default; }
+    .details .clockoli-timeline-actions { width: 100%; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+    .details .clockoli-description-field { flex: 1 1 100%; }
   `;
 
   function permissionsFor(item) {
@@ -4830,6 +4847,56 @@
           .calendar-task { font-size:11px }
           .clockoli-calendar-empty { font-size:13px }
           .clockoli-calendar-empty-help { font-size:12px;max-width:none }
+          .details.clockoli-compact-entry-details {
+            box-sizing:border-box;width:min(360px,calc(100vw - 16px));gap:12px;padding:12px;
+            border:1px solid var(--tt-border) !important;border-radius:14px;
+            background:var(--tt-panel);backdrop-filter:none;-webkit-backdrop-filter:none;
+            box-shadow:0 8px 24px rgba(16,24,40,.12)
+          }
+          .clockoli-compact-entry-details .details-info { display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;width:100% }
+          .clockoli-compact-entry-details .clockoli-details-task-icon {
+            position:relative;display:grid;grid-column:1;grid-row:1;place-items:center;width:36px;height:36px;
+            border-radius:50%;background:var(--tt-empty);color:var(--tt-text);
+            font-size:16px;font-weight:700;object-fit:contain
+          }
+          .clockoli-compact-entry-details .clockoli-details-task-icon img {
+            position:absolute;inset:6px;width:24px;height:24px;object-fit:contain;background:var(--tt-empty)
+          }
+          .clockoli-compact-entry-details .details-primary {
+            display:flex;grid-column:2;grid-row:1;flex-direction:column;justify-content:center;
+            gap:3px;min-width:0;padding:0;background:transparent
+          }
+          .clockoli-compact-entry-details .details-title {
+            display:block;overflow:hidden;max-width:100%;white-space:nowrap;
+            text-overflow:ellipsis;color:var(--tt-text);font-size:14px;
+            line-height:20px;font-weight:650;overflow-wrap:normal
+          }
+          .clockoli-compact-entry-details .clockoli-details-time {
+            display:block;overflow:hidden;color:var(--tt-muted);font-size:12px;
+            line-height:18px;white-space:nowrap;text-overflow:ellipsis
+          }
+          .clockoli-compact-entry-details .details-value { display:none }
+          .clockoli-compact-entry-details .clockoli-timeline-actions { width:100%;gap:8px;flex-wrap:wrap;justify-content:flex-start }
+          .clockoli-compact-entry-details .clockoli-description-field { flex:1 1 100% }
+          .clockoli-compact-entry-details .clockoli-timeline-action {
+            box-sizing:border-box;min-width:42px;height:38px;padding:0 10px;border:0;border-radius:10px
+          }
+          .clockoli-compact-entry-details .clockoli-timeline-action.danger,
+          .clockoli-compact-entry-details .clockoli-timeline-action.clockoli-entry-edit {
+            width:42px;padding:0;gap:0;font-size:0
+          }
+          .clockoli-compact-entry-details .clockoli-timeline-icon { width:18px;height:18px }
+          .clockoli-compact-entry-details .clockoli-timeline-action.clockoli-entry-edit {
+            background:color-mix(in srgb,var(--tt-muted) 8%,var(--tt-panel));color:var(--tt-muted)
+          }
+          .clockoli-compact-entry-details .clockoli-timeline-action.danger {
+            background:color-mix(in srgb,var(--fgColor-danger,#d1242f) 9%,var(--tt-panel));
+            color:var(--fgColor-danger,#d1242f)
+          }
+          .clockoli-compact-entry-details .clockoli-timeline-action.primary {
+            flex:1 1 auto;background:color-mix(in srgb,var(--fgColor-success,#1a7f37) 12%,var(--tt-panel));
+            color:var(--fgColor-success,#1a7f37)
+          }
         `
         : '');
 
@@ -5092,6 +5159,175 @@
     });
 
     timeline.shadow.append(style);
+    const details = timeline.details;
+    details.hidden = true;
+    details.setAttribute('role', 'group');
+    details.setAttribute('aria-label', 'Task details');
+    let hoverExitTimer = null;
+    let tooltipFrame = 0;
+    let pointerFocused = false;
+    let touchSelection = false;
+    let hoveredAnchor = null;
+    const isActivityDetails = () => Boolean(props.activityDashboard);
+
+    function crossingToDetails(event) {
+      if (!isActivityDetails() || details.hidden || timeline.hoveredKey == null) return false;
+      const container = timeline.getViewMode() === 'calendar' ? timeline.calendarCanvas : timeline.taskRow;
+      const anchor = hoveredAnchor?.isConnected && hoveredAnchor.dataset.taskKey === String(timeline.hoveredKey)
+        ? hoveredAnchor : [...container.querySelectorAll('.calendar-task[data-task-key], .task[data-task-key]')]
+          .find(node => node.dataset.taskKey === String(timeline.hoveredKey) && node.getBoundingClientRect().width > 0);
+      if (!anchor) return false;
+      const task = anchor.getBoundingClientRect();
+      const card = details.getBoundingClientRect();
+      const x = event.clientX, y = event.clientY;
+      const betweenVertical = card.top >= task.bottom
+        ? y >= task.bottom && y <= card.top
+        : task.top >= card.bottom && y >= card.bottom && y <= task.top;
+      const betweenHorizontal = card.left >= task.right
+        ? x >= task.right && x <= card.left
+        : task.left >= card.right && x >= card.right && x <= task.left;
+      return (betweenVertical && x >= Math.min(task.left, card.left) - 8 && x <= Math.max(task.right, card.right) + 8)
+        || (betweenHorizontal && y >= Math.min(task.top, card.top) - 8 && y <= Math.max(task.bottom, card.bottom) + 8);
+    }
+
+    function positionDetails() {
+      const key = timeline.hoveredKey
+        ?? (details.matches(':hover') ? timeline.detailsKey : null)
+        ?? (!pointerFocused ? (timeline.focusedKey ?? (details.contains(timeline.shadow.activeElement) ? timeline.detailsKey : null)) : null)
+        ?? (touchSelection ? timeline.selectedKey : null);
+      const task = key == null ? null : timeline._findTask(key);
+      const viewport = timeline.getViewMode() === 'calendar' ? timeline.calendarViewport : timeline.viewport;
+      const candidates = [...(timeline.getViewMode() === 'calendar' ? timeline.calendarCanvas : timeline.taskRow)
+        .querySelectorAll('.calendar-task[data-task-key], .task[data-task-key]')]
+        .filter(node => node.dataset.taskKey === String(key));
+      const bounds = viewport.getBoundingClientRect();
+      const anchor = candidates.find(node => node.matches(':hover') && node.getBoundingClientRect().bottom > bounds.top)
+        || candidates.find(node => {
+          const rect = node.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom && rect.right > bounds.left && rect.left < bounds.right;
+        });
+      if (!task || !anchor) { details.hidden = true; return; }
+      if (timeline.detailsKey !== key) timeline._showTaskDetails(task);
+      details.hidden = false;
+      const rect = anchor.getBoundingClientRect();
+      const panel = host.getRootNode()?.querySelector?.('.full-width-popup')?.getBoundingClientRect();
+      const margin = 8;
+      details.style.maxHeight = panel ? `${Math.max(0, panel.height - margin * 2)}px` : '';
+      details.style.maxWidth = panel ? `${Math.max(0, panel.width - margin * 2)}px` : '';
+      const width = details.offsetWidth;
+      const height = details.offsetHeight;
+      const leftEdge = panel ? panel.left + margin : margin;
+      const rightEdge = panel ? panel.right - margin : global.innerWidth - margin;
+      const topEdge = panel ? panel.top + margin : margin;
+      const bottomEdge = panel ? panel.bottom - margin : global.innerHeight - margin;
+      const calendarSide = timeline.getViewMode() === 'calendar' && (props.activityDashboard || props.toolbarPopup || panel);
+      const rightOfTask = rect.right + margin;
+      const leftOfTask = rect.left - width - margin;
+      const sideTop = Math.max(topEdge, Math.min(rect.top + rect.height / 2 - height / 2, bottomEdge - height));
+      const leftFits = leftOfTask >= leftEdge;
+      const rightFits = rightOfTask + width <= rightEdge;
+      const rightCoversNeighbor = calendarSide && leftFits && rightFits
+        && [...timeline.calendarCanvas.querySelectorAll('.calendar-task[data-task-key]')].some(node => {
+          if (node.dataset.taskKey === String(key)) return false;
+          const neighbor = node.getBoundingClientRect();
+          return rightOfTask < neighbor.right && rightOfTask + width > neighbor.left
+            && sideTop < neighbor.bottom && sideTop + height > neighbor.top;
+        });
+      if (calendarSide && ((rightFits && !rightCoversNeighbor) || leftFits)) {
+        details.style.left = `${rightFits && !rightCoversNeighbor ? rightOfTask : leftOfTask}px`;
+        details.style.top = `${sideTop}px`;
+        return;
+      }
+      const left = Math.max(leftEdge, Math.min(rect.left + rect.width / 2 - width / 2, rightEdge - width));
+      // Keep Timeline blocks clickable: the floating card sits outside the ruler.
+      const below = timeline.getViewMode() === 'timeline' ? bounds.bottom + margin : rect.bottom + margin;
+      const above = (timeline.getViewMode() === 'timeline' ? bounds.top : rect.top) - height - margin;
+      const top = below + height <= bottomEdge ? below
+        : above >= topEdge ? above : Math.max(topEdge, Math.min(below, bottomEdge - height));
+      details.style.left = `${left}px`;
+      details.style.top = `${top}px`;
+    }
+
+    function scheduleDetails() {
+      if (tooltipFrame) return;
+      tooltipFrame = requestAnimationFrame(() => { tooltipFrame = 0; if (!destroyed) positionDetails(); });
+    }
+
+    function clearHover() {
+      clearTimeout(hoverExitTimer);
+      hoverExitTimer = null;
+      timeline.hoveredKey = null;
+      hoveredAnchor = null;
+      scheduleDetails();
+    }
+
+    for (const container of [timeline.taskRow, timeline.calendarCanvas]) {
+      // The vendored widget handles hover in the bubble phase. Keep the current
+      // card while crossing a following block in the narrow path to that card.
+      container.addEventListener('pointerover', event => {
+        const element = event.target instanceof Element ? event.target.closest('[data-task-key]') : null;
+        if (element?.dataset.taskKey !== String(timeline.hoveredKey) && crossingToDetails(event)) event.stopPropagation();
+      }, true);
+      container.addEventListener('pointerout', event => {
+        const element = event.target instanceof Element ? event.target.closest('[data-task-key]') : null;
+        if (isActivityDetails() && timeline.hoveredKey != null && element
+            && element.dataset.taskKey !== String(timeline.hoveredKey)) event.stopPropagation();
+      }, true);
+      container.addEventListener('pointerover', event => {
+        const element = event.target instanceof Element ? event.target.closest('[data-task-key]') : null;
+        if (!element) return;
+        const task = timeline._findTask(element.dataset.taskKey);
+        if (!task) return;
+        timeline.hoveredKey = task._key;
+        hoveredAnchor = element;
+        clearTimeout(hoverExitTimer);
+        hoverExitTimer = null;
+        if (isActivityDetails()) { renderActions(); positionDetails(); }
+        else scheduleDetails();
+      });
+      container.addEventListener('pointerout', event => {
+        const element = event.target instanceof Element ? event.target.closest('[data-task-key]') : null;
+        if (!element || (event.relatedTarget instanceof Node && element.contains(event.relatedTarget))) return;
+        const task = timeline._findTask(element.dataset.taskKey);
+        if (!task) return;
+        timeline.hoveredKey = task._key;
+        timeline._showTaskDetails(task);
+        clearTimeout(hoverExitTimer);
+        if (!isActivityDetails() || event.pointerType !== 'mouse') hoverExitTimer = setTimeout(clearHover, 200);
+        scheduleDetails();
+      });
+      container.addEventListener('click', scheduleDetails);
+      container.addEventListener('pointerdown', event => {
+        if (!(event.target instanceof Element) || !event.target.closest('[data-task-key]')) return;
+        pointerFocused = true;
+        touchSelection = event.pointerType === 'touch';
+      });
+      container.addEventListener('focusin', scheduleDetails);
+      container.addEventListener('focusout', scheduleDetails);
+    }
+    details.addEventListener('pointerenter', () => { clearTimeout(hoverExitTimer); hoverExitTimer = null; });
+    details.addEventListener('pointerleave', event => {
+      if (!isActivityDetails() || event.pointerType !== 'mouse') clearHover();
+    });
+    details.addEventListener('focusin', scheduleDetails);
+    details.addEventListener('focusout', scheduleDetails);
+    const onKeyboard = () => { pointerFocused = false; touchSelection = false; scheduleDetails(); };
+    global.addEventListener('keydown', onKeyboard, true);
+    const onOutsideMove = event => {
+      if (timeline.hoveredKey == null) return;
+      // A closed outer shadow root hides the widget's internal nodes from
+      // window-level composedPath(), even while the pointer is on the card.
+      const target = timeline.shadow.elementFromPoint(event.clientX, event.clientY);
+      if (isActivityDetails() && event.pointerType === 'mouse') {
+        if ((target && (details.contains(target) || target.closest('.calendar-task[data-task-key], .task[data-task-key]')))
+          || crossingToDetails(event)) return;
+        clearHover();
+      } else if (!target || !timeline.shadow.contains(target)) clearHover();
+    };
+    const onDetailsScroll = () => scheduleDetails();
+    global.addEventListener('pointermove', onOutsideMove, true);
+    global.addEventListener('scroll', onDetailsScroll, true);
+    global.addEventListener('resize', onDetailsScroll);
 
     function hydrateExternalState() {
       const running = timeline.tasks.filter(task => task.running);
@@ -5260,12 +5496,48 @@
       requestAnimationFrame(() => { if (field.isConnected) measure(); });
     }
 
+    function renderCompactDetails(item) {
+      const compact = isActivityDetails();
+      timeline.details.classList.toggle('clockoli-compact-entry-details', compact);
+      if (!compact || !item) return;
+      const info = timeline.detailsInfo;
+      const primary = info.querySelector('.details-primary');
+      const values = [...info.querySelectorAll('.details-value strong')].map(value => value.textContent);
+      if (!primary || values.length !== 3) return;
+      if (!info.querySelector('.clockoli-details-task-icon')) {
+        const favicon = typeof item.faviconUrl === 'string' && item.faviconUrl;
+        const icon = document.createElement('span');
+        icon.className = 'clockoli-details-task-icon';
+        let hostname = '';
+        try { hostname = new URL(item.url).hostname.replace(/^www\./, ''); } catch { /* use the task title */ }
+        icon.textContent = (hostname || item.title || '?').charAt(0).toUpperCase();
+        icon.setAttribute('aria-hidden', 'true');
+        if (favicon) {
+          const image = document.createElement('img');
+          image.alt = ''; image.src = favicon;
+          image.addEventListener('error', () => image.remove(), { once: true });
+          icon.prepend(image);
+        }
+        info.prepend(icon);
+      }
+      let time = primary.querySelector('.clockoli-details-time');
+      if (!time) {
+        time = document.createElement('span');
+        time.className = 'clockoli-details-time';
+        primary.insertBefore(time, primary.querySelector('.details-project'));
+      }
+      const label = `${values[0]} – ${values[1]} · ${values[2]}`;
+      if (time.textContent !== label) time.textContent = label;
+    }
+
     function renderActions() {
       if (destroyed || !timeline.details) return;
+      scheduleDetails();
       const key = timeline.detailsKey;
       const item = sourceItem(key);
       const existing = timeline.details.querySelector('.clockoli-timeline-actions');
       if (!item) { existing?.remove(); return; }
+      renderCompactDetails(item);
       const permissions = permissionsFor(item);
       const mode = item.isCurrentTask ? 'current' : item.isRunning || item.endedAt == null ? 'running' : 'completed';
       const savedDescription = item.savedDescription ?? item.description ?? '';
@@ -5557,6 +5829,12 @@
         styleObserver?.disconnect();
         timeline.calendarViewport?.removeEventListener('scroll', positionEmptyCalendarDays);
         detailsObserver?.disconnect();
+        clearTimeout(hoverExitTimer);
+        cancelAnimationFrame(tooltipFrame);
+        global.removeEventListener('keydown', onKeyboard, true);
+        global.removeEventListener('pointermove', onOutsideMove, true);
+        global.removeEventListener('scroll', onDetailsScroll, true);
+        global.removeEventListener('resize', onDetailsScroll);
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
         global.removeEventListener('pointerup', onGestureEnd);
         global.removeEventListener('pointercancel', onGestureEnd);
