@@ -358,7 +358,7 @@ export function mountRunningStatus(container, { send, onChange }) {
       if (destroyed) return;
       state = current; readAt = Date.now(); reportDate = localDate(); render();
       if (!current.configured || current.active) return;
-      const active = await send({ type: 'START', taskUrl, taskTitle, description: taskDescription || '' });
+      const active = await send({ type: 'START', taskUrl, taskTitle, ...(taskDescription ? { description: taskDescription } : {}) });
       if (destroyed) return;
       started = active;
       // The accepted local timer is immediately available, even before GitHub sync.

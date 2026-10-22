@@ -4385,7 +4385,7 @@ test('quick start focuses an empty description when no recent description exists
     recent: [{ taskUrl: 'https://example.com/task', taskTitle: 'Demo task',
       startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z' }] });
   await h.find('running-status-recent-task').onclick(); await h.settle();
-  assert.equal(h.calls.find(call => call.type === 'START').description, '');
+  assert.equal(h.calls.find(call => call.type === 'START').description, undefined);
   const field = h.find('running-status-description');
   assert.equal(h.document.activeElement, field);
   assert.equal(field.value, '');
