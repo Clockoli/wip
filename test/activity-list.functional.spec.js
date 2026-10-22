@@ -91,7 +91,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   else if (message.type === 'START') {
     active = { id: 'quick-running', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
-      startedAt: new Date(Date.now() - 120000).toISOString(),
+      description: message.description ?? '', startedAt: new Date(Date.now() - 120000).toISOString(),
       entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' };
     respond({ ok: true, data: { ...active, _pending: true, destinationId: 'github:1' } });
   }
@@ -1147,12 +1147,19 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await worker.evaluate(() => { recent[0].description = 'Review PR\nFollow up'; });
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await page.getByRole('button', { name: 'Timeline', exact: true }).click();
 
     const quickStart = page.getByRole('button', { name: 'Start tracking Activity test task' })
       .and(page.locator('.running-status-recent-task'));
-    await expect(quickStart).toBeVisible();
+    await expect(quickStart.locator('.running-status-recent-description')).toHaveText('Review PR Follow up');
     await quickStart.click();
+    const runningDescription = page.locator('.running-status.is-active .running-status-description');
+    await expect(runningDescription).toHaveValue('Review PR\nFollow up');
+    await expect(runningDescription).toBeFocused();
+    await expect.poll(() => runningDescription.evaluate(node => [node.selectionStart, node.selectionEnd]))
+      .toEqual([0, 'Review PR\nFollow up'.length]);
     await expect(page.locator('.running-status.is-active')).toBeVisible();
     await expect(page.locator('.task[data-task-key="active:quick-running"]')).toHaveCount(1);
 
@@ -1171,6 +1178,23 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
       type => type === 'START' || type === 'STOP'))).toEqual(['START', 'STOP']);
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await expect(page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' })).toHaveCount(1);
+    // Continue the same task again, but start new work: Backspace clears the selected old note.
+    await worker.evaluate(() => { recent[0].description = 'Review PR\nFollow up'; });
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const again = page.getByRole('button', { name: 'Start tracking Activity test task' })
+      .and(page.locator('.running-status-recent-task'));
+    await expect(again).toBeVisible();
+    await again.click();
+    await expect(runningDescription).toBeFocused();
+    await expect(runningDescription).toHaveValue('Review PR\nFollow up');
+    await page.keyboard.press('Backspace');
+    await expect(runningDescription).toHaveValue('');
+    await page.keyboard.type('New task details');
+    await expect(runningDescription).toHaveValue('New task details');
+    await runningDescription.press('Enter');
+    await expect.poll(() => worker.evaluate(() => active?.description)).toBe('New task details');
+    await page.locator('.running-status-stop').click();
+    await expect.poll(() => worker.evaluate(() => locallyStopped[0]?.description)).toBe('New task details');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

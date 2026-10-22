@@ -118,7 +118,7 @@ export function mountRunningStatus(container, { send, onChange }) {
       if (pendingAccepted === null || latest === pendingAccepted) {
         acceptedDescription = latest;
         pendingAccepted = null;
-        description.value = latest;
+        if (description.value !== latest) description.value = latest;
       }
     }
     descriptionField.hidden = !active;
@@ -253,7 +253,7 @@ export function mountRunningStatus(container, { send, onChange }) {
       try {
         const taskUrl = normalizeStoredTaskIdentity(entry);
         const taskTitle = String(entry.taskTitle ?? entry.issueTitle ?? '').trim().slice(0, 300);
-        const taskDescription = String(entry.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+        const taskDescription = String(entry.description ?? '').trim().slice(0, 2000);
         const end = Date.parse(entry.endedAt || ''), start = Date.parse(entry.startedAt || '');
         candidates.push({ taskUrl, taskTitle, taskDescription, timestamp: Number.isFinite(end) ? end : (Number.isFinite(start) ? start : 0) });
       } catch { /* Ignore invalid cached task identities. */ }
@@ -282,9 +282,9 @@ export function mountRunningStatus(container, { send, onChange }) {
         button.append(play, name);
         if (item.taskDescription) {
           const subtitle = make('span', 'running-status-recent-description');
-          subtitle.textContent = item.taskDescription;
+          subtitle.textContent = item.taskDescription.replace(/\s+/g, ' ');
           button.append(subtitle);
-          button.setAttribute('aria-description', item.taskDescription);
+          button.setAttribute('aria-description', subtitle.textContent);
         }
         button.addEventListener('click', () => startRecentTask(item));
         recentList.append(button);
@@ -348,18 +348,19 @@ export function mountRunningStatus(container, { send, onChange }) {
     }
   }
 
-  async function startRecentTask({ taskUrl, taskTitle }) {
+  async function startRecentTask({ taskUrl, taskTitle, taskDescription }) {
     if (busy || destroyed || !state?.configured || state.active) return;
     busy = true; ++requestId; showError(); render();
-    let failure = null;
+    let failure = null, started = null;
     try {
       // The status may have changed in another tab since the buttons were shown.
       const current = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed) return;
       state = current; readAt = Date.now(); reportDate = localDate(); render();
       if (!current.configured || current.active) return;
-      const active = await send({ type: 'START', taskUrl, taskTitle });
+      const active = await send({ type: 'START', taskUrl, taskTitle, description: taskDescription || '' });
       if (destroyed) return;
+      started = active;
       // The accepted local timer is immediately available, even before GitHub sync.
       state = { ...state, active }; readAt = Date.now(); reportDate = localDate(); render();
       await onChange?.({ type: 'START', active });
@@ -367,8 +368,13 @@ export function mountRunningStatus(container, { send, onChange }) {
     finally {
       if (!destroyed) {
         await readState();
+        if (destroyed) return;
         busy = false; render();
         if (failure) showError(failure);
+        else if (started && timerKey(state?.active) === timerKey(started)) {
+          description.focus({ preventScroll: true });
+          if (description.value) description.select();
+        }
       }
     }
   }
