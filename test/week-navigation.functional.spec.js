@@ -457,6 +457,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const popupRoot = page.locator('#clockoli-full-width-popup-root');
     await expect.poll(() => worker.evaluate(() => globalThis.weekReads.filter(entry => entry.type === 'LOAD_WEEK').length))
       .toBeGreaterThan(popupWeekReadsBefore);
+    await expect(popupRoot.locator('.task-timeline-host .task[data-task-key="entry:current-week"]')).toBeVisible();
     await expectRunningCardFits(popupRoot);
     const popupCard = popupRoot.locator('.active-task-strip.is-active');
     const startField = popupCard.locator('.running-status-start-field');
@@ -470,7 +471,17 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     expect(rail).toBe('1px');
     await startField.locator('.running-status-start').fill('1158');
     await startField.getByRole('button', { name: 'Save start' }).click();
-    await expect.poll(() => worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
+    try {
+      await expect.poll(() => worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
+    } catch (cause) {
+      const state = await worker.evaluate(() => ({ startedAt: active.startedAt, edits: globalThis.activeStartEdits, reads: globalThis.stateReads }));
+      const field = await startField.evaluate(node => ({
+        value: node.querySelector('.running-status-start')?.value,
+        saveHidden: node.querySelector('.running-status-start-save')?.hidden,
+      })).catch(() => null);
+      const feedback = await popupRoot.locator('.panel-feedback').allTextContents();
+      throw new Error(`Start edit did not persist: ${JSON.stringify({ state, field, feedback })}\n${cause.message}`);
+    }
     await expect(startField.locator('.running-status-start')).toHaveValue('11:58');
     await worker.evaluate(() => { globalThis.rejectStartEdit = true; });
     await startField.locator('.running-status-start').fill('1157');
