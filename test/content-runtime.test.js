@@ -4211,7 +4211,14 @@ async function runningStatusHarness(initial) {
   const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [];
   let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null;
   const document = {
-    hidden: false, createElement: tag => new FakeNode(tag), getElementById: () => null,
+    hidden: false, activeElement: null,
+    createElement: tag => {
+      const node = new FakeNode(tag);
+      node.focus = () => { document.activeElement = node; };
+      node.select = () => { node.selectionStart = 0; node.selectionEnd = String(node.value || '').length; };
+      return node;
+    },
+    getElementById: () => null,
     addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
   };
   const context = vm.createContext({
@@ -4234,10 +4241,14 @@ async function runningStatusHarness(initial) {
     if (message.type === 'START') {
       if (startError) throw startError;
       state = { ...state, active: {
-        taskUrl: message.taskUrl, taskTitle: message.taskTitle, id: 'started',
+        taskUrl: message.taskUrl, taskTitle: message.taskTitle, description: message.description ?? '', id: 'started',
         startedAt: new Date(now).toISOString(), entryDate: '2026-09-05',
       } };
       return state.active;
+    }
+    if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+      state = { ...state, active: { ...state.active, ...('description' in message.payload ? { description: message.payload.description } : {}) } };
+      return { operationId: 'edited' };
     }
     if (message.type === 'STOP') {
       if (stopError) throw stopError;
@@ -4306,6 +4317,79 @@ test('idle quick start shows the three most recently completed distinct tasks', 
   assert.equal(h.container.walk().some(node => node.textContent === 'Start tracking from recent tasks'), false);
   await h.events.get('visibilitychange')(); await h.settle();
   assert.equal(list.children[0], buttons[0], 'polling does not replace a focused button');
+  h.destroy();
+});
+
+test('idle quick start shows the latest saved description below each task title', async () => {
+  const recent = [
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', description: 'Old description',
+      startedAt: '2026-09-05T09:00:00Z', endedAt: '2026-09-05T09:15:00Z' },
+    { taskUrl: 'https://example.com/other', taskTitle: 'Other', description: '',
+      startedAt: '2026-09-05T09:20:00Z', endedAt: '2026-09-05T09:30:00Z' },
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', description: '  Review  PR\n and publish  ',
+      startedAt: '2026-09-05T09:40:00Z', endedAt: '2026-09-05T10:00:00Z' },
+  ];
+  const h = await runningStatusHarness({ configured: true, active: null, recent, todayTrackedMs: 0 });
+  const list = h.find('running-status-recent'), buttons = list.children;
+  assert.equal(buttons.length, 2);
+  assert.equal(buttons[0].children[1].textContent, 'Google');
+  assert.equal(buttons[0].children[2].textContent, 'Review PR and publish');
+  assert.equal(buttons[0].getAttribute('aria-description'), 'Review PR and publish');
+  assert.equal(buttons[0].getAttribute('aria-label'), 'Start tracking Google');
+  assert.equal(buttons[1].children[1].textContent, 'Other');
+  assert.equal(buttons[1].children.length, 2, 'tasks without a saved description stay single-line');
+  const previous = buttons[0];
+  h.setState({ configured: true, active: null, todayTrackedMs: 0,
+    recent: recent.map((entry, index) => index === 2 ? { ...entry, description: 'Updated note' } : entry) });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.notEqual(list.children[0], previous, 'changed descriptions should update the card');
+  assert.equal(list.children[0].children[2].textContent, 'Updated note');
+  h.destroy();
+});
+
+test('quick start reuses the full recent description and selects it for Backspace or typing', async () => {
+  const task = { taskUrl: 'https://example.com/task', taskTitle: 'Demo task', description: 'Review PR\nFollow up',
+    startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z' };
+  const h = await runningStatusHarness({ configured: true, active: null, recent: [task], todayTrackedMs: 0 });
+
+  await h.find('running-status-recent-task').onclick(); await h.settle();
+  const field = h.find('running-status-description');
+  assert.deepEqual(h.calls.find(call => call.type === 'START'),
+    { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle, description: task.description });
+  assert.equal(field.value, task.description);
+  assert.equal(h.document.activeElement, field);
+  assert.deepEqual([field.selectionStart, field.selectionEnd], [0, task.description.length]);
+
+  // Backspace replaces the selected text. A state refresh must not restore it.
+  field.value = ''; field.oninput();
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(field.value, '', 'the unsaved cleared description survives polling');
+  await h.find('running-status-stop').onclick(); await h.settle();
+  assert.equal(h.calls.find(call => call.type === 'STOP').description, '');
+
+  // Starting from the recent card again also selects the old description for typing over.
+  await h.find('running-status-recent-task').onclick(); await h.settle();
+  assert.equal(field.value, task.description);
+  assert.equal(h.document.activeElement, field);
+  field.value = 'New work'; field.oninput();
+  field.onkeydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
+  await h.settle();
+  assert.equal(h.calls.find(call => call.type === 'QUEUE_ACTIVE_START_EDIT').payload.description, 'New work');
+  await h.find('running-status-stop').onclick(); await h.settle();
+  assert.equal(h.calls.filter(call => call.type === 'STOP').at(-1).description, 'New work');
+  h.destroy();
+});
+
+test('quick start focuses an empty description when no recent description exists', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null,
+    recent: [{ taskUrl: 'https://example.com/task', taskTitle: 'Demo task',
+      startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z' }] });
+  await h.find('running-status-recent-task').onclick(); await h.settle();
+  assert.equal(h.calls.find(call => call.type === 'START').description, undefined);
+  const field = h.find('running-status-description');
+  assert.equal(h.document.activeElement, field);
+  assert.equal(field.value, '');
+  assert.equal(field.selectionStart, undefined);
   h.destroy();
 });
 
