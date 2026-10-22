@@ -493,8 +493,9 @@ test('full-width timeline places branded navigation above the editor and Stop in
   assert.match(content, /popup-timeline-track/);
   assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
   assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
-  assert.match(content, /strip\.append\(el\('span', 'Not tracking', 'strip-idle'\), quickStart\)/);
-  assert.match(content, /header\.insertBefore\(summary, headerActions\)/);
+  assert.match(content, /idle\.append\(el\('span', 'Not tracking', 'strip-idle'\), el\('span', 'Start a task to begin', 'strip-idle-caption'\)\)/);
+  assert.match(content, /strip\.append\(idle, quickStart\)/);
+  assert.match(content, /overview\.append\(summary, strip\)/);
   assert.match(content, /timelineToolbarEnd\.insertBefore\(switchAction, closeButton\)/);
   assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
   assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);

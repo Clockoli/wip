@@ -280,6 +280,7 @@
         + '\n.task.short .resize-handle::after { background-size:1px 14px, 1px 14px; background-position:2px center, 4px center }'
       : '') + (initialProps.weeklyCalendar
       ? '\n.calendar-toolbar { display:none } .domain-start,.domain-end { visibility:hidden } .meta { min-height:0; padding-block:0; border-bottom:0 }' : '')
+      + (initialProps.activityPage ? '\n.shell .meta { display:none }' : '')
       + (initialProps.activityDashboard
         ? `
           .shell:has(.calendar-view:not([hidden])) .meta,

@@ -370,8 +370,8 @@ test('Tracking now adds multiline Description to a completed Top tasks timer wit
   await page.advance(5);
   assert.equal(description.value, 'First line\nSecond line', 'polling must not discard the unsaved draft');
   const tab = await description.dispatch('keydown', { key: 'Tab', isTrusted: true });
-  assert.equal(tab.defaultPrevented, true, 'Tab should move to Start');
-  assert.equal(page.document.activeElement, strip.querySelector('.running-status-start'));
+  assert.equal(tab.defaultPrevented, true, 'Tab should move directly to Stop and save');
+  assert.equal(page.document.activeElement, strip.querySelector('.running-status-stop'));
   assert.equal(page.messages.some(message => message.type === 'STOP'), false, 'Tab must not stop the timer');
   await strip.querySelector('.running-status-stop').click();
   assert.equal(page.messages.find(message => message.type === 'STOP')?.description, 'First line\nSecond line');

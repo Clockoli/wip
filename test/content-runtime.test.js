@@ -1977,7 +1977,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   values[7].value = '15'; values[7].oninput({});
   assert.deepEqual(values.slice(0, 2).map(node => node.value), ['11', '15'], 'Y Start mirrors X Stop');
-  const filter = createdNodes.findLast(node => node.placeholder === 'URL or title');
+  const filter = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Search activity');
   filter.value = '/x'; filter.oninput({});
   const filteredValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
@@ -3477,6 +3477,27 @@ test('Timeline favicon projection survives an unavailable extension resource URL
   resourcesAvailable = false;
   assert.doesNotThrow(() => harness.timelineItems(0, now));
   assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+});
+
+test('Timeline favicon projection stops querying an invalidated extension context', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-reload', '2026-09-05', '08');
+  let checks = 0;
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {
+      get permissions() { checks += 1; throw new Error('Extension context invalidated.'); },
+    } });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(checks, 1, 'the stale script must not retry extension APIs on every render');
+});
+
+test('Timeline favicon projection treats a missing manifest permission list as denied', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-no-manifest', '2026-09-05', '08');
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {} });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, null);
 });
 
 test('compact task switches preserve the edited active description in the completion', async () => {

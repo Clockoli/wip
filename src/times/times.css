@@ -13,7 +13,8 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
 #activity-summary:empty{display:none}
 #activity-summary:empty + #activity-running-status{grid-column:1/-1}
 #activity-summary .activity-weekly-heading{display:block;margin:0 0 6px;color:var(--fgColor-default);font-size:13px;font-weight:700}
-#activity-summary .activity-weekly-range{display:none}
+#activity-summary .activity-weekly-label{display:none}
+#activity-summary .activity-weekly-range{display:inline}
 #activity-summary .activity-weekly-cards{display:grid;grid-template-columns:1fr}
 #activity-summary .activity-weekly-card{min-width:0;padding:5px 0;border-bottom:1px solid var(--borderColor-muted)}
 #activity-summary .activity-weekly-card:last-child{border-bottom:0}
@@ -39,9 +40,9 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
 #activity-running-status.running-status.is-active .running-status-row{display:grid;grid-template-columns:minmax(0,1fr) max-content;grid-template-rows:auto auto 1fr;align-items:start;gap:8px 22px}
 #activity-running-status.is-active .running-status-live{grid-column:1;grid-row:1;justify-self:start}
 #activity-running-status.is-active .running-status-task{grid-column:1;grid-row:2;max-width:100%}
-#activity-running-status.is-active .running-status-description-field{grid-column:1;grid-row:3;width:min(100%,560px);max-width:none;min-width:0}
+#activity-running-status.is-active .running-status-description-field{grid-column:1;grid-row:3;width:100%;max-width:none;min-width:0}
 #activity-running-status.is-active .running-status-stats{grid-column:2;grid-row:1/span 2;justify-self:end;margin:0}
-#activity-running-status.is-active .running-status-stop{grid-column:2;grid-row:3;justify-self:end;align-self:start;min-height:36px}
+#activity-running-status.is-active .running-status-stop{box-sizing:border-box;grid-column:2;grid-row:3;justify-self:stretch;align-self:start;width:100%;min-height:36px}
 #activity-running-status .running-status-recent-task{min-height:44px}
 @media(max-width:1299px){.activity-overview-layout{grid-template-columns:minmax(190px,1fr) minmax(0,3fr)}}
 @media(max-width:900px){.activity-overview-layout{grid-template-columns:1fr}}

@@ -28,10 +28,10 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
   assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*width:100vw[^}]*max-width:none/s);
 });
 
-test('Activity places week navigation below view controls without a period selector', () => {
+test('Activity groups List search, week navigation, and Refresh below view controls without a period selector', () => {
   const page = renderer('renderTimesPage(preservedTimeline = null)', 'renderMenu()');
   assert.match(page, /filterLabel\.className = 'times-filter'/);
-  assert.match(page, /toolbar\.append\(filterLabel\);[\s\S]*summaryHost\.replaceChildren\(weeklySummary\);[\s\S]*viewHost\.replaceChildren\(views\);[\s\S]*body\.append\(toolbar, weekNavigation\(\), listTotal\)/);
+  assert.match(page, /toolbar\.append\(filterLabel\);[\s\S]*summaryHost\.replaceChildren\(weeklySummary\);[\s\S]*viewHost\.replaceChildren\(views\);[\s\S]*toolbar\.append\(weekNavigation\(\), refresh\);[\s\S]*body\.append\(toolbar, listTotal\)/);
   assert.doesNotMatch(page.split('function mergeTimelineCompletedEntries')[0], /Time period|times-custom|periodLabel/);
   assert.match(content, /\.times-toolbar\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/s);
   assert.match(content, /\.times-filter\s*\{[^}]*grid-column:auto/s);

@@ -133,6 +133,7 @@
   let suppressCalendarNavigate = false;
   let activeInlineKey = null;
   let timesFilter = '';
+  let panelListFilter = '';
   const ACTIVITY_SEARCH_PAGE_SIZE = 20;
   let activitySearchPage = 0;
   let timesHasTrackedTime = null;
@@ -161,6 +162,7 @@
   let compactSurface = null;
   let popupReturnFocus = null;
   let popupFocusPending = false;
+  let popupOpening = false;
   let timeEntryFormLoad = null;
   let timeEntryFormHost = null;
   let timeEntryFormDialog = null;
@@ -245,7 +247,14 @@
   function siteFaviconUrl(value) {
     const pageUrl = taskUrlOf(value);
     if (!pageUrl) return '';
-    if (!chrome.runtime.getManifest().permissions.includes('favicon')) return null;
+    if (!extensionContextActive) return '';
+    try {
+      if (!globalThis.chrome?.runtime?.getManifest?.()?.permissions?.includes('favicon')) return null;
+    } catch (error) {
+      if (!isExtensionContextInvalidated(error)) throw error;
+      deactivateExtensionContext();
+      return '';
+    }
     const base = extensionResourceUrl('/_favicon/');
     if (!base) return '';
     try {
@@ -807,7 +816,8 @@
     let nextControl;
     const updateNavigation = () => {
       const { startDate, endDate } = timesRange();
-      label.textContent = `${startDate} – ${endDate}`;
+      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+        ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       nextControl.disabled = weekWindow().start >= weekWindow(Date.now()).start;
     };
     for (const [direction, name, glyph] of [[-1, 'Previous week', '‹'], [1, 'Next week', '›']]) {
@@ -828,7 +838,8 @@
     for (const scope of [shadow, fullWidthPopupShadow]) {
       const navigation = scope?.querySelector('.week-navigation');
       const label = navigation?.querySelector('.week-navigation-label');
-      if (label) label.textContent = `${startDate} – ${endDate}`;
+      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+        ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       const next = navigation?.querySelector('[aria-label="Next week"]');
       if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
     }
@@ -850,7 +861,18 @@
     if (!navigation) return;
     const oldNavigation = host.querySelector('.week-navigation');
     if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
-    if (mode === 'calendar') {
+    const activityChart = timesMode || popupMode || fullWidthPopupOpen ? root.querySelector('.timeline-shell') : null;
+    const oldChartNavigation = activityChart?.querySelector('.week-navigation');
+    if (oldChartNavigation && oldChartNavigation !== navigation) oldChartNavigation.remove();
+    activityChart?.classList.toggle('calendar-week-navigation', mode === 'calendar');
+    if (activityChart && mode !== 'list') {
+      navigation.removeAttribute('slot');
+      activityChart.append(navigation);
+    } else if ((popupMode || fullWidthPopupOpen) && mode === 'list') {
+      navigation.removeAttribute('slot');
+      const toolbar = root.querySelector('.popup-list-toolbar');
+      if (toolbar) toolbar.insertBefore(navigation, toolbar.querySelector('.times-refresh'));
+    } else if (mode === 'calendar') {
       navigation.slot = 'week-navigation';
       host.append(navigation);
     } else if (navigation.parentElement === host) {
@@ -924,6 +946,11 @@
     return `Total: ${minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`}`;
   }
 
+  function activityWeekRangeLabel(range) {
+    const month = date => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+    return `${month(range.startDate)} ${Number(range.startDate.slice(-2))}–${range.startDate.slice(0, 7) === range.endDate.slice(0, 7) ? '' : `${month(range.endDate)} `}${Number(range.endDate.slice(-2))}`;
+  }
+
   function updateActivityWeekSummary() {
     const sections = [document.getElementById?.('activity-summary')?.querySelector('.activity-weekly-summary'),
       compactSurface?.summary].filter(section => section?.isConnected);
@@ -935,7 +962,11 @@
       : null;
     for (const section of sections) {
       const span = section.querySelector('.activity-weekly-range');
-      if (span) span.textContent = `${range.startDate} – ${range.endDate}`;
+      if (span) {
+        span.textContent = timesMode || popupMode || fullWidthPopupOpen
+          ? activityWeekRangeLabel(range)
+          : `${range.startDate} – ${range.endDate}`;
+      }
       for (const element of section.querySelectorAll('[data-stat]')) {
         element.textContent = summary ? String(summary[element.getAttribute('data-stat')]) : '—';
       }
@@ -2007,16 +2038,24 @@
     return group;
   }
 
-  function renderRecent(container, sourceEntries = recent, emptyState = null, allowCached = false) {
-    inlineEditors.clear();
-    const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode || popupMode || fullWidthPopupOpen ? 'Tracked time' : 'Recent entries'));
+  function recentRefreshButton() {
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
     refresh.disabled = loadingRecent; // GitHub sync runs silently and must not disable Refresh.
-    refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
+    refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH));
+    return refresh;
+  }
+
+  function renderRecent(container, sourceEntries = recent, emptyState = null, allowCached = false, hideHeader = false) {
+    inlineEditors.clear();
+    if (!timesMode && !hideHeader) {
+      const header = el('div', undefined, 'section-head');
+      header.append(el('strong', popupMode || fullWidthPopupOpen ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
+      container.append(header);
+    }
     if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
     if (emptyState) container.append(emptyState);
     if (!sourceEntries.length) { if (!emptyState) container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
@@ -2191,33 +2230,13 @@
     return weeklySummary;
   }
 
-  function renderTimesPage(preservedTimeline = null) {
-    const page = el('main', undefined, 'times-page');
-    const body = el('div', undefined, 'times-body');
-    if (!pageState.configured && recentLoaded) {
-      body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
-      page.append(body); return page;
-    }
-    if (pageState.partial) {
-      const failed = (pageState.readStatus ?? []).filter(item => item.status === 'error').length;
-      const conflicts = pageState.readConflicts?.length || 0;
-      const warning = el('p', [
-        failed ? `${failed} time ${failed === 1 ? 'repository' : 'repositories'} could not be loaded.` : '',
-        conflicts ? `${conflicts} conflicting ${conflicts === 1 ? 'record was' : 'records were'} omitted.` : '',
-        'Showing available activity.',
-      ].filter(Boolean).join(' '), 'notice partial-read-warning');
-      body.append(warning);
-    }
-    const toolbar = el('section', undefined, 'times-toolbar');
-    const filterLabel = el('label', 'Search activity'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'URL or title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
-    const result = el('section', undefined, 'times-results activity-list');
+  function createActivityListRenderer(result, filter, onEmpty = null) {
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
       const draftKeys = new Set(drafts.map(activityRecordKey));
       const range = timesRange();
-      // Use the same optimistic completions as Timeline and Calendar while
-      // the shared background queue waits for GitHub synchronization.
+      // Keep locally accepted completions visible while GitHub sync is pending.
       const entries = mergeTimelineCompletedEntries(query
         ? [...(activitySearchEntries || []).filter(entry => !draftKeys.has(activityRecordKey(entry))),
           ...recent.filter(entry => entry._pending && !draftKeys.has(activityRecordKey(entry))), ...drafts]
@@ -2241,8 +2260,8 @@
         empty = el('div', undefined, 'activity-empty');
         const firstUse = !entries.length && timesHasTrackedTime === false;
         empty.append(el('p', query ? 'No entries match across all weeks.' : entries.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
-        if (query || entries.length) empty.append(button('Clear filter', 'secondary', async () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
-        else if (!firstUse) empty.append(button('Add time', 'secondary', async () => { bulkOpen = true; bulk.open = true; input.focus(); }));
+        if (query || entries.length) empty.append(button('Clear filter', 'secondary', () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
+        else if (!firstUse && onEmpty) empty.append(button('Add time', 'secondary', onEmpty));
       }
       const pageCount = Math.ceil(matches.length / ACTIVITY_SEARCH_PAGE_SIZE);
       if (query && activitySearchEntries) activitySearchPage = Math.min(activitySearchPage, Math.max(0, pageCount - 1));
@@ -2254,7 +2273,7 @@
         const visible = new Set(visibleMatches.map(entryKey));
         for (const entry of drafts) if (!visible.has(entryKey(entry))) visibleMatches.push(entry);
       }
-      renderRecent(result, visibleMatches, empty);
+      renderRecent(result, visibleMatches, empty, false, popupMode);
       if (query && activitySearchEntries && pageCount > 1) {
         const pagination = el('nav', undefined, 'times-search-pagination');
         pagination.setAttribute('aria-label', 'Search results pages');
@@ -2277,6 +2296,32 @@
     });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
+    return renderFiltered;
+  }
+
+  function renderTimesPage(preservedTimeline = null) {
+    const page = el('main', undefined, 'times-page');
+    const body = el('div', undefined, 'times-body');
+    if (!pageState.configured && recentLoaded) {
+      body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
+      page.append(body); return page;
+    }
+    if (pageState.partial) {
+      const failed = (pageState.readStatus ?? []).filter(item => item.status === 'error').length;
+      const conflicts = pageState.readConflicts?.length || 0;
+      const warning = el('p', [
+        failed ? `${failed} time ${failed === 1 ? 'repository' : 'repositories'} could not be loaded.` : '',
+        conflicts ? `${conflicts} conflicting ${conflicts === 1 ? 'record was' : 'records were'} omitted.` : '',
+        'Showing available activity.',
+      ].filter(Boolean).join(' '), 'notice partial-read-warning');
+      body.append(warning);
+    }
+    const toolbar = el('section', undefined, 'times-toolbar');
+    const filterLabel = el('label'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Search entries'; filter.setAttribute('aria-label', 'Search activity'); filter.value = timesFilter; filterLabel.className = 'times-filter';
+    filterLabel.append(icon('search', 'M7 1a6 6 0 1 0 3.708 10.72l3.286 3.286a.75.75 0 0 0 1.06-1.06l-3.286-3.286A6 6 0 0 0 7 1Zm-4.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0Z', 18), filter);
+    toolbar.append(filterLabel);
+    const result = el('section', undefined, 'times-results activity-list');
+    const renderFiltered = createActivityListRenderer(result, filter, () => { bulkOpen = true; bulk.open = true; input.focus(); });
     const weeklySummary = createWeeklySummary();
     const summaryHost = document.getElementById?.('activity-summary');
     const views = el('div', undefined, 'times-view-modes');
@@ -2290,6 +2335,7 @@
         if (switched) {
           resetWeekForViewSwitch();
           if (mode === 'timeline') activityInitialFocusPending = true;
+          body.querySelector('.timeline-shell')?.classList.toggle('calendar-week-navigation', mode === 'calendar');
           if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
           return loadSelectedTimes();
         }
@@ -2298,7 +2344,7 @@
         timeline.hidden = mode === 'list'; result.hidden = mode !== 'list';
         listTotal.hidden = mode !== 'list';
         calendarStatus.hidden = mode !== 'calendar';
-        filterLabel.hidden = mode !== 'list'; toolbar.classList.toggle('times-visual', mode !== 'list');
+        filterLabel.hidden = mode !== 'list'; refresh.hidden = mode !== 'list'; toolbar.classList.toggle('times-visual', mode !== 'list');
         if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
         if (mode === 'timeline' && !activityTimelineView) refreshMountedTimeline();
         if (mode === 'calendar') focusActivityCalendarPeriod();
@@ -2321,7 +2367,10 @@
     else body.append(views);
     const listTotal = el('div', listWeekTotalText(), 'times-list-total');
     listTotal.hidden = activityViewMode !== 'list';
-    body.append(toolbar, weekNavigation(), listTotal);
+    const refresh = recentRefreshButton(); refresh.classList.add('times-refresh');
+    refresh.hidden = activityViewMode !== 'list';
+    toolbar.append(weekNavigation(), refresh);
+    body.append(toolbar, listTotal);
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -3010,6 +3059,7 @@
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
         activityDashboard: timesMode || popupMode || fullWidthPopupOpen,
+        activityPage: timesMode || popupMode || fullWidthPopupOpen,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
@@ -3215,9 +3265,10 @@
   }
 
   function focusPopupAction() {
-    if (!popupFocusPending) return;
+    if (!popupFocusPending || popupOpening) return;
     globalThis.requestAnimationFrame?.(() => {
-      const action = fullWidthPopupShadow?.querySelector?.('[data-strip-primary]');
+      const description = fullWidthPopupShadow?.querySelector?.('.active-task-strip.is-active .strip-description');
+      const action = description || fullWidthPopupShadow?.querySelector?.('[data-strip-primary]');
       if (!popupFocusPending || !action || action.disabled) return;
       action.focus({ preventScroll: true }); popupFocusPending = false;
     });
@@ -3226,12 +3277,15 @@
   function applyCompactViewMode() {
     if (!compactSurface) return;
     const list = timelineViewMode === 'list';
-    placeCalendarWeekNavigation(compactSurface.timeline, timelineViewMode);
-    compactSurface.timeline.hidden = false;
+    placeCalendarWeekNavigation(popupMode || fullWidthPopupOpen ? compactSurface.body : compactSurface.timeline, timelineViewMode);
+    updateWeekNavigationLabel();
+    compactSurface.timeline.hidden = (popupMode || fullWidthPopupOpen) && list;
+    const toolbar = compactSurface.body.querySelector('.popup-list-toolbar');
+    if (toolbar) toolbar.hidden = !list;
     const shell = compactSurface.timeline.querySelector('.timeline-shell');
     if (shell) shell.hidden = list;
     const total = compactSurface.timeline.querySelector('.popup-list-total');
-    if (total) { total.hidden = !list; total.textContent = listWeekTotalText(); }
+    if (total) { total.hidden = popupMode || fullWidthPopupOpen || !list; total.textContent = listWeekTotalText(); }
     compactSurface.overlaps.hidden = list;
     compactSurface.today.hidden = !list;
     for (const control of (fullWidthPopupShadow || shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
@@ -3332,11 +3386,11 @@
         updateDescriptionSave();
       });
       description.addEventListener('keydown', event => {
-        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !start.disabled) {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
           event.preventDefault();
-          // Blur may trigger an immediate timeline render before focus reaches Start.
+          // Blur may trigger an immediate timeline render before focus reaches Stop.
           strip.setAttribute('data-moving-focus-to-stop', '');
-          try { start.focus({ preventScroll: true }); }
+          try { stop.focus({ preventScroll: true }); }
           finally { strip.removeAttribute('data-moving-focus-to-stop'); }
           return;
         }
@@ -3352,16 +3406,15 @@
         el('span', formatElapsedCard(active.startedAt), 'running-status-metric-value running-elapsed'));
       const startField = el('div', undefined, 'running-status-start-field');
       const startLabel = el('label', undefined, 'running-status-start-label');
-      startLabel.append(el('span', 'Start', 'running-status-start-caption'));
+      startLabel.append(el('span', 'Started', 'running-status-start-caption'));
       const startValue = el('span', undefined, 'running-status-start-value');
       const start = el('input', undefined, 'running-status-start');
       start.type = 'text'; start.inputMode = 'numeric'; start.maxLength = 5;
-      start.autocomplete = 'off'; start.setAttribute('aria-label', 'Start');
+      start.autocomplete = 'off'; start.setAttribute('aria-label', 'Started');
+      start.title = 'Edit started time; press Enter to save';
       start.value = new Date(active.startedAt).toTimeString().slice(0, 5);
       let displayedStartAt = active.startedAt;
-      const editIcon = el('span', '✎', 'running-status-start-edit-icon');
-      editIcon.setAttribute('aria-hidden', 'true');
-      startValue.append(start, editIcon); startLabel.append(startValue);
+      startValue.append(start); startLabel.append(startValue);
       const saveStart = el('button', '✓', 'running-status-start-save');
       saveStart.type = 'button'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
       saveStart.hidden = true;
@@ -3373,10 +3426,8 @@
         const current = currentActive();
         if (!start.isConnected || !current) return;
         saveStart.hidden = parseTime(start.value) === timeValue(new Date(current.startedAt));
-        editIcon.hidden = !saveStart.hidden || !startSaved.hidden;
       };
       start.addEventListener('click', () => start.select());
-      editIcon.addEventListener('click', () => { start.focus(); start.select(); });
       start.addEventListener('input', () => { startSaved.hidden = true; void updateStartDraft().catch(setError); });
       start.addEventListener('blur', async () => {
         const { parseTime } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
@@ -3392,9 +3443,9 @@
         if (!start.isConnected) return;
         const clock = parseTime(start.value);
         const timestamp = clock && localTimestamp(localDateValue(new Date(current.startedAt)), clock);
-        if (!timestamp) { setError(new Error('Enter a valid Start time (HH:MM or 1000).')); return; }
+        if (!timestamp) { setError(new Error('Enter a valid Started time (HH:MM or 1000).')); return; }
         if (clock === timeValue(new Date(current.startedAt)) && current.startedAt === displayedStartAt) return;
-        if (timestamp.getTime() > Date.now()) { setError(new Error('Start cannot be in the future.')); return; }
+        if (timestamp.getTime() > Date.now()) { setError(new Error('Started time cannot be in the future.')); return; }
         savingStart = true; start.disabled = true;
         try {
           const latest = await send({ type: 'GET_PAGE_STATE', refresh: true });
@@ -3418,8 +3469,8 @@
           applyPageState(confirmed);
           active.startedAt = timestamp.toISOString();
           displayedStartAt = timestamp.toISOString();
-          start.value = clock; saveStart.hidden = true; editIcon.hidden = true; startSaved.hidden = false;
-          setTimeout(() => { if (startSaved.isConnected) { startSaved.hidden = true; editIcon.hidden = false; } }, 3000);
+          start.value = clock; saveStart.hidden = true; startSaved.hidden = false;
+          setTimeout(() => { if (startSaved.isConnected) startSaved.hidden = true; }, 3000);
         } catch (error) { setError(error); }
         finally { savingStart = false; start.disabled = false; }
       };
@@ -3482,7 +3533,9 @@
         }
         if (!seen.size) choices.append(el('span', 'No recent tasks yet', 'running-status-recent-empty'));
         quickStart.append(choices);
-        strip.append(el('span', 'Not tracking', 'strip-idle'), quickStart);
+        const idle = el('div', undefined, 'strip-idle-status');
+        idle.append(el('span', 'Not tracking', 'strip-idle'), el('span', 'Start a task to begin', 'strip-idle-caption'));
+        strip.append(idle, quickStart);
       }
     } else if (!preserveActiveDescription) {
       switchAction.replaceChildren();
@@ -3503,7 +3556,9 @@
       .filter(entry => entry.endedAt && ((activityRecordDate(entry) >= startDate && activityRecordDate(entry) <= endDate)
         || overlapsSelectedWeek(entry)))
       .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
-    renderRecent(today, entries, null, true);
+    compactSurface.listEntries = entries;
+    if (compactSurface.renderList) compactSurface.renderList(entries);
+    else renderRecent(today, entries, null, true);
     }
     feedback.replaceChildren(); renderPanelFeedback(feedback);
     const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
@@ -3575,9 +3630,29 @@
         const switchAction = el('div', undefined, 'popup-switch-action');
         const overview = el('div', undefined, 'popup-overview-layout');
         const summary = createWeeklySummary();
-        overview.append(strip);
-        header.insertBefore(summary, headerActions);
+        overview.append(summary, strip);
         compactSurface = { strip, summary, switchAction, today, feedback, overlaps, timeline: null, body, host: null };
+        const listToolbar = el('section', undefined, 'popup-list-toolbar');
+        const filterLabel = el('label', undefined, 'times-filter'), filter = el('input');
+        filter.type = 'search'; filter.placeholder = popupMode ? 'Search entries' : 'Search this week';
+        filter.setAttribute('aria-label', popupMode ? 'Search activity' : 'Search current week');
+        filter.value = popupMode ? timesFilter : panelListFilter;
+        filterLabel.append(icon('search', 'M7 1a6 6 0 1 0 3.708 10.72l3.286 3.286a.75.75 0 0 0 1.06-1.06l-3.286-3.286A6 6 0 0 0 7 1Zm-4.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0Z', 18), filter);
+        listToolbar.append(filterLabel);
+        const refresh = recentRefreshButton(); refresh.classList.add('times-refresh');
+        listToolbar.append(refresh);
+        if (popupMode) compactSurface.renderList = createActivityListRenderer(today, filter);
+        else {
+          compactSurface.renderList = (entries = compactSurface.listEntries || []) => {
+            today.replaceChildren();
+            const query = panelListFilter.trim().toLowerCase();
+            const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query)
+              || taskTitleOf(entry).toLowerCase().includes(query)) : entries;
+            const empty = query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
+            renderRecent(today, matches, empty, true, true);
+          };
+          filter.addEventListener('input', () => { panelListFilter = filter.value; compactSurface.renderList(); });
+        }
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
         const modeButton = (mode, label) => {
@@ -3602,6 +3677,7 @@
         if (closeButton) timelineToolbarEnd.insertBefore(switchAction, closeButton);
         else timelineToolbarEnd.append(switchAction);
         body.append(overview);
+        body.append(listToolbar);
         body.append(timeline, overlaps, today, feedback);
         refreshCompactSurface();
       }
@@ -3766,12 +3842,17 @@
 
   function renderFullWidthPopup(style) {
     if (!fullWidthPopupOpen || !fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected) return;
+    const focused = fullWidthPopupShadow.activeElement;
+    const restoreDescriptionFocus = focused?.classList?.contains('strip-description');
+    const restoreStopFocus = focused?.getAttribute?.('data-panel-action') === 'stop';
     compactSurface = null;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     const surface = el('section', undefined, 'full-width-popup');
     surface.append(renderMenu({ compact: true, onClose: closeFullWidthPopup }));
     fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
     updateActivityWeekSummary();
+    if (restoreDescriptionFocus) fullWidthPopupShadow.querySelector('.strip-description')?.focus({ preventScroll: true });
+    else if (restoreStopFocus) fullWidthPopupShadow.querySelector('[data-panel-action="stop"]')?.focus({ preventScroll: true });
     focusPopupAction();
   }
 
@@ -3779,6 +3860,7 @@
     fullWidthPopupOpen = !fullWidthPopupOpen;
     if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
     popupReturnFocus = shadow?.activeElement || document.activeElement; popupFocusPending = true;
+    popupOpening = true;
     mountFullWidthPopup(); renderUi();
     clearInterval(timelineWindowTimer);
     timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
@@ -3801,6 +3883,7 @@
       }
       else renderUi();
     } catch (error) { setError(error); }
+    finally { popupOpening = false; focusPopupAction(); }
     return true;
   }
 
@@ -4130,16 +4213,38 @@
       :host(.times-surface) .times-page {width:min(1800px,calc(100% - 80px));min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
       :host(.times-surface[data-clockoli-width="full"]) .times-page {width:calc(100% - 80px);margin:0 auto}
       :host(.times-surface) .times-body {padding:0 0 30px}
-      :host(.times-surface) .times-toolbar:not(.times-visual) {display:block;margin:18px 0 22px}
-      :host(.times-surface) .times-filter {width:100%}
-      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:42px;margin-top:6px;border-radius:8px}
+      :host(.times-surface) .times-toolbar:not(.times-visual) {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:16px;margin:24px 0 20px}
+      :host(.times-surface) .times-filter {position:relative;width:100%;margin:0}
+      :host(.times-surface) .times-filter svg {position:absolute;top:50%;left:16px;transform:translateY(-50%);color:var(--fgColor-muted,var(--ck-fg-muted));pointer-events:none}
+      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:50px;margin-top:0;padding-left:44px;border-radius:8px}
+      :host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation {display:grid;grid-template-columns:auto auto auto;gap:12px;width:auto;min-height:0;margin:0;padding:0}
+      :host(.times-surface) .times-toolbar .week-navigation-label {display:block;padding:11px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:8px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
+      :host(.times-surface) .times-toolbar .week-navigation-button {min-width:46px;min-height:50px}
+      :host(.times-surface) .times-refresh {width:50px;height:50px;border:1px solid var(--borderColor-default,var(--ck-border));border-radius:8px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-refresh:hover {background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover))}
+      :host(.times-surface) .times-refresh[hidden] {display:none}
+      :host(.times-surface) .activity-list .entry {padding-bottom:12px}
+      :host(.times-surface) .activity-list .entry-record {margin:10px 12px 0;padding:12px 110px 12px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .activity-list .entry-record + .entry-record {margin-top:10px}
+      :host(.times-surface) .activity-list .entry-record:last-child {border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px}
       :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
-      :host(.times-surface) .popup-timeline-section {margin-bottom:16px}
+      :host(.times-surface) .popup-timeline-section {padding-top:24px;margin-bottom:16px}
       :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
-      :host(.times-surface) .week-navigation-label {font-size:15px;font-weight:700}
+      :host(.times-surface) .week-navigation {grid-template-columns:1fr 1fr}
+      :host(.times-surface) .week-navigation-label,:host(.times-surface) .times-list-total {display:none}
+      :host(.times-surface) .activity-list .section-head {justify-content:flex-end;margin-bottom:0}
       :host(.times-surface) .week-navigation-button {border-radius:8px}
+      :host(.times-surface) .timeline-shell > .week-navigation {position:absolute;z-index:30;inset:0 0 auto;height:84px;min-height:0;margin:0;pointer-events:none}
+      :host(.times-surface) .timeline-shell.calendar-week-navigation > .week-navigation {height:44px}
+      :host(.times-surface) .timeline-shell > .week-navigation::before,
+      :host(.times-surface) .timeline-shell > .week-navigation::after {content:"";position:absolute;inset-block:0;width:90px;pointer-events:none}
+      :host(.times-surface) .timeline-shell > .week-navigation::before {left:0;background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent)}
+      :host(.times-surface) .timeline-shell > .week-navigation::after {right:0;background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent)}
+      :host(.times-surface) .timeline-shell > .week-navigation .week-navigation-button {position:relative;z-index:1;pointer-events:auto}
       @media(max-width:1000px){:host(.times-surface) .activity-weekly-copy{flex-direction:column;gap:0}:host(.times-surface) .activity-weekly-cards{gap:8px}}
       @media(max-width:700px){:host(.times-surface) .times-page,:host(.times-surface[data-clockoli-width="full"]) .times-page{width:100%;margin:0}:host(.times-surface) .times-body{padding:0 12px 24px}}
+      @media(max-width:700px){:host(.times-surface) .times-toolbar:not(.times-visual){grid-template-columns:minmax(0,1fr) auto;gap:10px}:host(.times-surface) .times-filter{grid-column:1/-1}:host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation{grid-column:1;justify-self:start;gap:8px}:host(.times-surface) .times-refresh{grid-column:2}}
+      @media(max-width:700px){:host(.times-surface) .popup-timeline-section{padding-top:16px}}
       @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `;
     if (popupMode || fullWidthPopupOpen) style.textContent += `
@@ -4183,7 +4288,7 @@
         :host(.full-width-popup-surface) .header-navigation .reports-button { min-width:0; justify-content:center; gap:3px; padding:5px 2px; font-size:10px; white-space:nowrap }
         :host(.full-width-popup-surface) .header-navigation .reports-button svg { width:12px; height:12px }
       }
-      :host(.full-width-popup-surface) .popup-timeline-section { position:relative; width:100%; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
+      :host(.full-width-popup-surface) .popup-timeline-section { box-sizing:border-box; position:relative; width:100%; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
       :host(.full-width-popup-surface) .popup-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
       :host(.full-width-popup-surface) .popup-list-total[hidden] { display:none }
       :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
@@ -4232,14 +4337,14 @@
       .active-task-strip .running-status-start-field:focus-within { box-shadow:inset 0 0 0 2px var(--fgColor-accent,var(--ck-accent)) }
       .active-task-strip .running-status-start-label { display:flex; flex-direction:column; gap:2px; margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:600; line-height:1.2; white-space:nowrap }
       .active-task-strip .running-status-start-value { display:inline-flex; align-items:center; gap:4px; height:24px }
-      .active-task-strip .running-status-start-edit-icon { color:var(--fgColor-accent,var(--ck-accent)); font-size:14px; line-height:11px; cursor:pointer }
-      .active-task-strip .running-status-start { box-sizing:border-box; width:52px; height:24px; margin:0; padding:2px 0; border:0; border-radius:4px; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font:650 14px/20px var(--fontStack-sansSerif); font-variant-numeric:tabular-nums }
+      .active-task-strip .running-status-start { box-sizing:border-box; width:55px; height:24px; margin:0; padding:2px 0; border:0; border-bottom:1px dashed var(--fgColor-accent,var(--ck-accent)); border-radius:0; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font:650 14px/20px var(--fontStack-sansSerif); font-variant-numeric:tabular-nums; cursor:text }
+      .active-task-strip .running-status-start:hover { border-bottom-style:solid }
       .active-task-strip .running-status-start:focus-visible { outline:none }
       .active-task-strip .running-status-start-save,.active-task-strip .running-status-start-saved { position:absolute; right:3px; bottom:4px; display:grid; width:24px; height:26px; place-items:center }
       .active-task-strip .running-status-start-save { padding:0; border:0; border-radius:5px; background:transparent; color:var(--fgColor-success,var(--ck-success)); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
       .active-task-strip .running-status-start-saved { color:var(--fgColor-success,var(--ck-success)); font-size:0 }
       .active-task-strip .running-status-start-saved::before { content:'✓'; font-size:17px; font-weight:800 }
-      .active-task-strip .running-status-start-save[hidden],.active-task-strip .running-status-start-saved[hidden],.active-task-strip .running-status-start-edit-icon[hidden] { display:none }
+      .active-task-strip .running-status-start-save[hidden],.active-task-strip .running-status-start-saved[hidden] { display:none }
       .active-task-strip .running-status-metrics { display:flex; align-items:stretch; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
       .active-task-strip .running-status-elapsed,.active-task-strip .running-status-today { display:flex; flex-direction:column; gap:2px; min-width:0; padding:5px 11px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:650; line-height:1.2 }
       .active-task-strip .running-status-today { border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
@@ -4295,17 +4400,114 @@
       .popup-overview-layout .active-task-strip .running-status-recent-empty { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
       @media(max-width:1450px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"brand stats end" "nav nav nav"; row-gap:3px } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; justify-self:start } :host(.full-width-popup-surface) .header-actions { grid-area:nav } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
       @media(max-width:900px) { .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap } .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none } .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 40% } .popup-overview-layout .active-task-strip.is-active .running-status-stats { margin-left:auto } }
+      @media(min-width:901px) {
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:100%; max-width:none; min-width:0 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin-left:0 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:stretch; align-self:start; width:100% }
+      }
       :host(.popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "actions actions"; gap:4px; padding:8px 12px }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; width:100%; justify-content:space-between }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 }
       :host(.popup-surface) .timeline-toolbar-end { grid-area:end; gap:4px }
       :host(.popup-surface) .header-actions { grid-area:actions }
-      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap }
-      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none }
-      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex-basis:100% }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto auto; align-items:start; gap:8px 12px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-live { grid-column:1; grid-row:1; justify-self:start; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1; grid-row:2; max-width:100%; min-width:0; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1; grid-row:3; width:100%; min-width:0; max-width:none; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; align-self:start; margin:0 }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { box-sizing:border-box; grid-column:2; grid-row:3; justify-self:stretch; align-self:start; width:100% }
+      @media(max-width:520px) { :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description { min-height:44px } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { min-height:44px } }
+      @media(max-width:359px) { :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1/span 2 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1/span 2 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-row:4 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { grid-row:5 } }
       :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px }
       :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:start }
+      :host(.popup-surface) .strip-idle-status { display:flex; flex-direction:column; align-items:flex-start; gap:4px }
+      :host(.popup-surface) .strip-idle { padding:4px 8px; border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-transform:uppercase }
+      :host(.popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-quick-start { display:grid; grid-template-columns:minmax(0,1fr); width:100% }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-recent { width:100% }
+      /* Keep the toolbar popup's Activity hierarchy within its scrollable width. */
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-summary { margin-bottom:10px; padding:12px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-range { display:block; font-size:14px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-cards { grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-card { padding:0 4px; border:0; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-right:0 }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:column; align-items:flex-start; gap:0 }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-value { font-size:16px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-name { font-size:10px }
+      :host(.popup-surface) .popup-timeline-section { padding-top:16px }
+      :host(.popup-surface) .popup-timeline-section[hidden],:host(.popup-surface) .popup-list-toolbar[hidden] { display:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 6px; border:0; pointer-events:none }
+      :host(.popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation { height:44px }
+      :host(.popup-surface) .timeline-shell > .week-navigation .week-navigation-label { display:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation::before,:host(.popup-surface) .timeline-shell > .week-navigation::after { content:""; position:absolute; inset-block:0; width:55px; pointer-events:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; pointer-events:auto }
+      :host(.popup-surface) .popup-list-toolbar { display:grid; grid-template-columns:minmax(0,1fr) 40px; align-items:center; gap:8px; min-width:0; margin:16px 12px 12px }
+      :host(.popup-surface) .popup-list-toolbar .times-filter { position:relative; grid-column:1/-1; min-width:0; margin:0 }
+      :host(.popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:12px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
+      :host(.popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:44px; margin:0; padding-left:38px; border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; grid-row:2; grid-template-columns:40px auto 40px; justify-self:end; width:max-content; max-width:100%; min-width:0; min-height:0; margin:0; padding:0; border:0; gap:8px }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-label { box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden; height:40px; padding:0 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; color:var(--fgColor-muted,var(--ck-fg-muted)); text-align:center; text-overflow:ellipsis }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-button { width:40px; height:40px; border-radius:8px }
+      :host(.popup-surface) .popup-list-toolbar .times-refresh { grid-column:2; grid-row:2; width:40px; height:40px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .today-list { margin:0 12px 16px }
+      :host(.popup-surface) .activity-list .entry { margin:0 0 12px; border:0; background:transparent }
+      :host(.popup-surface) .activity-list .entry-record,:host(.popup-surface) .activity-list .entry-record.entry-overlap { margin:8px 0 0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .activity-list .entry-record + .entry-record { margin-top:8px }
+      :host(.popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
+      :host(.popup-surface) .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto }
+      :host(.popup-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:16px 0; font-size:12px }
       @media(max-width:520px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "nav nav" } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { width:100%; justify-content:space-between } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px } }
+      /* The injected page panel uses the same Activity hierarchy, not toolbar chrome. */
+      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:none; grid-template-columns:auto minmax(0,1fr) auto; gap:12px; padding-block:10px }
+      :host(.full-width-popup-surface) .timeline-brand,:host(.full-width-popup-surface) .header-actions,:host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:auto }
+      :host(.full-width-popup-surface) .header-actions { justify-self:center }
+      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end }
+      :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,7fr); align-items:stretch; gap:12px; margin:14px auto 0 }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-summary { padding:12px 14px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; font-size:13px }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-range { display:block }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card { padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:row-reverse; justify-content:space-between; font-size:14px }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-value { font-size:13px }
+      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-name { font-size:11px }
+      :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:84px; padding:12px 24px; gap:14px }
+      :host(.full-width-popup-surface) .strip-idle-status { display:flex; flex-direction:column; flex:none; gap:4px; min-width:150px; padding-right:20px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.full-width-popup-surface) .strip-idle { align-self:flex-start; padding:4px 8px; border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-transform:uppercase }
+      :host(.full-width-popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      :host(.full-width-popup-surface) .popup-timeline-section { padding-top:24px }
+      :host(.full-width-popup-surface) .popup-timeline-section[hidden],:host(.full-width-popup-surface) .popup-list-toolbar[hidden] { display:none }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 12px; border:0; pointer-events:none }
+      :host(.full-width-popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation { height:44px }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-label { display:none }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before,:host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { content:""; position:absolute; inset-block:0; width:90px; pointer-events:none }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; min-width:44px; min-height:40px; border-radius:8px; pointer-events:auto }
+      :host(.full-width-popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button { min-width:30px; min-height:30px }
+      :host(.full-width-popup-surface) .popup-list-toolbar { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:16px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:24px auto 20px }
+      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { position:relative; min-width:0; margin:0 }
+      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:16px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
+      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:50px; margin:0; padding-left:44px; border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-template-columns:46px auto 46px; gap:12px; width:auto; min-height:0; margin:0; padding:0; border:0 }
+      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-label { padding:11px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; font-size:14px }
+      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-button { width:46px; height:50px; border-radius:8px }
+      :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { width:50px; height:50px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.full-width-popup-surface) .today-list { padding-bottom:16px }
+      :host(.full-width-popup-surface) .activity-list .entry { margin-bottom:12px; border:0; background:transparent }
+      :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { margin:10px 12px 0; padding:12px 110px 12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.full-width-popup-surface) .activity-list .entry-record + .entry-record { margin-top:10px }
+      :host(.full-width-popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
+      @media(max-width:900px) { :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:110px } :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:"brand end" "nav nav"; grid-template-columns:minmax(0,1fr) auto } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .header-actions { grid-area:nav; justify-self:stretch } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
+      @media(max-width:700px) { :host(.full-width-popup-surface) .popup-list-toolbar { grid-template-columns:minmax(0,1fr) auto; gap:10px } :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { grid-column:1/-1 } :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; justify-self:start; gap:8px } :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { grid-column:2 } :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { padding-right:14px } :host(.full-width-popup-surface) .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
     `;
     if (fullWidthPopupOpen) {
       if (preserveFullWidthTimeline) refreshMountedTimeline();

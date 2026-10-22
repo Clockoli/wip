@@ -146,7 +146,10 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await expect(root.locator('.calendar-day-header')).toHaveCount(7);
     await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     await expect(summary).not.toContainText('Daily average');
-    await expect(summary).toContainText('Statistic');
+    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–\d+/);
+    await expect(summary.locator('.activity-weekly-label')).toBeHidden();
+    await expect(root.locator('.week-navigation-label')).toBeHidden();
+    await expect(root.locator('.times-list-total')).toBeHidden();
     await expect(switcher.getByRole('group', { name: 'Activity view' })).toBeVisible();
     await expect(summary.locator('.activity-weekly-card').first()).toContainText('Today');
     await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
@@ -155,6 +158,18 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await root.getByRole('button', { name: 'Previous week' }).click();
     await root.getByRole('button', { name: 'Next week' }).click();
     await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await switcher.getByRole('button', { name: 'List' }).click();
+    const search = root.getByRole('searchbox', { name: 'Search activity' });
+    await expect(search).toBeVisible();
+    await expect(root.getByText('Search activity', { exact: true })).toHaveCount(0);
+    await expect(search).toHaveCSS('margin-top', '0px');
+    await expect(root.getByText('Tracked time', { exact: true })).toHaveCount(0);
+    await expect(root.locator('.week-navigation-label')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(root.locator('.times-list-total')).toBeHidden();
+    await search.fill('Activity test task');
+    await expect(search).toHaveValue('Activity test task');
+    await search.fill('');
+    await switcher.getByRole('button', { name: 'Calendar' }).click();
     const github = await context.newPage();
     github.on('pageerror', error => errors.push(error.message));
     await github.setViewportSize({ width: 1774, height: 900 });
@@ -165,24 +180,28 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await github.goto('https://github.com/acme/app/issues/42');
     await github.locator('#clockoli-root .trigger-main').click();
     const panel = github.locator('#clockoli-full-width-popup-root');
-    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
     await expect(panel.locator('.popup-overview-layout .strip-idle')).toHaveText('Not tracking');
     await expect(panel.locator('.active-task-strip .running-status-recent-task')).toHaveCount(3);
     await expect(panel.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toHaveText('Track this task');
     await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
     await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
     const idleOverview = await panel.locator('.full-width-popup').evaluate(popup => {
-      const header = popup.querySelector('.tracker-toolbar');
-      const logo = header.querySelector('.timeline-brand').getBoundingClientRect();
-      const summary = header.querySelector('.activity-weekly-summary').getBoundingClientRect();
+      const summary = popup.querySelector('.popup-overview-layout .activity-weekly-summary').getBoundingClientRect();
       const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
-      return { logoRight: logo.right, summaryLeft: summary.left, summaryBottom: summary.bottom,
-        cardTop: card.top, cardHeight: card.height, cardWidth: card.width };
+      return { summaryTop: summary.top, summaryRight: summary.right, summaryHeight: summary.height,
+        cardTop: card.top, cardLeft: card.left, cardHeight: card.height, cardWidth: card.width,
+        scrollWidth: popup.scrollWidth, clientWidth: popup.clientWidth };
     });
-    expect(idleOverview.summaryLeft).toBeGreaterThan(idleOverview.logoRight);
-    expect(idleOverview.cardTop).toBeGreaterThan(idleOverview.summaryBottom);
-    expect(idleOverview.cardHeight).toBeLessThan(85);
+    const activitySummary = await summary.boundingBox();
+    const activityCard = await page.locator('#activity-running-status .running-status-row').boundingBox();
+    expect(Math.abs(idleOverview.summaryTop - idleOverview.cardTop)).toBeLessThan(2);
+    expect(idleOverview.summaryRight).toBeLessThan(idleOverview.cardLeft);
+    expect(idleOverview.cardHeight).toBeGreaterThanOrEqual(idleOverview.summaryHeight - 2);
     expect(idleOverview.cardWidth).toBeGreaterThan(600);
+    expect(idleOverview.summaryHeight).toBeLessThanOrEqual(activitySummary.height + 20);
+    expect(idleOverview.cardHeight).toBeLessThanOrEqual(activityCard.height + 20);
+    expect(idleOverview.scrollWidth).toBeLessThanOrEqual(idleOverview.clientWidth);
     const quickStartLabels = await panel.locator('.running-status-recent-task').allTextContents();
     await panel.getByRole('button', { name: 'Previous week' }).click();
     await panel.getByRole('button', { name: 'Next week' }).click();
@@ -391,13 +410,77 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     }));
     await quickStartPage.goto('https://github.com/acme/app/issues/42');
     await quickStartPage.locator('#clockoli-root .trigger-main').click();
+    const githubPanel = quickStartPage.locator('#clockoli-full-width-popup-root');
+    const panelSummary = githubPanel.locator('.popup-overview-layout .activity-weekly-summary');
+    await expect(panelSummary.locator('.activity-weekly-range')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(githubPanel.locator('.tracker-toolbar .activity-weekly-summary')).toHaveCount(0);
+    await expect(githubPanel.locator('.strip-idle-caption')).toHaveText('Start a task to begin');
+    for (const mode of ['Timeline', 'Calendar']) {
+      await githubPanel.getByRole('button', { name: mode, exact: true }).click();
+      const shell = githubPanel.locator('.popup-timeline-section .timeline-shell');
+      const nav = shell.locator(':scope > .week-navigation');
+      await expect(nav).toBeVisible();
+      await expect(nav.locator('.week-navigation-label')).toBeHidden();
+      const [shellBox, navBox] = await Promise.all([shell.boundingBox(), nav.boundingBox()]);
+      expect(Math.abs(shellBox.y - navBox.y)).toBeLessThan(2);
+      expect(await nav.evaluate(node => getComputedStyle(node, '::before').backgroundImage)).toContain('gradient');
+      await nav.getByRole('button', { name: 'Previous week' }).click();
+      await nav.getByRole('button', { name: 'Next week' }).click();
+    }
+    await githubPanel.getByRole('button', { name: 'List', exact: true }).click();
+    const panelToolbar = githubPanel.locator('.popup-list-toolbar');
+    const localSearch = panelToolbar.getByRole('searchbox', { name: 'Search current week' });
+    await expect(panelToolbar.locator('.week-navigation-label')).toHaveText(await panelSummary.locator('.activity-weekly-range').innerText());
+    await expect(panelToolbar.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    const listControls = await panelToolbar.evaluate(toolbar => {
+      const bounds = selector => toolbar.querySelector(selector).getBoundingClientRect();
+      const previous = bounds('.week-navigation-button:first-child');
+      const label = bounds('.week-navigation-label');
+      const next = bounds('.week-navigation-button:last-child');
+      return { searchRight: bounds('.times-filter').right, navigationLeft: bounds('.week-navigation').left,
+        navigationRight: bounds('.week-navigation').right, refreshLeft: bounds('.times-refresh').left,
+        previousWidth: previous.width, previousHeight: previous.height,
+        previousGap: label.left - previous.right, nextGap: next.left - label.right,
+        nextWidth: next.width, nextHeight: next.height };
+    });
+    expect(listControls.searchRight).toBeLessThan(listControls.navigationLeft);
+    expect(listControls.navigationRight).toBeLessThan(listControls.refreshLeft);
+    expect(listControls.previousWidth).toBe(46);
+    expect(listControls.previousHeight).toBe(50);
+    expect(listControls.nextWidth).toBe(46);
+    expect(listControls.nextHeight).toBe(50);
+    expect(listControls.previousGap).toBe(12);
+    expect(listControls.nextGap).toBe(12);
+    await quickStartPage.setViewportSize({ width: 420, height: 720 });
+    const narrowControls = await panelToolbar.evaluate(toolbar => {
+      const nav = toolbar.querySelector('.week-navigation').getBoundingClientRect();
+      const refresh = toolbar.querySelector('.times-refresh').getBoundingClientRect();
+      return { navRight: nav.right, refreshLeft: refresh.left, refreshRight: refresh.right,
+        navMid: nav.top + nav.height / 2, refreshMid: refresh.top + refresh.height / 2,
+        overflow: toolbar.closest('.full-width-popup').scrollWidth - toolbar.closest('.full-width-popup').clientWidth };
+    });
+    expect(narrowControls.navRight).toBeLessThan(narrowControls.refreshLeft);
+    expect(narrowControls.refreshRight).toBeLessThanOrEqual(420);
+    expect(Math.abs(narrowControls.navMid - narrowControls.refreshMid)).toBeLessThan(2);
+    expect(narrowControls.overflow).toBeLessThanOrEqual(1);
+    await quickStartPage.setViewportSize({ width: 1774, height: 900 });
+    await expect(githubPanel.locator('.popup-list-total')).toBeHidden();
+    await expect(githubPanel.locator('.today-list .section-head')).toHaveCount(0);
+    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await localSearch.fill('Earlier day task');
+    await expect(githubPanel.locator('.today-list .entry-record')).toHaveCount(1);
+    await localSearch.fill('Archived task');
+    await expect(githubPanel.locator('.today-list')).toContainText('No entries match this week.');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.includes('SEARCH_ACTIVITY'))).toBe(false);
+    await localSearch.fill('');
+    await githubPanel.getByRole('button', { name: 'Timeline', exact: true }).click();
     const recentTask = quickStartPage.locator('#clockoli-full-width-popup-root .running-status-recent-task');
     await expect(recentTask).toHaveCount(3);
     const toolbar = await context.newPage();
     toolbar.on('pageerror', error => errors.push(error.message));
     await toolbar.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
     const toolbarRoot = toolbar.locator('#clockoli-popup-root');
-    await expect(toolbarRoot.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(toolbarRoot.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
     await expect(toolbarRoot.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toBeVisible();
     await expect(toolbarRoot.locator('.running-status-recent-task')).toHaveCount(3);
     await toolbarRoot.locator('.running-status-recent-task').first().click();
@@ -459,7 +542,7 @@ test('popup Quick start uses the fresh recent response rather than the older pag
     await page.goto('https://github.com/acme/app/issues/42');
     await page.locator('#clockoli-root .trigger-main').click();
     const panel = page.locator('#clockoli-full-width-popup-root');
-    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
     await expect(panel.locator('.running-status-recent-task')).toHaveCount(3);
   });
 });
@@ -476,7 +559,7 @@ for (const view of ['Timeline', 'Calendar']) test(`popup weekly total advances w
     await page.locator('#clockoli-root .trigger-main').click();
     const panel = page.locator('#clockoli-full-width-popup-root');
     await panel.getByRole('button', { name: view }).click();
-    const total = panel.locator('.tracker-toolbar [data-stat="total"]');
+    const total = panel.locator('.popup-overview-layout [data-stat="total"]');
     await expect(total).not.toHaveText('—');
     const before = await total.textContent();
     await expect.poll(() => panel.locator('.running-status-elapsed').textContent(), { timeout: 20_000 })
@@ -564,6 +647,210 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
   }
 });
 
+test('toolbar popup gives Description the remaining width and aligns Stop with Started and Duration', async ({}, testInfo) => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-running-layout-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-popup-running-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let active = null;', `let active = {
+      id: 'running', taskUrl, taskTitle: 'Running task', startedAt: date + 'T12:00:17Z',
+      entryDate: date, timezone: 'UTC', description: '' };`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const root = page.locator('#clockoli-popup-root');
+    const card = root.locator('.active-task-strip.is-active');
+    await expect(card.getByRole('textbox', { name: 'Started' })).toBeVisible();
+    await expect(card.getByRole('textbox', { name: 'Description (optional)' })).toHaveValue('');
+    for (const width of [420, 390, 800, 320]) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.evaluate(full => { document.documentElement.dataset.clockoliWidth = full ? 'full' : 'contained'; }, width === 800);
+      const layout = await card.evaluate(node => {
+        const b = selector => node.querySelector(selector).getBoundingClientRect();
+        const cardBox = node.getBoundingClientRect();
+        const title = b('.strip-task-copy');
+        const field = b('.strip-description-field');
+        const input = b('.strip-description');
+        const stats = b('.running-status-stats');
+        const stop = b('[data-panel-action="stop"]');
+        return { card: cardBox.toJSON(), title: title.toJSON(), field: field.toJSON(),
+          input: input.toJSON(), stats: stats.toJSON(), stop: stop.toJSON(),
+          overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      expect(layout.title.bottom).toBeLessThanOrEqual(layout.field.top);
+      if (width > 359) {
+        expect(layout.stats.left - layout.input.right).toBeGreaterThanOrEqual(8);
+        expect(layout.stats.left - layout.input.right).toBeLessThanOrEqual(24);
+      } else {
+        expect(layout.input.right).toBeGreaterThan(layout.stats.left);
+        expect(layout.input.bottom).toBeLessThanOrEqual(layout.stats.top);
+      }
+      expect(Math.abs(layout.input.right - layout.field.right)).toBeLessThan(2);
+      expect(Math.abs(layout.stop.width - layout.stats.width)).toBeLessThan(2);
+      expect(Math.abs(layout.stop.right - layout.stats.right)).toBeLessThan(2);
+      expect(layout.stop.top).toBeGreaterThanOrEqual(layout.stats.bottom);
+      if (width <= 420) {
+        expect(layout.input.height).toBeGreaterThanOrEqual(44);
+        expect(layout.stop.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(layout.overflow).toBeLessThanOrEqual(0);
+      if (width === 420 || width === 800) {
+        await page.screenshot({ path: testInfo.outputPath(`popup-running-${width}.png`) });
+      }
+    }
+    await card.locator('.strip-description').focus();
+    await page.keyboard.press('Tab');
+    await expect(card.getByRole('button', { name: 'Stop and save' })).toBeFocused();
+    await expect(card.getByRole('button', { name: 'Stop and save' })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('toolbar popup shares Activity summary, chart navigation, and List controls', async ({}, testInfo) => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-visual-parity-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-popup-visual-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.setViewportSize({ width: 420, height: 720 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const root = page.locator('#clockoli-popup-root');
+    const summary = root.locator('.popup-overview-layout .activity-weekly-summary');
+    await expect(summary.locator('.activity-weekly-range')).toBeVisible();
+    await expect(summary.locator('.activity-weekly-range')).not.toBeEmpty();
+    await expect(root.locator('.tracker-toolbar .activity-weekly-summary')).toHaveCount(0);
+    await expect(root.locator('.active-task-strip .strip-idle-caption')).toHaveText('Start a task to begin');
+    await expect(root.locator('.running-status-recent-task').first()).toBeVisible();
+    const quickStartBounds = await root.locator('.active-task-strip').evaluate(card => {
+      const label = card.querySelector('.running-status-quick-label').getBoundingClientRect();
+      const choice = card.querySelector('.running-status-recent-task').getBoundingClientRect();
+      const bounds = card.getBoundingClientRect();
+      return { labelRight: label.right, choiceLeft: choice.left, choiceRight: choice.right, cardLeft: bounds.left, cardRight: bounds.right };
+    });
+    expect(quickStartBounds.labelRight).toBeLessThan(quickStartBounds.cardRight);
+    expect(quickStartBounds.choiceLeft).toBeGreaterThan(quickStartBounds.cardLeft);
+    expect(quickStartBounds.choiceRight).toBeLessThan(quickStartBounds.cardRight);
+    for (const mode of ['Timeline', 'Calendar']) {
+      await root.getByRole('button', { name: mode, exact: true }).click();
+      const shell = root.locator('.popup-timeline-section .timeline-shell');
+      const navigation = shell.locator(':scope > .week-navigation');
+      await expect(navigation).toBeVisible();
+      await expect(navigation.locator('.week-navigation-label')).toBeHidden();
+      const [shellBox, navBox] = await Promise.all([shell.boundingBox(), navigation.boundingBox()]);
+      expect(Math.abs(shellBox.y - navBox.y)).toBeLessThan(2);
+      expect(await navigation.evaluate(node => getComputedStyle(node, '::before').backgroundImage)).toContain('gradient');
+      if (mode === 'Calendar') {
+        const activity = await context.newPage();
+        await activity.setViewportSize({ width: 420, height: 720 });
+        await activity.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+        await activity.locator('#activity-view-switcher').getByRole('button', { name: 'Calendar' }).click();
+        const popupArrow = await navigation.getByRole('button', { name: 'Previous week' }).boundingBox();
+        const activityArrow = await activity.getByRole('button', { name: 'Previous week' }).boundingBox();
+        expect({ width: popupArrow.width, height: popupArrow.height })
+          .toEqual({ width: activityArrow.width, height: activityArrow.height });
+        await activity.close();
+      }
+      await navigation.getByRole('button', { name: 'Previous week' }).click();
+      await expect(navigation.getByRole('button', { name: 'Next week' })).toBeEnabled();
+      await navigation.getByRole('button', { name: 'Next week' }).click();
+    }
+    await root.getByRole('button', { name: 'List', exact: true }).click();
+    const toolbar = root.locator('.popup-list-toolbar');
+    const search = toolbar.getByRole('searchbox', { name: 'Search activity' });
+    const navigation = toolbar.locator('.week-navigation');
+    const refresh = toolbar.getByRole('button', { name: 'Refresh' });
+    await expect(search).toHaveAttribute('placeholder', 'Search entries');
+    await expect(navigation.locator('.week-navigation-label')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(refresh).toBeVisible();
+    const listControls = await toolbar.evaluate(node => {
+      const box = selector => node.querySelector(selector).getBoundingClientRect();
+      const nav = box('.week-navigation'), previous = box('.week-navigation-button:first-child');
+      const label = box('.week-navigation-label'), next = box('.week-navigation-button:last-child');
+      const refresh = box('.times-refresh');
+      return { navWidth: nav.width, labelWidth: label.width, previousRight: previous.right,
+        labelLeft: label.left, labelRight: label.right, nextLeft: next.left,
+        nextRight: next.right, refreshLeft: refresh.left,
+        nextMid: next.top + next.height / 2, refreshMid: refresh.top + refresh.height / 2 };
+    });
+    expect(listControls.navWidth).toBeLessThan(240);
+    expect(listControls.labelWidth).toBeLessThan(140);
+    expect(listControls.labelLeft - listControls.previousRight).toBeLessThanOrEqual(8);
+    expect(listControls.nextLeft - listControls.labelRight).toBeLessThanOrEqual(8);
+    expect(listControls.refreshLeft - listControls.nextRight).toBeLessThanOrEqual(16);
+    expect(Math.abs(listControls.nextMid - listControls.refreshMid)).toBeLessThan(2);
+    const currentRange = await summary.locator('.activity-weekly-range').innerText();
+    await navigation.getByRole('button', { name: 'Previous week' }).click();
+    await expect(summary.locator('.activity-weekly-range')).not.toHaveText(currentRange);
+    await navigation.getByRole('button', { name: 'Next week' }).click();
+    await expect(summary.locator('.activity-weekly-range')).toHaveText(currentRange);
+    await expect(root.locator('.today-list .section-head')).toHaveCount(0);
+    await expect(root.locator('.popup-list-total')).toBeHidden();
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-width', '1px');
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    const reads = await worker.evaluate(() => globalThis.trackingMessages.length);
+    await refresh.click();
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.length)).toBeGreaterThan(reads);
+    await expect(refresh).toBeEnabled();
+    await search.fill('Archived task');
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.includes('SEARCH_ACTIVITY'))).toBe(true);
+    await expect(root.locator('.today-list').getByRole('link', { name: 'Archived task' })).toBeVisible();
+    await search.fill('');
+    await expect(root.locator('.today-list').getByRole('link', { name: 'Archived task' })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('popup-list-420.png') });
+    for (const width of [320, 390, 800]) {
+      await page.setViewportSize({ width, height: 720 });
+      const controls = await toolbar.evaluate(node => {
+        const nav = node.querySelector('.week-navigation').getBoundingClientRect();
+        const refresh = node.querySelector('.times-refresh').getBoundingClientRect();
+        const label = node.querySelector('.week-navigation-label').getBoundingClientRect();
+        return { navRight: nav.right, refreshLeft: refresh.left, refreshRight: refresh.right,
+          navMid: nav.top + nav.height / 2, refreshMid: refresh.top + refresh.height / 2,
+          labelWidth: label.width, overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      expect(controls.navRight).toBeLessThan(controls.refreshLeft);
+      expect(controls.refreshRight).toBeLessThanOrEqual(width);
+      expect(controls.labelWidth).toBeLessThan(140);
+      expect(Math.abs(controls.navMid - controls.refreshMid)).toBeLessThan(2);
+      expect(controls.overflow).toBeLessThanOrEqual(1);
+    }
+    await page.screenshot({ path: testInfo.outputPath('popup-list-800.png') });
+    expect(await toolbar.evaluate(node => document.documentElement.scrollWidth <= innerWidth && node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('Tracking now stacks task details and places Start, Duration and Stop on the right', async () => {
   test.setTimeout(45000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-status-start-extension-'));
@@ -594,20 +881,12 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const strip = page.locator('.running-status.is-active .running-status-row');
     const description = strip.getByRole('textbox', { name: 'Description' });
-    const start = strip.getByRole('textbox', { name: 'Start' });
+    const start = strip.getByRole('textbox', { name: 'Started' });
     await expect(start).toHaveValue('12:00');
-    const editIcon = strip.locator('.running-status-start-edit-icon');
-    await expect(editIcon).toBeVisible();
-    await expect(editIcon).toHaveText('✎');
-    await expect(editIcon).toHaveAttribute('aria-hidden', 'true');
-    const iconPlacement = await start.evaluate(input => {
-      const icon = input.parentElement.querySelector('.running-status-start-edit-icon');
-      return { followsTime: input.nextElementSibling === icon,
-        gap: icon.getBoundingClientRect().left - input.getBoundingClientRect().right };
-    });
-    expect(iconPlacement.followsTime).toBe(true);
-    expect(iconPlacement.gap).toBeGreaterThanOrEqual(0);
-    expect(iconPlacement.gap).toBeLessThan(12);
+    await expect(strip.locator('.running-status-start-caption')).toHaveText('Started');
+    await expect(strip.locator('.running-status-start-edit-icon')).toHaveCount(0);
+    await expect(start).toHaveCSS('cursor', 'text');
+    await expect(start).toHaveCSS('border-bottom-style', 'dashed');
     await expect(strip.getByLabel('Date')).toHaveCount(0);
     const stats = strip.locator('.running-status-stats');
     await expect(stats).toBeVisible();
@@ -617,7 +896,7 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     const widths = await strip.evaluate(row => ({ row: row.getBoundingClientRect().width,
       description: row.querySelector('.running-status-description-field').getBoundingClientRect().width }));
     expect(widths.description).toBeGreaterThan(290);
-    expect(widths.description).toBeLessThan(widths.row);
+    expect(widths.description).toBeGreaterThan(widths.row * .55);
     const measureControls = () => strip.evaluate(row => {
       const rect = selector => row.querySelector(selector).getBoundingClientRect();
       const startField = rect('.running-status-start-field');
@@ -635,6 +914,7 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
         statsRightOfTitle: stats.left > title.right,
         stopBelowStats: stop.top >= stats.bottom,
         descriptionBeforeStop: description.right < stop.left,
+        descriptionFillsColumn: Math.abs(description.right - stats.left) < 30,
         startToMetrics: metrics.left - startField.right,
         valueOffset: Math.max(...values) - Math.min(...values),
         statsBackground: getComputedStyle(row.querySelector('.running-status-stats')).backgroundColor,
@@ -647,6 +927,7 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(desktop.statsRightOfTitle).toBe(true);
     expect(desktop.stopBelowStats).toBe(true);
     expect(desktop.descriptionBeforeStop).toBe(true);
+    expect(desktop.descriptionFillsColumn).toBe(true);
     expect(desktop.rightInset).toBeLessThan(30);
     expect(desktop.startToMetrics).toBeGreaterThanOrEqual(0);
     expect(desktop.startToMetrics).toBeLessThan(3);
@@ -664,21 +945,31 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     await github.goto('https://github.com/acme/app/issues/42');
     await github.locator('#clockoli-root .trigger-main').click();
     const panel = github.locator('#clockoli-full-width-popup-root');
-    await expect(panel.locator('.tracker-toolbar .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
     await expect(panel.locator('.activity-weekly-label')).toHaveText('Statistic');
     await expect(panel.locator('.activity-weekly-card').first()).toContainText('7h 11m');
     await expect(panel.locator('.active-task-strip .running-status-live')).toHaveText('Tracking now');
     await expect(panel.locator('.active-task-strip .running-status-metric-label')).toHaveText(['Duration']);
     await expect(panel.locator('.active-task-strip .running-status-start')).toHaveValue('12:00');
+    const panelStart = panel.locator('.active-task-strip .running-status-start');
+    await expect(panel.locator('.running-status-start-caption')).toHaveText('Started');
+    await expect(panel.locator('.running-status-start-edit-icon')).toHaveCount(0);
+    await expect(panelStart).toHaveCSS('cursor', 'text');
+    await expect(panelStart).toHaveCSS('border-bottom-style', 'dashed');
+    await panelStart.click();
+    await expect(panelStart).toBeFocused();
+    expect(await panelStart.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
     await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
     const overview = await panel.locator('.full-width-popup').evaluate(popup => {
-      const summary = popup.querySelector('.tracker-toolbar .activity-weekly-summary').getBoundingClientRect();
+      const summary = popup.querySelector('.popup-overview-layout .activity-weekly-summary').getBoundingClientRect();
       const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
-      return { summaryBottom: summary.bottom, cardTop: card.top, cardHeight: card.height, cardWidth: card.width };
+      return { summaryTop: summary.top, summaryRight: summary.right, summaryHeight: summary.height,
+        cardTop: card.top, cardLeft: card.left, cardHeight: card.height, cardWidth: card.width };
     });
-    expect(overview.summaryBottom).toBeLessThan(overview.cardTop);
-    expect(overview.cardHeight).toBeLessThan(86);
+    expect(Math.abs(overview.summaryTop - overview.cardTop)).toBeLessThan(2);
+    expect(overview.summaryRight).toBeLessThan(overview.cardLeft);
+    expect(overview.cardHeight).toBeGreaterThanOrEqual(overview.summaryHeight - 2);
     expect(overview.cardWidth).toBeGreaterThan(600);
     await github.close();
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -693,9 +984,6 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(focusedStyle.outline).toBe('none');
     expect(focusedStyle.ring).not.toBe('none');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-start-focused.png') });
-    await editIcon.click();
-    await expect(start).toBeFocused();
-    expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     await start.evaluate(node => node.blur());
     await page.setViewportSize({ width: 390, height: 740 });
     await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
@@ -714,7 +1002,6 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     await page.screenshot({ path: join(tmpdir(), 'clockoli-stats-realistic-mobile.png') });
     await page.setViewportSize({ width: 1440, height: 800 });
     await start.fill('1000');
-    await expect(editIcon).toBeHidden();
     await page.clock.runFor(5000);
     await expect(start).toHaveValue('1000');
     await start.press('Tab');
@@ -736,7 +1023,6 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     await strip.getByRole('button', { name: 'Save start' }).click();
     await expect.poll(() => worker.evaluate(() => active.startedAt)).toBe(`${day}T10:00:00.000Z`);
     await expect(strip.locator('.running-status-start-saved')).toHaveText('✓ Saved');
-    await expect(editIcon).toBeHidden();
     const payloads = await worker.evaluate(() => globalThis.activeEditPayloads);
     expect(payloads.at(-1)).toEqual({ original: { id: 'running', startedAt: `${day}T12:00:17Z` }, startedAt: `${day}T10:00:00.000Z` });
     await start.fill('0900');
@@ -749,11 +1035,10 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(await worker.evaluate(() => active.entryDate)).toBe(day);
     await start.fill('2500');
     await strip.getByRole('button', { name: 'Save start' }).click();
-    await expect(page.locator('.running-status-error')).toContainText('valid Start time');
+    await expect(page.locator('.running-status-error')).toContainText('valid Started time');
     expect(await worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(3);
     await start.fill('0900');
     await expect(strip.getByRole('button', { name: 'Save start' })).toBeHidden();
-    await expect(editIcon).toBeVisible();
     await page.setViewportSize({ width: 390, height: 740 });
     const mobile = await strip.evaluate(row => ({ row: row.getBoundingClientRect().right,
       fields: [...row.querySelectorAll('input,textarea,button')].filter(node => !node.hidden)
@@ -1303,12 +1588,16 @@ async function expectActivityListBounds(page) {
       labelLeftGap: label.left - field.left, viewportWidth: innerWidth,
       overflow: document.documentElement.scrollWidth > innerWidth };
   });
-  const aligned = bounds.viewportWidth <= 700 ? ['field', 'toolbar', 'list', 'navigation']
-    : ['field', 'toolbar', 'list', 'navigation', 'content'];
+  const aligned = bounds.viewportWidth <= 700 ? ['field', 'toolbar', 'list']
+    : ['toolbar', 'list', 'content'];
   for (const element of aligned) {
     expect(Math.abs(bounds[element].left - bounds.overview.left), element).toBeLessThan(2);
     expect(Math.abs(bounds[element].right - bounds.overview.right), element).toBeLessThan(2);
   }
+  expect(Math.abs(bounds.field.left - bounds.toolbar.left)).toBeLessThan(2);
+  expect(bounds.field.right).toBeLessThanOrEqual(bounds.toolbar.right);
+  expect(bounds.navigation.left).toBeGreaterThanOrEqual(bounds.toolbar.left);
+  expect(bounds.navigation.right).toBeLessThanOrEqual(bounds.toolbar.right);
   if (bounds.viewportWidth <= 700) {
     expect(bounds.content.left).toBe(0);
     expect(bounds.content.right).toBe(bounds.viewportWidth);
@@ -1445,7 +1734,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
       expect(appearance.radius).not.toBe('0px');
       expect(appearance.contained).toBe(true);
     }
-    expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '0px']);
+    expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '1px']);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-activity-list-days-desktop.png') });
     const edited = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
     await edited.hover();
@@ -1513,8 +1802,6 @@ test('Activity List icon switches from Start to Stop and back in the extension p
         .map(group => ({ right: group.getBoundingClientRect().right, width: group.getBoundingClientRect().width })) }));
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
     await runningDescription.press('Tab');
-    await expect(strip.getByRole('textbox', { name: 'Start' })).toBeFocused();
-    await page.keyboard.press('Tab');
     const saveTime = strip.getByRole('button', { name: 'Stop and save' });
     await expect(saveTime).toBeFocused();
     await page.keyboard.press('Enter');

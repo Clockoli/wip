@@ -1467,6 +1467,8 @@ for (const mode of ['timeline', 'calendar']) {
       await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       for (const id of ['entry:old', 'active:now']) {
+        await page.locator('body').hover({ position: { x: 1, y: 1 } });
+        await expect(page.locator('#timeline .details')).toBeHidden();
         await page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="${id}"]`).first().click();
         await expect(page.locator('#timeline .details')).toBeVisible();
         const gap = await page.locator('#timeline .clockoli-timeline-actions').evaluate(actions => {

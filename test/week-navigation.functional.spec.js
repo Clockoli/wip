@@ -80,6 +80,46 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 async function expectWeekHeaderLayout(root) {
   const section = root.locator('.popup-timeline-section');
   const navigation = root.locator('.week-navigation');
+  if (await navigation.locator('.week-navigation-label').isHidden()) {
+    await expect(section.locator('.calendar-view:visible,.viewport:visible')).toBeVisible();
+    await expect(section.locator('.calendar-sticky-header:visible,.day-row:visible')).toBeVisible();
+    const [bounds, left, right, chart, header, ruler] = await Promise.all([
+      section.locator('.timeline-shell').boundingBox(),
+      navigation.getByRole('button', { name: 'Previous week' }).boundingBox(),
+      navigation.getByRole('button', { name: 'Next week' }).boundingBox(),
+      section.locator('.calendar-view:visible,.viewport:visible').boundingBox(),
+      section.locator('.calendar-sticky-header:visible,.day-row:visible').boundingBox(),
+      section.locator('.ruler-row').boundingBox(),
+    ]);
+    expect(bounds && left && right && chart && header).toBeTruthy();
+    expect(await navigation.evaluate(element => element.parentElement?.classList.contains('timeline-shell'))).toBe(true);
+    if (!ruler) expect(Math.abs((await navigation.boundingBox()).height - header.height)).toBeLessThan(2);
+    expect(left.x - bounds.x).toBeGreaterThanOrEqual(12);
+    expect(bounds.x + bounds.width - right.x - right.width).toBeGreaterThanOrEqual(12);
+    await expect(navigation.locator('.week-navigation-label')).toBeHidden();
+    await expect(section.locator('.meta')).toBeHidden();
+    for (const arrow of [left, right]) {
+      expect(arrow.y + arrow.height / 2).toBeGreaterThanOrEqual(header.y);
+      expect(arrow.y + arrow.height / 2).toBeLessThanOrEqual(ruler ? ruler.y + ruler.height : header.y + header.height);
+      expect(Math.abs(arrow.y + arrow.height / 2
+        - (header.y + (ruler ? ruler.y + ruler.height - header.y : header.height) / 2))).toBeLessThan(2);
+    }
+    const backdrop = await navigation.evaluate(element => ({
+      surface: getComputedStyle(element).pointerEvents,
+      arrow: getComputedStyle(element.querySelector('button')).pointerEvents,
+      left: getComputedStyle(element, '::before').backgroundImage,
+      right: getComputedStyle(element, '::after').backgroundImage,
+    }));
+    expect(backdrop.surface).toBe('none');
+    expect(backdrop.arrow).toBe('auto');
+    expect(backdrop.left).toContain('gradient');
+    expect(backdrop.right).toContain('gradient');
+    expect(await navigation.evaluate(element => [...element.querySelectorAll('button')].map(button => {
+      const rect = button.getBoundingClientRect();
+      return button.contains(element.getRootNode().elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+    }))).toEqual([true, true]);
+    return;
+  }
   if (await section.locator('.meta').isHidden() && await section.locator('.calendar-view').isVisible()) {
     const [bounds, left, label, right, chart] = await Promise.all([
       section.locator('.timeline-shell').boundingBox(),
@@ -122,7 +162,11 @@ async function expectCalendarWeekLayout(root) {
     const [navigation, chart] = await Promise.all([
       root.locator('.week-navigation').boundingBox(), host.locator('.calendar-view').boundingBox(),
     ]);
-    expect(navigation.y + navigation.height).toBeLessThanOrEqual(chart.y);
+    if (await root.locator('.week-navigation').evaluate(element => element.parentElement?.classList.contains('timeline-shell'))) {
+      expect(Math.abs(navigation.y - chart.y)).toBeLessThan(2);
+    } else {
+      expect(navigation.y + navigation.height).toBeLessThanOrEqual(chart.y);
+    }
     await expect(host.locator('.details')).toHaveCSS('position', 'fixed');
     await expect(host.locator('.meta')).toBeHidden();
     return;
@@ -136,6 +180,15 @@ async function expectCalendarWeekLayout(root) {
   expect(navigation.y + navigation.height).toBeLessThanOrEqual(total.y);
   expect(total.y + total.height).toBeLessThanOrEqual(chart.y);
   await expect(host.locator('.details')).toHaveCSS('position', 'fixed');
+}
+
+async function expectActivityChartGap(page, root, expected) {
+  const [overview, chart] = await Promise.all([
+    page.locator('.activity-overview-layout').boundingBox(),
+    root.locator('.popup-timeline-section .timeline-shell').boundingBox(),
+  ]);
+  expect(overview && chart).toBeTruthy();
+  expect(Math.abs(chart.y - overview.y - overview.height - expected)).toBeLessThan(2);
 }
 
 async function expectRunningCardFits(root) {
@@ -301,7 +354,22 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activity.goto(`chrome-extension://${id}/src/times/times.html`);
     let activityRoot = activity.locator('#clockoli-times-root').locator('> *');
     await expect(activityRoot.getByRole('button', { name: 'Previous week' })).toBeVisible();
+    await expect(activity.locator('.running-status-description')).toBeFocused();
+    await activity.setViewportSize({ width: 1920, height: 900 });
+    const runningLayout = await activity.locator('#activity-running-status.is-active').evaluate(card => {
+      const box = selector => card.querySelector(selector).getBoundingClientRect();
+      const description = box('.running-status-description');
+      const stats = box('.running-status-stats');
+      const stop = box('.running-status-stop');
+      return { descriptionRight: description.right, statsLeft: stats.left,
+        statsWidth: stats.width, stopWidth: stop.width, statsRight: stats.right, stopRight: stop.right };
+    });
+    expect(runningLayout.statsLeft - runningLayout.descriptionRight).toBeGreaterThanOrEqual(20);
+    expect(runningLayout.statsLeft - runningLayout.descriptionRight).toBeLessThanOrEqual(24);
+    expect(Math.abs(runningLayout.statsWidth - runningLayout.stopWidth)).toBeLessThan(2);
+    expect(Math.abs(runningLayout.statsRight - runningLayout.stopRight)).toBeLessThan(2);
     await expectWeekHeaderLayout(activityRoot);
+    await expectActivityChartGap(activity, activityRoot, 24);
     await expect(activityRoot.getByRole('combobox', { name: 'Time period' })).toHaveCount(0);
     await expect(activityRoot.getByRole('button', { name: 'Next week' })).toBeDisabled();
     await expect(activityRoot.locator('.task-timeline-host .task.running')).toHaveCount(1);
@@ -335,24 +403,50 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activity.locator('#activity-view-switcher').getByRole('button', { name: 'List', exact: true }).click();
     await expect(activityRoot.getByRole('button', { name: 'Next week' })).toBeDisabled();
     await expect(activityRoot.getByText('Current week entry', { exact: true })).toBeVisible();
+    const listToolbar = activityRoot.locator('.times-toolbar');
+    const listNavigation = listToolbar.locator('.week-navigation');
+    const listRefresh = listToolbar.getByRole('button', { name: 'Refresh' });
+    await expect(listNavigation).toBeVisible();
+    await expect(listRefresh).toBeVisible();
+    await expect(listRefresh).toHaveCSS('border-top-width', '1px');
+    await expect(listRefresh).toHaveCSS('border-top-color',
+      await listNavigation.getByRole('button', { name: 'Previous week' }).evaluate(node => getComputedStyle(node).borderTopColor));
+    await expect(activityRoot.locator('.activity-list .section-head button')).toHaveCount(0);
+    await expect(listToolbar.getByRole('searchbox', { name: 'Search activity' })).toHaveAttribute('placeholder', 'Search entries');
+    await expect(listNavigation.locator('.week-navigation-label')).toHaveText(await activity.locator('#activity-summary .activity-weekly-range').innerText());
+    const [searchBox, navBox, refreshBox, overviewBox, toolbarBox, listBox, groupBox, cardBox] = await Promise.all([
+      listToolbar.getByRole('searchbox', { name: 'Search activity' }).boundingBox(), listNavigation.boundingBox(),
+      listRefresh.boundingBox(), activity.locator('.activity-overview-layout').boundingBox(),
+      listToolbar.boundingBox(), activityRoot.locator('.activity-list').boundingBox(),
+      activityRoot.locator('.activity-list .entry').first().boundingBox(),
+      activityRoot.locator('.activity-list .entry-record').first().boundingBox(),
+    ]);
+    expect(searchBox.x + searchBox.width).toBeLessThan(navBox.x);
+    expect(navBox.x + navBox.width).toBeLessThan(refreshBox.x);
+    expect(Math.abs(searchBox.y - navBox.y)).toBeLessThan(8);
+    expect(Math.abs(navBox.y - refreshBox.y)).toBeLessThan(8);
+    expect(toolbarBox.y - overviewBox.y - overviewBox.height).toBeGreaterThanOrEqual(20);
+    expect(listBox.y - toolbarBox.y - toolbarBox.height).toBeGreaterThanOrEqual(16);
+    expect(cardBox.x - groupBox.x).toBeGreaterThanOrEqual(8);
+    const readsBeforeListRefresh = await worker.evaluate(() => globalThis.weekReads.length);
+    await listRefresh.click();
+    await expect.poll(() => worker.evaluate(() => globalThis.weekReads.length)).toBeGreaterThan(readsBeforeListRefresh);
+    await expect(listToolbar.getByRole('button', { name: 'Refresh' })).toBeEnabled();
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(activityRoot.getByText('Previous week entry', { exact: true })).toBeVisible();
     await expect(activityRoot.locator('.times-list-total')).toHaveText('Total: 1h');
-    const [weekLabel, listTotal, listHeading] = await Promise.all([
-      activityRoot.locator('.week-navigation-label').boundingBox(),
-      textBounds(activityRoot.locator('.times-list-total')),
-      activityRoot.getByText('Tracked time', { exact: true }).boundingBox(),
-    ]);
-    expect(listTotal.y).toBeGreaterThan(weekLabel.y);
-    expect(listHeading.y).toBeGreaterThan(listTotal.y);
-    expect(Math.abs(listTotal.x + listTotal.width / 2 - weekLabel.x - weekLabel.width / 2)).toBeLessThan(8);
-    await activity.screenshot({ path: join(tmpdir(), 'clockoli-list-week-total.png') });
+    await expect(activityRoot.locator('.times-list-total')).toBeHidden();
+    await expect(activityRoot.getByText('Tracked time', { exact: true })).toHaveCount(0);
+    await expect(activity.locator('#activity-summary .activity-weekly-range')).toBeVisible();
     await activity.setViewportSize({ width: 390, height: 800 });
-    const [mobileLabel, mobileTotal] = await Promise.all([
-      activityRoot.locator('.week-navigation-label').boundingBox(),
-      textBounds(activityRoot.locator('.times-list-total')),
+    await expect(activity.locator('#activity-summary .activity-weekly-range')).toBeVisible();
+    const [narrowSearch, narrowNav, narrowRefresh] = await Promise.all([
+      listToolbar.getByRole('searchbox', { name: 'Search activity' }).boundingBox(),
+      listNavigation.boundingBox(), listRefresh.boundingBox(),
     ]);
-    expect(Math.abs(mobileTotal.x + mobileTotal.width / 2 - mobileLabel.x - mobileLabel.width / 2)).toBeLessThan(8);
+    expect(narrowNav.y).toBeGreaterThan(narrowSearch.y + narrowSearch.height);
+    expect(narrowNav.x + narrowNav.width).toBeLessThan(narrowRefresh.x);
+    expect(await activity.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await activity.setViewportSize({ width: 1280, height: 900 });
     await activityRoot.getByRole('button', { name: 'Previous week', exact: true }).click();
     await expect(activityRoot.locator('.times-list-total')).toHaveText('Total: 0m');
@@ -363,6 +457,8 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activityRoot.getByRole('searchbox', { name: 'Search activity' }).fill('');
     await expect(activityRoot.getByRole('button', { name: 'Previous week', exact: true })).toBeVisible();
     await activity.locator('#activity-view-switcher').getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect(activityRoot.locator('.timeline-shell > .week-navigation')).toHaveCSS('height', '44px');
+    await expectActivityChartGap(activity, activityRoot, 24);
     await expect(activityRoot.getByRole('button', { name: 'Next week' })).toBeDisabled();
     await expect(activityRoot.locator('.times-list-total')).toBeHidden();
     await expect(activityRoot.getByRole('button', { name: 'Previous week' })).toBeVisible();
@@ -418,6 +514,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activity.setViewportSize({ width: 480, height: 900 });
     await expectWeekHeaderLayout(activityRoot);
     await expectCalendarWeekLayout(activityRoot);
+    await expectActivityChartGap(activity, activityRoot, 16);
     await activity.setViewportSize({ width: 1280, height: 900 });
     await worker.evaluate(() => { globalThis.holdNextWeekRead = true; });
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
@@ -449,6 +546,12 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await activity.locator('#activity-view-switcher').getByRole('button', { name: 'Calendar', exact: true }).click();
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
+    const activityCalendarArrow = await activityRoot.getByRole('button', { name: 'Previous week' }).evaluate(node => {
+      const style = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      return { width: box.width, height: box.height, background: style.backgroundColor,
+        border: style.borderTop, radius: style.borderRadius, color: style.color, fontSize: style.fontSize };
+    });
     await activity.close();
     activity = await context.newPage();
     await activity.clock.setFixedTime(fixedNow);
@@ -483,7 +586,8 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectRunningCardFits(popupRoot);
     const popupCard = popupRoot.locator('.active-task-strip.is-active');
     const startField = popupCard.locator('.running-status-start-field');
-    await expect(startField.locator('.running-status-start-caption')).toHaveText('Start');
+    await expect(popupCard.locator('.strip-description')).toBeFocused();
+    await expect(startField.locator('.running-status-start-caption')).toHaveText('Started');
     await expect(startField.locator('.running-status-start')).toHaveValue(editClock(59));
     await expect(popupCard.locator('.strip-favicon')).toHaveCount(0);
     await expect(popupCard.locator('.strip-task .task-title')).toHaveCSS('max-width', 'none');
@@ -532,7 +636,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const popupStats = popupRoot.locator('.active-task-strip .running-status-stats');
     await expect(popupStats.locator('.running-status-metric-label')).toHaveText(['Duration']);
     const popupOverview = popupRoot.locator('.popup-overview-layout');
-    const popupSummary = popupRoot.locator('.tracker-toolbar .activity-weekly-summary');
+    const popupSummary = popupOverview.locator('.activity-weekly-summary');
     await expect(popupSummary.locator('.activity-weekly-label')).toHaveText('Statistic');
     await expect(popupSummary.locator('.activity-weekly-name')).toHaveText(['Today', 'Total tracked', 'Tasks worked on']);
     await expect(popupOverview.locator('.active-task-strip')).toBeVisible();
@@ -547,19 +651,47 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await page.setViewportSize({ width: 1920, height: 900 });
     const wideCard = await popupRoot.locator('.active-task-strip.is-active').boundingBox();
     const wideSummary = await popupSummary.boundingBox();
-    const brandBox = await popupRoot.locator('.tracker-toolbar .timeline-brand').boundingBox();
-    expect(wideSummary.x).toBeGreaterThan(brandBox.x + brandBox.width);
+    expect(Math.abs(wideSummary.y - wideCard.y)).toBeLessThan(2);
     expect(wideSummary.width).toBeLessThan(420);
-    expect(wideCard.y).toBeGreaterThanOrEqual(wideSummary.y + wideSummary.height);
-    expect(wideCard.height).toBeLessThan(86);
-    expect(wideCard.width).toBeGreaterThan(1500);
+    expect(wideCard.x).toBeGreaterThan(wideSummary.x + wideSummary.width);
+    expect(wideCard.height).toBeGreaterThanOrEqual(wideSummary.height - 2);
+    expect(wideCard.width).toBeGreaterThan(1000);
+    const measureRunningRow = () => popupCard.evaluate(card => {
+      const bounds = selector => {
+        const { left, right, width } = (selector ? card.querySelector(selector) : card).getBoundingClientRect();
+        return { left, right, width };
+      };
+      return { card: bounds(), task: bounds('.strip-task-copy'),
+        description: bounds('.strip-description-field'), input: bounds('.strip-description'), stats: bounds('.running-status-stats'),
+        stop: bounds('[data-panel-action="stop"]') };
+    });
+    for (const width of [3230, 1920, 1280, 901]) {
+      await page.setViewportSize({ width, height: 900 });
+      const row = await measureRunningRow();
+      expect(Math.abs(row.stop.width - row.stats.width)).toBeLessThan(2);
+      expect(Math.abs(row.stop.right - row.stats.right)).toBeLessThan(2);
+      expect(Math.abs(row.description.left - row.task.left)).toBeLessThan(2);
+      expect(row.stats.left - row.description.right).toBeGreaterThanOrEqual(20);
+      expect(row.stats.left - row.description.right).toBeLessThanOrEqual(24);
+      expect(row.description.width).toBeGreaterThan(row.card.width * 0.45);
+      expect(Math.abs(row.input.left - row.description.left)).toBeLessThan(2);
+      expect(Math.abs(row.input.right - row.description.right)).toBeLessThan(2);
+      expect(row.input.width).toBeGreaterThan(row.card.width * 0.45);
+    }
+    for (const width of [900, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const row = await measureRunningRow();
+      expect(row.description.right).toBeLessThanOrEqual(row.card.right + 1);
+      expect(row.stop.right).toBeLessThanOrEqual(row.card.right + 1);
+      await expect(popupCard.getByRole('button', { name: 'Stop and save' })).toBeVisible();
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
     const descriptionLayout = await popupRoot.locator('.strip-description-field').evaluate(node => ({
       directChild: node.parentElement.classList.contains('active-task-strip'),
       width: node.getBoundingClientRect().width,
     }));
     expect(descriptionLayout.directChild).toBe(true);
     expect(descriptionLayout.width).toBeGreaterThan(100);
-    await page.setViewportSize({ width: 1280, height: 900 });
     const runningDescription = popupRoot.locator('.strip-description');
     await expect(runningDescription).toHaveJSProperty('tagName', 'TEXTAREA');
     await expect(runningDescription).toHaveValue('First line\nSecond line\nThird line\nFourth line');
@@ -583,8 +715,6 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     expect(await worker.evaluate(() => active.description)).toBe('Newer description from Activity');
     await runningDescription.fill('Finished work\nReviewed changes');
     await runningDescription.press('Tab');
-    await expect(startField.locator('.running-status-start')).toBeFocused();
-    await startField.locator('.running-status-start').press('Tab');
     const stopAndSave = popupRoot.getByRole('button', { name: 'Stop and save' });
     await expect(stopAndSave).toBeFocused();
     await expect.poll(() => worker.evaluate(() => globalThis.activeDescriptionEdits.length)).toBe(2);
@@ -620,6 +750,13 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await popupRoot.getByRole('button', { name: 'Calendar', exact: true }).click();
     await expect(popupRoot.getByRole('button', { name: 'Next week' })).toBeDisabled();
     await expect(popupRoot.getByRole('button', { name: 'Previous week' })).toBeVisible();
+    const popupCalendarArrow = await popupRoot.getByRole('button', { name: 'Previous week' }).evaluate(node => {
+      const style = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      return { width: box.width, height: box.height, background: style.backgroundColor,
+        border: style.borderTop, radius: style.borderRadius, color: style.color, fontSize: style.fontSize };
+    });
+    expect(popupCalendarArrow).toEqual(activityCalendarArrow);
     await expect(popupRoot.locator('.task-timeline-host .calendar-day-header')).toHaveCount(7);
     await expect(popupRoot.locator('.task-timeline-host .calendar-task.running')).toHaveCount(1);
     await page.setViewportSize({ width: 1280, height: 520 });
@@ -659,7 +796,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
       const bounds = popup.getBoundingClientRect();
       return Math.max(0, Math.min(grid.bottom, bounds.bottom) - Math.max(grid.top, bounds.top));
     });
-    expect(calendarSpace).toBeGreaterThan(350);
+    expect(calendarSpace).toBeGreaterThan(300);
     await expectCalendarWeekLayout(popupRoot);
     await expectWeekHeaderLayout(popupRoot);
     await page.setViewportSize({ width: 480, height: 900 });
@@ -684,7 +821,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await popupRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(popupRoot.getByRole('link', { name: 'Previous week entry' })).toBeVisible();
     await expect(popupRoot.getByRole('link', { name: 'Current week entry' })).toHaveCount(0);
-    await expect(popupRoot.locator('.popup-list-total')).toHaveText('Total: 1h');
+    await expect(popupSummary.locator('[data-stat="total"]')).toHaveText('1h 0m');
     await popupRoot.getByRole('button', { name: 'Next week' }).click();
     await expect(popupRoot.getByRole('link', { name: 'Current week entry' })).toBeVisible();
     await popupRoot.getByRole('button', { name: 'Close Clockoli' }).click();
@@ -718,7 +855,13 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
       return { children: [...node.children].map(child => child.className), padding: css.padding,
         border: css.borderBottomWidth, background: css.backgroundColor, radius: css.borderRadius };
     });
-    expect(await listRow(popupRoot)).toEqual(await listRow(activityRoot));
+    const popupRow = await listRow(popupRoot), activityRow = await listRow(activityRoot);
+    expect(popupRow.children).toEqual(activityRow.children);
+    expect(popupRow.border).toBe('1px');
+    expect(activityRow.border).toBe('1px');
+    expect(activityRow.radius).toBe('10px');
+    expect(popupRow.radius).toBe(activityRow.radius);
+    expect(popupRow.background).toBe(activityRow.background);
     const toolbar = await context.newPage();
     await toolbar.clock.setFixedTime(fixedNow);
     toolbar.on('pageerror', error => errors.push(error.message));
@@ -729,13 +872,19 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const toolbarControls = await toolbarRoot.locator('.active-task-strip.is-active').evaluate(strip => {
       const stats = strip.querySelector('.running-status-stats').getBoundingClientRect();
       const stop = strip.querySelector(':scope > .danger').getBoundingClientRect();
+      const description = strip.querySelector('.strip-description').getBoundingClientRect();
       const bounds = strip.getBoundingClientRect();
-      return { statsRight: stats.right, stopLeft: stop.left, stopRight: stop.right, stripRight: bounds.right };
+      return { statsWidth: stats.width, stopWidth: stop.width, statsRight: stats.right,
+        stopRight: stop.right, statsBottom: stats.bottom, stopTop: stop.top,
+        descriptionRight: description.right, statsLeft: stats.left, stripRight: bounds.right };
     });
-    expect(toolbarControls.statsRight).toBeLessThanOrEqual(toolbarControls.stopLeft);
+    expect(Math.abs(toolbarControls.statsWidth - toolbarControls.stopWidth)).toBeLessThan(2);
+    expect(Math.abs(toolbarControls.statsRight - toolbarControls.stopRight)).toBeLessThan(2);
+    expect(toolbarControls.stopTop).toBeGreaterThanOrEqual(toolbarControls.statsBottom);
+    expect(toolbarControls.statsLeft - toolbarControls.descriptionRight).toBeGreaterThanOrEqual(8);
     expect(toolbarControls.stopRight).toBeLessThanOrEqual(toolbarControls.stripRight);
-    await expect(toolbarRoot.locator('.tracker-toolbar .activity-weekly-name')).toHaveText(['Today', 'Total tracked', 'Tasks worked on']);
-    await expect(toolbarRoot.locator('.tracker-toolbar .activity-weekly-value').first()).toBeVisible();
+    await expect(toolbarRoot.locator('.popup-overview-layout .activity-weekly-name')).toHaveText(['Today', 'Total tracked', 'Tasks worked on']);
+    await expect(toolbarRoot.locator('.popup-overview-layout .activity-weekly-value').first()).toBeVisible();
     const toolbarLayout = await toolbarRoot.evaluate(element => {
       const root = element.shadowRoot;
       const logo = root.querySelector('.clockoli-wordmark').getBoundingClientRect();
@@ -759,7 +908,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(toolbarDetails).toHaveClass(/clockoli-compact-entry-details/);
     await expect(toolbarDetails.locator('.clockoli-details-task-icon')).toBeVisible();
     await expect(toolbarDetails.locator('.details-value').first()).toBeHidden();
-    await toolbar.setViewportSize({ width: 420, height: 520 });
+    await toolbar.setViewportSize({ width: 420, height: 420 });
     await expectPanelScroll(toolbar, toolbarRoot, '.menu');
     await toolbar.close();
     const other = await context.newPage();
