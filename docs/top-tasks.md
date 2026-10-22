@@ -1,6 +1,8 @@
 # Top tasks
 
-Top tasks lists the tasks you tracked recently, with their accumulated time and a Start/Stop control, so you can pick up work again with one click. Open it from the toolbar panel navigation or the GitHub split-menu arrow.
+See the tasks you tracked recently with their total time, and pick any of them up again with one click.
+
+Open **Top tasks** from the toolbar panel navigation or the GitHub split-menu arrow.
 
 ## What the list shows
 

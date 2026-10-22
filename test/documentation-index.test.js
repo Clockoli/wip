@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 // docs/README.md is the documentation index on GitHub and the source of the
-// clockoli.com/docs categories: `## Category` headings group
-// `- [Title](file.md): description` entries, in order.
+// clockoli.com/docs categories: `## Category` headings group plain
+// `- [Title](file.md)` entries, in reading order. Each guide's own opening
+// paragraph is its summary (the site's lede and meta description).
 const docsDirectory = new URL('../docs/', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, docsDirectory), 'utf8');
 const index = read('README.md');
@@ -16,11 +17,13 @@ function entries() {
   for (const line of index.split('\n')) {
     const heading = line.match(/^##\s+(.+)$/);
     if (heading) { category = heading[1].trim(); continue; }
-    const entry = line.match(/^- \[([^\]]+)\]\(([\w-]+\.md)\):\s*(.+)$/);
-    if (entry) found.push({ category, title: entry[1], file: entry[2], description: entry[3].trim() });
+    const entry = line.match(/^- \[([^\]]+)\]\(([\w-]+\.md)\)(.*)$/);
+    if (entry) found.push({ category, title: entry[1], file: entry[2], rest: entry[3] });
   }
   return found;
 }
+
+const intro = markdown => markdown.replace(/^#\s+.+\n+/, '').split(/\n\n+/)[0].trim();
 
 // Same algorithm as github-slugger (GitHub's heading anchors and rehype-slug on
 // clockoli.com) for the punctuation the docs use.
@@ -43,26 +46,34 @@ function anchors(markdown) {
   return result;
 }
 
-test('documentation index lists every user guide once, in a category, with a short description', () => {
+test('documentation index lists every user guide once, by title, in a category', () => {
   const listed = entries();
   assert.ok(listed.length > 0);
   const files = listed.map(entry => entry.file);
   assert.equal(new Set(files).size, files.length, 'no guide is listed twice');
   for (const entry of listed) {
     assert.ok(entry.category, `${entry.file} sits under a ## category heading`);
+    assert.equal(entry.rest, '', `${entry.file} is listed by title only`);
     assert.ok(fs.existsSync(new URL(entry.file, docsDirectory)), `${entry.file} exists`);
     assert.ok(!maintainerDocs.has(entry.file), `${entry.file} is maintainer reference, not a user guide entry`);
-    // The site uses the description as the page meta description (max 160).
-    assert.ok(entry.description.length <= 160, `${entry.file} description is ${entry.description.length} chars`);
   }
   const userDocs = fs.readdirSync(docsDirectory).filter(name => name.endsWith('.md') && name !== 'README.md' && !maintainerDocs.has(name));
   assert.deepEqual(userDocs.filter(name => !files.includes(name)), [], 'every user guide appears in the index');
-  for (const file of files) {
-    const title = read(file).match(/^#\s+(.+)$/m)?.[1] ?? '';
-    // The site renders `<h1> — Clockoli` as the page title (max 60).
-    assert.ok(title && `${title} — Clockoli`.length <= 60, `${file} has a short h1`);
-  }
   assert.match(index, /\[[^\]]+\]\(\.\.\/CONTRIBUTING\.md\)/);
+});
+
+test('each user guide is titled as indexed and opens with a short summary', () => {
+  for (const { title, file } of entries()) {
+    const markdown = read(file);
+    assert.equal(markdown.match(/^#\s+(.+)$/m)?.[1], title, `${file} h1 matches its index title`);
+    // The site renders `<h1> — Clockoli` as the page title (max 60).
+    assert.ok(`${title} — Clockoli`.length <= 60, `${file} title is short`);
+    const summary = intro(markdown);
+    assert.doesNotMatch(summary, /^(#|[-*] |\d+\. |\||```|>|\*\*)/, `${file} opens with a prose paragraph`);
+    assert.doesNotMatch(summary, /\n/, `${file} summary is one paragraph line`);
+    // The summary is the page's meta description (max 160).
+    assert.ok(summary.length <= 160, `${file} summary is ${summary.length} chars`);
+  }
 });
 
 test('relative documentation links and heading anchors resolve', () => {

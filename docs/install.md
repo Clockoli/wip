@@ -1,6 +1,8 @@
 # Install Clockoli
 
-Clockoli is a browser extension for Chrome and other Chromium browsers, Firefox, and Safari on macOS. After installing, continue with [Getting started](getting-started.md).
+Install Clockoli from the Chrome Web Store, from a release file for Firefox and Safari, or from a development checkout.
+
+Clockoli is a browser extension for Chrome and other Chromium browsers, Firefox, and Safari on macOS. When it is installed, follow [Getting started](getting-started.md).
 
 ## Supported browsers
 

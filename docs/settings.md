@@ -1,12 +1,14 @@
 # Settings
 
-Settings opens after the first installation. Reopen it from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page. This page describes each section in the order Settings shows it.
+Every Settings section, in the order Settings shows it: account, repositories, display, routing, merging, add-ons, billing, backups, and advanced.
+
+Settings opens after the first installation. Reopen it from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page.
 
 **Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. After a settings change, a reminder suggests exporting an updated backup; it appears once per page load and, after exporting, does not show again until you reopen or reload Settings.
 
 ## GitHub account
 
-The connection card handles GitHub sign-in and the first time repository; see [Getting started](getting-started.md#2-set-up-clockoli). Before setup is complete, Settings focuses on this card.
+The connection card handles GitHub sign-in and the first time repository; see [Getting started](getting-started.md#step-1-sign-in-with-github). Before setup is complete, Settings focuses on this card.
 
 **Sign out on this browser** removes local sign-in while preserving local tracking data and the repository configuration. It does not revoke GitHub sign-in, change the GitHub App installation, or delete repository data.
 
@@ -83,7 +85,7 @@ Import validates the entire file and restores routes to destinations already con
 
 #### Use a personal access token
 
-A single-repository compatibility option for existing PAT setups or environments where the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#advanced-pat-setup).
+A single-repository compatibility option for existing PAT setups or environments where the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
 
 #### Recovery and access
 
