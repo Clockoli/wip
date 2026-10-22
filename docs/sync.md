@@ -1,6 +1,8 @@
 # Sync and offline work
 
-Clockoli saves every change in the browser first and synchronizes it with GitHub in the background. You can keep tracking and editing while GitHub is slow or unreachable; nothing waits for a spinner.
+Clockoli saves every change in your browser first and sends it to GitHub in the background, so you can keep working offline.
+
+You can keep tracking and editing while GitHub is slow or unreachable; nothing waits for a spinner. Conflicting changes are never silently overwritten.
 
 ## What is saved locally first
 

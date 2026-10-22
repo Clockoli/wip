@@ -1,47 +1,48 @@
 # Clockoli documentation
 
-Clockoli tracks time against any HTTP(S) task URL and writes the records to private GitHub time repositories you control. New to Clockoli? Install it, then follow [Getting started](getting-started.md).
+Clockoli tracks time against any task URL and writes the records to private GitHub repositories you control. New here? [Install Clockoli](install.md), then follow [Getting started](getting-started.md).
 
 ## Getting started
 
-- [Why Clockoli](why-clockoli.md): how the Git-backed model differs from hosted trackers, local-only timers, spreadsheets, and issue-only integrations.
-- [Install Clockoli](install.md): install from the Chrome Web Store or a release file for Firefox and Safari, load a development checkout, and update.
-- [Getting started](getting-started.md): sign in with GitHub, check and connect a time repository, and track your first task.
+- [Why Clockoli](why-clockoli.md)
+- [Install Clockoli](install.md)
+- [Getting started](getting-started.md)
+- [Key concepts](concepts.md)
 
 ## Track time
 
-- [Track a task](tracking.md): start, stop, and switch the single timer from the toolbar panel or the GitHub stopwatch, and describe your work.
-- [Activity](activity.md): review a week of tracked time in Timeline, Calendar, and List, move and resize entries, and search older history.
-- [Add and edit time](editing-time.md): add a single or bulk entry, edit or delete completed time, fix overlaps, and change a running timer's start.
-- [Top tasks](top-tasks.md): see recently tracked tasks with their totals and restart any of them with one click.
+- [Track a task](tracking.md)
+- [Activity](activity.md)
+- [Add and edit time](editing-time.md)
+- [Top tasks](top-tasks.md)
 
 ## Reports and billing
 
-- [Reports](reports.md): filter tracked time by period, person, project, and source, chart it, and export CSV, JSON, or PDF timesheets.
-- [Billable rates](billable-rates.md): set effective-dated hourly rates per person that stay in your browser, with mixed-currency conversion.
-- [Invoicing](invoicing.md): turn a filtered report into a numbered, taxed invoice and print it or save it as PDF without committing it.
+- [Reports](reports.md)
+- [Billable rates](billable-rates.md)
+- [Invoicing](invoicing.md)
 
 ## Repositories and teams
 
-- [Time repositories](time-data-repository.md): repository requirements, the check and connect flow, branch layout, and safe manual editing.
-- [Projects and routing](projects-and-routing.md): send new time to the right repository with ordered URL rules and an explicit default.
-- [Work as a team](teams.md): share a time repository, invite and remove teammates, and report across everyone's personal branches.
+- [Time repositories](time-data-repository.md)
+- [Projects and routing](projects-and-routing.md)
+- [Work as a team](teams.md)
 
 ## Settings and data
 
-- [Settings](settings.md): every Settings section, from interface width and recent entries to merge tasks, backups, and sign-out.
-- [Sync and offline work](sync.md): how changes are saved locally first, synchronized with GitHub, and protected against conflicts.
-- [Data, privacy, and security](data-and-privacy.md): what is stored where, GitHub permissions, security boundaries, and what stays private.
-- [Data format reference](data-format-v1.md): the normative version 1 schema for active timers, monthly JSONL records, and the task index.
+- [Settings](settings.md)
+- [Sync and offline work](sync.md)
+- [Data, privacy, and security](data-and-privacy.md)
+- [Data format v1](data-format-v1.md)
 
 ## Integrations
 
-- [Add-ons and Clockify migration](add-ons.md): enable packaged add-ons and import Clockify history with a preview and explicit user mapping.
+- [Add-ons and Clockify migration](add-ons.md)
 
 ## Help
 
-- [Troubleshooting](troubleshooting.md): fixes for installation, GitHub connection, tracking, synchronization, editing, reports, and Clockify problems.
-- [Licensing and source releases](licensing.md): GPLv3 terms, third-party notices, and Corresponding Source archives for each release.
+- [Troubleshooting](troubleshooting.md)
+- [Licensing and source releases](licensing.md)
 
 ## Product scope
 

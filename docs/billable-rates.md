@@ -1,6 +1,8 @@
 # Billable rates
 
-Billable rates turn tracked hours into money in Reports and invoices. Rates and calculated amounts stay in this browser's extension-local storage; they are never written to the time repository, so teammates who share it never see them.
+Set hourly rates per person to turn tracked hours into billable amounts. Rates stay in your browser and are never written to GitHub.
+
+Rates and calculated amounts stay in this browser's extension-local storage. They are never written to the time repository, so teammates who share it never see them.
 
 ## Add a rate
 

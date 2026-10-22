@@ -1,5 +1,7 @@
 # Why Clockoli
 
+Clockoli keeps your time records in private GitHub repositories you own instead of a vendor database. Here is what that changes, and what it costs.
+
 Clockoli is not a hosted time-tracking service with GitHub added as an integration. GitHub is the durable data layer, and the browser extension is the application.
 
 That design changes who controls the records, how they can be inspected, and what happens if you stop using the product.
