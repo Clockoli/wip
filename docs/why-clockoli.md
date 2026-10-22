@@ -15,7 +15,7 @@ Choose Clockoli when you want:
 - one task model that works with GitHub and arbitrary HTTP(S) pages;
 - reports across selected time repositories without writing private rates to them.
 
-Choose a conventional hosted tracker when your priority is turnkey installation, automatic updates, native mobile applications, reminders, invoicing workflows, or support for people who should not need GitHub access.
+Choose a conventional hosted tracker when your priority is turnkey installation, automatic updates, native mobile applications, reminders, mature invoicing workflows such as retainers and payment reminders, or support for people who should not need GitHub access.
 
 ## How the model differs
 
@@ -92,7 +92,7 @@ Clockoli keeps the useful contextual behavior—a stopwatch inside GitHub and me
 
 That gives you:
 
-- the same task identity in the popup, Tasks, Reports, and storage;
+- the same task identity in the toolbar panel, Top tasks, Activity, Reports, and storage;
 - arbitrary URLs without a separate manual project hierarchy;
 - one durable URL identity for GitHub issues, pull requests, and other HTTP(S) tasks;
 - separate Task source grouping by GitHub repository or generic hostname and Time repository provenance.
@@ -108,10 +108,10 @@ A spreadsheet gives strong control but depends on consistent manual entry. Clock
 - one active timer state across connected browsers;
 - guarded editing and deletion;
 - automatic duration calculation;
-- structured Tasks and Reports;
+- structured Top tasks, Activity, and Reports;
 - recoverable offline Stop operations.
 
-A spreadsheet remains better for unconstrained custom modeling. Clockoli can create completed manual entries in bulk on the Activity page while retaining its validated monthly storage format.
+A spreadsheet remains better for unconstrained custom modeling. Clockoli can add completed entries one at a time with **Add time** or in bulk on the Activity page while retaining its validated monthly storage format.
 
 ## Compared with a local-only browser timer
 
@@ -129,7 +129,7 @@ Clockoli is intentionally opinionated:
 - Branch protection or rulesets that prevent direct writes can make a repository unsuitable.
 - Start, Stop, and switches are accepted into durable local queues and then reconciled with GitHub; cross-repository switches depend on source completion before target Start.
 - Chrome and other Chromium browsers install from the Chrome Web Store. Firefox and Safari builds are not yet in their stores, so those file installations update manually.
-- There is no mobile app or reminder system; manual completed entries use the Activity bulk importer.
+- There is no mobile app or reminder system; forgotten time is added afterwards with **Add time** or **Bulk time adding**.
 - Local rates are not synchronized with teammates.
 
 These are not hidden implementation gaps; they follow from the current product scope and should be part of the adoption decision.

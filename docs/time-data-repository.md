@@ -1,4 +1,4 @@
-# Time-data repository setup
+# Time repositories
 
 Clockoli can use several dedicated private GitHub repositories as durable destinations for active timers and completed work records. Each destination is a **time repository**. A repository whose issue or pull request you track is a **source repository**; it is not automatically a time repository and Clockoli does not need write access to it.
 
@@ -23,24 +23,13 @@ Required conditions:
 
 Use **Only select repositories** when granting App access.
 
-## Shared repository setup
+## Share a repository with teammates
 
-1. Choose a dedicated private time repository, whether owned by a person or an organization. Create one only if needed, and grant the Clockoli GitHub App access if it is missing.
-2. If the repository is not initialized, a user with the required permissions reviews the privacy disclosure and explicitly confirms **Initialize repository**. Organization initialization requires GitHub repository-admin permission; Clockoli does not create a permanent Clockoli admin role.
-3. In the connected repository card, open **Invite teammates** with the + circle beside collaborator avatars. A repository administrator can search by GitHub username and review each result's login, public display name (if set), and avatar. Choose the account and confirm **Check access and invite**. Clockoli rechecks the selected GitHub user ID, repository coordinates, accepted collaborator access, and pending invitations, then requests GitHub repository **write** access only if neither exists. **About access and invitations** explains the permission scope; **What your teammate does next** contains shareable setup steps and a copy action. The administrator may also grant access through GitHub directly.
-4. Each teammate signs in separately, chooses the existing marked repository, reviews the disclosure, and explicitly confirms **Join repository**.
-5. Clockoli creates and verifies each user's personal storage branch.
-6. Give reporting-only users read access only if they may inspect all stored work data in that repository.
+A time repository can be shared: each teammate joins it and writes to their own personal branch. See [Work as a team](teams.md) for initialization, invitations, collaborator avatars, and removing access. Use separate time repositories for different privacy boundaries.
 
-An ordinary employee cannot use the join flow to initialize an unmarked organization repository. Repository discovery and inspection never write a marker, branch, membership, or work record.
+## Manage connected repositories
 
-Settings shows up to four current GitHub collaborator avatars and four pending GitHub account invitations beside each connected time repository, with separate ellipses when more verified accounts exist. Pending invitations have a dashed accent ring and a dot; hovering an avatar shows the GitHub login and, for pending invitees, the invitation state. Email-only invitations have no GitHub account avatar and are not shown; the pending lookup scans up to five pages so an email-only page does not imply more account avatars. The adjacent + circle has an **Add teammate** hover title and opens that repository's invitation form; it does not send an invitation. These are repository access states, not Clockoli-joined users or task assignees. The read-only lookup is scoped to that configured repository; a failed or inconclusive invitation read silently omits unavailable status and preserves known collaborators. A failed collaborator read shows “Collaborators unavailable”. Avatars come only from GitHub's avatar host, with an initial as fallback.
-
-To revoke access, select a verified collaborator avatar beside the connected repository in Settings and choose **Remove @user** from its dropdown; a pending GitHub account invitation avatar instead offers **Cancel invitation for @user**. Your own account avatar is not a removal control. Confirm the repository and account before Clockoli verifies repository identity, admin permissions, account ID, and current access and asks GitHub to remove the collaborator or cancel the invitation. Removing access does not delete existing time records or Git history. A failure retains the action for retry; confirmed success refreshes the displayed avatars. Only the first four accounts in each category appear here; use **Manage GitHub access** for others or email-only invitations. Avatar actions require a connected GitHub App installation with Administration write permission and repository-admin rights; PAT connections show noninteractive avatars.
-
-Inviting requires both the signed-in user's repository-admin rights and **Administration: Read and write** on the Clockoli GitHub App installation. The App owner must enable that permission in the App settings and installations must accept the updated permission request before inviting works. Choose **Only select repositories** and grant the App access to the intended time repository; App permissions apply to every repository selected for that installation, **not** automatically to all repositories in your GitHub account. Organization and enterprise policies may forbid outside collaborators. A GitHub invitation is not a Clockoli join: the recipient accepts on GitHub, grants the App access to the same repository if needed, and confirms their own join/branch setup in Clockoli. Search and membership checks do not write to the time repository.
-
-Use separate time repositories for different privacy boundaries.
+Each connected repository has a card in **Time repositories** with **Check access**, **Open repository**, **Manage GitHub access**, **Make default**, and **Remove from Clockoli**. Removing a repository from Clockoli affects only this browser; repository data, GitHub App access, and Git history are not deleted. See [Settings](settings.md#time-repositories).
 
 ## Branch and storage layout
 
@@ -68,6 +57,8 @@ times/{YYYY-MM}/{storage-login}.jsonl
 Routine work-record writes occur only on the personal branch. Completed-record changes update monthly JSONL and `.clockoli/tasks.json` atomically. Reports discovers marked personal branches and reads their canonical monthly JSONL files. The default branch is repository metadata, not an alternate work-record source.
 
 Do not manually create a branch under `clockoli/users/`. Existing branches must have ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
+
+Personal branches keep each user's routine timer commits off the default branch and reduce write conflicts between team members. An existing configuration can temporarily retain its prior storage branch while active or pending work prevents a safe transition to the personal branch.
 
 ## Data format v1
 
@@ -170,14 +161,14 @@ Repository readers can see stored actor identities, work-item URLs and titles, t
 
 ### Add repositories and change routing
 
-Use **Time repositories** in Settings to add eligible personal or organization destinations. Use **Projects and routing** to order URL rules, assign each project to a destination, and select the explicit default for unmatched URLs. Adding or changing routing does not delete or transfer existing records.
+Use **Time repositories** in Settings to add eligible personal or organization destinations. Use **Projects and routing** to order URL rules, assign each project to a destination, and select the explicit default for unmatched URLs. Adding or changing routing does not delete or transfer existing records. See [Projects and routing](projects-and-routing.md).
 
 The GitHub App flow supports several destinations under one GitHub account. PAT compatibility mode remains limited to one destination.
 
-### Disconnect a browser
+### Sign out of a browser
 
-**Disconnect this browser** removes local sign-in but leaves GitHub authorization, App installation, repository data, and local configuration as described in Settings.
+**Sign out on this browser** removes local sign-in but leaves GitHub authorization, App installation, repository data, and local configuration in place.
 
 ### Revoke or uninstall
 
-Revoking Clockoli user authorization and uninstalling the GitHub App are separate GitHub operations. Neither deletes repository data. Delete or archive data only through an explicit repository administration process.
+Revoking Clockoli user authorization (**Revoke GitHub sign-in** in Settings) and uninstalling the GitHub App are separate GitHub operations. Neither deletes repository data. Delete or archive data only through an explicit repository administration process.
