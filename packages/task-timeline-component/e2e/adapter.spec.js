@@ -1712,7 +1712,8 @@ for (const mode of ['timeline', 'calendar']) {
           primaryHeight: primary.height,
           primaryScrollWidth: button.scrollWidth,
           primaryClientWidth: button.clientWidth,
-          sameRow: Math.abs(primary.top - field.top) < 12,
+          // A multiline description may be taller than the button; compare centers, not top edges.
+          sameRow: Math.abs((primary.top + primary.height / 2) - (field.top + field.height / 2)) < 12,
         };
       });
       expect(Math.abs(bounds.freeRight)).toBeLessThanOrEqual(2);
