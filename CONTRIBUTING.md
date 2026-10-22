@@ -166,8 +166,9 @@ When behavior depends on the current task, explicitly verify both a matching URL
 Update documentation in the same change when behavior, setup, privacy, storage, or troubleshooting changes. Keep these sources aligned:
 
 - `README.md` for the product overview;
-- `docs/getting-started.md` for user setup;
-- `docs/features.md` for behavior;
+- `docs/README.md` for the documentation index: its `## Category` headings and `- [Title](file.md): description` entries drive the order, grouping, and descriptions on clockoli.com/docs;
+- `docs/install.md` and `docs/getting-started.md` for installation and user setup;
+- the topic guide that owns the behavior, such as `docs/tracking.md`, `docs/activity.md`, `docs/editing-time.md`, `docs/reports.md`, `docs/invoicing.md`, or `docs/sync.md`;
 - `docs/data-and-privacy.md` for data flows and disclosure;
 - `docs/troubleshooting.md` for recovery steps;
 - `docs/data-format-v1.md` for the normative persistent format.

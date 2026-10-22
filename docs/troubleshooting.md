@@ -109,7 +109,7 @@ Start is unavailable when:
 - the active tab is not HTTP(S);
 - the requested Start cannot be safely ordered behind active or conflicted work.
 
-Open the panel for details. Choose **Switch to this task** when another task is running. Choose **Sync now** or resolve the pending state when a queued dependency is blocked.
+Open the panel for details. Choose **Switch to this task** when another task is running. If the panel says a stopped entry is still waiting to sync, restore GitHub access and wait for the automatic retry, or resolve the conflict it shows.
 
 ### The panel says “Tracking another task”
 
@@ -133,14 +133,16 @@ Clockoli warns before saving an entry longer than 12 hours. This catches forgott
 
 ## Synchronization and conflicts
 
-### “Saved locally and waiting to sync with GitHub”
+### A stopped entry is still waiting to sync
 
-Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write.
+Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. Until it does, a new Start can report that the previous timer was saved locally but must sync first.
 
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
-- Choose **Sync now**.
-- Clockoli also retries at startup and approximately once per minute.
+- Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
+- If the panel shows **Retry** or another recovery action, follow it.
+
+See [Sync and offline work](sync.md) for the full model.
 
 A conflicted source completion can pause a dependent cross-repository Start until the conflict is resolved. Do not clear local data while either operation is queued.
 
@@ -196,23 +198,23 @@ The monthly file changed after the panel loaded. Reload recent entries, review t
 
 ### A manually edited file cannot be read
 
-Clockoli parses the entire monthly file and does not silently skip malformed blocks. Check:
+Clockoli parses the entire monthly file and does not silently skip malformed lines. Check that:
 
-- recognized `URL`, optional `Title`, `Start`, `End`, and optional `Description` fields;
-- a valid HTTP(S) URL without embedded credentials;
-- explicit timezone offsets;
-- Start month matching `times/YYYY-MM/`;
-- one-line bounded Title/Description values;
-- one blank line between records;
-- no duplicate default-branch and personal-branch copies.
+- each non-empty line is one valid JSON work record with `schema_version` equal to `1`;
+- record IDs are unique and unchanged;
+- work-item URLs are canonical HTTP(S) URLs without embedded credentials;
+- timestamps are UTC ISO 8601 values ending in `Z`, with a valid IANA `timezone`;
+- `local_date` falls in the monthly path's `times/YYYY-MM/` partition;
+- no record is duplicated across branches or monthly files;
+- `.clockoli/tasks.json` matches the completed records.
 
-Use Git history to compare with the last valid version.
+See [Validation and manual editing](time-data-repository.md#validation-and-manual-editing) and the [data format reference](data-format-v1.md). Use Git history to compare with the last valid version.
 
 ## Tasks
 
 ### A tracked task is not listed
 
-Check the selected period and URL/title filter. **Recently tracked work** is current-user-only and reads entries whose Start date is in the selected period. Clear the filter when looking for a task whose optional GitHub title is unavailable.
+Check the selected period and URL/title filter. **Top tasks** is current-user-only and reads entries whose Start date is in the selected period. Clear the filter when looking for a task whose optional GitHub title is unavailable.
 
 ### A GitHub task has no title
 
@@ -285,13 +287,11 @@ Clockoli blocks transitions that could strand active or pending work. Stop activ
 
 ### Settings import did not reconnect GitHub
 
-This is intentional. A version 6 JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub.
+This is intentional. A version 6 JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
 
 ### A task went to the wrong time repository
 
-Projects are checked top to bottom with case-insensitive URL-substring matching; the first match wins. Unmatched URLs use the explicit default. Reorder or correct the rules for future Starts. A running timer or queued write remains pinned to the destination chosen when Clockoli accepted it.
-
-Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
+Projects are checked top to bottom with case-insensitive URL-substring matching; the first match wins. Unmatched URLs use the explicit default. Reorder or correct the rules for future Starts. A running timer or queued write remains pinned to the destination chosen when Clockoli accepted it. See [Projects and routing](projects-and-routing.md).
 
 ## Collecting a useful bug report
 
@@ -300,7 +300,7 @@ Include:
 - Clockoli commit or package identity;
 - browser name and version;
 - the visible error text and recovery action;
-- whether the surface was GitHub, popup, Tasks, Reports, or Settings;
+- whether the surface was the GitHub panel, toolbar panel, Top tasks, Activity, Reports, or Settings;
 - whether a timer or pending write existed;
 - redacted repository owner/name if needed;
 - relevant Git path and commit SHA when safe.

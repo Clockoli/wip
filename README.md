@@ -69,7 +69,7 @@ Safari removes temporary extensions after 24 hours or when you quit Safari; add 
 
 </details>
 
-Store reviews can make the Chrome Web Store version trail the latest GitHub release. [Getting started](docs/getting-started.md#1-install-clockoli) covers every install path, including loading this repository unpacked for development.
+Store reviews can make the Chrome Web Store version trail the latest GitHub release. [Install Clockoli](docs/install.md) covers every install path, including loading this repository unpacked for development.
 
 ## Quick start
 
@@ -117,7 +117,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - If you administer a time repository, invite teammates to it from Settings.
 - Import Clockify history with the optional [Clockify add-on](docs/add-ons.md), with a preview and explicit mapping of Clockify users to GitHub users.
 
-The [feature guide](docs/features.md) describes every behavior in detail.
+The [documentation](docs/README.md) describes every behavior in detail, grouped by topic.
 
 ## Your data and permissions
 
@@ -147,11 +147,15 @@ Anyone who can read a time repository can read the URLs, titles, timestamps and 
 
 ## Documentation
 
+The [documentation index](docs/README.md) groups every guide by topic. Common starting points:
+
+- [Install Clockoli](docs/install.md)
 - [Getting started](docs/getting-started.md)
-- [Feature guide](docs/features.md)
-- [Why Clockoli](docs/why-clockoli.md)
+- [Track a task](docs/tracking.md)
+- [Add and edit time](docs/editing-time.md)
+- [Reports](docs/reports.md) and [Invoicing](docs/invoicing.md)
+- [Work as a team](docs/teams.md)
 - [Data, privacy, and security](docs/data-and-privacy.md)
-- [Time-data repository setup](docs/time-data-repository.md)
 - [Packaged add-ons](docs/add-ons.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Browser release support](docs/browser-releases.md)

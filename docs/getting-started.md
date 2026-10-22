@@ -1,13 +1,10 @@
 # Getting started with Clockoli
 
-Clockoli is a browser extension for Chrome and other Chromium browsers, Firefox, and Safari on macOS. It uses one GitHub account for sign-in and can store time records in several dedicated private GitHub time repositories.
+Clockoli uses one GitHub account for sign-in and can store time records in several dedicated private GitHub time repositories. This guide takes you from a fresh installation to your first tracked task.
 
 ## What you need
 
-- One of these browsers:
-  - Chrome or another Chromium browser, version 102 or newer;
-  - Firefox 140 or newer;
-  - Safari 18 or newer on macOS.
+- Clockoli installed in a [supported browser](install.md#supported-browsers).
 - A GitHub account.
 - Read/write access to a suitable private time repository, or permission to create one. It may belong to you, another person, or an organization. Initializing an organization repository requires GitHub repository-admin permission.
 
@@ -15,53 +12,7 @@ A time repository is separate from the source repositories, documents, tickets, 
 
 ## 1. Install Clockoli
 
-### Chrome and other Chromium browsers
-
-Add Clockoli from the [Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl), then pin it to the toolbar so it is available on non-GitHub pages. Store installations update automatically. Store review can make the listed version trail the latest GitHub release.
-
-### Firefox
-
-Download `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases). Open `about:addons`, choose the gear menu → **Install Add-on From File**, and select it.
-
-The unsigned `Clockoli-X.Y.Z-firefox.xpi` is for store submission and temporary testing. To load it, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the XPI. Temporary installations last until Firefox restarts.
-
-### Safari
-
-1. Download `Clockoli-X.Y.Z-safari-extension.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
-2. In Safari Settings → Advanced, turn on **Show features for web developers**.
-3. In Safari Settings → Developer, choose **Add Temporary Extension…** and select the extracted folder. It must contain `manifest.json` at its top level.
-
-Safari removes temporary extensions after 24 hours or when you quit Safari ([Apple documentation](https://developer.apple.com/documentation/safariservices/running-your-safari-web-extension)). Add the folder again to keep using Clockoli. Let pending changes sync before you quit Safari.
-
-The `Clockoli-X.Y.Z-safari-unsigned.zip` app is ad-hoc signed and not notarized, so macOS can refuse to open it on another Mac. When a release includes `Clockoli-X.Y.Z-safari.zip`, it contains the signed, notarized app: move `Clockoli.app` to Applications, open it once, and enable Clockoli in Safari Settings → Extensions. That installation stays across restarts.
-
-### Development checkout (Chromium)
-
-1. Clone or update the repository:
-
-   ```bash
-   git clone git@github.com:clockoli/clockoli.git
-   cd clockoli
-   git switch main
-   git pull --ff-only
-   ```
-
-2. Open `chrome://extensions`.
-3. Enable **Developer mode**.
-4. Select **Load unpacked**.
-5. Choose the directory containing Clockoli's `manifest.json`.
-
-To use a release `Clockoli-X.Y.Z.zip` unpacked, extract it into a permanent folder first and select that folder. Do not select the ZIP itself.
-
-### Updating a file installation
-
-Unpacked and file installations do not update automatically:
-
-1. Pull the latest trusted source, or install the newer release file.
-2. For an unpacked installation, open `chrome://extensions` and select **Reload** on the Clockoli card.
-3. Refresh any already-open GitHub tabs so they receive the current content script.
-
-Before you replace an installation or switch browser, sync pending changes, stop the timer, and export settings. Credentials and local state do not move between browsers, browser profiles, or a store and an unpacked installation.
+Add Clockoli from the [Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl) and pin it to the toolbar. For Firefox, Safari, a development checkout, or updating a file installation, see [Install Clockoli](install.md).
 
 ## 2. Set up Clockoli
 
@@ -157,82 +108,14 @@ Clockoli adds a split stopwatch control before your GitHub avatar:
 
 GitHub issue and pull-request titles can be used as optional metadata when GitHub makes them available. The URL remains the task identity.
 
-### One timer at a time
+Clockoli runs one timer at a time. Starting another task saves the running one first; see [Track a task](tracking.md#one-timer-at-a-time).
 
-Clockoli permits one global active timer across every configured time repository. The smaller GitHub stopwatch dialog says:
+## Next steps
 
-- **Tracking this task** when the active timer matches the current page;
-- **Tracking another task** when a different URL is active.
-
-Choose **Switch to this task** in the full-width panel (or **Save and switch to this task** in the smaller GitHub stopwatch dialog) to finish the running task and start the current one. For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it. This preserves one timer even though the two repositories cannot be updated in one Git commit.
-
-### Route new Starts
-
-Projects are ordered, case-insensitive URL-substring rules. The first matching project chooses the time repository for a new Start. An explicit default time repository receives unmatched URLs. A running timer and every accepted queued write remain pinned to their original destination if you later reorder rules or change the default.
-
-## 4. Correct a record
-
-Open **Activity** for older entries and overlaps, or correct a recent entry in the tracking panel.
-
-Recent rows contain one-line `HH : MM - HH : MM` controls. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
-
-- Type the Start or Stop hour/minute directly in the unified inline draft.
-- Wheel/trackpad gestures scroll the panel normally and do not change time; no `−`/`+` controls are shown.
-- Choose **Save time** to persist the correction, or **Cancel** to discard the draft.
-- Select the displayed URL, title, or description to edit those fields in the same draft; Enter also saves it.
-- Choose **Delete** to remove an entry. The previous repository version remains in Git history.
-
-If moving a boundary crosses the adjacent record, Clockoli changes the matching neighboring boundary immediately and saves all affected records atomically. Intersections that still remain are highlighted.
-
-## 5. Open Top tasks, Activity, and Reports
-
-Use the panel navigation or the GitHub split-menu arrow:
-
-- **Top tasks** groups the current user's sessions by canonical task URL across selected time repositories. Search or choose a period, then start or stop a task from its row.
-- **Activity** combines completed entries from selected time repositories for preset or custom periods. Filter by URL or title, correct an entry, or add completed time with the all-or-nothing bulk importer.
-- **Reports** reads selected or all time repositories and provides facets, configurable charts, billable amounts, CSV/JSON download, and print/save-to-PDF. It labels the tracked URL's **Task source** separately from the **Time repository** that stores the record.
-
-Reads can succeed partially. Clockoli keeps records from repositories that loaded and identifies unavailable destinations. Reports disables CSV, JSON, and report print/PDF exports while the selected data is partial. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
-
-## 6. Optional settings
-
-**Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. The backup reminder appears once per page load; after exporting, further saves do not show it again until you reopen or reload Settings.
-
-### Recent entries
-
-Choose from 1 to 31 days of recent entries in the main panel. This changes display only; it does not limit tracking, Top tasks, Activity, or Reports.
-
-### Billable rates
-
-Add hourly rates by GitHub login and include the currency directly in each rate, for example `$15.50`, `20.15$`, `€55.50`, `750 RUB`, or `888 GEL`. Rates stay in this browser's extension-local storage. Other team members do not receive them, and the repository never stores rates or calculated money.
-
-### Invoicing
-
-In **Invoicing**, save seller and client details, invoice numbering, payment terms, and tax defaults for local invoice previews. These details stay in this browser and are not written to the time repository. See the [feature guide](features.md#invoicing) for invoice creation and limits.
-
-### Local settings backup
-
-Export a readable JSON backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
-
-- recent-entry and reporting preferences;
-- project rules and client assignments;
-- hourly rates with their currency signs or descriptions;
-- invoicing details such as seller, clients, and payment terms;
-- credential-free repository references and, for routed installations, the default destination.
-
-The routed export uses settings format version 6; the single-repository/PAT path can use version 7. Neither contains credentials, device codes, active timers, pending writes, or tracked time. Import restores routes to destinations already configured in this browser and reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub.
-
-## Team setup
-
-For shared reporting:
-
-1. A repository administrator signs in, chooses a suitable private repository from autocomplete or enters its URL, and grants the Clockoli GitHub App access only if needed. After checking the target, they explicitly confirm **Initialize repository** and copy the teammate instructions. Shared repositories may belong to a person or an organization; organization initialization requires fresh GitHub repository-admin permission.
-2. Give each teammate the GitHub rights needed to read and write that repository.
-3. Each teammate installs Clockoli, signs in with their own GitHub account, chooses the repository from autocomplete or enters its URL or `owner/name` and leaves the field to check it. If access is missing, follow the target-specific access instructions and return. Check the target and review the disclosure. If storage is already ready, explicitly confirm **Connect repository** to add it to this browser; otherwise confirm **Join repository** (or **Set up storage branch** if already a member with a missing branch).
-4. Clockoli provisions a marked personal branch for each stable GitHub user ID.
-5. Teammates can add that shared repository alongside other personal or organization time repositories and route projects to it.
-6. Reports combines the selected visible repositories and branches.
-
-Repository readers can see every stored URL, title, timestamp, and description included in shared reporting. Use separate data repositories for groups with different access boundaries.
-
-Next: [Feature guide](features.md) or [Troubleshooting](troubleshooting.md).
+- [Track a task](tracking.md) covers the panel, the GitHub stopwatch, switching, and descriptions.
+- [Activity](activity.md) and [Add and edit time](editing-time.md) show how to review and correct entries.
+- [Reports](reports.md), [Billable rates](billable-rates.md), and [Invoicing](invoicing.md) turn tracked time into timesheets and invoices.
+- [Projects and routing](projects-and-routing.md) sends work to different time repositories.
+- [Work as a team](teams.md) explains shared repositories and teammate invitations.
+- [Settings](settings.md) describes every remaining option, including backups.
+- [Troubleshooting](troubleshooting.md) helps when something does not work.
