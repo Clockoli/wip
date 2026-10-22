@@ -23,8 +23,11 @@ const current = { id: 'current-week', taskUrl: 'https://github.com/acme/app/issu
   startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 2).toISOString(),
   endedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 3).toISOString(),
   durationSeconds: 3600, _path: 'times/' + day(today).slice(0, 7) + '/alice.jsonl', _sha: 'fixture', _index: 1 };
+// The browser's extension isolated world uses the real clock, not page.clock's frozen noon.
+const initialStart = new Date(Math.min(Date.now() - 10 * 60_000, today.getTime() - 60_000));
+initialStart.setSeconds(0, 0);
 const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/42',
-  taskTitle: 'Running task', startedAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 59).toISOString() };
+  taskTitle: 'Running task', startedAt: initialStart.toISOString() };
 const mondayStart = new Date(monday); mondayStart.setHours(0, 0, 0, 0);
 const saturday = new Date(mondayStart); saturday.setDate(saturday.getDate() - 2); saturday.setHours(23, 0, 0, 0);
 const mondayEnd = new Date(monday); mondayEnd.setHours(1, 0, 0, 0);
@@ -461,61 +464,56 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectRunningCardFits(popupRoot);
     const popupCard = popupRoot.locator('.active-task-strip.is-active');
     const startField = popupCard.locator('.running-status-start-field');
+    const initialStartedAt = await worker.evaluate(() => active.startedAt);
+    const timeBefore = minutes => new Date(Date.parse(initialStartedAt) - minutes * 60_000);
+    const clockText = minutes => timeBefore(minutes).toTimeString().slice(0, 5);
+    const localParts = minutes => [timeBefore(minutes).getHours(), timeBefore(minutes).getMinutes()];
     await expect(startField.locator('.running-status-start-caption')).toHaveText('Start');
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:59');
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(0));
     await expect(popupCard.locator('.strip-favicon')).toHaveCount(0);
     await expect(popupCard.locator('.strip-task .task-title')).toHaveCSS('max-width', 'none');
     await expect(popupCard.locator('.running-elapsed')).toHaveText(/^\d+(?:h \d+)?m$/);
     await expect(popupCard.getByRole('button', { name: 'Switch to this task' })).toHaveCount(0);
     const rail = await popupCard.evaluate(node => getComputedStyle(node).borderLeftWidth);
     expect(rail).toBe('1px');
-    await startField.locator('.running-status-start').fill('1158');
+    await startField.locator('.running-status-start').fill(clockText(1).replace(':', ''));
     await startField.getByRole('button', { name: 'Save start' }).click();
-    try {
-      await expect.poll(() => worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
-    } catch (cause) {
-      const state = await worker.evaluate(() => ({ startedAt: active.startedAt, edits: globalThis.activeStartEdits, reads: globalThis.stateReads }));
-      const field = await startField.evaluate(node => ({
-        value: node.querySelector('.running-status-start')?.value,
-        saveHidden: node.querySelector('.running-status-start-save')?.hidden,
-      })).catch(() => null);
-      const feedback = await popupRoot.locator('.panel-feedback').allTextContents();
-      throw new Error(`Start edit did not persist: ${JSON.stringify({ state, field, feedback })}\n${cause.message}`);
-    }
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:58');
+    await expect.poll(() => worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()]))
+      .toEqual(localParts(1));
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(1));
     await worker.evaluate(() => { globalThis.rejectStartEdit = true; });
-    await startField.locator('.running-status-start').fill('1157');
+    await startField.locator('.running-status-start').fill(clockText(2).replace(':', ''));
     await startField.getByRole('button', { name: 'Save start' }).click();
     await expect(popupRoot.locator('.panel-feedback')).toContainText('Start would overlap another entry.');
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:57');
-    expect(await worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual([11, 58]);
-    await worker.evaluate(() => {
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(2));
+    expect(await worker.evaluate(() => [new Date(active.startedAt).getHours(), new Date(active.startedAt).getMinutes()])).toEqual(localParts(1));
+    await worker.evaluate(timestamp => {
       globalThis.rejectStartEdit = false;
-      active.startedAt = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 56).toISOString();
-    });
+      active.startedAt = timestamp;
+    }, timeBefore(3).toISOString());
     const readsBeforeExternalEdit = await worker.evaluate(() => globalThis.stateReads);
     await startField.locator('.running-status-start').press('Enter');
     await expect.poll(() => worker.evaluate(() => globalThis.stateReads)).toBeGreaterThan(readsBeforeExternalEdit);
     await expect(popupRoot.locator('.panel-feedback')).toContainText('Start changed elsewhere');
     expect(await worker.evaluate(() => globalThis.activeStartEdits.length)).toBe(1);
-    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(56);
+    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(localParts(3)[1]);
     await popupRoot.getByRole('button', { name: 'Close Clockoli' }).click();
     await githubRoot.locator('.trigger-main').click();
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:56');
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(3));
     await worker.evaluate(() => { globalThis.holdNextStartEdit = true; });
-    await startField.locator('.running-status-start').fill('1155');
+    await startField.locator('.running-status-start').fill(clockText(4).replace(':', ''));
     await startField.getByRole('button', { name: 'Save start' }).click();
     await expect.poll(() => worker.evaluate(() => typeof globalThis.finishHeldStartEdit)).toBe('function');
-    await worker.evaluate(() => { active.startedAt = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 11, 54).toISOString(); });
+    await worker.evaluate(timestamp => { active.startedAt = timestamp; }, timeBefore(5).toISOString());
     const readsBeforeLateEdit = await worker.evaluate(() => globalThis.stateReads);
     await worker.evaluate(() => { globalThis.finishHeldStartEdit(); globalThis.finishHeldStartEdit = null; });
     await expect.poll(() => worker.evaluate(() => globalThis.stateReads)).toBeGreaterThan(readsBeforeLateEdit);
     await expect(popupRoot.locator('.panel-feedback')).toContainText('Start changed elsewhere');
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:55');
-    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(54);
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(4));
+    expect(await worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(localParts(5)[1]);
     await popupRoot.getByRole('button', { name: 'Close Clockoli' }).click();
     await githubRoot.locator('.trigger-main').click();
-    await expect(startField.locator('.running-status-start')).toHaveValue('11:54');
+    await expect(startField.locator('.running-status-start')).toHaveValue(clockText(5));
     const popupStats = popupRoot.locator('.active-task-strip .running-status-stats');
     await expect(popupStats.locator('.running-status-metric-label')).toHaveText(['Duration', 'Today']);
     const popupMetrics = await popupStats.evaluate(node => ({
@@ -550,9 +548,9 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(popupRoot.locator('.description-saved')).toHaveText('✓ Saved');
     await expect(popupRoot.locator('.active-task-strip.is-active')).toBeVisible();
     await worker.evaluate(() => { active.description = 'Newer description from Activity'; });
-    await startField.locator('.running-status-start').fill('1153');
+    await startField.locator('.running-status-start').fill(clockText(6).replace(':', ''));
     await startField.getByRole('button', { name: 'Save start' }).click();
-    await expect.poll(() => worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(53);
+    await expect.poll(() => worker.evaluate(() => new Date(active.startedAt).getMinutes())).toBe(localParts(6)[1]);
     const startOnlyPayload = await worker.evaluate(() => globalThis.activeStartEdits.at(-1));
     expect(startOnlyPayload).not.toHaveProperty('description');
     expect(await worker.evaluate(() => active.description)).toBe('Newer description from Activity');
