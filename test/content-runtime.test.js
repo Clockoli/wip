@@ -4309,6 +4309,33 @@ test('idle quick start shows the three most recently completed distinct tasks', 
   h.destroy();
 });
 
+test('idle quick start shows the latest saved description below each task title', async () => {
+  const recent = [
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', description: 'Old description',
+      startedAt: '2026-09-05T09:00:00Z', endedAt: '2026-09-05T09:15:00Z' },
+    { taskUrl: 'https://example.com/other', taskTitle: 'Other', description: '',
+      startedAt: '2026-09-05T09:20:00Z', endedAt: '2026-09-05T09:30:00Z' },
+    { taskUrl: 'https://example.com/google', taskTitle: 'Google', description: '  Review  PR\n and publish  ',
+      startedAt: '2026-09-05T09:40:00Z', endedAt: '2026-09-05T10:00:00Z' },
+  ];
+  const h = await runningStatusHarness({ configured: true, active: null, recent, todayTrackedMs: 0 });
+  const list = h.find('running-status-recent'), buttons = list.children;
+  assert.equal(buttons.length, 2);
+  assert.equal(buttons[0].children[1].textContent, 'Google');
+  assert.equal(buttons[0].children[2].textContent, 'Review PR and publish');
+  assert.equal(buttons[0].getAttribute('aria-description'), 'Review PR and publish');
+  assert.equal(buttons[0].getAttribute('aria-label'), 'Start tracking Google');
+  assert.equal(buttons[1].children[1].textContent, 'Other');
+  assert.equal(buttons[1].children.length, 2, 'tasks without a saved description stay single-line');
+  const previous = buttons[0];
+  h.setState({ configured: true, active: null, todayTrackedMs: 0,
+    recent: recent.map((entry, index) => index === 2 ? { ...entry, description: 'Updated note' } : entry) });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.notEqual(list.children[0], previous, 'changed descriptions should update the card');
+  assert.equal(list.children[0].children[2].textContent, 'Updated note');
+  h.destroy();
+});
+
 test('idle quick start starts with one click, blocks repeat clicks, and updates the running strip', async () => {
   const recent = [{ taskUrl: 'https://example.com/task', taskTitle: 'Demo task',
     startedAt: '2026-09-05T10:00:00Z', endedAt: '2026-09-05T11:00:00Z' }];

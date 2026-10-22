@@ -253,15 +253,16 @@ export function mountRunningStatus(container, { send, onChange }) {
       try {
         const taskUrl = normalizeStoredTaskIdentity(entry);
         const taskTitle = String(entry.taskTitle ?? entry.issueTitle ?? '').trim().slice(0, 300);
+        const taskDescription = String(entry.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000);
         const end = Date.parse(entry.endedAt || ''), start = Date.parse(entry.startedAt || '');
-        candidates.push({ taskUrl, taskTitle, timestamp: Number.isFinite(end) ? end : (Number.isFinite(start) ? start : 0) });
+        candidates.push({ taskUrl, taskTitle, taskDescription, timestamp: Number.isFinite(end) ? end : (Number.isFinite(start) ? start : 0) });
       } catch { /* Ignore invalid cached task identities. */ }
     }
     candidates.sort((a, b) => b.timestamp - a.timestamp);
     const seen = new Set(), recent = [];
     for (const candidate of candidates) {
       if (seen.has(candidate.taskUrl)) continue;
-      seen.add(candidate.taskUrl); recent.push({ taskUrl: candidate.taskUrl, taskTitle: candidate.taskTitle });
+      seen.add(candidate.taskUrl); recent.push({ taskUrl: candidate.taskUrl, taskTitle: candidate.taskTitle, taskDescription: candidate.taskDescription });
       if (recent.length === RECENT_TASK_LIMIT) break;
     }
     return recent;
@@ -279,6 +280,12 @@ export function mountRunningStatus(container, { send, onChange }) {
         const play = make('span', 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true');
         const name = make('span', 'running-status-recent-name'); name.textContent = label;
         button.append(play, name);
+        if (item.taskDescription) {
+          const subtitle = make('span', 'running-status-recent-description');
+          subtitle.textContent = item.taskDescription;
+          button.append(subtitle);
+          button.setAttribute('aria-description', item.taskDescription);
+        }
         button.addEventListener('click', () => startRecentTask(item));
         recentList.append(button);
       }
