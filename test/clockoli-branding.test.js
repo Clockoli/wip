@@ -87,7 +87,9 @@ test('storage, branch, DOM, settings, and GitHub App identities are Clockoli-onl
 });
 
 test('documentation and clone instructions use Clockoli GitHub coordinates', () => {
-  const docs = ['README.md', 'docs/README.md', 'docs/getting-started.md', 'docs/features.md',
+  const docs = ['README.md', 'docs/README.md', 'docs/install.md', 'docs/getting-started.md', 'docs/tracking.md',
+    'docs/activity.md', 'docs/editing-time.md', 'docs/top-tasks.md', 'docs/reports.md', 'docs/billable-rates.md',
+    'docs/invoicing.md', 'docs/projects-and-routing.md', 'docs/teams.md', 'docs/settings.md', 'docs/sync.md',
     'docs/data-and-privacy.md', 'docs/time-data-repository.md', 'docs/troubleshooting.md',
     'docs/why-clockoli.md', 'docs/spec-compliance.md'].map(read).join('\n');
   assertClockoliOnly(docs);

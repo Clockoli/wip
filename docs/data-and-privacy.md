@@ -170,7 +170,7 @@ Do not clear browser data or Clockoli local configuration while a Stop is waitin
 
 ## Aggregated reads and reports cache
 
-Tasks, Times, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
+Top tasks, Activity, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
 
 For each repository, Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
 
