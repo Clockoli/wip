@@ -1,18 +1,10 @@
 # Time repositories
 
-Clockoli can use several dedicated private GitHub repositories as durable destinations for active timers and completed work records. Each destination is a **time repository**. A repository whose issue or pull request you track is a **source repository**; it is not automatically a time repository and Clockoli does not need write access to it.
+A time repository is a private GitHub repository where Clockoli stores your timers and completed time. You can connect several and choose a default.
 
-## Connect time repositories
+A repository whose issue or pull request you track is a **source repository**. It is not automatically a time repository, and Clockoli does not need write access to it. See [Key concepts](concepts.md).
 
-Sign in with GitHub. **Connect an existing repository** is the first option: paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. Or type at least two characters of a repository name and choose one of up to eight matching GitHub App-granted suggestions from the dropdown; choosing checks the target but does not connect it. The catalog is fetched on demand rather than displayed in full when setup opens. Use the **Check** button inside the field to recheck the target. There is no separate existing/new or owner-type selection. If you do not have a repository, choose the secondary **Create a new time repository** action below the existing-repository field, then return and paste its URL into the **New repository URL** dialog to check it.
-
-Clockoli requests missing App access only for the checked target and remembers that target across the GitHub visit and Settings reload. The access dialog appears only after an explicit target check. **Grant access** closes it immediately. When an installation is already known, its settings are used. Returning to Settings checks an unresolved remembered target after a one-second settling delay, even if the access dialog was closed or Settings was reloaded. If the grant is not visible yet, return again after completing it on GitHub to recheck. If it needs initialization, the **Initialize repository** review dialog opens after inspection; review the writes and confirm there. Dismissing the review leaves **Initialize repository** beside the status so you can reopen it. Other available actions appear beneath the check status. Discovery refreshes silently every 3 seconds during active setup only when a target is remembered or authorization is pending; polling pauses during the pending grant handoff and does not reopen a dismissed initialization review. A missing private repository does not prove it does not exist; check its name, your access, and the App grant. Checking is necessary because an App grant alone does not prove the repository is private, writable, compatible with Clockoli storage, or that your personal branch and task index belong to you. It does not connect the repository. Review **Connect repository**, **Set up storage branch**, **Join repository**, or **Initialize repository** and explicitly confirm the offered action.
-
-Discovery reads GitHub but never connects newly granted repositories. Unchanged results preserve focus, scroll, drafts, messages, and dialogs, except that a newly granted remembered target needing initialization opens its read-only review dialog once. Background errors retain the last good suggestions. There is no **Refresh repositories** or **Review connection** button; discovery never performs remote writes. A checked ready repository remains **Ready — not connected** until you choose **Connect repository** and confirm. That action revalidates the repository and registers it locally, without changing repository files; only then does it appear in **Default time repository**. An explicit check opens the appropriate access or initialization/join/branch-setup dialog when needed; read the privacy disclosure and exact writes before confirming. Even **Set up storage branch** can create or verify your personal storage branch.
-
-Connections are additive: the first becomes the default and later additions preserve it. The first confirmed repository action completes initial setup when a usable default is registered and authorization is not blocked; there is no separate Finish click or page reload. For later additions, use the separate **Default time repository** selector, then **Finish setup** once that default is usable. A new or replacement GitHub authorization is confirmed automatically after Clockoli read-validates every configured destination under the same GitHub identity and atomically verifies that no active or queued work can be stranded. This authorization check performs no repository writes. If it is blocked, Clockoli reports one account-level action instead of showing a button on every repository. Finish stops polling, invalidates late discovery replies, and clears the remembered target without remote writes.
-
-Required conditions:
+## Requirements
 
 - private visibility;
 - repository not archived or disabled;
@@ -22,6 +14,65 @@ Required conditions:
 - branch policy permits Clockoli's direct marker and personal-branch writes.
 
 Use **Only select repositories** when granting App access.
+
+## Connect a repository
+
+[Getting started](getting-started.md#step-2-connect-a-time-repository) walks through the first connection. This section describes each part of the flow.
+
+### Check a repository
+
+After sign-in, the primary action is **Connect an existing repository**. Paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. The **Check** button also retries a check and shows **Checking…** while a check is in progress.
+
+Or type at least two characters of a repository name and choose one of up to eight matching GitHub App-granted suggestions from the dropdown. Choosing a suggestion checks the target but does not connect it; merely typing or seeing a suggestion does neither. The granted catalog is fetched on demand rather than displayed in full when setup opens, and not once per keystroke.
+
+There is no separate existing/new or personal/organization choice: Clockoli inspects the selected repository's state and your permissions, regardless of its name or owner.
+
+Checking is necessary because an App grant alone does not prove the repository is private, writable, compatible with Clockoli storage, or that your personal branch and task index belong to you. **Check repository** verifies the current GitHub grant, permissions, membership, personal branch ownership, and task index. A grant or a previously checked Ready label alone cannot authorize writes. Checking changes neither repository files nor the list of connected repositories.
+
+Editing the repository field invalidates the previous selection and confirmation: check the new target and review it before confirming.
+
+### Create a repository
+
+If you do not have a repository, choose the secondary **Create a new time repository** action below the existing-repository field; it suggests `clockoli-data`. After creating the private repository on GitHub, return and paste its URL into the **New repository URL** dialog to check it. This checks the target without connecting or initializing it, and creating a repository does not grant the Clockoli GitHub App access to it.
+
+The access dialog's **Create one on GitHub** link prefills the checked repository name and owner while retaining the private Clockoli template. GitHub may ignore the owner if you lack creation permission; verify the owner before creating.
+
+### Grant App access
+
+Clockoli asks for **Grant access** only when the checked target is missing from the accessible list or needs App Contents-write permission. The access dialog appears only after an explicit check, and **Grant access** closes it immediately. If Clockoli knows the owner's existing App installation, the link opens that installation's settings rather than starting another installation. Use **Only select repositories** and grant access only to the intended time repository or repositories. If you cannot change access, ask the repository owner or organization administrator; approval may be required.
+
+Clockoli remembers the target across the GitHub visit and a Settings reload. Returning to Settings checks an unresolved remembered target after a one-second settling delay, even if the access dialog was closed or Settings was reloaded. If the grant is not visible yet, return again after completing it on GitHub to recheck; the pending grant handoff does not poll in the background.
+
+A missing private repository does not prove it does not exist; check its name, your access, the App grant, and any pending approval. Clockoli never replaces a missing target with another available repository.
+
+### Confirm a setup action
+
+An explicit check opens the appropriate access, initialization, join, or branch-setup dialog when needed. Read the privacy disclosure and, for actions that write remotely, the exact **Repository writes** before confirming:
+
+- **Connect repository** adds an already-ready repository to this browser after another read-only validation; it does not change repository files.
+- **Set up storage branch** explicitly creates or verifies a missing personal storage branch for an existing member. Invalid branch ownership or task-index data is unavailable until repaired; discovery never overwrites it.
+- **Join repository** registers your GitHub identity in the initialized repository's Clockoli user list and creates or verifies your personal storage branch.
+- **Initialize repository** creates the Clockoli marker and personal storage branch; for an empty repository, it also creates the first commit and default branch.
+
+A checked ready repository remains **Ready — not connected** until you choose **Connect repository** and confirm; only then does it appear in **Default time repository**. If a target needs initialization, the **Initialize repository** review dialog opens once after inspection. Dismissing the review leaves **Initialize repository** beside the status so you can reopen it; other available actions appear beneath the check status.
+
+Clockoli rechecks repository state and permissions before applying the confirmed action. Initializing an organization repository requires fresh GitHub repository-admin permission; an ordinary teammate can join a valid initialized repository but cannot initialize an unmarked one.
+
+After confirmation succeeds, the repository appears under **Time repositories**. Shared repositories provide copyable instructions for other people who should join them.
+
+### Default repository and finishing setup
+
+Connections are additive: the first becomes the default and later additions preserve it. The first confirmed repository action completes initial setup when a usable default is registered and authorization is not blocked; there is no separate Finish click or page reload. For later additions, use the separate **Default time repository** selector, then **Finish setup** once that default is usable. Finish stops polling, invalidates late discovery replies, and clears the remembered target without remote writes.
+
+### Background discovery
+
+Discovery only reads GitHub and never connects newly granted repositories. It runs on demand for autocomplete and explicit checks, and refreshes silently every 3 seconds during active setup only when a target is remembered or an authorization is pending. Polling pauses during the pending grant handoff and never reopens a dismissed review.
+
+Unchanged results preserve focus, scroll, drafts, messages, and open dialogs, except that a newly granted remembered target needing initialization opens its read-only review dialog once. Background errors keep the last good suggestions without a notification; explicit checks report errors. There is no **Refresh repositories** or **Review connection** button.
+
+### Authorization changes
+
+A new or replacement GitHub authorization is confirmed automatically when it belongs to the same GitHub identity, can read every configured time repository, and cannot strand active or queued work. This check performs no repository writes. If any check fails, the current credentials remain in use and Clockoli shows one account-level recovery message; there is no per-repository **Confirm authorization** button.
 
 ## Share a repository with teammates
 

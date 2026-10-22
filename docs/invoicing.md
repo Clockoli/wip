@@ -1,6 +1,8 @@
 # Invoicing
 
-Clockoli turns a filtered report into a numbered, taxed invoice that you print or save as PDF. Invoices are generated in the browser from your time records and local settings; no invoice, invoice number, rate, or client detail is ever written to the time repository.
+Turn a filtered report into a numbered, taxed invoice, then print it or save it as PDF. Invoices never leave your browser.
+
+Invoices are generated in the browser from your time records and local settings. No invoice, invoice number, rate, or client detail is ever written to the time repository.
 
 ## Set up invoicing
 

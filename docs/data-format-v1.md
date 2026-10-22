@@ -1,4 +1,6 @@
-# Clockoli Data Format Specification
+# Data format v1
+
+The normative format of the files Clockoli writes to a time repository: active timers, monthly JSONL time records, and the task index.
 
 **Status:** Canonical Version 1
 **Scope:** Persistent Clockoli work data stored in the user's GitHub repository

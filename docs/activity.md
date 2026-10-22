@@ -1,5 +1,7 @@
 # Activity
 
+Review a week of tracked time in Timeline, Calendar, or List, move and resize entries, and search your whole history.
+
 Activity shows your completed and running time one Monday–Sunday week at a time, in three views: **Timeline**, **Calendar**, and **List**. The same views appear in the toolbar panel and the GitHub panel.
 
 ## Open Activity

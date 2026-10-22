@@ -1,6 +1,8 @@
 # Add and edit time
 
-Add time you forgot to track, correct completed entries, and change when a running timer started. Every change is saved locally first and synchronized with GitHub in the background.
+Add time you forgot to track, correct or delete completed entries, and change when a running timer started.
+
+Every change is saved locally first and synchronized with GitHub in the background, so edits appear immediately.
 
 ## Add a single entry
 

@@ -1,6 +1,8 @@
 # Work as a team
 
-Teammates track into the same private time repository, each on a personal branch, and Reports reads everyone's branches as one view. There is no Clockoli workspace or admin role: GitHub repository access decides who can read and write.
+Share one private time repository with your team, invite and remove teammates, and report on everyone's time together.
+
+Teammates track into the same repository, each on a personal branch, and Reports reads everyone's branches as one view. There is no Clockoli workspace or admin role: GitHub repository access decides who can read and write.
 
 ## Before you start
 
