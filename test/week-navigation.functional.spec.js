@@ -274,6 +274,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const initialStartedAt = await worker.evaluate(() => active.startedAt);
     const errors = [];
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     const id = new URL(worker.url()).host;
@@ -427,7 +428,10 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.times-calendar-status')).toHaveText('');
     expect(await calendarViewport.evaluate(element => element.scrollTop)).toBeCloseTo(manualScroll, 0);
     await activityRoot.getByRole('button', { name: 'List', exact: true }).click();
-    await expect(activityRoot.locator('.times-list-total')).toHaveText(/Total: 1h [1-9]\d*m/);
+    const currentWeekMinutes = 60 + Math.max(0, Math.floor((fixedNow.getTime() - Date.parse(initialStartedAt)) / 60_000));
+    const currentWeekTotal = Math.floor(currentWeekMinutes / 60) + 'h'
+      + (currentWeekMinutes % 60 ? ' ' + currentWeekMinutes % 60 + 'm' : '');
+    await expect(activityRoot.locator('.times-list-total')).toHaveText('Total: ' + currentWeekTotal);
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await activityRoot.getByRole('button', { name: 'Calendar', exact: true }).click();
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
@@ -464,7 +468,6 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expectRunningCardFits(popupRoot);
     const popupCard = popupRoot.locator('.active-task-strip.is-active');
     const startField = popupCard.locator('.running-status-start-field');
-    const initialStartedAt = await worker.evaluate(() => active.startedAt);
     const timeBefore = minutes => new Date(Date.parse(initialStartedAt) - minutes * 60_000);
     const clockText = minutes => timeBefore(minutes).toTimeString().slice(0, 5);
     const localParts = minutes => [timeBefore(minutes).getHours(), timeBefore(minutes).getMinutes()];
