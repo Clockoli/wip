@@ -1164,6 +1164,16 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
     const quickStart = page.getByRole('button', { name: 'Start tracking Activity test task' })
       .and(page.locator('.running-status-recent-task'));
     await expect(quickStart.locator('.running-status-recent-description')).toHaveText('Review PR Follow up');
+    const plainTask = page.getByRole('button', { name: 'Start tracking Same day task' })
+      .and(page.locator('.running-status-recent-task'));
+    await expect(plainTask).toBeVisible();
+    await expect(plainTask.locator('.running-status-recent-description')).toHaveCount(0);
+    const centered = await plainTask.evaluate(button => {
+      const card = button.getBoundingClientRect();
+      const name = button.querySelector('.running-status-recent-name').getBoundingClientRect();
+      return Math.abs((card.top + card.bottom - name.top - name.bottom) / 2);
+    });
+    expect(centered).toBeLessThan(1);
     await quickStart.click();
     const runningDescription = page.locator('.running-status.is-active .running-status-description');
     await expect(runningDescription).toHaveValue('Review PR\nFollow up');
