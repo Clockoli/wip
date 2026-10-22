@@ -1168,6 +1168,11 @@ test('Quick start Stop stays visible in Activity Timeline before any GitHub writ
       .and(page.locator('.running-status-recent-task'));
     await expect(plainTask).toBeVisible();
     await expect(plainTask.locator('.running-status-recent-description')).toHaveCount(0);
+    const [withDescriptionHeight, withoutDescriptionHeight] = await Promise.all([
+      quickStart.evaluate(button => button.getBoundingClientRect().height),
+      plainTask.evaluate(button => button.getBoundingClientRect().height),
+    ]);
+    expect(withoutDescriptionHeight).toBe(withDescriptionHeight);
     const centered = await plainTask.evaluate(button => {
       const card = button.getBoundingClientRect();
       const name = button.querySelector('.running-status-recent-name').getBoundingClientRect();

@@ -105,9 +105,11 @@
 .running-status-quick-label{font-size:13px;white-space:nowrap}
 .running-status-recent{gap:12px}
 .running-status-recent-task{
+  box-sizing:border-box;
   flex:1 1 0;
   max-width:none;
-  min-height:40px;
+  height:52px;
+  min-height:52px;
   padding:7px 12px;
   border-radius:9px;
   transition:border-color .12s,background-color .12s
