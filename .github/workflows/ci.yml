@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -84,7 +90,40 @@ jobs:
       - name: Rebuild PDF and byte-compare the distributed bundle and notices
         run: python3 scripts/verify-pdf-rebuild.py "$RUNNER_TEMP/Clockoli-source.zip"
 
+  # The native Safari/Xcode build is slow; keep its check visible but skip
+  # the macOS runner for changes unrelated to packaging or legal resources.
+  safari-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      safari: ${{ steps.filter.outputs.safari }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            safari:
+              - '.github/workflows/**'
+              - 'COPYRIGHT'
+              - 'LICENSE'
+              - 'LICENSES/**'
+              - 'THIRD_PARTY_NOTICES.md'
+              - 'manifest.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/**/package.json'
+              - 'src/assets/**'
+              - 'src/vendor/**'
+              - 'third_party/**'
+              - 'scripts/**'
+
   safari-license-smoke:
+    needs: safari-changes
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.safari-changes.outputs.safari == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
