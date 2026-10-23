@@ -223,7 +223,7 @@
       <label>Period<select id="merge-task-period"><option value="one-month" selected>Last 30 days</option><option value="three-months">Last 3 months</option><option value="all-time">All time</option></select></label>
       <label>Time repository<select id="merge-task-destination"></select></label>
       <details id="merge-people-select" class="merge-people-select">
-        <summary><label class="visually-hidden" for="merge-people-filter">Filter people</label><input id="merge-people-filter" type="search" placeholder="People" aria-controls="merge-people-list" aria-expanded="false"><button id="merge-people-all" class="text-button compact" type="button" aria-pressed="false">All people</button></summary>
+        <summary><span id="merge-people-selected" class="merge-people-selected" aria-live="polite"></span><label class="visually-hidden" for="merge-people-filter">Filter people</label><input id="merge-people-filter" type="search" placeholder="People" aria-controls="merge-people-list" aria-expanded="false"><button id="merge-people-all" class="text-button compact" type="button" aria-pressed="false">All people</button></summary>
         <div class="merge-people-popover">
           <div id="merge-people-list" class="merge-people-list"></div>
         </div>

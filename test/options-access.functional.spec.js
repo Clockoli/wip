@@ -38,7 +38,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ], currentUsers: { 'github:20': 'octocat' }, availableUsers: ['octocat'],
     },
     LOAD_REPOSITORY_COLLABORATORS: {
-      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: false,
+      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: true,
+      avatarUsers: [{ login: 'Member', avatarUrl: null },
+        { login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/43?v=4' }],
       pendingUsers: [], pendingHasMore: false,
     },
   };
@@ -66,6 +68,9 @@ async function openOptions() {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
+    await context.route('https://avatars.githubusercontent.com/u/43?v=4', route => route.fulfill({
+      status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="12" fill="#88aaff"/></svg>',
+    }));
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const page = await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
@@ -221,6 +226,31 @@ test('Merge tasks offers an imported identity only on the source side in Chromiu
     await expect(page.locator('#merge-queue-list .merge-queue-row')).toHaveCount(1);
     await expect(page.locator('#merge-tasks-submit')).toBeEnabled();
     await expectReadOnlyRequests(fixture.worker);
+    expect(errors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Merge people keeps the selected avatar visible in Chromium without another collaborator read', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.locator('#merge-task-destination').selectOption('github:20');
+    await expect(page.locator('#merge-people-selected img')).toHaveAttribute('src', 'https://avatars.githubusercontent.com/u/43?v=4');
+    await expect(page.locator('#merge-people-selected')).toHaveAttribute('aria-label', 'Selected people: octocat');
+    const reads = (await worker.evaluate(() => globalThis.requests)).filter(type => type === 'LOAD_REPOSITORY_COLLABORATORS').length;
+    await page.locator('#merge-people-filter').click();
+    await expect(page.locator('#merge-people-list input:checked')).toHaveCount(1);
+    await page.locator('#merge-people-all').click();
+    await expect(page.locator('#merge-people-selected')).toHaveAttribute('aria-label', 'No people selected');
+    await page.setViewportSize({ width: 375, height: 780 });
+    expect(await page.locator('#merge-people-select').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect((await worker.evaluate(() => globalThis.requests)).filter(type => type === 'LOAD_REPOSITORY_COLLABORATORS').length).toBe(reads);
+    await page.reload();
+    await page.locator('#merge-task-destination').selectOption('github:20');
+    await expect(page.locator('#merge-people-selected img')).toHaveAttribute('src', 'https://avatars.githubusercontent.com/u/43?v=4');
     expect(errors).toEqual([]);
   } finally { await closeOptions(fixture); }
 });
