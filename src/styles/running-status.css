@@ -128,6 +128,7 @@
 }
 .running-status-task{flex:0 1 auto;max-width:340px}
 .running-status-description-field{flex:0 1 230px;min-width:160px;max-width:250px}
+.wide-running-description .running-status-description-field{flex:1 1 230px;min-width:0;max-width:none}
 .running-status-description{min-height:36px;padding-right:78px;border-radius:8px;resize:none}
 .running-status-stats{display:flex;align-items:stretch;flex:none;max-width:100%;margin-left:auto;border:1px solid var(--borderColor-muted);border-radius:9px;background:var(--bgColor-muted)}
 .running-status-start-field{box-sizing:border-box;position:relative;display:flex;align-items:center;flex:none;min-width:100px;margin-left:0;padding:5px 8px 5px 11px;border-right:1px solid var(--borderColor-muted);border-radius:8px 0 0 8px}
@@ -163,6 +164,7 @@
   .running-status-recent-task{flex:0 0 172px}
   .running-status-task{flex-basis:100%}
   .running-status-description-field{flex-basis:100%;min-width:0;max-width:none}
+  .wide-running-description .running-status-description-field{flex-basis:100%}
   .running-status-stats{order:3}
   .running-status .running-status-stop{order:4}
 }

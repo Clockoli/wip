@@ -247,7 +247,8 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await panelEntry.hover();
     await panelDetails.getByRole('button', { name: 'Edit' }).click();
     await expect(editDialog).toBeVisible();
-    await editDialog.press('Escape');
+    await expect(editDialog.locator('#add-time-task')).toBeFocused();
+    await github.keyboard.press('Escape');
     await expect(editDialog).toBeHidden();
     await expect(panel.locator('.full-width-popup')).toBeVisible();
     await panelEntry.hover();
@@ -971,6 +972,26 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(overview.summaryRight).toBeLessThan(overview.cardLeft);
     expect(overview.cardHeight).toBeGreaterThanOrEqual(overview.summaryHeight - 2);
     expect(overview.cardWidth).toBeGreaterThan(600);
+    for (const width of [800, 420, 320]) {
+      await github.setViewportSize({ width, height: 720 });
+      const controls = await panel.locator('.active-task-strip.is-active').evaluate(card => {
+        const box = selector => card.querySelector(selector).getBoundingClientRect();
+        const stats = box('.running-status-stats'), stop = box('[data-panel-action="stop"]');
+        const description = box('.strip-description'), live = box('.running-status-live');
+        const bounds = card.getBoundingClientRect();
+        return { stats: stats.toJSON(), stop: stop.toJSON(), description: description.toJSON(),
+          live: live.toJSON(), bounds: bounds.toJSON(),
+          overflow: card.closest('.full-width-popup').scrollWidth - card.closest('.full-width-popup').clientWidth };
+      });
+      expect(controls.live.width).toBeLessThan(170);
+      expect(Math.abs(controls.stop.left - controls.stats.left)).toBeLessThan(2);
+      expect(Math.abs(controls.stop.right - controls.stats.right)).toBeLessThan(2);
+      expect(controls.stop.top).toBeGreaterThanOrEqual(controls.stats.bottom);
+      expect(controls.stop.right).toBeLessThanOrEqual(controls.bounds.right);
+      expect(controls.overflow).toBeLessThanOrEqual(0);
+      if (width > 359) expect(Math.abs(controls.stop.top - controls.description.top)).toBeLessThan(2);
+      else expect(controls.stop.top).toBeGreaterThanOrEqual(controls.description.bottom);
+    }
     await github.close();
     await page.setViewportSize({ width: 1280, height: 800 });
     const narrowDesktop = await measureControls();
@@ -1952,6 +1973,12 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await row.locator('.entry-edit').click();
     const dialog = page.getByRole('dialog', { name: 'Edit time' });
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Task' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
+    await row.locator('.entry-edit').click();
+    await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel('Description (optional)', { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('Task title', { exact: true })).toHaveCount(0);
     await expect(dialog.getByRole('combobox', { name: 'Task' })).toHaveValue('Activity test task');
@@ -2018,6 +2045,11 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     const popupRow = popup.locator('.today-list .entry-record').filter({ hasText: 'Activity test task' });
     await popupRow.locator('.entry-edit').click();
     const popupDialog = popup.getByRole('dialog', { name: 'Edit time' });
+    await expect(popupDialog).toBeVisible();
+    await expect(popupDialog.getByRole('combobox', { name: 'Task' })).toBeFocused();
+    await popup.keyboard.press('Escape');
+    await expect(popupDialog).toBeHidden();
+    await popupRow.locator('.entry-edit').click();
     await expect(popupDialog).toBeVisible();
     await expect(popupDialog.getByLabel('Description')).toHaveValue('Edited from form');
     await popupDialog.getByRole('button', { name: 'Cancel' }).click();

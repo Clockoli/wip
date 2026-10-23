@@ -4507,6 +4507,20 @@
       :host(.full-width-popup-surface) .activity-list .entry-record + .entry-record { margin-top:10px }
       :host(.full-width-popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
       @media(max-width:900px) { :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:110px } :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:"brand end" "nav nav"; grid-template-columns:minmax(0,1fr) auto } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .header-actions { grid-area:nav; justify-self:stretch } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
+      @media(max-width:900px) {
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto auto; align-items:start; gap:8px 12px }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-live { grid-column:1; grid-row:1; justify-self:start }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1; grid-row:2; min-width:0 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1; grid-row:3; width:100%; min-width:0; max-width:none }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { box-sizing:border-box; grid-column:2; grid-row:3; justify-self:stretch; width:100%; margin:0 }
+      }
+      @media(max-width:359px) {
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1/-1 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-row:4 }
+        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { grid-row:5 }
+      }
       @media(max-width:700px) { :host(.full-width-popup-surface) .popup-list-toolbar { grid-template-columns:minmax(0,1fr) auto; gap:10px } :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { grid-column:1/-1 } :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; justify-self:start; gap:8px } :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { grid-column:2 } :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { padding-right:14px } :host(.full-width-popup-surface) .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
     `;
     if (fullWidthPopupOpen) {
