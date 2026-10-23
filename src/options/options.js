@@ -59,6 +59,8 @@ let repositoryActionApplying = false;
 let authorizationBlock = null;
 let projectSequence = 0;
 let closeActiveAvatarMenu = null;
+const repositoryCollaborators = new Map();
+let collaboratorAccount = '';
 
 
 function message(text, kind = '') {
@@ -583,6 +585,8 @@ async function loadRepositoryCollaborators(article, destination, root) {
     if (!root.contains(article) || article.collaboratorLoadId !== loadId) return;
     const users = Array.isArray(result?.users) ? result.users : [];
     const pending = Array.isArray(result?.pendingUsers) ? result.pendingUsers : [];
+    repositoryCollaborators.set(destination.id, new Map((result.avatarUsers || users).map(user => [user.login.toLowerCase(), user.avatarUrl])));
+    if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
     const labels = users.map(user => `@${user.login}`);
     closeActiveAvatarMenu?.();
     display.replaceChildren();
@@ -620,6 +624,8 @@ async function loadRepositoryCollaborators(article, destination, root) {
     }
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
+      repositoryCollaborators.delete(destination.id);
+      if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
       closeActiveAvatarMenu?.();
     }
@@ -713,6 +719,9 @@ function renderOnboardingProgress() {
 }
 
 function renderState() {
+  const account = `${state?.auth?.mode || ''}:${state?.auth?.githubLogin?.toLowerCase() || ''}`;
+  const accountChanged = account !== collaboratorAccount;
+  if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
   const repositoryFlowOpen = Boolean(state?.candidateAuth) || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
@@ -751,6 +760,7 @@ function renderState() {
   renderDestinationCards();
   renderDestinationControls(localPreferences || {});
   renderMergeDestinationOptions();
+  if (accountChanged) updateMergePeopleAvatars();
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
   else $('device-panel').hidden = true;
@@ -1579,6 +1589,36 @@ const mergeSelection = { source: '', target: '' };
 let mergePairs = [];
 let mergePeople = new Set();
 let mergeAvailableUsers = [];
+function mergePersonAvatar(user) {
+  const avatar = document.createElement('span'); avatar.className = 'merge-person-avatar';
+  avatar.textContent = user[0]?.toUpperCase() || '?';
+  const url = repositoryCollaborators.get($('merge-task-destination').value)?.get(user.toLowerCase());
+  if (url) {
+    const image = document.createElement('img'); image.src = url; image.alt = '';
+    image.referrerPolicy = 'no-referrer'; image.addEventListener('error', () => image.remove()); avatar.append(image);
+  }
+  return avatar;
+}
+function updateMergePeopleAvatars() {
+  for (const label of $('merge-people-list').children) {
+    const avatar = label.querySelector('.merge-person-avatar');
+    if (!avatar) continue;
+    const updated = mergePersonAvatar(label.dataset.user);
+    avatar.replaceChildren();
+    avatar.textContent = updated.textContent;
+    avatar.append(...updated.children);
+  }
+  const selected = mergeAvailableUsers.filter(user => mergePeople.has(user));
+  const display = $('merge-people-selected'); display.replaceChildren();
+  display.setAttribute('aria-label', selected.length ? `Selected people: ${selected.join(', ')}` : 'No people selected');
+  for (const user of selected.slice(0, 3)) {
+    const avatar = mergePersonAvatar(user); avatar.title = user; display.append(avatar);
+  }
+  const count = document.createElement('span'); count.className = 'merge-people-count';
+  count.textContent = selected.length > 3 ? `${selected.length} selected` : selected.length ? selected.join(', ') : 'None selected';
+  display.append(count);
+  $('merge-people-filter').placeholder = selected.length ? 'Filter' : 'People';
+}
 function renderMergeDestinationOptions() {
   const select = $('merge-task-destination'), destinations = configuredDestinations();
   const previous = select.value, fallback = defaultDestinationId();
@@ -1612,6 +1652,7 @@ function updateMergePeopleState(users = mergeAvailableUsers) {
   $('merge-people-all').disabled = !users.length;
   $('merge-people-all').setAttribute('aria-pressed', String(allSelected));
   $('merge-people-all').setAttribute('aria-label', allSelected ? 'Clear all people' : 'Select all people');
+  updateMergePeopleAvatars();
 }
 function renderMergePeople(users = []) {
   const focusedUser = document.activeElement?.type === 'checkbox' ? document.activeElement.value : '';
@@ -1625,7 +1666,7 @@ function renderMergePeople(users = []) {
       clearMergePairs(); updateMergePeopleState(); void refreshMergeTasks();
     });
     const text = document.createElement('span'); text.textContent = user;
-    label.append(input, text); list.append(label);
+    label.append(input, mergePersonAvatar(user), text); list.append(label);
   }
   updateMergePeopleState(users);
   filterMergePeople();
