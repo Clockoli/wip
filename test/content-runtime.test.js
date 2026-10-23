@@ -3421,6 +3421,17 @@ test('Timeline details stops projecting a reverted draft over later authoritativ
 });
 
 for (const permissions of [[], ['favicon']]) {
+  test(`GitHub List favicon styling does not alter the permission fallback with permissions ${JSON.stringify(permissions)}`, () => {
+    const now = Date.parse('2026-09-05T12:00:00Z');
+    const entry = activityEntry('github-icon', '2026-09-05', '08', 'https://github.com/acme/app/issues/42');
+    const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+      pageUrl: 'chrome-extension://clockoli/src/times/times.html', runtimeManifest: { permissions } });
+    const icon = harness.renderActivity().querySelector('.entry-record-favicon');
+    assert.equal(icon.tag, permissions.length ? 'img' : 'span');
+    assert.equal(icon.className.includes('site-github-favicon'), Boolean(permissions.length));
+    assert.equal(harness.timelineItems(0, now)[0].githubFavicon, true);
+  });
+
   test(`task favicon surfaces use ${permissions.length ? 'images' : 'monograms'} from the running manifest`, () => {
     const now = Date.parse('2026-09-05T12:00:00Z');
     const entry = activityEntry('site-icon', '2026-09-05', '08', 'https://www.example.com/work');
@@ -3454,15 +3465,17 @@ for (const permissions of [[], ['favicon']]) {
     assert.equal(resources.includes('/_favicon/'), Boolean(permissions.length));
   });
 
-  test(`imported task favicons stay hidden with permissions ${JSON.stringify(permissions)}`, () => {
+  test(`imported tasks show a theme-colored Clockoli mark with permissions ${JSON.stringify(permissions)}`, () => {
     const now = Date.parse('2026-09-05T12:00:00Z');
     const entry = activityEntry('imported-icon', '2026-09-05', '08', 'owner/repo/slug');
     const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
       pageUrl: 'chrome-extension://clockoli/src/times/times.html', runtimeManifest: { permissions } });
     const icon = harness.renderActivity().querySelector('.entry-record-favicon');
-    assert.equal(icon.tag, 'img');
-    assert.equal(icon.hidden, true);
+    assert.equal(icon.tag, 'span');
+    assert.ok(icon.className.includes('site-clockoli-icon'));
+    assert.equal(icon.getAttribute('aria-hidden'), 'true');
     assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+    assert.match(harness.timelineItems(0, now)[0].fallbackIconUrl, /src\/assets\/clockoli-inverse-circle\.svg$/);
   });
 }
 

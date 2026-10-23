@@ -53,6 +53,15 @@ test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch 
     'GitHub pages can load the 2x timeline mark');
 });
 
+test('theme-colored task fallback is an inverted circular Clockoli mark', () => {
+  const file = 'src/assets/clockoli-inverse-circle.svg';
+  assert.ok(fs.existsSync(new URL(`../${file}`, import.meta.url)));
+  const asset = read(file);
+  assert.match(asset, /<circle\b/);
+  assert.match(asset, /<mask\b/);
+  assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes(file)));
+});
+
 test('the Clockoli mark and tab-scoped extension icon rotate only for the current tracked task', () => {
   const content = read('src/content/github.js');
   const serviceWorker = read('src/background/service-worker.js');

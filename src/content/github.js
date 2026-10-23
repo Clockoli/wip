@@ -195,6 +195,11 @@
   }
 
   function taskUrlOf(value) { return normalizeTaskUrl(typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url); }
+  function isGitHubTask(value) {
+    const taskUrl = taskUrlOf(value);
+    try { return Boolean(taskUrl && new URL(taskUrl).hostname === 'github.com'); }
+    catch { return false; }
+  }
   function storedTaskIdentityOf(value) {
     const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
     const url = normalizeTaskUrl(candidate);
@@ -223,6 +228,18 @@
   }
 
   function siteFavicon(value, className = '') {
+    if (!taskUrlOf(value)) {
+      const icon = el('span', undefined, `site-favicon site-clockoli-icon${className ? ` ${className}` : ''}`);
+      icon.setAttribute('aria-hidden', 'true');
+      icon.style.backgroundColor = 'currentColor';
+      icon.style.maskSize = 'contain';
+      icon.style.maskPosition = 'center';
+      icon.style.maskRepeat = 'no-repeat';
+      const mark = extensionResourceUrl('src/assets/clockoli-inverse-circle.svg');
+      if (mark) icon.style.maskImage = `url("${mark}")`;
+      else icon.hidden = true;
+      return icon;
+    }
     const image = el('img');
     image.className = `site-favicon${className ? ` ${className}` : ''}`;
     image.alt = '';
@@ -236,7 +253,10 @@
         monogram.setAttribute('aria-hidden', 'true');
         return monogram;
       }
-      if (faviconUrl) image.src = faviconUrl;
+      if (faviconUrl) {
+        if (isGitHubTask(value)) image.classList.add('site-github-favicon');
+        image.src = faviconUrl;
+      }
       else image.hidden = true;
     }
     catch { image.hidden = true; }
@@ -2490,6 +2510,8 @@
         taskIdentity: storedTaskIdentityOf(entry),
         title: taskTitleOf(entry) || storedTaskIdentityOf(entry) || 'Untitled task',
         faviconUrl: siteFaviconUrl(entry),
+        githubFavicon: isGitHubTask(entry),
+        fallbackIconUrl: !taskUrlOf(entry) ? extensionResourceUrl('src/assets/clockoli-inverse-circle.svg') : '',
         description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
         savedDescription: entry.description || '',
         originalStartedAt: new Date(entry.startedAt).getTime(),
@@ -4165,6 +4187,8 @@
       .activity-list .activity-task-result .task-url { width:max-content; max-width:100%; margin-top:2px; line-height:1.35 }
       .activity-list .entry-record-task-identity { gap:9px }
       .activity-list .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:4px }
+      .site-github-favicon { filter:var(--clockoli-github-favicon-filter,none) }
+      @media(prefers-color-scheme:dark) { .site-github-favicon { filter:var(--clockoli-github-favicon-filter,brightness(0) invert(1)) } }
       .activity-list .entry-record-task-result { margin:0 }
       .entry-description-link { white-space:pre-wrap; overflow-wrap:anywhere }
       .activity-list .entry-description-link { margin:5px 0 0 27px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }

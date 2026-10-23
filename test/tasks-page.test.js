@@ -307,8 +307,9 @@ test('Top tasks uses monograms without favicon permission and preserves GitHub a
   assert.equal(icon.textContent, 'E');
   assert.equal(icon['aria-hidden'], 'true');
   assert.equal(icon.src, undefined);
-  assert.equal(unresolved.querySelector('.task-main').children[0].tag, 'img');
-  assert.equal(unresolved.querySelector('.task-main').children[0].hidden, true);
+  assert.equal(unresolved.querySelector('.task-main').children[0].tag, 'span');
+  assert.ok(unresolved.querySelector('.task-main').children[0].className.includes('task-clockoli-icon'));
+  assert.match(unresolved.querySelector('.task-main').children[0].style.maskImage, /clockoli-inverse-circle\.svg/);
   assert.equal(page.resources.includes('/_favicon/'), false);
 });
 

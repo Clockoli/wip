@@ -4727,6 +4727,9 @@
     .calendar-task.selected, .calendar-task.focused:not(.selected) { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
+    .clockoli-calendar-favicon.clockoli-fallback-icon { display:inline-block; background:var(--tt-text); mask-size:contain; mask-position:center; mask-repeat:no-repeat; }
+    .clockoli-github-favicon { filter:var(--clockoli-github-favicon-filter,none) }
+    @media(prefers-color-scheme:dark) { .clockoli-github-favicon { filter:var(--clockoli-github-favicon-filter,brightness(0) invert(1)) } }
     .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; white-space:pre-line; }
     
     /* Shared task actions, with accessible text labels kept intact. */
@@ -4862,6 +4865,11 @@
           }
           .clockoli-compact-entry-details .clockoli-details-task-icon img {
             position:absolute;inset:6px;width:24px;height:24px;object-fit:contain;background:var(--tt-empty)
+          }
+          .clockoli-compact-entry-details .clockoli-details-task-icon.clockoli-fallback-icon { background:var(--tt-empty);mask-image:none !important }
+          .clockoli-compact-entry-details .clockoli-details-task-icon.clockoli-fallback-icon::before {
+            content:"";width:24px;height:24px;background:var(--tt-text);
+            mask:var(--clockoli-fallback-url) center / contain no-repeat
           }
           .clockoli-compact-entry-details .details-primary {
             display:flex;grid-column:2;grid-row:1;flex-direction:column;justify-content:center;
@@ -5453,14 +5461,19 @@
             element.style.removeProperty('--clockoli-end-edge-shift');
           }
         }
-        if (element.classList.contains('calendar-task') && (item?.faviconUrl || item?.faviconUrl === null) && !element.querySelector('.clockoli-calendar-favicon')) {
-          const icon = document.createElement(item.faviconUrl === null ? 'span' : 'img');
+        if (element.classList.contains('calendar-task') && (item?.faviconUrl || item?.faviconUrl === null || item?.fallbackIconUrl) && !element.querySelector('.clockoli-calendar-favicon')) {
+          const icon = document.createElement(item.faviconUrl === null || item.fallbackIconUrl ? 'span' : 'img');
           icon.className = 'clockoli-calendar-favicon';
-          if (item.faviconUrl === null) {
+          if (item.fallbackIconUrl) {
+            icon.classList.add('clockoli-fallback-icon');
+            icon.style.maskImage = `url("${item.fallbackIconUrl}")`;
+            icon.setAttribute('aria-hidden', 'true');
+          } else if (item.faviconUrl === null) {
             icon.classList.add('clockoli-calendar-monogram');
             icon.textContent = new URL(item.url).hostname.replace(/^www\./, '').charAt(0).toUpperCase();
             icon.setAttribute('aria-hidden', 'true');
           } else {
+            if (item.githubFavicon) icon.classList.add('clockoli-github-favicon');
             icon.alt = ''; icon.src = item.faviconUrl;
             icon.addEventListener('error', () => { icon.hidden = true; }, { once: true });
           }
@@ -5509,12 +5522,17 @@
         const favicon = typeof item.faviconUrl === 'string' && item.faviconUrl;
         const icon = document.createElement('span');
         icon.className = 'clockoli-details-task-icon';
+        if (item.fallbackIconUrl) {
+          icon.classList.add('clockoli-fallback-icon');
+          icon.style.setProperty('--clockoli-fallback-url', `url("${item.fallbackIconUrl}")`);
+        }
         let hostname = '';
         try { hostname = new URL(item.url).hostname.replace(/^www\./, ''); } catch { /* use the task title */ }
-        icon.textContent = (hostname || item.title || '?').charAt(0).toUpperCase();
+        icon.textContent = item.fallbackIconUrl ? '' : (hostname || item.title || '?').charAt(0).toUpperCase();
         icon.setAttribute('aria-hidden', 'true');
         if (favicon) {
           const image = document.createElement('img');
+          if (item.githubFavicon) image.classList.add('clockoli-github-favicon');
           image.alt = ''; image.src = favicon;
           image.addEventListener('error', () => image.remove(), { once: true });
           icon.prepend(image);
