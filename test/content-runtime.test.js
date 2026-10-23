@@ -1977,7 +1977,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   values[7].value = '15'; values[7].oninput({});
   assert.deepEqual(values.slice(0, 2).map(node => node.value), ['11', '15'], 'Y Start mirrors X Stop');
-  const filter = createdNodes.findLast(node => node.placeholder === 'URL or title');
+  const filter = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Search activity');
   filter.value = '/x'; filter.oninput({});
   const filteredValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
@@ -2169,6 +2169,8 @@ test('header totals-only polling preserves the description draft and updates exi
   const menu = root.querySelector('.menu'), input = menu.querySelector('.strip-description');
   const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
   const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
+  assert.ok(total, 'today total lives in the shared Statistic panel');
+  assert.equal(week, null, 'the running card does not duplicate weekly totals');
   const elapsed = menu.querySelector('.running-elapsed');
   input.value = 'Unsaved draft'; input.oninput?.({ target: input }); input.focus();
   for (const ms of [60_000, 60_500]) {
@@ -2181,7 +2183,7 @@ test('header totals-only polling preserves the description draft and updates exi
     assert.equal(h.document.activeElement, input);
     assert.equal(root.querySelector('[data-tracked-total="todayTrackedMs"]'), total);
     assert.equal(root.querySelector('[data-tracked-total="weekTrackedMs"]'), week);
-    assert.equal(total.textContent, '1m'); assert.equal(week.textContent, '1m');
+    assert.equal(total.textContent, '1m');
   }
   assert.equal(root.querySelector('.running-elapsed'), elapsed);
   assert.equal(elapsed.textContent, '1m');
@@ -2237,14 +2239,14 @@ test('header opening retries failed initial reads and retains Retry until recove
   assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
 });
 
-test('daily strip omits idle branding and panel List keeps its week navigation', () => {
+test('daily strip shows idle status and panel List keeps its week navigation', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const record = { id: 'today', taskUrl: 'https://example.com/today', taskTitle: 'Today task', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3600000).toISOString(), endedAt: new Date(now - 1800000).toISOString(), durationSeconds: 1800, _pending: true, _path: 'times/example' };
   const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, timelineEnabled: true, records: [record, { ...record, id: 'yesterday', taskTitle: 'Yesterday task', entryDate: '2000-01-01', startedAt: '2000-01-01T08:00:00Z', endedAt: '2000-01-01T08:30:00Z' }] });
   const menu = harness.renderMenu({ compact: true, onClose: () => {} });
   harness.attach(menu);
   let nodes = menu.walk();
-  assert.ok(!nodes.some(node => node.textContent === 'Not tracking'));
+  assert.ok(nodes.some(node => node.textContent === 'Not tracking'));
   assert.equal(menu.querySelector('.active-task-strip').querySelectorAll('.clockoli-mark').length, 0);
   assert.ok(nodes.some(node => node.textContent === 'Track this task'));
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
@@ -2294,7 +2296,8 @@ test('active strip matches the Activity card without a favicon and saves its edi
   assert.ok(strip.classList.contains('is-active'));
   assert.equal(strip.querySelector('.running-status-live').textContent, 'Tracking now');
   assert.equal(strip.querySelector('.running-status-elapsed').getAttribute('role'), 'timer');
-  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
+  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]'), null);
+  assert.equal(menu.querySelector('.activity-weekly-summary').querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
   assert.equal(menu.querySelector('.strip-favicon'), null);
   assert.equal(menu.querySelector('.running-status-start').value, new Date(active.startedAt).toTimeString().slice(0, 5));
   const description = menu.querySelector('.strip-description');
@@ -3476,6 +3479,27 @@ test('Timeline favicon projection survives an unavailable extension resource URL
   assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
 });
 
+test('Timeline favicon projection stops querying an invalidated extension context', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-reload', '2026-09-05', '08');
+  let checks = 0;
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {
+      get permissions() { checks += 1; throw new Error('Extension context invalidated.'); },
+    } });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(checks, 1, 'the stale script must not retry extension APIs on every render');
+});
+
+test('Timeline favicon projection treats a missing manifest permission list as denied', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-no-manifest', '2026-09-05', '08');
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {} });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, null);
+});
+
 test('compact task switches preserve the edited active description in the completion', async () => {
   const now = Date.parse('2026-09-05T14:00:00Z');
   const active = { id: 'active', taskUrl: 'https://example.com/old', taskTitle: 'Old task', description: 'Old note', startedAt: new Date(now - 60_000).toISOString() };
@@ -3927,7 +3951,7 @@ test('mounted panel refresh updates controls, errors, totals and now while prese
   assert.equal(harness.document.activeElement.getAttribute('data-panel-action'), 'stop');
   harness.advance(60000); harness.updatePanelClocks();
   assert.equal(menu.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '3m');
-  assert.equal(menu.querySelector('[data-tracked-total="weekTrackedMs"]').textContent, '1h 2m');
+  assert.equal(menu.querySelector('[data-tracked-total="weekTrackedMs"]'), null);
 });
 
 test('visible overlap flags produce one named warning and open Activity without a mutation', async () => {

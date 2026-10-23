@@ -2740,14 +2740,12 @@
 
       const left = document.createElement('div');
       left.className = 'resize-handle left';
-      left.title = 'Change start time';
       left.setAttribute('aria-label', 'Change start time');
       el.appendChild(left);
 
       if (!task.running) {
         const right = document.createElement('div');
         right.className = 'resize-handle right';
-        right.title = 'Change end time';
         right.setAttribute('aria-label', 'Change end time');
         el.appendChild(right);
       }
@@ -3448,7 +3446,6 @@
           startHandle.className = 'calendar-resize-handle start';
           startHandle.dataset.resizeMode = 'resize-left';
           startHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
-          startHandle.title = 'Change start time';
           startHandle.setAttribute('aria-label', 'Change start time');
           el.appendChild(startHandle);
         }
@@ -3457,7 +3454,6 @@
           endHandle.className = 'calendar-resize-handle end';
           endHandle.dataset.resizeMode = 'resize-right';
           endHandle.style.height = `${this._calendarResizeEdgePx(item.height)}px`;
-          endHandle.title = 'Change end time';
           endHandle.setAttribute('aria-label', 'Change end time');
           el.appendChild(endHandle);
         }

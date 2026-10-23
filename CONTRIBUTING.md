@@ -26,6 +26,8 @@ timeline workspace checks.
 
 Chrome loads checked-in extension files directly. When changing the timeline source or adapter under `packages/task-timeline-component/`, regenerate `src/content/task-timeline-component.js` with `npm run build:timeline` before testing or loading the extension.
 
+Functional browser tests launch Chromium headlessly by default and should not open visible browser windows. Use a headed browser only for a deliberately requested manual visual check.
+
 To load the extension:
 
 1. Open `chrome://extensions`.

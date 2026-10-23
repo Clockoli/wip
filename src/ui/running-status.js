@@ -9,7 +9,7 @@ const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
 const RECENT_TASK_LIMIT = 3;
 
-export function mountRunningStatus(container, { send, onChange }) {
+export function mountRunningStatus(container, { send, onChange, showToday = true }) {
   const document = container.ownerDocument || globalThis.document;
   const row = document.createElement('div'); row.className = 'running-status-row';
   const make = (tag, className) => {
@@ -42,14 +42,12 @@ export function mountRunningStatus(container, { send, onChange }) {
   descriptionField.append(description, saveDescription, saved, moreLines);
   const startField = make('div', 'running-status-start-field');
   const startLabel = make('label', 'running-status-start-label');
-  const startCaption = make('span', 'running-status-start-caption'); startCaption.textContent = 'Start';
-  const editIcon = make('span', 'running-status-start-edit-icon'); editIcon.textContent = '✎';
-  editIcon.setAttribute('aria-hidden', 'true');
+  const startCaption = make('span', 'running-status-start-caption'); startCaption.textContent = 'Started';
   const start = make('input', 'running-status-start'); start.type = 'text'; start.inputMode = 'numeric';
   start.placeholder = 'HH:MM'; start.maxLength = 5; start.autocomplete = 'off'; start.value = '';
-  const startValue = make('span', 'running-status-start-value'); startValue.append(start, editIcon);
+  start.title = 'Edit started time; press Enter to save';
+  const startValue = make('span', 'running-status-start-value'); startValue.append(start);
   startLabel.append(startCaption, startValue);
-  editIcon.addEventListener('click', event => { event.preventDefault(); start.focus(); start.select(); });
   const saveStart = make('button', 'running-status-start-save'); saveStart.type = 'button';
   saveStart.textContent = '✓'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
   const startSaved = make('span', 'running-status-start-saved');
@@ -61,7 +59,7 @@ export function mountRunningStatus(container, { send, onChange }) {
   idleHint.textContent = 'Start a task to begin';
   idleGroup.append(idle, idleHint);
   row.append(idleGroup, quickStart);
-  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today, stop });
+  const { live, metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: row, task, description: descriptionField, elapsed, today: showToday ? today : null, stop });
   const stats = make('div', 'running-status-stats'); stats.append(startField, metrics);
   row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
   for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
@@ -69,6 +67,7 @@ export function mountRunningStatus(container, { send, onChange }) {
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
   let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
+  let focusDescriptionOnLoad = true;
   let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
   let shownStartTimer = '', acceptedStartedAt = '', pendingAcceptedStart = null, savingStart = false, hideStartSavedTimer = null;
   const localDate = () => entryDateValue(localDateParts(new Date(Date.now())));
@@ -129,7 +128,6 @@ export function mountRunningStatus(container, { send, onChange }) {
   function updateStartSave() {
     const initial = new Date(acceptedStartedAt);
     saveStart.hidden = !acceptedStartedAt || parseTime(start.value) === timeValue(initial);
-    editIcon.hidden = !saveStart.hidden || !startSaved.hidden;
   }
 
   function renderStart(active) {
@@ -165,10 +163,10 @@ export function mountRunningStatus(container, { send, onChange }) {
     const active = state.active, key = timerKey(active);
     const clock = parseTime(start.value);
     const timestamp = clock && localTimestamp(dateValue(new Date(active.startedAt)), clock);
-    if (!timestamp) { showError(new Error('Enter a valid Start time (HH:MM or 1000).')); return; }
+    if (!timestamp) { showError(new Error('Enter a valid Started time (HH:MM or 1000).')); return; }
     const unchanged = clock === timeValue(new Date(active.startedAt));
     const startedAt = unchanged ? active.startedAt : timestamp.toISOString();
-    if (new Date(startedAt).getTime() > Date.now()) { showError(new Error('Start cannot be in the future.')); return; }
+    if (new Date(startedAt).getTime() > Date.now()) { showError(new Error('Started time cannot be in the future.')); return; }
     if (unchanged) return;
     savingStart = true; start.disabled = true; saveStart.disabled = true; showError();
     try {
@@ -233,9 +231,9 @@ export function mountRunningStatus(container, { send, onChange }) {
     updateDescriptionSave();
   });
   description.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    if (event.key === 'Tab' && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
       event.preventDefault();
-      start.focus({ preventScroll: true });
+      stop.focus({ preventScroll: true });
       return;
     }
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
@@ -331,6 +329,10 @@ export function mountRunningStatus(container, { send, onChange }) {
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
       state = local; readAt = Date.now(); reportDate = localDate(); render(); showError(local.summaryError);
+      if (focusDescriptionOnLoad && state.active) {
+        focusDescriptionOnLoad = false;
+        if (!document.activeElement || document.activeElement === document.body) description.focus({ preventScroll: true });
+      }
       if (refresh && local.configured) {
         const remote = await send({ type: 'GET_PAGE_STATE', refresh: true });
         if (destroyed || id !== requestId) return;
@@ -414,6 +416,7 @@ export function mountRunningStatus(container, { send, onChange }) {
 // Activity's content renderer is a classic script with a private message helper.
 const activityContainer = document.getElementById('activity-running-status');
 if (activityContainer) mountRunningStatus(activityContainer, {
+  showToday: false,
   send: message => new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
     if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
     if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));

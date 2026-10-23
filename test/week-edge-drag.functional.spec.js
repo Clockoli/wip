@@ -58,7 +58,7 @@ for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} does not nav
     const id = new URL(worker.url()).host;
     await page.goto(`chrome-extension://${id}/src/times/times.html`);
     const root = page.locator('#clockoli-times-root');
-    await root.getByRole('button', { name: view, exact: true }).click();
+    await page.locator('#activity-view-switcher').getByRole('button', { name: view, exact: true }).click();
     await expect.poll(() => worker.evaluate(() => globalThis.reads.length)).toBeGreaterThan(0);
     await expect(root.locator('.calendar-week-loading')).toBeHidden();
     await page.waitForTimeout(700);

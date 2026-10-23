@@ -18,6 +18,12 @@ async function mount(page, overrides = {}) {
   await page.goto('/packages/task-timeline-component/e2e/fixture.html');
   return page.evaluate(({ hour, overrides }) => {
     const now = Date.now();
+    const host = document.querySelector('#timeline');
+    if (overrides.closedOuter) {
+      const wrapper = document.createElement('div');
+      document.body.append(wrapper);
+      wrapper.attachShadow({ mode: 'closed' }).append(host);
+    }
     const items = overrides.scenario === 'future-after-running' ? [
       { id: 'active:c', url: 'https://example.com/c', title: 'Task C', startedAt: now - 10_000, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
       { id: 'future:d', url: 'https://example.com/d', title: 'Task D', startedAt: now + 5_000, endedAt: now + 10_000, rowId: 'two', isEditable: true },
@@ -31,13 +37,15 @@ async function mount(page, overrides = {}) {
     window.__edits = [];
     window.__editSettlers = [];
     window.__items = items;
-    window.__timeline = ClockoliTaskTimeline.createTimeline(document.querySelector('#timeline'), {
+    window.__timeline = ClockoliTaskTimeline.createTimeline(host, {
       items,
       rows: overrides.rows || [{ id: 'one', title: 'One' }, { id: 'two', title: 'Two' }],
       now,
       view: overrides.view || { start: now - 4 * hour, end: now, focusedAt: now - 2 * hour },
       totalRange: overrides.totalRange,
       weeklyCalendar: overrides.weeklyCalendar,
+      activityDashboard: overrides.activityDashboard,
+      toolbarPopup: overrides.toolbarPopup,
       onWeekEdgeNavigate: overrides.edgeNavigation
         ? direction => { window.__calls.push(['edge', direction]); return true; } : undefined,
       onCalendarNavigate: overrides.trackCalendarNavigation ? range => window.__calls.push(['navigate', range.start, range.end]) : undefined,
@@ -76,6 +84,506 @@ async function mount(page, overrides = {}) {
     return now;
   }, { hour: HOUR, overrides });
 }
+
+test('Activity Calendar shows a compact inline details card with accessible actions', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { activityDashboard: true, entryForm: true, rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/task', title: 'Resolve issues reported by the team and review the remaining work',
+      faviconUrl: null, startedAt: now - 3 * HOUR, endedAt: now - HOUR, rowId: 'one', isEditable: true }] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first().hover();
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const visual = await details.evaluate(card => {
+    const title = card.querySelector('.details-title');
+    const actions = [...card.querySelectorAll('.clockoli-timeline-action')];
+    const time = card.querySelector('.clockoli-details-time');
+    return {
+      width: card.getBoundingClientRect().width,
+      background: getComputedStyle(card).backgroundColor,
+      shadow: getComputedStyle(card).boxShadow,
+      icon: card.querySelector('.clockoli-details-task-icon')?.textContent,
+      iconRadius: card.querySelector('.clockoli-details-task-icon') && getComputedStyle(card.querySelector('.clockoli-details-task-icon')).borderRadius,
+      titleOverflow: title.scrollWidth > title.clientWidth,
+      titleLines: Math.round(title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight)),
+      time: time?.textContent,
+      timeLines: time && Math.round(time.getBoundingClientRect().height / parseFloat(getComputedStyle(time).lineHeight)),
+      oldValuesHidden: [...card.querySelectorAll('.details-value')].every(node => getComputedStyle(node).display === 'none'),
+      buttons: actions.map(button => ({ name: button.textContent, fontSize: getComputedStyle(button).fontSize,
+        icon: Boolean(button.querySelector('svg')), top: button.getBoundingClientRect().top })),
+      primaryBackground: getComputedStyle(card.querySelector('.clockoli-timeline-action.primary')).backgroundColor,
+    };
+  });
+  expect(visual.width).toBeLessThanOrEqual(360);
+  expect(visual.background).toBe('rgb(255, 255, 255)');
+  expect(visual.shadow).not.toBe('none');
+  expect(visual.icon).toBe('E');
+  expect(visual.iconRadius).toBe('50%');
+  expect(visual.titleOverflow).toBe(true);
+  expect(visual.titleLines).toBe(1);
+  expect(visual.time).toMatch(/^\d{2}:\d{2} – \d{2}:\d{2} · 2h$/);
+  expect(visual.timeLines).toBe(1);
+  expect(visual.oldValuesHidden).toBe(true);
+  expect(visual.buttons.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track time']);
+  expect(visual.buttons.slice(0, 2).every(button => button.fontSize === '0px' && button.icon)).toBe(true);
+  expect(new Set(visual.buttons.map(button => button.top)).size).toBe(1);
+  expect(visual.primaryBackground).not.toBe('rgb(31, 136, 61)');
+  if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) await details.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT });
+  await details.getByRole('button', { name: 'Edit' }).click();
+  await details.getByRole('button', { name: 'Track time' }).click();
+  await details.getByRole('button', { name: 'Delete' }).click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([
+    ['edit-form', 'entry:a'], ['start', 'entry:a'], ['delete', 'entry:a'],
+  ]);
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.locator('#timeline').evaluate(host => { host.style.width = '404px'; });
+  await page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first().hover();
+  await expect.poll(() => details.evaluate(card => card.getBoundingClientRect().right)).toBeLessThanOrEqual(420);
+  if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) {
+    await page.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT.replace(/\.png$/, '-narrow.png') });
+  }
+});
+
+test('Activity Timeline and Calendar share the compact card layout', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { activityDashboard: true, entryForm: true, rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/task', title: 'A very long issue title that must be truncated in both views',
+      startedAt: now - 3 * HOUR, endedAt: now - HOUR, rowId: 'one', isEditable: true }] });
+  const details = page.locator('#timeline .details');
+  const cardState = () => details.evaluate(card => ({
+    width: card.getBoundingClientRect().width,
+    background: getComputedStyle(card).backgroundColor,
+    shadow: getComputedStyle(card).boxShadow,
+    iconVisible: Boolean(card.querySelector('.clockoli-details-task-icon')?.getBoundingClientRect().width),
+    time: card.querySelector('.clockoli-details-time')?.textContent,
+    titleTruncated: card.querySelector('.details-title').scrollWidth > card.querySelector('.details-title').clientWidth,
+    valuesHidden: [...card.querySelectorAll('.details-value')].every(value => getComputedStyle(value).display === 'none'),
+    actions: [...card.querySelectorAll('.clockoli-timeline-action')].map(button => ({
+      name: button.textContent, fontSize: getComputedStyle(button).fontSize,
+      background: getComputedStyle(button).backgroundColor,
+    })),
+  }));
+  await page.locator('#timeline .task[data-task-key="entry:a"]').first().hover();
+  await expect(details).toBeVisible();
+  const timelineCard = await cardState();
+  expect(timelineCard.width).toBeLessThanOrEqual(360);
+  expect(timelineCard.iconVisible).toBe(true);
+  expect(timelineCard.time).toMatch(/^\d{2}:\d{2} – \d{2}:\d{2} · 2h$/);
+  expect(timelineCard.titleTruncated).toBe(true);
+  expect(timelineCard.valuesHidden).toBe(true);
+  expect(timelineCard.actions.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track time']);
+  expect(timelineCard.actions.slice(0, 2).map(button => button.fontSize)).toEqual(['0px', '0px']);
+  if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) {
+    await details.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT.replace(/\.png$/, '-timeline.png') });
+  }
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first().hover();
+  await expect(details).toBeVisible();
+  expect(await cardState()).toEqual(timelineCard);
+});
+
+test('popup Calendar uses the same compact details layout as Activity', async ({ page }) => {
+  await mount(page, { activityDashboard: true, toolbarPopup: true, entryForm: true });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first().hover();
+  await expect(page.locator('#timeline .details')).toHaveClass(/clockoli-compact-entry-details/);
+  await expect(page.locator('#timeline .details-value').first()).toBeHidden();
+  await expect(page.locator('#timeline .clockoli-details-task-icon')).toBeVisible();
+});
+
+test('narrow popup Calendar falls back vertically and keeps the upper card actionable', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { activityDashboard: true, toolbarPopup: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Upper', startedAt: now - 3 * HOUR,
+        endedAt: now - 2.5 * HOUR, rowId: 'one', isEditable: true },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Lower', startedAt: now - 2 * HOUR,
+        endedAt: now - 1.5 * HOUR, rowId: 'one', isEditable: true },
+    ] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const upper = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await upper.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  await upper.hover();
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const geometry = await details.evaluate(card => {
+    const lower = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:b"]').getBoundingClientRect();
+    return { card: card.getBoundingClientRect().toJSON(), lower: lower.toJSON() };
+  });
+  expect(geometry.card.top, JSON.stringify(geometry)).toBeLessThan(geometry.lower.bottom);
+  expect(geometry.card.bottom, JSON.stringify(geometry)).toBeGreaterThan(geometry.lower.top);
+  const edit = details.getByRole('button', { name: 'Edit' });
+  await edit.hover();
+  await expect(details).toContainText('Upper');
+  await edit.click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+});
+
+test('popup Calendar keeps a short running entry card while moving down over the next entry', async ({ page }) => {
+  const now = Date.now();
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await mount(page, { activityDashboard: true, toolbarPopup: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [
+      { id: 'active:a', url: 'https://example.com/a', title: 'Running upper task', startedAt: now - 23 * 60_000,
+        endedAt: null, rowId: 'one', isRunning: true, isEditable: true },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Lower task', startedAt: now + 5 * 60_000,
+        endedAt: now + HOUR, rowId: 'one', isEditable: true },
+    ] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const upper = page.locator('#timeline .calendar-task[data-task-key="active:a"]').first();
+  await upper.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  await upper.hover();
+  const details = page.locator('#timeline .details');
+  const stop = details.getByRole('button', { name: 'Stop and save' });
+  await expect(stop).toBeVisible();
+  const button = await stop.boundingBox();
+  const placement = await details.evaluate(card => {
+    const upper = card.getRootNode().querySelector('.calendar-task[data-task-key="active:a"]').getBoundingClientRect();
+    const lower = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:b"]').getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return { rect: rect.toJSON(), upper: upper.toJSON(), beside: rect.left >= upper.right + 8 || rect.right <= upper.left - 8,
+      overlappingLower: rect.top < lower.bottom && rect.bottom > lower.top && rect.left < lower.right && rect.right > lower.left };
+  });
+  expect(placement.beside, JSON.stringify(placement)).toBe(true);
+  expect(placement.overlappingLower).toBe(false);
+  await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2, { steps: 25 });
+  await expect(details).toContainText('Running upper task');
+  await stop.click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['stop', 'active:a']);
+  await page.mouse.move(2, 2);
+  await page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first().hover();
+  await expect(details).toContainText('Lower task');
+});
+
+test('popup Calendar places a right-edge entry card on its left', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  const sunday = new Date();
+  sunday.setDate(sunday.getDate() + (7 - sunday.getDay()) % 7);
+  sunday.setHours(10, 0, 0, 0);
+  await mount(page, { activityDashboard: true, toolbarPopup: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/a', title: 'Sunday task',
+      startedAt: sunday.getTime(), endedAt: sunday.getTime() + 30 * 60_000, rowId: 'one', isEditable: true }] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const task = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await task.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  await task.hover();
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const placement = await details.evaluate(card => {
+    const task = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:a"]').getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return { leftOfTask: rect.right <= task.left - 8, inside: rect.left >= 0 && rect.right <= innerWidth };
+  });
+  expect(placement).toEqual({ leftOfTask: true, inside: true });
+  await details.getByRole('button', { name: 'Track time' }).hover();
+  await expect(details).toContainText('Sunday task');
+});
+
+test('Activity Calendar places the upper entry card beside its block without covering the next entry', async ({ page }) => {
+  const now = Date.now();
+  await page.setViewportSize({ width: 1100, height: 720 });
+  await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Upper task', startedAt: now - 3 * HOUR,
+        endedAt: now - 2.5 * HOUR, rowId: 'one', isEditable: true },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Lower task', startedAt: now - 2 * HOUR,
+        endedAt: now - 1.5 * HOUR, rowId: 'one', isEditable: true },
+    ] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const upper = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await upper.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  const center = await page.evaluate(() => {
+    const rect = window.__timeline.__timeline.calendarCanvas
+      .querySelector('.calendar-task[data-task-key="entry:a"]').getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(center.x, center.y);
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const placement = await details.evaluate(card => {
+    const root = card.getRootNode();
+    const upper = root.querySelector('.calendar-task[data-task-key="entry:a"]').getBoundingClientRect();
+    const lower = root.querySelector('.calendar-task[data-task-key="entry:b"]').getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return { beside: rect.left >= upper.right + 8 || rect.right <= upper.left - 8,
+      coversNext: rect.top < lower.bottom && rect.bottom > lower.top && rect.left < lower.right && rect.right > lower.left };
+  });
+  expect(placement).toEqual({ beside: true, coversNext: false });
+  await details.getByRole('button', { name: 'Edit' }).hover();
+  await expect(details).toContainText('Upper task');
+  await details.getByRole('button', { name: 'Edit' }).click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+});
+
+test('Activity Calendar chooses the clear left side when the right card would cover an adjacent project', async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  const start = new Date();
+  start.setHours(10, 0, 0, 0);
+  await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'Project A' }, { id: 'two', title: 'Project B' }],
+    items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Project A task',
+        startedAt: start.getTime(), endedAt: start.getTime() + 30 * 60_000, rowId: 'one', isEditable: true },
+      { id: 'entry:b', url: 'https://example.com/b', title: 'Project B task',
+        startedAt: start.getTime() + 30 * 60_000, endedAt: start.getTime() + HOUR, rowId: 'two', isEditable: true },
+    ] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const first = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await first.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  await first.hover();
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const placement = await details.evaluate(card => {
+    const root = card.getRootNode();
+    const a = root.querySelector('.calendar-task[data-task-key="entry:a"]').getBoundingClientRect();
+    const b = root.querySelector('.calendar-task[data-task-key="entry:b"]').getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return {
+      leftFits: a.left - rect.width - 8 >= 8,
+      rightFits: a.right + 8 + rect.width <= innerWidth - 8,
+      rightWouldCoverB: a.right + 8 < b.right && a.right + 8 + rect.width > b.left
+        && rect.top < b.bottom && rect.bottom > b.top,
+      leftOfA: rect.right <= a.left - 8,
+      coversB: rect.left < b.right && rect.right > b.left && rect.top < b.bottom && rect.bottom > b.top,
+    };
+  });
+  expect(placement).toEqual({ leftFits: true, rightFits: true, rightWouldCoverB: true,
+    leftOfA: true, coversB: false });
+  await details.getByRole('button', { name: 'Edit' }).hover();
+  await expect(details).toContainText('Project A task');
+  await details.getByRole('button', { name: 'Edit' }).click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+});
+
+test('Activity Calendar card stays reachable while the pointer crosses the gap slowly', async ({ page }) => {
+  await mount(page, { activityDashboard: true, entryForm: true });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.calendarCanvas.addEventListener('pointerover', event => {
+      if (!(event.target instanceof Element) || !event.target.closest('.calendar-task[data-task-key="entry:a"]')) return;
+      window.__onEnter = {
+        visible: !timeline.details.hidden,
+        actionsReady: Boolean(timeline.details.querySelector('.clockoli-entry-edit')),
+      };
+    });
+  });
+  const task = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await task.hover();
+  expect(await page.evaluate(() => window.__onEnter)).toEqual({ visible: true, actionsReady: true });
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const { x, y, button } = await page.evaluate(() => {
+    const root = document.querySelector('#timeline').shadowRoot;
+    const task = root.querySelector('.calendar-task[data-task-key="entry:a"]');
+    const details = root.querySelector('.details');
+    const card = details.getBoundingClientRect();
+    const anchor = task.getBoundingClientRect();
+    const button = details.querySelector('.clockoli-entry-edit').getBoundingClientRect();
+    return {
+      x: Math.max(card.left + 12, Math.min(anchor.left + anchor.width / 2, card.right - 12)),
+      y: (card.top + anchor.bottom) / 2,
+      button: { x: button.left + button.width / 2, y: button.top + button.height / 2 },
+    };
+  });
+  await page.mouse.move(x, y);
+  await page.waitForTimeout(350);
+  await expect(details).toBeVisible();
+  await page.mouse.move(button.x, button.y, { steps: 6 });
+  await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+  await page.mouse.move(x, y);
+  await page.waitForTimeout(350);
+  await expect(details).toBeVisible();
+  await page.mouse.move(button.x, button.y, { steps: 6 });
+  await details.getByRole('button', { name: 'Edit' }).click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+  await page.mouse.move(2, 2);
+  await expect(details).toBeHidden();
+});
+
+test('Activity Calendar card stays visible while moving within a tall event before approaching its actions', async ({ page }) => {
+  const now = Date.now();
+  await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/task', title: 'Long task', rowId: 'one',
+      startedAt: now - 5 * HOUR, endedAt: now - HOUR, isEditable: true }] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const task = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  const details = page.locator('#timeline .details');
+  const { x, left, right, top, bottom } = await task.evaluate(element => {
+    element.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const rect = element.getBoundingClientRect();
+    const viewport = element.getRootNode().querySelector('.calendar-viewport').getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, left: rect.left + 8, right: rect.right - 8,
+      top: Math.max(rect.top, viewport.top) + 8,
+      bottom: Math.min(rect.bottom, viewport.bottom) - 8 };
+  });
+  expect(bottom - top).toBeGreaterThan(60);
+  const states = [];
+  for (let step = 0; step <= 12; step++) {
+    await page.mouse.move(x, top + (bottom - top) * step / 12);
+    states.push(await page.evaluate(({ x, y }) => {
+      const timeline = window.__timeline.__timeline;
+      const hit = document.querySelector('#timeline').shadowRoot.elementFromPoint(x, y);
+      return { visible: !timeline.details.hidden, key: timeline.hoveredKey,
+        hit: hit?.className?.baseVal || hit?.className || hit?.tagName };
+    }, { x, y: top + (bottom - top) * step / 12 }));
+  }
+  for (let step = 0; step <= 12; step++) {
+    const cursorX = left + (right - left) * step / 12;
+    const cursorY = top + 16;
+    await page.mouse.move(cursorX, cursorY);
+    states.push(await page.evaluate(({ x, y }) => {
+      const timeline = window.__timeline.__timeline;
+      const hit = document.querySelector('#timeline').shadowRoot.elementFromPoint(x, y);
+      return { visible: !timeline.details.hidden, key: timeline.hoveredKey,
+        hit: hit?.className?.baseVal || hit?.className || hit?.tagName };
+    }, { x: cursorX, y: cursorY }));
+  }
+  expect(states.every(state => state.visible && state.key === 'entry:a'), JSON.stringify(states)).toBe(true);
+  const edit = details.getByRole('button', { name: 'Edit' });
+  await edit.hover();
+  await expect(details).toBeVisible();
+  await edit.click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+});
+
+test('Activity Calendar late-day event keeps its side card reachable', async ({ page }) => {
+  await page.clock.install({ time: new Date(2026, 9, 21, 22, 30) });
+  const start = new Date(2026, 9, 21, 17, 34).getTime();
+  const end = new Date(2026, 9, 21, 22, 21).getTime();
+  await page.setViewportSize({ width: 900, height: 560 });
+  await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
+    rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/task', title: 'Late work', rowId: 'one',
+      startedAt: start, endedAt: end, isEditable: true }] });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const task = page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first();
+  await task.evaluate(element => element.scrollIntoView({ block: 'end', behavior: 'instant' }));
+  await task.hover({ position: { x: 15, y: 15 } });
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const initial = await page.evaluate(() => {
+    const root = document.querySelector('#timeline').shadowRoot;
+    const task = root.querySelector('.calendar-task[data-task-key="entry:a"]').getBoundingClientRect();
+    const card = root.querySelector('.details').getBoundingClientRect();
+    return { task: { left: task.left, right: task.right, top: task.top, bottom: task.bottom },
+      card: { left: card.left, right: card.right, top: card.top, bottom: card.bottom } };
+  });
+  expect(initial.card.left >= initial.task.right + 8 || initial.card.right <= initial.task.left - 8,
+    JSON.stringify(initial)).toBe(true);
+  const history = [];
+  const x = initial.task.left + 20;
+  for (let step = 0; step <= 12; step++) {
+    const y = initial.task.top + 15 + (initial.task.bottom - initial.task.top - 30) * step / 12;
+    await page.mouse.move(x, y);
+    history.push(await page.evaluate(({ x, y }) => {
+      const root = document.querySelector('#timeline').shadowRoot;
+      const timeline = window.__timeline.__timeline;
+      return { visible: !timeline.details.hidden, key: timeline.hoveredKey,
+        hit: root.elementFromPoint(x, y)?.className || '' };
+    }, { x, y }));
+  }
+  expect(history.every(state => state.visible && state.key === 'entry:a'), JSON.stringify(history)).toBe(true);
+  await details.getByRole('button', { name: 'Edit' }).hover();
+  await expect(details).toBeVisible();
+  await details.getByRole('button', { name: 'Edit' }).click();
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+});
+
+test('Activity Calendar hover survives movement inside the real closed-shadow page', async ({ page }) => {
+  await mount(page, { activityDashboard: true, entryForm: true, closedOuter: true });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const { x, y } = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const task = timeline.calendarCanvas.querySelector('.calendar-task[data-task-key="entry:a"]');
+    task.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const rect = task.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(x, y);
+  await expect.poll(() => page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  await page.mouse.move(x + 4, y + 4);
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  const card = await page.evaluate(() => {
+    const rect = window.__timeline.__timeline.details.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(card.x, card.y, { steps: 20 });
+  await expect.poll(() => page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  const edit = await page.evaluate(() => {
+    const rect = window.__timeline.__timeline.details.querySelector('.clockoli-entry-edit').getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.click(edit.x, edit.y);
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+  await page.mouse.move(2, 2);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.details.hidden)).toBe(true);
+});
+
+test('Activity Timeline card opens immediately and stays reachable across the gap in a closed shadow root', async ({ page }) => {
+  await mount(page, { activityDashboard: true, entryForm: true, closedOuter: true });
+  await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    timeline.taskRow.addEventListener('pointerover', event => {
+      if (!(event.target instanceof Element) || !event.target.closest('.task[data-task-key="entry:a"]')) return;
+      window.__timelineEnter = { visible: !timeline.details.hidden,
+        actionsReady: Boolean(timeline.details.querySelector('.clockoli-entry-edit')) };
+    });
+  });
+  const { x, y } = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const task = timeline.taskRow.querySelector('.task[data-task-key="entry:a"]');
+    task.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const rect = task.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(x, y);
+  expect(await page.evaluate(() => window.__timelineEnter)).toEqual({ visible: true, actionsReady: true });
+  const gap = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const anchor = timeline.taskRow.querySelector('.task[data-task-key="entry:a"]').getBoundingClientRect();
+    const card = timeline.details.getBoundingClientRect();
+    return { x: Math.max(card.left + 12, Math.min(anchor.left + anchor.width / 2, card.right - 12)),
+      y: (card.top + anchor.bottom) / 2 };
+  });
+  await page.mouse.move(gap.x, gap.y, { steps: 20 });
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  const edit = await page.evaluate(() => {
+    const rect = window.__timeline.__timeline.details.querySelector('.clockoli-entry-edit').getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(edit.x, edit.y, { steps: 10 });
+  expect(await page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  await page.mouse.click(edit.x, edit.y);
+  await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+  await page.mouse.move(2, 2);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.details.hidden)).toBe(true);
+});
+
+test('Timeline hover also survives movement when the widget is nested in a closed shadow root', async ({ page }) => {
+  await mount(page, { closedOuter: true });
+  const { x, y } = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    const task = timeline.taskRow.querySelector('.task[data-task-key="entry:a"]');
+    task.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const rect = task.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  await page.mouse.move(x, y);
+  await expect.poll(() => page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  await page.mouse.move(x + 4, y);
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => !window.__timeline.__timeline.details.hidden)).toBe(true);
+  await page.mouse.move(2, 2);
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline.details.hidden)).toBe(true);
+});
 
 async function dragGeometry(page, sourceSelector, viewportSelector) {
   let geometry;
@@ -836,6 +1344,117 @@ test('completed details expose Edit even when the task is currently running', as
 });
 
 for (const mode of ['timeline', 'calendar']) {
+  test(`${mode} opens details on hover without keeping a mouse selection open`, async ({ page }) => {
+    await mount(page, { entryForm: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
+    const details = page.locator('#timeline .details');
+    await page.locator('body').hover({ position: { x: 1, y: 1 } });
+    await record.hover();
+    await expect(details).toBeVisible();
+    expect(await page.evaluate(() => window.__timeline.__timeline.selectedKey)).toBeNull();
+    await record.click();
+    await expect(details).toBeVisible();
+    await page.locator('body').hover({ position: { x: 1, y: 1 } });
+    await expect(details).toBeHidden();
+  });
+
+  test(`${mode} keeps details available for keyboard focus and its actions`, async ({ page }) => {
+    await mount(page, { entryForm: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
+    const details = page.locator('#timeline .details');
+    await record.focus();
+    await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Edit' }).focus();
+    await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Edit' }).evaluate(button => button.blur());
+    await expect(details).toBeHidden();
+  });
+
+  test(`${mode} reveals the details card on a touchscreen tap`, async ({ browser }) => {
+    const context = await browser.newContext({ hasTouch: true, viewport: { width: 420, height: 900 } });
+    try {
+      const page = await context.newPage();
+      await mount(page, { entryForm: true });
+      if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+      const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
+      await record.tap();
+      const details = page.locator('#timeline .details');
+      await expect(details).toBeVisible();
+      await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`${mode} uses the details card instead of black start and end hover badges`, async ({ page }) => {
+    await mount(page);
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
+    await record.hover();
+    await expect(page.locator('#timeline .details')).toBeVisible();
+    const clock = mode === 'calendar' ? '.calendar-edit-clock' : '.edit-clock';
+    for (const edge of mode === 'calendar' ? ['start', 'end'] : ['start', 'end', 'duration']) {
+      await expect(record.locator(`${clock}.${edge}`)).toHaveCSS('visibility', 'hidden');
+    }
+    const handle = mode === 'calendar' ? '.calendar-resize-handle' : '.resize-handle';
+    for (const [edge, label] of mode === 'calendar' ? [['start', 'Change start time'], ['end', 'Change end time']]
+      : [['left', 'Change start time'], ['right', 'Change end time']]) {
+      await expect(record.locator(`${handle}.${edge}`)).not.toHaveAttribute('title');
+      await expect(record.locator(`${handle}.${edge}`)).not.toHaveAttribute('data-clockoli-tooltip');
+      await expect(record.locator(`${handle}.${edge}`)).toHaveAttribute('aria-label', label);
+    }
+  });
+
+  test(`${mode} shows interactive details beside the hovered record without a permanent details row`, async ({ page }) => {
+    await mount(page, { entryForm: true });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
+    const details = page.locator('#timeline .details');
+    await expect(details).toBeHidden();
+    await record.hover();
+    await expect(details).toBeVisible();
+    const finish = await details.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      blur: getComputedStyle(node).backdropFilter,
+      radius: getComputedStyle(node).borderRadius,
+      primary: getComputedStyle(node.querySelector('.clockoli-timeline-action.primary')).backgroundColor,
+    }));
+    expect(finish.background).toMatch(/\/ 0\.9\d+\)|0\.9\d+\)$/);
+    expect(finish.blur).toContain('blur(');
+    expect(finish.radius).toBe('12px');
+    expect(finish.primary).not.toBe('rgb(31, 136, 61)');
+    await expect(details.locator('.details-title')).toBeVisible();
+    await expect(details.locator('.details-value')).toHaveCount(3);
+    await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    const position = await details.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right,
+        viewportWidth: innerWidth, viewportHeight: innerHeight };
+    });
+    expect(position.left).toBeGreaterThanOrEqual(0);
+    expect(position.right).toBeLessThanOrEqual(position.viewportWidth);
+    expect(position.top).toBeGreaterThanOrEqual(0);
+    expect(position.bottom).toBeLessThanOrEqual(position.viewportHeight);
+    if (process.env.CLOCKOLI_TOOLTIP_SCREENSHOT && mode === 'calendar') {
+      await page.screenshot({ path: process.env.CLOCKOLI_TOOLTIP_SCREENSHOT });
+    }
+    await details.getByRole('button', { name: 'Edit' }).click();
+    expect(await page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:a']);
+    await page.locator('body').hover({ position: { x: 1, y: 1 } });
+    await expect(details).toBeHidden();
+    await record.click();
+    await expect(details).toBeVisible();
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.locator('#timeline').evaluate(host => { host.style.width = '404px'; });
+    await expect(details).toBeVisible();
+    await expect.poll(() => details.evaluate(node => node.getBoundingClientRect().right)).toBeLessThanOrEqual(420);
+    const narrow = await details.boundingBox();
+    expect(narrow.x).toBeGreaterThanOrEqual(0);
+    expect(narrow.x + narrow.width).toBeLessThanOrEqual(420);
+  });
+
   test(`details without a description keep action buttons at the right edge in ${mode}`, async ({ page }) => {
     const now = Date.now();
     await mount(page, { entryForm: true, items: [
@@ -846,8 +1465,12 @@ for (const mode of ['timeline', 'calendar']) {
     for (const width of [1600, 420]) {
       await page.setViewportSize({ width, height: 900 });
       await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       for (const id of ['entry:old', 'active:now']) {
+        await page.locator('body').hover({ position: { x: 1, y: 1 } });
+        await expect(page.locator('#timeline .details')).toBeHidden();
         await page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="${id}"]`).first().click();
+        await expect(page.locator('#timeline .details')).toBeVisible();
         const gap = await page.locator('#timeline .clockoli-timeline-actions').evaluate(actions => {
           const details = actions.closest('.details');
           const last = actions.querySelector('.clockoli-timeline-action:last-child');
@@ -1677,7 +2300,7 @@ for (const mode of ['timeline', 'calendar']) {
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
 
-  test('Track time stays on one line and description fills the remaining details width in ' + mode, async ({ page }) => {
+  test('Track time stays on one line below the full-width description in ' + mode, async ({ page }) => {
     await mount(page, { weeklyCalendar: true });
     await page.evaluate(() => {
       window.__items[0].description = 'Existing note';
@@ -1694,6 +2317,9 @@ for (const mode of ['timeline', 'calendar']) {
       await page.setViewportSize({ width, height: 900 });
       // The fixture's 1000px inline width is fixed unless updated explicitly.
       await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first().hover();
+      await expect(action).toBeVisible();
       const bounds = await action.evaluate(button => {
         const actions = button.closest('.clockoli-timeline-actions');
         const details = actions.closest('.details');
@@ -1706,22 +2332,22 @@ for (const mode of ['timeline', 'calendar']) {
         return {
           inputWidth: input.width,
           fieldWidth: field.width,
-          inputRight: input.right,
-          deleteLeft: deletion.left,
+          fieldBottom: field.bottom,
+          deleteTop: deletion.top,
           freeRight: container.right - parseFloat(getComputedStyle(details).paddingRight) - group.right,
           primaryHeight: primary.height,
           primaryScrollWidth: button.scrollWidth,
           primaryClientWidth: button.clientWidth,
-          sameRow: Math.abs(primary.top - field.top) < 12,
+          belowDescription: primary.top >= field.bottom - 1,
         };
       });
-      expect(Math.abs(bounds.freeRight)).toBeLessThanOrEqual(2);
+      expect(Math.abs(bounds.freeRight), JSON.stringify({ width, bounds })).toBeLessThanOrEqual(2);
       expect(Math.abs(bounds.fieldWidth - bounds.inputWidth)).toBeLessThanOrEqual(2);
-      expect(Math.abs(bounds.deleteLeft - bounds.inputRight - 8)).toBeLessThanOrEqual(2);
+      expect(bounds.deleteTop).toBeGreaterThanOrEqual(bounds.fieldBottom - 1);
       expect(bounds.primaryScrollWidth).toBeLessThanOrEqual(bounds.primaryClientWidth);
       expect(bounds.primaryHeight).toBeLessThan(40);
-      expect(bounds.sameRow).toBe(true);
-      expect(bounds.fieldWidth).toBeGreaterThan(width === 1600 ? 420 : 80);
+      expect(bounds.belowDescription).toBe(true);
+      expect(bounds.fieldWidth).toBeGreaterThan(300);
     }
   });
 
@@ -3005,7 +3631,7 @@ test('data refresh preserves the manual center timestamp when older history expa
   expect(Math.abs(state.centerAfter - state.centerBefore)).toBeLessThan(10_000);
 });
 
-test('Timeline hover and drag show only Start, End, and Duration badges in the requested positions', async ({ page }) => {
+test('Timeline keeps edit badge geometry and reveals it only during a drag', async ({ page }) => {
   await mount(page);
   const task = page.locator('#timeline .task[data-task-key="entry:a"]');
   await task.hover();
@@ -3030,6 +3656,8 @@ test('Timeline hover and drag show only Start, End, and Duration badges in the r
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 20, box.y + box.height / 2);
   expect(await task.locator('.edit-clock').count()).toBe(3);
+  await expect(task.locator('.edit-clock.start')).toHaveCSS('visibility', 'visible');
+  await expect(task.locator('.edit-clock.end')).toHaveCSS('visibility', 'visible');
   expect(await page.locator('#timeline .edit-guide-label').count()).toBe(0);
   await page.mouse.up();
 });
@@ -3215,24 +3843,25 @@ test('minimum-width badges paint above adjacent task blocks', async ({ page }) =
   expect(Number(stacking.middleZ)).toBeGreaterThan(Number(stacking.selectedZ));
 });
 
-test('the Timeline details pointer connects the hovered block to the details panel', async ({ page }) => {
+test('Timeline shows a floating details card without the old connector line', async ({ page }) => {
   await mount(page);
   const task = page.locator('#timeline .task[data-task-key="entry:a"]');
   await task.hover();
-  await expect.poll(() => page.evaluate(() => {
+  await expect(page.locator('#timeline .details')).toBeVisible();
+  const result = await page.evaluate(() => {
     const root = document.querySelector('#timeline').shadowRoot;
     const task = root.querySelector('.task[data-task-key="entry:a"]').getBoundingClientRect();
     const pointer = root.querySelector('.details-pointer');
     const details = root.querySelector('.details').getBoundingClientRect();
-    const rect = pointer.getBoundingClientRect();
-    return { hidden: pointer.hidden, task, rect, details,
-      aligned: rect.width === 1 && Math.abs((rect.left + rect.width / 2) - (task.left + task.width / 2)) < 1,
-      startsAtTask: Math.abs(rect.top - task.bottom) < 1,
-      reachesDetails: Math.abs(rect.bottom - details.top) < 1 };
-  })).toMatchObject({ hidden: false, aligned: true, startsAtTask: true, reachesDetails: true });
+    const viewport = root.querySelector('.viewport').getBoundingClientRect();
+    return { pointerHidden: getComputedStyle(pointer).display === 'none',
+      outsideChart: details.top >= viewport.bottom,
+      centeredOnTask: Math.abs((details.left + details.right) / 2 - (task.left + task.right) / 2) < 2 };
+  });
+  expect(result).toEqual({ pointerHidden: true, outsideChart: true, centeredOnTask: true });
 });
 
-test('Calendar shows task details above the slotted week navigation and summary, while Timeline keeps them below', async ({ page }) => {
+test('Timeline and Calendar keep week navigation in flow while task details float', async ({ page }) => {
   await mount(page, { weeklyCalendar: true });
   const placement = () => page.evaluate(() => {
     const root = document.querySelector('#timeline').shadowRoot;
@@ -3240,8 +3869,9 @@ test('Calendar shows task details above the slotted week navigation and summary,
     const navigation = document.querySelector('#timeline .week-navigation').getBoundingClientRect();
     const meta = root.querySelector('.meta').getBoundingClientRect();
     const chart = root.querySelector('.viewport:not([hidden]), .calendar-view:not([hidden])').getBoundingClientRect();
-    return { aboveWeek: details.bottom <= navigation.top && navigation.bottom <= meta.top && meta.bottom <= chart.top,
-      belowChart: details.top >= chart.bottom };
+    return { navigationBeforeChart: navigation.bottom <= meta.top && meta.bottom <= chart.top,
+      detailsFloating: getComputedStyle(root.querySelector('.details')).position === 'fixed',
+      detailsVisible: details.width > 0 && details.height > 0 };
   });
   await page.evaluate(() => {
     const navigation = document.createElement('div');
@@ -3253,9 +3883,10 @@ test('Calendar shows task details above the slotted week navigation and summary,
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   await page.locator('#timeline .calendar-task').first().click();
   await expect(page.locator('#timeline .details-title')).toBeVisible();
-  expect(await placement()).toMatchObject({ aboveWeek: true, belowChart: false });
+  expect(await placement()).toEqual({ navigationBeforeChart: true, detailsFloating: true, detailsVisible: true });
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
-  expect(await placement()).toMatchObject({ aboveWeek: false, belowChart: true });
+  await page.locator('#timeline .task').first().hover();
+  expect(await placement()).toEqual({ navigationBeforeChart: true, detailsFloating: true, detailsVisible: true });
 });
 
 test('Calendar hover stays below day and project labels', async ({ page }) => {
@@ -3276,19 +3907,18 @@ test('Calendar hover stays below day and project labels', async ({ page }) => {
   expect(layers.task).toBeLessThan(layers.header);
 });
 
-test('task details stay visible after the pointer leaves and omit internal identifiers', async ({ page }) => {
+test('hover details hide after the pointer leaves and omit internal identifiers', async ({ page }) => {
   await mount(page);
   const task = page.locator('#timeline .task').first();
   await task.hover();
-  const before = await page.evaluate(() => window.__timeline.__timeline.detailsInfo.textContent.trim());
+  const before = await page.locator('#timeline .details-info').textContent();
+  expect(before).toContain('Start');
+  expect(before).toContain('End');
+  expect(before).toContain('Duration');
+  expect(before).not.toContain('Instance:');
+  expect(before).not.toContain('ID:');
   await page.locator('body').hover({ position: { x: 1, y: 1 } });
-  const after = await page.evaluate(() => window.__timeline.__timeline.detailsInfo.textContent.trim());
-  expect(after).toBe(before);
-  expect(after).toContain('Start');
-  expect(after).toContain('End');
-  expect(after).toContain('Duration');
-  expect(after).not.toContain('Instance:');
-  expect(after).not.toContain('ID:');
+  await expect(page.locator('#timeline .details')).toBeHidden();
 });
 
 test('details actions always target the task currently shown', async ({ page }) => {

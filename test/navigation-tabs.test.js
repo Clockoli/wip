@@ -62,7 +62,7 @@ test('Activity does not duplicate standalone navigation inside its renderer', ()
 
 test('Activity mounts one shared running status outside its content renderer', () => {
   const html = read('src/times/times.html');
-  assert.match(html, /<\/nav>\s*<\/div>\s*<div id="activity-running-status"><\/div>/);
+  assert.match(html, /<\/nav>\s*<\/div>\s*<div class="activity-overview-layout">\s*<div id="activity-summary"><\/div>\s*<div id="activity-running-status"><\/div>\s*<\/div>/);
   assert.equal((html.match(/src="\.\.\/ui\/running-status\.js"/g) || []).length, 1);
   assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
   const content = read('src/content/github.js');

@@ -118,6 +118,13 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   });
   cancel.addEventListener('click', () => { if (!busy) dialog.close(); });
   close.addEventListener('click', () => { if (!busy) dialog.close(); });
+  dialog.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    // A focused search input consumes Escape to clear its value before the
+    // dialog receives a native cancel event. Dismiss the form on the first press.
+    event.preventDefault(); event.stopPropagation();
+    if (!busy) dialog.close();
+  }, true);
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('close', () => {
     if (dialog.open) return; // A later edit may already have reopened the dialog.
