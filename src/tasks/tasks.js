@@ -64,9 +64,15 @@ function setError(error = '') {
 
 function taskIcon(task) {
   if (!task.issue) {
+    if (!/^https?:\/\//.test(taskUrlOf(task))) {
+      const icon = document.createElement('span');
+      icon.className = 'task-icon task-clockoli-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.style.maskImage = `url("${chrome.runtime.getURL('src/assets/clockoli-inverse-circle.svg')}")`;
+      return icon;
+    }
     const image = document.createElement('img');
     image.className = 'task-icon task-favicon'; image.alt = ''; image.width = 16; image.height = 16; image.referrerPolicy = 'no-referrer';
-    if (!/^https?:\/\//.test(taskUrlOf(task))) { image.hidden = true; return image; }
     try {
       if (!chrome.runtime.getManifest().permissions.includes('favicon')) {
         const monogram = document.createElement('span');
@@ -232,7 +238,7 @@ function rebuildList(tasks) {
     row.setAttribute('style', `--task-color:${taskColor(task)}`);
     row.addEventListener('pointerleave', reconcileList);
     const main = document.createElement('div'); main.className = 'task-main';
-    const taskIdentityIcon = taskIcon(task); taskIdentityIcon.setAttribute('style', `color:${taskIdentityIcon.classList.contains('task-monogram') ? 'var(--fgColor-default)' : taskColor(task)}`); main.append(taskIdentityIcon);
+    const taskIdentityIcon = taskIcon(task); taskIdentityIcon.style.color = taskIdentityIcon.classList.contains('task-monogram') ? 'var(--fgColor-default)' : taskColor(task); main.append(taskIdentityIcon);
     const copy = document.createElement('div'); copy.className = `task-copy${task.title ? '' : ' untitled'}`;
     const navigable = /^https?:\/\//.test(task.taskUrl);
     const url = document.createElement(!task.title && navigable ? 'a' : 'div'); url.className = 'task-url'; url.title = task.taskUrl; url.textContent = task.taskUrl;

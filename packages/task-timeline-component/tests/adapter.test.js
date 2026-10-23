@@ -63,14 +63,17 @@ test('Calendar preserves supported favicon images, including a failed image', ()
   assert.equal(harness.name.children.length, 1);
 });
 
-test('Calendar keeps unavailable resources and imported identities without favicons', () => {
+test('Calendar keeps unavailable resources without icons and uses Clockoli for imported identities', () => {
   for (const item of [
     { id: 'unavailable', url: 'https://example.com/work', faviconUrl: '' },
-    { id: 'imported', url: null, faviconUrl: '' },
+    { id: 'imported', url: null, faviconUrl: '', fallbackIconUrl: 'chrome-extension://clockoli/src/assets/clockoli-32.png' },
   ]) {
     const harness = calendarFaviconHarness(item);
     harness.decorate();
-    assert.equal(harness.name.children.length, 0);
+    if (item.id === 'imported') {
+      assert.equal(harness.name.children[0].tag, 'span');
+      assert.ok(harness.name.children[0].className.includes('clockoli-fallback-icon'));
+    } else assert.equal(harness.name.children.length, 0);
   }
 });
 

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 442 442" aria-hidden="true">
+  <mask id="broccoli-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="442" height="442">
+    <rect width="442" height="442" fill="white"/>
+    <g fill="black" stroke="black" stroke-width="8" stroke-linejoin="round">
+      <path d="M136 257 C142 269 148 281 149 301 L149 350 C149 368 161 379 178 380 L244 380 C262 380 274 370 275 352 L275 303 C276 283 282 271 289 259 C274 251 256 247 236 246 L188 246 C168 247 151 250 136 257Z"/>
+      <path d="M136 263 C126 271 111 275 98 270 C81 264 72 246 74 226 C76 204 87 187 103 180 C101 162 109 146 123 135 C132 128 142 124 154 124 C165 102 186 89 210 89 C237 89 259 102 271 123 C290 121 307 129 318 142 C327 152 331 165 329 178 C344 184 352 200 353 219 C354 241 344 260 327 269 C313 277 297 274 287 266 C280 272 270 276 259 275 C248 274 240 268 235 258 C230 266 222 270 211 270 C201 270 192 266 186 257 C181 266 171 271 160 271 C150 271 142 268 136 263Z"/>
+    </g>
+  </mask>
+  <circle cx="221" cy="221" r="211" fill="black" mask="url(#broccoli-cutout)"/>
+  <g fill="none" stroke="black" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M211 220 L164 178 M211 220 L280 150"/>
+  </g>
+  <circle cx="211" cy="220" r="15" fill="black"/>
+</svg>

@@ -5,7 +5,8 @@ import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
 
-test('Reports and Top tasks stretch the running description without overflowing', async () => {
+test('Reports, Top tasks and Settings stretch the running description without overflowing', async () => {
+  test.setTimeout(90000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-wide-description-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-wide-description-profile-'));
   let context;
@@ -33,10 +34,12 @@ test('Reports and Top tasks stretch the running description without overflowing'
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
-    for (const path of ['reports/reports.html', 'tasks/tasks.html']) {
+    for (const path of ['reports/reports.html', 'tasks/tasks.html', 'options/options.html']) {
       for (const width of [1440, 390]) {
         await page.setViewportSize({ width, height: 850 });
         await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/${path}`);
+        // Settings' unsupported fixture-only requests show a fixed error toast over the header.
+        if (path.startsWith('options')) await page.locator('#message').evaluate(node => { node.style.display = 'none'; });
         const row = page.locator('#running-status.is-active .running-status-row');
         await expect(row.getByRole('textbox', { name: 'Description' })).toBeVisible();
         const geometry = await row.evaluate(node => {
@@ -56,6 +59,25 @@ test('Reports and Top tasks stretch the running description without overflowing'
           expect(geometry.above).toBe(true);
         }
         expect(geometry.overflow).toBeLessThanOrEqual(1);
+        const nav = await page.locator('.page-tabs').evaluate(node => {
+          const brand = node.querySelector('.page-brand').getBoundingClientRect();
+          const toggle = node.querySelector('.page-theme-toggle').getBoundingClientRect();
+          return { brandRight: brand.right, toggleLeft: toggle.left, toggleRight: toggle.right,
+            brandTop: brand.top, toggleTop: toggle.top, overflow: document.documentElement.scrollWidth - innerWidth };
+        });
+        expect(nav.toggleLeft).toBeGreaterThanOrEqual(nav.brandRight);
+        expect(nav.toggleLeft - nav.brandRight).toBeLessThan(24);
+        expect(Math.abs(nav.toggleTop - nav.brandTop)).toBeLessThan(12);
+        expect(nav.overflow).toBeLessThanOrEqual(1);
+        await expect(page.locator('.page-brand-controls > .page-brand')).toHaveCount(1);
+        await page.locator('.page-brand').focus();
+        await page.keyboard.press('Tab');
+        await expect(page.locator('.page-theme-toggle')).toBeFocused();
+        await expect(page.locator('.page-theme-toggle')).toHaveAttribute('aria-label', 'Switch to dark theme');
+        await page.locator('.page-theme-toggle').click({ timeout: 5000 });
+        await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
+        await expect(page.locator('.page-theme-toggle')).toHaveAttribute('aria-label', 'Switch to light theme');
+        await page.locator('.page-theme-toggle').click({ timeout: 5000 });
       }
     }
     expect(errors).toEqual([]);

@@ -2,6 +2,7 @@
 .page-tabs-shell{border-bottom:1px solid var(--borderColor-muted,var(--borderColor-default));background:var(--bgColor-default)}
 .page-tabs{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;width:100%;min-height:48px;margin:0;padding:8px clamp(16px,3vw,48px);white-space:nowrap}
 .page-brand{display:inline-flex;grid-column:1;align-items:center;justify-self:start;padding:0;text-decoration:none}
+.page-brand-controls{display:flex;grid-column:1;align-items:center;justify-self:start;gap:12px;min-width:0}
 .page-brand img{display:block;width:auto;height:32px;object-fit:contain}
 .page-brand:hover{color:var(--fgColor-default);text-decoration:none}
 .page-tab-list{display:flex;grid-column:2;align-items:center;gap:2px;margin:0}
@@ -14,6 +15,7 @@
 .page-brand:focus-visible,.page-tab:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:-4px}
 @media(max-width:640px){.page-tabs{display:flex;flex-wrap:wrap;padding:8px 12px;gap:6px}.page-brand{width:100%}.page-brand img{height:24px}.page-tab-list{max-width:100%;margin:0;overflow-x:auto}.page-tab{padding-inline:5px;font-size:12px}}
 @media(max-width:640px){.page-add-time{margin-left:auto;order:1}.page-tab-list{order:2;width:100%}}
+@media(max-width:640px){.page-brand-controls{width:100%}.page-brand-controls .page-brand{width:auto}}
 @media(max-width:400px){.page-tab-list{gap:0}.page-tab{gap:2px;padding-inline:2px;font-size:11px}.page-tab svg{width:13px;height:13px}}
 @media print{.page-tabs-shell{display:none}}
 /* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
@@ -23,11 +25,12 @@
 .page-tab-actions{grid-column:3;justify-self:end;display:flex;align-items:center;gap:12px}
 .page-tab-actions .page-add-time{grid-column:auto;justify-self:auto;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;border-radius:8px;font-size:13px}
 .page-action-icon{width:16px;height:16px;flex:none}
-.page-theme-toggle{display:grid;place-items:center;width:36px;height:36px;padding:7px;border:1px solid var(--borderColor-muted);border-radius:9px;background:var(--bgColor-default);color:var(--fgColor-muted);cursor:pointer}
+.page-theme-toggle{display:grid;place-items:center;width:36px;height:36px;padding:7px;border:1px solid var(--borderColor-muted);border-radius:9px;background:var(--bgColor-default);color:var(--fgColor-default);cursor:pointer}
+.page-brand-controls .page-theme-toggle{flex:none}
 .page-theme-toggle:hover{background:var(--bgColor-muted);color:var(--fgColor-default)}
 .page-theme-toggle:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
 .page-theme-toggle svg{display:block;width:18px;height:18px}
-:root[data-clockoli-theme="dark"] .page-theme-sun,:root[data-clockoli-theme="light"] .page-theme-moon{display:none}
+:root[data-clockoli-theme="dark"] .page-theme-moon,:root[data-clockoli-theme="light"] .page-theme-sun{display:none}
 .page-tab[aria-current="page"]{background:var(--bgColor-success-muted);color:var(--fgColor-default)}
 @media(max-width:640px){.page-tab-actions{margin-left:auto;order:1;gap:8px}.page-tab-actions .page-add-time{margin-left:0;order:initial}}
 /* Keep the original dark wordmark adjustment only when the effective theme is dark. */

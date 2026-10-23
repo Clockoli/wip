@@ -112,6 +112,133 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
+test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);').replace('for (const entry of recent) entry.destinationId',
+      "recent.push({ ...recent[0], id: 'imported', taskUrl: 'owner/repo/slug', taskTitle: 'Imported task', startedAt: date + 'T10:00:00Z', endedAt: date + 'T10:30:00Z' });\nrecent.push({ ...recent[0], id: 'github-icon', taskUrl: 'https://github.com/acme/app/issues/42', taskTitle: 'GitHub task', startedAt: date + 'T11:00:00Z', endedAt: date + 'T11:30:00Z' });\nfor (const entry of recent) entry.destinationId")
+      .replace("else if (message.type === 'GET_PAGE_STATE')", "else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [{ taskUrl: 'owner/repo/slug', title: 'Imported task', totalSeconds: 1800 }], active: null, pendingWrites: [] } });\n  else if (message.type === 'GET_PAGE_STATE')"));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const maskPixels = await page.evaluate(async () => {
+      const image = new Image();
+      image.src = chrome.runtime.getURL('src/assets/clockoli-inverse-circle.svg');
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 442; canvas.height = 442;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, 442, 442);
+      const alpha = (x, y) => context.getImageData(x, y, 1, 1).data[3];
+      return { outside: alpha(0, 0), circle: alpha(221, 40), crown: alpha(210, 160), stem: alpha(210, 310), hands: alpha(211, 220) };
+    });
+    expect(maskPixels).toEqual({ outside: 0, circle: 255, crown: 0, stem: 0, hands: 255 });
+    const root = page.locator('#clockoli-times-root');
+    const switcher = page.locator('#activity-view-switcher');
+    await switcher.getByRole('button', { name: 'Calendar' }).click();
+    await expect(root.locator('.calendar-day-header')).toHaveCount(7);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => document.documentElement.setAttribute('data-clockoli-theme', theme), theme);
+      await switcher.getByRole('button', { name: 'List' }).click();
+      await expect(root.locator('.entry-record').first()).toBeVisible();
+      const icon = root.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+      await expect(icon).toBeVisible();
+      const listColor = await icon.evaluate(element => getComputedStyle(element).backgroundColor);
+      expect(await icon.evaluate(element => getComputedStyle(element).maskImage)).toContain('clockoli-inverse-circle.svg');
+      expect(listColor).toBe(await icon.evaluate(element => getComputedStyle(element).color));
+      expect(listColor).toBe(theme === 'light' ? 'rgb(31, 35, 40)' : 'rgb(240, 246, 252)');
+      const githubIcon = root.locator('.entry-record').filter({ hasText: 'GitHub task' }).locator('.site-github-favicon');
+      await expect(githubIcon).toBeVisible();
+      await expect(githubIcon).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await expect(root.locator('.entry-record').filter({ hasText: 'Activity test task' }).locator('.entry-record-favicon')).toHaveCSS('filter', 'none');
+      await switcher.getByRole('button', { name: 'Calendar' }).click();
+      const tile = root.locator('.calendar-task[data-task-key="entry:imported"] .clockoli-fallback-icon').first();
+      await expect(tile).toBeVisible();
+      expect(await tile.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(listColor);
+      expect(await tile.evaluate(element => getComputedStyle(element).maskImage)).toContain('clockoli-inverse-circle.svg');
+      const githubTile = root.locator('.calendar-task[data-task-key="entry:github-icon"] .clockoli-github-favicon').first();
+      await expect(githubTile).toBeVisible();
+      await expect(githubTile).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await githubTile.hover();
+      const githubDetails = root.locator('.clockoli-compact-entry-details .clockoli-details-task-icon img.clockoli-github-favicon');
+      await expect(githubDetails).toBeVisible();
+      await expect(githubDetails).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await tile.hover();
+      const detailsIcon = root.locator('.clockoli-compact-entry-details .clockoli-details-task-icon.clockoli-fallback-icon');
+      await expect(detailsIcon).toBeVisible();
+      expect(await detailsIcon.evaluate(element => getComputedStyle(element, '::before').backgroundColor)).toBe(listColor);
+      expect(await detailsIcon.evaluate(element => getComputedStyle(element, '::before').maskImage)).toContain('clockoli-inverse-circle.svg');
+    }
+    const tasksPage = await context.newPage();
+    tasksPage.on('pageerror', error => errors.push(error.message));
+    await tasksPage.goto(`chrome-extension://${new URL(worker.url()).host}/src/tasks/tasks.html`);
+    const taskIcon = tasksPage.locator('.task-clockoli-icon');
+    await expect(taskIcon).toBeVisible();
+    await expect(taskIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    for (const theme of ['light', 'dark']) {
+      await tasksPage.evaluate(theme => document.documentElement.setAttribute('data-clockoli-theme', theme), theme);
+      await expect(taskIcon).toHaveCSS('background-color', theme === 'light' ? 'rgb(31, 35, 40)' : 'rgb(240, 246, 252)');
+    }
+    const toolbar = await context.newPage();
+    toolbar.on('pageerror', error => errors.push(error.message));
+    await toolbar.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const toolbarRoot = toolbar.locator('#clockoli-popup-root');
+    await toolbarRoot.getByRole('button', { name: 'List', exact: true }).click();
+    const toolbarIcon = toolbarRoot.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+    await expect(toolbarIcon).toBeVisible();
+    await expect(toolbarIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    await expect(toolbarIcon).toHaveCSS('background-color', 'rgb(31, 35, 40)');
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1774, height: 900 });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'List', exact: true }).click();
+    const popupIcon = panel.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+    await expect(popupIcon).toBeVisible();
+    await expect(popupIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    await expect(popupIcon).toHaveCSS('background-color', 'rgb(31, 35, 40)');
+    const resourceLoaded = await popupIcon.evaluate(async icon => {
+      const mask = getComputedStyle(icon).maskImage;
+      const image = new Image();
+      image.src = mask.slice(5, -2);
+      await image.decode();
+      return image.naturalWidth > 0 && image.naturalHeight > 0;
+    });
+    expect(resourceLoaded).toBe(true);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.evaluate(() => document.documentElement.removeAttribute('data-clockoli-theme'));
+    await switcher.getByRole('button', { name: 'List' }).click();
+    const githubIcon = root.locator('.entry-record').filter({ hasText: 'GitHub task' }).locator('.site-github-favicon');
+    await expect(githubIcon).toHaveCSS('filter', 'brightness(0) invert(1)');
+    await page.evaluate(() => document.documentElement.setAttribute('data-clockoli-theme', 'light'));
+    await expect(githubIcon).toHaveCSS('filter', 'none');
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('Activity calendar metrics and view switcher fit the desktop and mobile layouts', async () => {
   test.setTimeout(30000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-extension-'));
@@ -339,7 +466,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
       return { stackedCards: cards.every((rect, index) => !index || rect.top > cards[index - 1].top),
         stats: { top: stats.top, right: stats.right, width: stats.width },
         tracking: { top: tracking.top, left: tracking.left, width: tracking.width },
-        tabs: { top: tabs.top, height: tabs.height, right: tabs.right }, theme: { top: theme.top, height: theme.height, left: theme.left },
+        tabs: { top: tabs.top, left: tabs.left, height: tabs.height, right: tabs.right }, theme: { top: theme.top, right: theme.right, bottom: theme.bottom, height: theme.height, left: theme.left },
         horizontalOverflow: document.documentElement.scrollWidth > innerWidth };
     });
     const desktop = await geometry();
@@ -348,7 +475,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     expect(desktop.stats.right).toBeLessThan(desktop.tracking.left);
     expect(desktop.tracking.width / desktop.stats.width).toBeCloseTo(7, 0);
     expect(Math.abs(desktop.tabs.top + desktop.tabs.height / 2 - desktop.theme.top - desktop.theme.height / 2)).toBeLessThanOrEqual(1);
-    expect(desktop.tabs.right).toBeLessThan(desktop.theme.left);
+    expect(desktop.theme.right).toBeLessThan(desktop.tabs.left);
     expect(desktop.horizontalOverflow).toBe(false);
     if (process.env.CLOCKOLI_ACTIVITY_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_SCREENSHOT });
     const lightPanel = await details.evaluate(node => getComputedStyle(node).backgroundColor);
@@ -383,7 +510,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     expect(new Set(mobileCards.map(card => card.top)).size).toBe(3);
     const mobile = await geometry();
     expect(mobile.stats.top).toBeLessThan(mobile.tracking.top);
-    expect(mobile.tabs.right).toBeLessThan(mobile.theme.left);
+    expect(mobile.theme.bottom).toBeLessThan(mobile.tabs.top);
     expect(mobile.horizontalOverflow).toBe(false);
     if (process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT });
     await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();

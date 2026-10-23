@@ -43,6 +43,7 @@ test('Clockoli pages expose the theme button; popup applies the same selected th
   for (const page of ['src/times/times.html', 'src/tasks/tasks.html', 'src/reports/reports.html', 'src/options/options.html']) {
     assert.match(read(page), /class="page-theme-toggle"/, page);
     assert.match(read(page), /src="\.\.\/ui\/theme\.js"/, page);
+    assert.match(read(page), /class="page-theme-moon" viewBox="0 0 16 16"[^>]*><path d="M6 \.278/, `${page} should use a recognizable filled crescent`);
   }
   assert.match(read('src/popup/popup.html'), /src="\.\.\/ui\/theme\.js"/);
   const tokens = read('src/styles/github-primer.css');
@@ -93,6 +94,7 @@ test('Activity has three compact metrics without Daily average and an icon view 
   assert.match(ui, /\[shadow, fullWidthPopupShadow, timesMode \? document\.getElementById\?\.\('activity-summary'\) : null\]/);
   assert.match(ui, /viewHost\.replaceChildren\(views\)/);
   assert.match(read('src/times/times.html'), /id="activity-view-switcher"[\s\S]*class="page-theme-toggle"/);
+  assert.match(read('src/ui/theme.js'), /group\.append\(brand, control\)/);
 });
 
 test('manual themes control select arrows and print reports stay light', () => {

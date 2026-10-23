@@ -7,3 +7,4 @@
 @media(max-width:700px){.app-header,main{padding:16px}.toolbar{grid-template-columns:1fr 1fr}.toolbar #task-filter{grid-column:1/-1}.task-row{grid-template-columns:1fr;gap:12px}.task-actions{justify-content:flex-end}.timer-button{min-width:104px}}
 .task-row.running{background:color-mix(in srgb,var(--task-color) 12%,var(--bgColor-default))}
 .task-monogram{display:grid;place-items:center;font:var(--text-caption-shorthand);font-weight:600;line-height:1}
+.task-clockoli-icon{background:var(--fgColor-default);mask-size:contain;mask-position:center;mask-repeat:no-repeat}

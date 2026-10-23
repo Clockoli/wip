@@ -1031,6 +1031,9 @@ test('Activity follows the theme switch in every shadow-root surface without a r
     await page.goto('chrome-extension://' + id + '/src/times/times.html');
     const switcher = page.locator('.page-theme-toggle');
     await expect(switcher).toHaveAttribute('aria-label', 'Switch to dark theme');
+    await expect(switcher.locator('.page-theme-moon')).toBeVisible();
+    await expect(switcher.locator('.page-theme-sun')).toBeHidden();
+    await expect(switcher).toHaveCSS('color', 'rgb(31, 35, 40)');
     await expect(page.locator('.running-status.is-idle .running-status-row')).toBeVisible();
     await page.getByRole('button', { name: 'Calendar', exact: true }).click();
     const activity = page.locator('#clockoli-times-root');
@@ -1044,6 +1047,9 @@ test('Activity follows the theme switch in every shadow-root surface without a r
 
     await switcher.click();
     await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
+    await expect(switcher.locator('.page-theme-sun')).toBeVisible();
+    await expect(switcher.locator('.page-theme-moon')).toBeHidden();
+    await expect(switcher).toHaveCSS('color', 'rgb(240, 246, 252)');
     await expect(activity).toHaveAttribute('data-clockoli-theme', 'dark');
     await expect(card).toHaveCSS('background-color', 'rgb(21, 27, 35)');
     await expect(calendar).toHaveCSS('background-color', 'rgb(13, 17, 23)');
@@ -1056,6 +1062,8 @@ test('Activity follows the theme switch in every shadow-root surface without a r
     // A manual light selection must override a dark OS preference as well.
     await page.emulateMedia({ colorScheme: 'dark' });
     await switcher.click();
+    await expect(switcher.locator('.page-theme-moon')).toBeVisible();
+    await expect(switcher.locator('.page-theme-sun')).toBeHidden();
     await expect(card).toHaveCSS('background-color', 'rgb(246, 248, 250)');
     await expect(calendar).toHaveCSS('background-color', 'rgb(255, 255, 255)');
     await expect(panel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
