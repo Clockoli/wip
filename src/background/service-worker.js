@@ -7,7 +7,7 @@ import {
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
 import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
-import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
+import { aggregateTaskParticipants, aggregateTrackedTasks, selectTaskUsers } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
 import { setAddonEnabled } from '../addons/service.js';
@@ -531,9 +531,9 @@ async function loadTasks(message, sender) {
         ...(operation.entry ? { entry: { ...operation.entry, destinationId, timeRepository: destination?.label || `${destination?.owner}/${destination?.repo}` } } : {}),
       }));
     });
-    const availableUsers = [...new Set(loaded.records.map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
-    const requestedUsers = Array.isArray(message.payload?.selectedUsers) ? message.payload.selectedUsers : Object.values(currentUsers);
-    const selectedUsers = requestedUsers.filter(user => availableUsers.includes(user));
+    const availableUsers = [...new Set([...loaded.records, ...(active ? [active] : [])]
+      .map(record => String(record?.user || '').trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    const selectedUsers = selectTaskUsers(availableUsers, currentUsers, message.payload);
     return {
       configured: true,
       sourceRepositories: destinations.map(destination => destination.label),
@@ -1333,9 +1333,8 @@ async function handle(message, sender) {
       const destinations = selectReadDestinations(snapshot, { destinationIds: requestedDestinationIds });
       if (destinations.length !== 1) throw new Error('Choose exactly one time repository before merging tasks.');
       const request = { pairs: message.pairs, startDate: message.startDate, endDate: message.endDate };
-      const selectedUsers = [...new Set((Array.isArray(message.selectedUsers) ? message.selectedUsers : [])
-        .map(user => String(user || '').trim()).filter(Boolean))];
-      if (!selectedUsers.length) throw new Error('Choose at least one person before merging tasks.');
+      if (message.allUsers !== undefined && typeof message.allUsers !== 'boolean') throw new Error('Invalid task merge scope.');
+      const allUsers = message.allUsers === true;
       let mergedEntries = 0, mergedActive = false, completedDestinations = 0;
       const failures = [];
       for (const destination of destinations) {
@@ -1344,15 +1343,13 @@ async function handle(message, sender) {
           const localTracker = await trackerForDestination(destination.id);
           const state = await localTracker.getState();
           if (state.pendingWrites?.length) throw new Error('Sync pending changes before merging tasks.');
-          const branches = await discoverUserStorageBranches(githubForConfig(destination));
-          const byLogin = new Map(branches.map(branch => [branch.login.toLowerCase(), branch]));
-          const targets = selectedUsers.map(user => {
-            if (user.toLowerCase() === currentUser.toLowerCase()) return { user: currentUser, tracker: localTracker };
-            const branch = byLogin.get(user.toLowerCase());
-            if (!branch) throw new Error(`Clockoli storage for ${user} is no longer available. Reload Settings.`);
-            const detachedStore = { getState: async () => ({ pendingWrites: [], recentCache: [] }), patchState: async () => {} };
-            return { user: branch.login, tracker: new TrackerService({ github: branch.github, store: detachedStore, user: branch.login, actorId: `github:${branch.id}`, actorName: branch.login, recentDays: destination.recentDays || 7 }) };
-          });
+          const branches = allUsers ? await discoverUserStorageBranches(githubForConfig(destination)) : [];
+          const targets = [{ user: currentUser, tracker: localTracker }, ...branches
+            .filter(branch => branch.login.toLowerCase() !== currentUser.toLowerCase())
+            .map(branch => {
+              const detachedStore = { getState: async () => ({ pendingWrites: [], recentCache: [] }), patchState: async () => {} };
+              return { user: branch.login, tracker: new TrackerService({ github: branch.github, store: detachedStore, user: branch.login, actorId: `github:${branch.id}`, actorName: branch.login, recentDays: destination.recentDays || 7 }) };
+            })];
           for (const { tracker } of targets) {
             const result = await tracker.mergeTasks(request);
             mergedEntries += result.mergedEntries; mergedActive ||= result.mergedActive;
@@ -1362,11 +1359,11 @@ async function handle(message, sender) {
       }
       if (failures.length) {
         const labels = failures.map(({ destination }) => destination.label || `${destination.owner}/${destination.repo}`).join(', ');
-        const completedLabel = `${completedDestinations} time ${completedDestinations === 1 ? 'repository' : 'repositories'}`;
-        const error = new Error(completedDestinations
-          ? `The merge finished in ${completedLabel} but could not finish in ${labels}. Retry to finish the remaining entries.`
+        const partial = completedDestinations > 0 || mergedEntries > 0 || mergedActive;
+        const error = new Error(partial
+          ? `Some task entries were merged before a failure in ${labels}. Retry to finish the remaining entries. ${failures[0].error.message}`
           : `Could not merge tasks in ${labels}. ${failures[0].error.message}`);
-        error.code = completedDestinations ? 'partial_task_merge' : failures[0].error.code;
+        error.code = partial ? 'partial_task_merge' : failures[0].error.code;
         throw error;
       }
       return { mergedEntries, mergedActive, destinationCount: completedDestinations };

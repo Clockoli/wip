@@ -2,7 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from './onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../domain/local-settings.js';
 import { taskPeriodRange } from '../domain/tasks.js';
-import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
+import { normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubTaskUrl } from '../domain/values.js';
 import { getAddon } from '../addons/registry.js';
 
 
@@ -720,7 +720,7 @@ function renderState() {
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
-  $('merge-tasks').hidden = !state.config && destinations.length === 0;
+  $('merge-tasks').hidden = !accountConnected || (!state.config && destinations.length === 0);
   if (settingsConnected !== accountConnected) {
     $('more-settings').open = Boolean(accountConnected);
     settingsConnected = accountConnected;
@@ -1575,72 +1575,81 @@ function currentDateValue(now = new Date()) {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 function mergeTaskLabel(task) { return task.title || task.taskUrl; }
+function mergeTaskIdentity(task) {
+  const issue = parseGitHubTaskUrl(task.taskUrl);
+  if (issue) return `${issue.owner}/${issue.repo} #${issue.number}`;
+  try {
+    const url = new URL(task.taskUrl);
+    return `${url.host}${url.pathname}${url.search}${url.hash}`;
+  } catch { return task.taskUrl; }
+}
 const mergeSelection = { source: '', target: '' };
 let mergePairs = [];
-let mergePeople = new Set();
-let mergeAvailableUsers = [];
+let mergeLoadGeneration = 0;
+let mergeContextSignature = '';
+let mergeTasksLoaded = false;
+let mergeTasksLoading = false;
+let mergeSubmitting = false;
 function renderMergeDestinationOptions() {
   const select = $('merge-task-destination'), destinations = configuredDestinations();
   const previous = select.value, fallback = defaultDestinationId();
+  const signature = JSON.stringify([
+    state?.auth?.mode, state?.auth?.githubLogin, state?.auth?.githubUserId,
+    destinations.map(destination => [
+      destination.id, destination.owner, destination.repo, destination.branch || destination.defaultBranch,
+      destination.repoId, destination.installationId,
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  ]);
+  const contextChanged = mergeContextSignature !== signature;
+  mergeContextSignature = signature;
   select.replaceChildren();
   for (const destination of destinations) {
     const option = document.createElement('option'); option.value = destination.id; option.textContent = destinationLabel(destination); select.append(option);
   }
   const next = destinations.some(destination => destination.id === previous) ? previous : fallback;
   select.value = next;
-  select.disabled = destinations.length < 2;
-  if (previous && next !== previous) {
-    mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
-    mergePeople = new Set(); mergeAvailableUsers = []; renderMergePeople([]); renderMergeTasks([]);
+  select.disabled = destinations.length < 2 || mergeSubmitting;
+  if (contextChanged || (previous && next !== previous)) {
+    resetMergeTaskCandidates();
+    $('merge-all-people').checked = false; updateMergeScope();
+    if (contextChanged) $('merge-tasks').open = false;
+    else if ($('merge-tasks').open) void refreshMergeTasks();
   }
 }
 function mergeTasksVisible(side) {
-  const query = $(`merge-${side}-filter`).value.trim().toLowerCase();
-  return mergeTasks.filter(task => (side === 'source' || isMergeTarget(task))
-    && (!query || `${task.title || ''} ${task.taskUrl}`.toLowerCase().includes(query)));
+  const filter = $(`merge-${side}-filter`).value.trim().toLowerCase();
+  return mergeTasks.filter(task => {
+    const url = task.taskUrl;
+    if (side === 'source' && mergePairs.some(pair => pair.source.taskUrl === url || pair.target.taskUrl === url)) return false;
+    if (side === 'target' && (!mergeSelection.source || mergeSelection.source === url || !isMergeTarget(task)
+        || mergePairs.some(pair => pair.source.taskUrl === url))) return false;
+    return !filter || `${task.title || ''} ${url}`.toLowerCase().includes(filter);
+  });
 }
 function isMergeTarget(task) {
   try { return normalizeTaskUrl(task.taskUrl) === task.taskUrl; }
   catch { return false; }
 }
-function filterMergePeople() {
-  const query = $('merge-people-filter').value.trim().toLowerCase();
-  for (const label of $('merge-people-list').children) label.hidden = Boolean(query && !label.dataset.user.toLowerCase().includes(query));
-}
-function updateMergePeopleState(users = mergeAvailableUsers) {
-  const allSelected = Boolean(users.length) && users.every(user => mergePeople.has(user));
-  $('merge-people-all').disabled = !users.length;
-  $('merge-people-all').setAttribute('aria-pressed', String(allSelected));
-  $('merge-people-all').setAttribute('aria-label', allSelected ? 'Clear all people' : 'Select all people');
-}
-function renderMergePeople(users = []) {
-  const focusedUser = document.activeElement?.type === 'checkbox' ? document.activeElement.value : '';
-  mergeAvailableUsers = users;
-  const list = $('merge-people-list'); list.replaceChildren();
-  for (const user of users) {
-    const label = document.createElement('label'), input = document.createElement('input');
-    label.dataset.user = user;
-    input.type = 'checkbox'; input.value = user; input.checked = mergePeople.has(user); input.addEventListener('change', () => {
-      if (input.checked) mergePeople.add(user); else mergePeople.delete(user);
-      clearMergePairs(); updateMergePeopleState(); void refreshMergeTasks();
-    });
-    const text = document.createElement('span'); text.textContent = user;
-    label.append(input, text); list.append(label);
-  }
-  updateMergePeopleState(users);
-  filterMergePeople();
-  if (focusedUser) {
-    const focused = [...list.children].find(label => label.dataset.user === focusedUser)?.children[0];
-    focused?.focus({ preventScroll: true });
-  }
+function updateMergeScope() {
+  const allPeople = $('merge-all-people').checked === true;
+  $('merge-scope-note').textContent = allPeople
+    ? 'Changes everyone’s time entries in this repository and period.'
+    : 'Only your time entries will change.';
+  $('merge-tasks-submit').textContent = allPeople ? 'Merge for all people' : 'Merge my tasks';
 }
 function renderMergeTaskList(side) {
   const list = $(`merge-${side}-list`); list.replaceChildren();
+  const needsSource = side === 'target' && !mergeSelection.source;
+  $(`merge-${side}-filter`).disabled = needsSource;
+  if (needsSource) {
+    const help = document.createElement('p'); help.className = 'help'; help.textContent = 'Select a task to replace first.'; list.append(help);
+    return;
+  }
   for (const task of mergeTasksVisible(side)) {
     const row = document.createElement('button'); row.type = 'button'; row.className = `merge-task-row${mergeSelection[side] === task.taskUrl ? ' selected' : ''}`;
     row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(mergeSelection[side] === task.taskUrl));
-    const title = document.createElement('span'); title.className = 'merge-task-title'; title.textContent = mergeTaskLabel(task);
-    const url = document.createElement('span'); url.className = 'merge-task-url'; url.textContent = task.taskUrl;
+    const title = document.createElement('span'); title.className = 'merge-task-title'; title.textContent = mergeTaskLabel(task); title.title = mergeTaskLabel(task);
+    const url = document.createElement('span'); url.className = 'merge-task-url'; url.textContent = mergeTaskIdentity(task); url.title = task.taskUrl;
     row.append(title, url); row.addEventListener('click', () => selectMergeTask(side, task.taskUrl)); list.append(row);
   }
   if (!list.children.length) { const empty = document.createElement('p'); empty.className = 'help'; empty.textContent = 'No matching tasks.'; list.append(empty); }
@@ -1655,21 +1664,26 @@ function renderMergeQueue() {
     const row = document.createElement('div'); row.className = 'merge-queue-row';
     const source = document.createElement('div'); source.className = 'merge-queue-task';
     const sourceTitle = document.createElement('span'); sourceTitle.textContent = mergeTaskLabel(pair.source);
-    const sourceUrl = document.createElement('small'); sourceUrl.className = 'merge-queue-task-url'; sourceUrl.textContent = pair.source.taskUrl;
+    const sourceUrl = document.createElement('small'); sourceUrl.className = 'merge-queue-task-url'; sourceUrl.textContent = mergeTaskIdentity(pair.source); sourceUrl.title = pair.source.taskUrl;
     source.append(sourceTitle, sourceUrl);
     const arrow = document.createElement('span'); arrow.className = 'merge-queue-arrow'; arrow.textContent = '→'; arrow.setAttribute('aria-hidden', 'true');
     const target = document.createElement('div'); target.className = 'merge-queue-task';
     const targetTitle = document.createElement('span'); targetTitle.textContent = mergeTaskLabel(pair.target);
-    const targetUrl = document.createElement('small'); targetUrl.className = 'merge-queue-task-url'; targetUrl.textContent = pair.target.taskUrl;
+    const targetUrl = document.createElement('small'); targetUrl.className = 'merge-queue-task-url'; targetUrl.textContent = mergeTaskIdentity(pair.target); targetUrl.title = pair.target.taskUrl;
     target.append(targetTitle, targetUrl);
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project merge-pair-remove'; remove.textContent = '✕';
     remove.setAttribute('aria-label', `Remove merge pair ${mergeTaskLabel(pair.source)} to ${mergeTaskLabel(pair.target)}`);
-    remove.addEventListener('click', () => { mergePairs = mergePairs.filter(item => item !== pair); renderMergeQueue(); });
+    remove.addEventListener('click', () => {
+      if (mergeSubmitting) return;
+      mergePairs = mergePairs.filter(item => item !== pair);
+      renderMergeTaskList('source'); renderMergeTaskList('target'); renderMergeQueue();
+    });
     row.append(source, arrow, target, remove); list.append(row);
   }
   $('merge-queue-count').textContent = `${mergePairs.length} ${mergePairs.length === 1 ? 'pair' : 'pairs'}`;
   $('merge-queue-empty').hidden = Boolean(mergePairs.length);
-  $('merge-tasks-submit').disabled = !mergePairs.length;
+  $('merge-tasks-submit').disabled = !mergePairs.length || mergeSubmitting;
+  updateMergeScope();
 }
 function renderMergeTasks(tasks) {
   const destinationId = $('merge-task-destination').value;
@@ -1687,41 +1701,60 @@ function renderMergeTasks(tasks) {
   return unavailable;
 }
 function selectMergeTask(side, taskUrl) {
-  if (!mergeTasksVisible(side).some(task => task.taskUrl === taskUrl)) return;
-  mergeSelection[side] = taskUrl; renderMergeTaskList(side);
-  const other = side === 'source' ? 'target' : 'source';
-  if (!mergeSelection[other] || mergeSelection[other] === taskUrl) return;
-  const source = mergeTasks.find(task => task.taskUrl === mergeSelection.source), target = mergeTasks.find(task => task.taskUrl === mergeSelection.target);
-  if (!source || !target || mergePairs.some(pair => pair.source.taskUrl === source.taskUrl)) return;
+  if (mergeSubmitting || !mergeTasksVisible(side).some(task => task.taskUrl === taskUrl)) return;
+  if (side === 'source') {
+    mergeSelection.source = taskUrl; mergeSelection.target = '';
+    $('merge-target-filter').value = '';
+    renderMergeTaskList('source'); renderMergeTaskList('target');
+    return;
+  }
+  const source = mergeTasks.find(task => task.taskUrl === mergeSelection.source);
+  const target = mergeTasks.find(task => task.taskUrl === taskUrl);
+  if (!source || !target || mergePairs.some(pair => pair.source.taskUrl === source.taskUrl
+      || pair.target.taskUrl === source.taskUrl || pair.source.taskUrl === target.taskUrl)) return;
   mergePairs.push({ source, target }); mergeSelection.source = ''; mergeSelection.target = '';
   renderMergeTaskList('source'); renderMergeTaskList('target'); renderMergeQueue();
 }
 async function refreshMergeTasks() {
-  if ($('merge-tasks').hidden) return;
-  if (!mergePeople.size && mergeAvailableUsers.length) {
-    renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Select at least one person to show tasks.'; return;
-  }
-  const range = taskPeriodRange($('merge-task-period').value, currentDateValue());
+  if ($('merge-tasks').hidden || !$('merge-tasks').open) return null;
+  const generation = ++mergeLoadGeneration;
+  mergeTasksLoading = true;
+  $('merge-tasks-feedback').textContent = 'Loading tasks…';
   try {
+    const range = taskPeriodRange($('merge-task-period').value, currentDateValue());
     const destinationId = $('merge-task-destination').value;
     if (!destinationId) throw new Error('Choose a time repository before merging tasks.');
-    const payload = { ...range, destinationIds: [destinationId], includeAllUsers: true, requestId: `merge-tasks-${Date.now()}` };
-    if (mergePeople.size) payload.selectedUsers = [...mergePeople];
+    const payload = { ...range, destinationIds: [destinationId], includeAllUsers: $('merge-all-people').checked === true, requestId: `merge-tasks-${Date.now()}` };
     const result = await send({ type: 'LOAD_TASKS', payload });
-    const currentUsers = Object.values(result.currentUsers || {}).filter(Boolean);
-    const users = result.availableUsers || currentUsers;
-    if (!mergePeople.size) mergePeople = new Set(currentUsers);
-    renderMergePeople(users);
+    if (generation !== mergeLoadGeneration) return;
     if (result.partial || result.conflicts?.length) {
-      renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return;
+      mergeTasksLoaded = false;
+      renderMergeTasks([]); $('merge-tasks-feedback').textContent = 'Some time repositories could not be loaded completely. Reload Settings before merging tasks.'; return false;
     }
     const unavailable = renderMergeTasks(result.tasks || []);
+    mergeTasksLoaded = true;
     const imported = mergeTasks.filter(task => !isMergeTarget(task)).length;
     $('merge-tasks-feedback').textContent = unavailable
       ? `${unavailable} invalid task ${unavailable === 1 ? 'identity was' : 'identities were'} excluded.`
       : imported ? 'Imported task identities can be replaced with a tracked URL; replacement tasks must have a URL.'
-        : mergeTasks.length ? '' : 'No tasks match the selected people and period.';
-  } catch (error) { renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message; }
+        : mergeTasks.length ? '' : 'No tasks match the selected period.';
+    return true;
+  } catch (error) {
+    if (generation === mergeLoadGeneration) {
+      mergeTasksLoaded = false;
+      renderMergeTasks([]); $('merge-tasks-feedback').textContent = error.message;
+      return false;
+    }
+  } finally {
+    if (generation === mergeLoadGeneration) mergeTasksLoading = false;
+  }
+}
+
+function resetMergeTaskCandidates() {
+  mergeLoadGeneration++;
+  mergeTasksLoaded = false; mergeTasksLoading = false;
+  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
+  renderMergeTasks([]);
 }
 
 function ratesPayload() {
@@ -2429,49 +2462,53 @@ $('import-settings-file').addEventListener('change', async () => {
 });
 
 for (const side of ['source', 'target']) $(`merge-${side}-filter`).addEventListener('input', () => renderMergeTaskList(side));
-const mergePeopleSelect = $('merge-people-select');
-function setMergePeopleOpen(open) {
-  mergePeopleSelect.open = open;
-  $('merge-people-filter').setAttribute('aria-expanded', String(open));
-}
-mergePeopleSelect.addEventListener('toggle', () => $('merge-people-filter').setAttribute('aria-expanded', String(mergePeopleSelect.open)));
-$('merge-people-filter').addEventListener('click', event => { event.stopPropagation(); setMergePeopleOpen(true); });
-$('merge-people-filter').addEventListener('focus', () => setMergePeopleOpen(true));
-mergePeopleSelect.addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return;
-  event.preventDefault();
-  $('merge-people-filter').focus({ preventScroll: true });
-  setMergePeopleOpen(false);
+$('merge-tasks').addEventListener('toggle', () => {
+  if ($('merge-tasks').open && !mergeTasksLoaded && !mergeTasksLoading) return refreshMergeTasks();
 });
-document.addEventListener('pointerdown', event => { if (!mergePeopleSelect.contains(event.target)) setMergePeopleOpen(false); });
-document.addEventListener('focusin', event => { if (!mergePeopleSelect.contains(event.target)) setMergePeopleOpen(false); });
-$('merge-people-filter').addEventListener('input', filterMergePeople);
-$('merge-task-period').addEventListener('change', () => { mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs(); void refreshMergeTasks(); });
+$('merge-task-period').addEventListener('change', () => {
+  resetMergeTaskCandidates();
+  void refreshMergeTasks();
+});
 $('merge-task-destination').addEventListener('change', async () => {
-  mergeSelection.source = ''; mergeSelection.target = ''; clearMergePairs();
-  mergePeople = new Set(); mergeAvailableUsers = []; renderMergePeople([]); renderMergeTasks([]);
+  resetMergeTaskCandidates();
+  $('merge-all-people').checked = false; updateMergeScope();
   await refreshMergeTasks();
 });
-$('merge-people-all').addEventListener('click', event => {
-  event.stopPropagation(); setMergePeopleOpen(true);
-  const allSelected = mergeAvailableUsers.length > 0 && mergeAvailableUsers.every(user => mergePeople.has(user));
-  allSelected ? mergePeople.clear() : mergeAvailableUsers.forEach(user => mergePeople.add(user));
-  clearMergePairs(); renderMergePeople(mergeAvailableUsers); void refreshMergeTasks();
+$('merge-all-people').addEventListener('change', () => {
+  resetMergeTaskCandidates();
+  void refreshMergeTasks();
 });
 $('merge-tasks-submit').addEventListener('click', async () => {
-  if (!mergePairs.length) return;
-  const button = $('merge-tasks-submit'); button.disabled = true; formFeedback('merge-tasks-feedback', 'Merging tasks…');
+  if (!mergePairs.length || mergeSubmitting) return;
+  mergeSubmitting = true; renderMergeQueue();
+  for (const id of ['merge-all-people', 'merge-task-period', 'merge-task-destination']) $(id).disabled = true;
+  const allUsers = $('merge-all-people').checked === true;
+  formFeedback('merge-tasks-feedback', 'Merging tasks…');
   try {
     const range = taskPeriodRange($('merge-task-period').value, currentDateValue());
     const pairs = mergePairs.map(pair => ({ sourceTaskUrl: pair.source.taskUrl, targetTaskUrl: pair.target.taskUrl, targetTaskTitle: pair.target.title || '' }));
-    const result = await send({ type: 'MERGE_TASKS', destinationIds: [$('merge-task-destination').value], selectedUsers: [...mergePeople], pairs, ...range });
+    const result = await send({ type: 'MERGE_TASKS', destinationIds: [$('merge-task-destination').value], allUsers, pairs, ...range });
     const changed = result.mergedEntries + (result.mergedActive ? 1 : 0);
-    mergePairs = []; renderMergeQueue(); await refreshMergeTasks();
-    formFeedback('merge-tasks-feedback', changed ? `Merged ${mergePairs.length || pairs.length} ${pairs.length === 1 ? 'task pair' : 'task pairs'} across ${result.destinationCount} ${result.destinationCount === 1 ? 'time repository' : 'time repositories'}.` : 'No matching entries needed changing.', 'success');
+    resetMergeTaskCandidates();
+    $('merge-all-people').checked = false; updateMergeScope();
+    const refreshed = await refreshMergeTasks();
+    const refreshError = refreshed === false ? $('merge-tasks-feedback').textContent : '';
+    const summary = changed
+      ? `Merged ${pairs.length} ${pairs.length === 1 ? 'task pair' : 'task pairs'} ${allUsers ? 'for all people' : 'for your entries'}.`
+      : 'No matching entries needed changing.';
+    formFeedback('merge-tasks-feedback', refreshError ? `${summary} Could not refresh the task list: ${refreshError}` : summary,
+      refreshError ? 'error' : 'success');
   } catch (error) {
-    if (error.code === 'partial_task_merge') await refreshMergeTasks().catch(() => {});
+    if (error.code === 'partial_task_merge') {
+      resetMergeTaskCandidates();
+      await refreshMergeTasks().catch(() => {});
+    }
     formFeedback('merge-tasks-feedback', error.message || 'Could not merge tasks.', 'error');
-  } finally { renderMergeQueue(); }
+  } finally {
+    mergeSubmitting = false;
+    for (const id of ['merge-all-people', 'merge-task-period', 'merge-task-destination']) $(id).disabled = false;
+    renderMergeQueue();
+  }
 });
 
 $('settings-form').addEventListener('submit', async event => {
@@ -2488,6 +2525,6 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).catch(error => message(error.message, 'error'));
 
 mountRunningStatus($('running-status'), { send });

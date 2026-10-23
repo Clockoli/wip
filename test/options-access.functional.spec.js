@@ -16,7 +16,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     GET_ONBOARDING_STATE: {
       ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' },
       config: { owner: 'acme', repo: 'time-data', branch: 'main', recentDays: 7 },
-      verificationStatus: 'write_verified', destinations,
+      verificationStatus: 'write_verified', defaultDestinationId: 'github:20', destinations,
     },
     RESUME_DEVICE_FLOW: null,
     GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
@@ -211,12 +211,27 @@ test('Merge tasks offers an imported identity only on the source side in Chromiu
     const errors = [];
     page.on('pageerror', error => errors.push(`page: ${error.message}`));
     fixture.worker.on('console', message => { if (message.type() === 'error') errors.push(`worker: ${message.text()}`); });
-    await expect(page.locator('#merge-tasks')).toBeVisible();
-    await page.locator('#merge-task-destination').selectOption('github:20');
+    const panel = page.locator('#merge-tasks');
+    const loadCount = () => fixture.worker.evaluate(() => globalThis.requests.filter(type => type === 'LOAD_TASKS').length);
+    await expect(panel).toBeVisible();
+    await expect(panel).not.toHaveAttribute('open', '');
+    expect(await loadCount()).toBe(0, 'Settings must not load merge history before expansion');
+    await panel.locator(':scope > summary').click();
+    await expect(panel).toHaveAttribute('open', '');
+    await expect(page.locator('#merge-task-destination')).toHaveValue('github:20');
     await expect(page.locator('#merge-source-list .merge-task-row')).toHaveCount(2);
-    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(1);
+    expect(await loadCount()).toBe(1);
+    await panel.locator(':scope > summary').click();
+    await panel.locator(':scope > summary').click();
+    await expect(panel).toHaveAttribute('open', '');
+    expect(await loadCount()).toBe(1, 'reopening an unchanged merge panel must reuse the loaded list');
+    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(0);
+    await expect(page.locator('#merge-target-list')).toContainText('Select a task to replace first.');
+    await expect(page.locator('#merge-all-people')).not.toBeChecked();
     await page.locator('#merge-source-filter').fill('6-Polish-the-Clockoli');
     await page.locator('#merge-source-list .merge-task-row').click();
+    await expect(page.locator('#merge-target-list .merge-task-row')).toHaveCount(1);
+    await expect(page.locator('#merge-target-list .merge-task-url')).toHaveText('acme/app #6');
     await page.locator('#merge-target-list .merge-task-row').click();
     await expect(page.locator('#merge-queue-list .merge-queue-row')).toHaveCount(1);
     await expect(page.locator('#merge-tasks-submit')).toBeEnabled();

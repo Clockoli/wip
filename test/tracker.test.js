@@ -253,6 +253,45 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.equal(github.atomicWrites.length, 1);
 });
 
+test('active-only task merge safely updates the running timer with an index guard', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const source = 'https://example.test/old-active', target = 'https://example.test/new-active';
+  const running = active('2026-08-18T08:00:00.000Z', { taskUrl: source, taskTitle: 'Old active' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  const tracker = service({ github, store });
+  const result = await tracker.mergeTasks({
+    pairs: [{ sourceTaskUrl: source, targetTaskUrl: target, targetTaskTitle: 'New active' }],
+    startDate: '2026-08-18', endDate: '2026-08-18',
+  });
+  assert.deepEqual(result, { mergedEntries: 0, mergedActive: true });
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['active/alice.json']);
+  assert.deepEqual(github.atomicWrites[0].guards.map(guard => guard.path), [TASK_INDEX_PATH]);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).taskUrl, target);
+  assert.equal(store.value.activeCache.taskUrl, target);
+  assert.deepEqual(store.value.activeCache.metadata.clockoli.task_identity_history,
+    [{ url: source, title: 'Old active' }]);
+});
+
+test('long-range task merge reads only existing months and guards the discovered branch head', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const source = 'https://example.test/old', target = 'https://example.test/new';
+  const monthPath = 'times/2021-02/alice.jsonl';
+  const original = entry('2021-02-03T09:00:00.000Z', '2021-02-03T10:00:00.000Z', { taskUrl: source });
+  seedText(github, monthPath, serializeMonthlyRecords([original]), 'old-month-sha');
+  const tracker = service({ github, store });
+  const result = await tracker.mergeTasks({
+    pairs: [{ sourceTaskUrl: source, targetTaskUrl: target, targetTaskTitle: 'New task' }],
+    startDate: '1970-01-01', endDate: '2026-08-18',
+  });
+  assert.deepEqual(result, { mergedEntries: 1, mergedActive: false });
+  assert.deepEqual(github.reads.filter(path => path.startsWith('times/')), [monthPath],
+    'All time should not query every missing month from 1970 onwards');
+  assert.equal(github.atomicWrites[0].expectedHeadSha, 'discovery-head',
+    'a new file added after listing the snapshot must trigger a write conflict');
+  assert.equal(parseMonthlyRecords(github.files.get(monthPath).text, { user: 'alice', month: '2021-02' })[0].taskUrl, target);
+});
+
 test('task merge replaces an imported identity with a URL and rejects an imported replacement', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const source = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
@@ -269,6 +308,21 @@ test('task merge replaces an imported identity with a URL and rejects an importe
   assert.equal(saved.taskUrl, target);
   assert.deepEqual(saved.metadata.clockoli.task_identity_history, [{ url: source, title: 'Imported task' }]);
   assert.equal(github.atomicWrites.length, 1);
+});
+
+test('task merge rejects source-target chains and cycles before any writes', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store });
+  for (const pairs of [
+    [{ sourceTaskUrl: 'https://example.test/a', targetTaskUrl: 'https://example.test/b' },
+      { sourceTaskUrl: 'https://example.test/b', targetTaskUrl: 'https://example.test/c' }],
+    [{ sourceTaskUrl: 'https://example.test/a', targetTaskUrl: 'https://example.test/b' },
+      { sourceTaskUrl: 'https://example.test/b', targetTaskUrl: 'https://example.test/a' }],
+  ]) {
+    await assert.rejects(tracker.mergeTasks({ pairs, startDate: '2026-08-18', endDate: '2026-08-18' }),
+      /both a merge source and a replacement/);
+  }
+  assert.equal(github.atomicWrites.length, 0);
 });
 
 test('start writes one readable active text file with its durable issue title', async () => {

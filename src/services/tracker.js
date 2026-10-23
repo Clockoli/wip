@@ -2099,12 +2099,23 @@ export class TrackerService {
       if (replacements.has(sourceUrl)) throw new Error('Each task can be replaced only once');
       replacements.set(sourceUrl, { taskUrl: targetUrl, taskTitle: String(pair?.targetTaskTitle || '').trim().slice(0, 300) });
     }
+    if ([...replacements.values()].some(replacement => replacements.has(replacement.taskUrl))) {
+      throw new Error('A task cannot be both a merge source and a replacement');
+    }
     const state = await this.store.getState();
     if ((state.pendingWrites ?? []).length) throw new Error('Sync pending changes before merging tasks.');
+    const months = monthsInRange(startDate, endDate);
+    // Long ranges can span decades. Discover existing months rather than making
+    // hundreds of 404 requests; pin the snapshot head so concurrent additions conflict.
+    const snapshot = months.length > 12 ? await this.github.listTextFilesSnapshot('times/') : null;
+    if (snapshot && (snapshot.notModified || !Array.isArray(snapshot.files) || !snapshot.headSha)) {
+      throw new Error('Could not read the current time-file list before merging tasks.');
+    }
+    const existingPaths = snapshot ? new Set(snapshot.files.map(file => file.path)) : null;
     const files = new Map();
-    for (const month of monthsInRange(startDate, endDate)) {
+    for (const month of months) {
       const path = monthlyRecordsPath(this.user, `${month}-01`);
-      files.set(path, await this.readMonthly(path));
+      if (!existingPaths || existingPaths.has(path)) files.set(path, await this.readMonthly(path));
     }
     const removed = [], added = [], touched = [];
     for (const file of files.values()) {
@@ -2128,8 +2139,13 @@ export class TrackerService {
     if (mergeActive) changes.push({ path: activePath, sha: active._sha, text: serializeActiveRecord(updatedActive) });
     try {
       const result = removed.length
-        ? await this.updateCompletedRecords(changes, `time: merge tasks ${this.user}`, { remove: removed, add: added })
-        : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`);
+        ? await this.updateCompletedRecords(changes, `time: merge tasks ${this.user}`, {
+          remove: removed, add: added, expectedHeadSha: snapshot?.headSha ?? null,
+        })
+        : await this.github.updateTextsAtomic(changes, `timer: merge active task ${this.user}`, {
+          guards: [{ path: TASK_INDEX_PATH, sha: (await this.readTaskIndex()).sha }],
+          expectedHeadSha: snapshot?.headSha ?? null,
+        });
       const replacements = touched.flatMap(file => parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: result.blobShas[file.path],
       }));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateTaskParticipants, aggregateTrackedTasks, effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
+import { aggregateTaskParticipants, aggregateTrackedTasks, effectiveTrackedSeconds, selectTaskUsers, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
 
 const issue = (number, type = 'issue', repo = 'app') => ({
   type, owner: 'acme', repo, number,
@@ -19,6 +19,22 @@ test('task periods are inclusive and default to the last two weeks', () => {
 
 test('all-time task period starts at the first supported Clockoli date', () => {
   assert.deepEqual(taskPeriodRange('all-time', '2026-08-20'), { startDate: '1970-01-01', endDate: '2026-08-20' });
+});
+
+test('task loads display my tasks by default and every person only with explicit all-user scope', () => {
+  const currentUsers = { 'github:1': 'alice' }, availableUsers = ['alice', 'bob'];
+  const records = [
+    record(issue(1), 100, '2026-08-20', 'alice'),
+    record(issue(2), 200, '2026-08-20', 'bob'),
+  ];
+  const shown = payload => aggregateTrackedTasks(records, {
+    currentUsers: selectTaskUsers(availableUsers, currentUsers, payload),
+  }).map(task => task.taskUrl);
+  assert.deepEqual(shown(), [issue(1).url]);
+  assert.deepEqual(shown({ includeAllUsers: false }), [issue(1).url]);
+  assert.deepEqual(shown({ includeAllUsers: true }), [issue(2).url, issue(1).url]);
+  assert.deepEqual(shown({ includeAllUsers: true, selectedUsers: ['bob'] }), [issue(2).url]);
+  assert.deepEqual(shown({ includeAllUsers: true, selectedUsers: ['unknown'] }), []);
 });
 
 test('tracked tasks deduplicate sessions by canonical issue or PR and sort by total time', () => {
@@ -49,6 +65,14 @@ test('tracked tasks aggregate current users by URL with sorted destination prove
     taskUrl: task.url, issue: task, title: '', totalSeconds: 1500, sessionCount: 2,
     destinationIds: ['github:1', 'github:2'], timeRepositories: ['alice/time', 'team/time'],
   }]);
+});
+
+test('active-only tasks remain selectable even when nobody has completed entries', () => {
+  const running = { user: 'alice', issue: issue(42), startedAt: '2026-08-20T11:00:00.000Z' };
+  const users = [running].map(item => item.user);
+  const selected = selectTaskUsers(users, { 'github:1': 'alice' });
+  const tasks = aggregateTrackedTasks([], { currentUsers: selected, active: running });
+  assert.deepEqual(tasks.map(task => task.taskUrl), [running.issue.url]);
 });
 
 test('an empty selected-user set is an empty Top tasks result, not a missing-owner error', () => {

@@ -337,6 +337,9 @@ test('multi-destination read callbacks use local-only contexts and retain persis
   assert.match(tasks, /tracker\.getState\(\{ refresh: true, signal \}\)/);
   assert.match(reports, /includeStorageMetadata: true/);
   assert.match(tasks, /includeStorageMetadata: true/);
+  assert.match(tasks, /selectTaskUsers\(availableUsers, currentUsers, message\.payload\)/);
+  assert.match(tasks, /\.\.\.loaded\.records, \.\.\.\(active \? \[active\] : \[\]\)/,
+    'An active-only task should not disappear when no completed entries exist for its owner');
   assert.match(participants, /merge: mergeDestinationTaskSummaries/);
 });
 
@@ -346,14 +349,14 @@ test('MERGE_TASKS applies every queued pair only in the one selected destination
     configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
     destinationUser: async () => 'alice',
     githubForConfig: () => ({}),
-    discoverUserStorageBranches: async () => [],
+    discoverUserStorageBranches: async () => { throw new Error('personal merges must not enumerate other people'); },
     trackerForDestination: async destinationId => ({
       getState: async () => ({ pendingWrites: [] }),
       mergeTasks: async request => { calls.push({ destinationId, request }); return { mergedEntries: 2, mergedActive: destinationId === 'github:2' }; },
     }),
   });
   const request = {
-    type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice'],
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice', 'bob'],
     pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }, { sourceTaskUrl: 'https://example.test/old-two', targetTaskUrl: 'https://example.test/new-two', targetTaskTitle: 'Newer task' }],
     startDate: '2026-05-19', endDate: '2026-08-18',
   };
@@ -372,7 +375,7 @@ test('MERGE_TASKS rejects requests spanning multiple time repositories', async (
   }, extensionSender), /one time repository/i);
 });
 
-test('MERGE_TASKS writes selected other-user storage branches rather than only the current user branch', async () => {
+test('MERGE_TASKS includes other-user storage branches only when explicitly requested', async () => {
   const calls = [];
   const context = handlerContext({
     configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
@@ -389,11 +392,47 @@ test('MERGE_TASKS writes selected other-user storage branches rather than only t
     }),
   });
   await context.handle({
-    type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice', 'bob'],
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], allUsers: true, selectedUsers: ['alice'],
     pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new', targetTaskTitle: 'New task' }],
     startDate: '2026-05-19', endDate: '2026-08-18',
   }, extensionSender);
   assert.deepEqual(calls.map(call => [call.destinationId, call.user]), [['github:1', 'alice'], ['github:1', 'bob']]);
+});
+
+test('MERGE_TASKS identifies partially applied multi-person merges so they can be retried', async () => {
+  const request = {
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], allUsers: true,
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new' }],
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  };
+  const context = handlerContext({
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    destinationUser: async () => 'alice',
+    githubForConfig: destination => ({ destinationId: destination.id }),
+    discoverUserStorageBranches: async github => [{ id: 42, login: 'bob', github: { destinationId: github.destinationId } }],
+    TrackerService: class {
+      async mergeTasks() { throw new Error('Cannot write Bob’s time branch'); }
+    },
+    trackerForDestination: async () => ({
+      getState: async () => ({ pendingWrites: [] }),
+      mergeTasks: async () => ({ mergedEntries: 1, mergedActive: false }),
+    }),
+  });
+  await assert.rejects(context.handle(request, extensionSender), error => {
+    assert.equal(error.code, 'partial_task_merge');
+    assert.match(error.message, /Some task entries were merged.*Retry to finish/);
+    assert.match(error.message, /Cannot write Bob/);
+    return true;
+  });
+});
+
+test('MERGE_TASKS rejects non-boolean allUsers to avoid ambiguous scope', async () => {
+  const context = handlerContext({ configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }) });
+  await assert.rejects(context.handle({
+    type: 'MERGE_TASKS', destinationIds: ['github:1'], allUsers: 'yes',
+    pairs: [{ sourceTaskUrl: 'https://example.test/old', targetTaskUrl: 'https://example.test/new' }],
+    startDate: '2026-05-19', endDate: '2026-08-18',
+  }, extensionSender), /merge scope/i);
 });
 
 test('extracted service-worker handler pins STOP to the active destination', async () => {

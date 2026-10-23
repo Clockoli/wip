@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
 import { taskPeriodRange } from '../src/domain/tasks.js';
-import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/values.js';
+import { normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubTaskUrl } from '../src/domain/values.js';
 
 
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
@@ -58,7 +58,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     document: { documentElement: { dataset: {} }, getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
     window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
-    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeStoredTaskIdentity, normalizeTaskUrl,
+    onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubTaskUrl,
     ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
 
     ClockoliRecovery: { actionFor: () => null },
@@ -69,8 +69,8 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
       }
       requests.push(request);
       const result = reply(request);
-      const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message } } : { ok: true, data: value });
-      if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message } }));
+      const respond = value => callback(value instanceof Error ? { ok: false, error: { message: value.message, code: value.code } } : { ok: true, data: value });
+      if (result?.then) result.then(respond, error => callback({ ok: false, error: { message: error.message, code: error.code } }));
       else respond(result);
 
     } } },
@@ -647,7 +647,196 @@ test('a second explicit Check is queued after an in-flight inspection without ap
   assert.equal(page.nodes.get('repository-confirmation-title').textContent, 'Connect acme/second?');
 });
 
-test('Merge tasks offers imported identities as sources but only URLs as replacement targets', async () => {
+test('Merge tasks fetches only after expansion, caches across reopen, and refreshes on selection changes', async () => {
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks: [], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  const panel = page.nodes.get('merge-tasks');
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const loads = () => page.requests.filter(request => request.type === 'LOAD_TASKS');
+  assert.equal(panel.open, false);
+  assert.equal(loads().length, 0);
+  await page.context.refreshMergeTasks();
+  assert.equal(loads().length, 0);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 1);
+  assert.equal(loads()[0].payload.includeAllUsers, false);
+  panel.open = false; await panel.listeners.toggle();
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 1, 'reopening retains the loaded tasks');
+  page.nodes.get('merge-task-period').value = 'three-months';
+  await page.nodes.get('merge-task-period').listeners.change();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loads().length, 2);
+  panel.open = false; await panel.listeners.toggle();
+  page.nodes.get('merge-all-people').checked = true;
+  await page.nodes.get('merge-all-people').listeners.change();
+  assert.equal(loads().length, 2, 'changing scope while closed must not request data');
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(loads().length, 3);
+  assert.equal(loads()[2].payload.includeAllUsers, true);
+});
+
+test('Merge tasks retries failed initial loading on subsequent expansion', async () => {
+  let attempts = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? ++attempts === 1 ? new Error('Transient GitHub error')
+      : { tasks: [], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Transient GitHub error/);
+  panel.open = false; await panel.listeners.toggle();
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(attempts, 2);
+  assert.doesNotMatch(page.nodes.get('merge-tasks-feedback').textContent, /Transient GitHub error/);
+});
+
+
+test('a changed account invalidates an in-flight merge load even if the repository id is unchanged', async () => {
+  const oldUrl = 'https://example.test/old-account', newUrl = 'https://example.test/new-account';
+  const destinationRegistry = { defaultDestinationId: 'github:1', destinations: { 'github:1': { owner: 'acme', repo: 'time' } } };
+  let releaseFirst, loads = 0;
+  const page = harness({ reply: request => {
+    if (request.type !== 'LOAD_TASKS') return {};
+    if (++loads === 1) return new Promise(resolve => {
+      releaseFirst = () => resolve({ tasks: [{ taskUrl: oldUrl, title: 'Old account task', destinationIds: ['github:1'] }],
+        currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] });
+    });
+    return { tasks: [{ taskUrl: newUrl, title: 'New account task', destinationIds: ['github:1'] }],
+      currentUsers: { 'github:1': 'alice' }, availableUsers: ['alice'] };
+  } });
+  const firstState = { ...connectedState, destinationRegistry };
+  page.render(firstState);
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true;
+  const initialLoad = panel.listeners.toggle();
+  assert.equal(loads, 1);
+  page.render({ ...firstState, auth: { ...connectedState.auth, githubLogin: 'alice' } });
+  assert.equal(panel.open, false, 'switching identity closes a potentially stale merge panel');
+  releaseFirst();
+  await initialLoad;
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === oldUrl), false);
+  panel.open = true;
+  await panel.listeners.toggle();
+  assert.equal(loads, 2);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === newUrl), true);
+  page.render({ ...firstState, auth: null });
+  assert.equal(panel.hidden, true, 'merge controls must be hidden after sign-out');
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === newUrl), false);
+});
+
+test('closing during a successful all-people merge invalidates the list and reopens in personal scope', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let resolveMerge;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['alice', 'octocat'] }
+    : request.type === 'MERGE_TASKS' ? new Promise(resolve => { resolveMerge = resolve; }) : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  const all = page.nodes.get('merge-all-people');
+  all.checked = true; await all.listeners.change();
+  await new Promise(resolve => setImmediate(resolve));
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  const pendingMerge = page.nodes.get('merge-tasks-submit').listeners.click();
+  panel.open = false; await panel.listeners.toggle();
+  resolveMerge({ mergedEntries: 1, mergedActive: false, destinationCount: 1 });
+  await pendingMerge;
+  assert.equal(Boolean(all.checked), false);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === tasks[0].taskUrl), false);
+  const loadsBeforeReopen = page.requests.filter(request => request.type === 'LOAD_TASKS').length;
+  panel.open = true; await panel.listeners.toggle();
+  const loads = page.requests.filter(request => request.type === 'LOAD_TASKS');
+  assert.equal(loads.length, loadsBeforeReopen + 1);
+  assert.equal(loads.at(-1).payload.includeAllUsers, false);
+});
+
+test('partially applied merge cannot leave a stale, resubmittable pair in a closed panel', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let failMerge;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] }
+    : request.type === 'MERGE_TASKS' ? new Promise((_, reject) => { failMerge = reject; }) : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  const pendingMerge = page.nodes.get('merge-tasks-submit').listeners.click();
+  panel.open = false; await panel.listeners.toggle();
+  failMerge(Object.assign(new Error('Some task entries were merged before a failure'), { code: 'partial_task_merge' }));
+  await pendingMerge;
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Some task entries were merged/);
+});
+
+test('changing repository coordinates invalidates cached tasks even when its id stays the same', async () => {
+  const task = { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] };
+  let loads = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? { tasks: [task], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] } : {} });
+  const first = { ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } };
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  page.render(first);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === task.taskUrl), true);
+  page.render({ ...first, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'other', repo: 'different-time' } } } });
+  assert.equal(panel.open, false);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === task.taskUrl), false);
+  panel.open = true; await panel.listeners.toggle();
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').length, 2);
+});
+
+test('successful merge reports a refresh failure as a warning without claiming the merge failed', async () => {
+  const tasks = [
+    { taskUrl: 'https://example.test/source', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://example.test/target', title: 'Target', destinationIds: ['github:1'] },
+  ];
+  let loads = 0;
+  const page = harness({ reply: request => request.type === 'LOAD_TASKS'
+    ? ++loads === 1 ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat'] }
+      : new Error('Temporary network failure')
+    : request.type === 'MERGE_TASKS' ? { mergedEntries: 1, mergedActive: false, destinationCount: 1 } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1',
+    destinations: { 'github:1': { owner: 'acme', repo: 'time' } } } });
+  page.nodes.get('merge-task-period').value = 'one-month';
+  const panel = page.nodes.get('merge-tasks');
+  panel.open = true; await panel.listeners.toggle();
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  await page.nodes.get('merge-tasks-submit').listeners.click();
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 1 task pair/);
+  assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Temporary network failure/);
+  assert.doesNotMatch(page.nodes.get('merge-tasks-feedback').textContent, /Could not merge tasks/);
+  assert.equal(vm.runInContext('mergeTasksLoaded', page.context), false);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+});
+
+test('Merge tasks offers an imported identity as a source, with replacement choices only after source selection', async () => {
   const imported = 'KlimTodrik/clockoli-issues/6-Polish-the-Clockoli-GitHub-project-page-for-Launch-1';
   const page = harness({ reply: request => request.type === 'LOAD_TASKS' ? { tasks: [
     { taskUrl: imported, title: 'clockoli-issues — #6 Polish the Clockoli GitHub project page for Launch 1', destinationIds: ['github:1'] },
@@ -657,17 +846,22 @@ test('Merge tasks offers imported identities as sources but only URLs as replace
     'github:1': { owner: 'acme', repo: 'time-data' },
   } } });
   page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-tasks').open = true;
   page.nodes.get('merge-task-period').value = 'one-month';
-  assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
   await page.context.refreshMergeTasks();
-  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').length, 1);
+  const read = page.requests.find(request => request.type === 'LOAD_TASKS');
+  assert.equal(read.payload.includeAllUsers, false);
   assert.match(page.nodes.get('merge-tasks-feedback').textContent, /replacement.*URL/i);
-  assert.deepEqual(page.nodes.get('merge-source-list').children.map(row => row.children[1]?.textContent),
+  assert.equal(page.nodes.get('merge-target-filter').disabled, true);
+  assert.equal(page.nodes.get('merge-target-list').children[0].textContent, 'Select a task to replace first.');
+  assert.deepEqual(page.nodes.get('merge-source-list').children.map(row => row.children[1]?.title),
     ['https://example.test/task', imported]);
-  assert.deepEqual(page.nodes.get('merge-target-list').children.map(row => row.children[1]?.textContent), ['https://example.test/task']);
   page.context.selectMergeTask('source', imported);
+  assert.equal(page.nodes.get('merge-target-filter').disabled, false);
+  assert.deepEqual(page.nodes.get('merge-target-list').children.map(row => row.children[1]?.title), ['https://example.test/task']);
   page.context.selectMergeTask('target', 'https://example.test/task');
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
+  assert.equal(page.nodes.get('merge-target-list').children[0].textContent, 'Select a task to replace first.');
 });
 
 test('Merge tasks queues selected left-to-right pairs and sends them together', async () => {
@@ -688,20 +882,22 @@ test('Merge tasks queues selected left-to-right pairs and sends them together', 
   });
   page.nodes.get('merge-task-period').value = 'one-month';
   assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
-  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
   page.context.renderMergeTasks(tasks);
   assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === tasks[2].taskUrl), false);
   page.context.selectMergeTask('source', tasks[0].taskUrl);
   page.context.selectMergeTask('target', tasks[1].taskUrl);
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, false);
   const queued = page.nodes.get('merge-queue-list').children[0];
-  assert.deepEqual(queued.children[0].children.map(node => node.textContent), ['Old task', tasks[0].taskUrl]);
-  assert.deepEqual(queued.children[2].children.map(node => node.textContent), ['Canonical task', tasks[1].taskUrl]);
+  assert.deepEqual(queued.children[0].children.map(node => node.textContent), ['Old task', 'acme/app #1']);
+  assert.deepEqual(queued.children[2].children.map(node => node.textContent), ['Canonical task', 'acme/app #2']);
+  assert.equal(queued.children[0].children[1].title, tasks[0].taskUrl);
+  assert.equal(queued.children[2].children[1].title, tasks[1].taskUrl);
   assert.equal(queued.children[3].textContent, '✕');
   assert.match(queued.children[3].attributes['aria-label'], /Remove merge pair/);
   await page.nodes.get('merge-tasks-submit').listeners.click();
   const request = page.requests.find(item => item.type === 'MERGE_TASKS');
   assert.deepEqual(JSON.parse(JSON.stringify(request.destinationIds)), ['github:1']);
+  assert.equal(request.allUsers, false);
   assert.deepEqual(JSON.parse(JSON.stringify(request.pairs)), [{ sourceTaskUrl: tasks[0].taskUrl, targetTaskUrl: tasks[1].taskUrl, targetTaskTitle: 'Canonical task' }]);
   assert.match(page.nodes.get('merge-tasks-feedback').textContent, /Merged 1 task pair/);
 });
@@ -719,13 +915,14 @@ test('changing the merge repository clears stale candidates and scopes the next 
     } },
   });
   page.nodes.get('merge-task-period').value = 'one-month';
+  page.nodes.get('merge-tasks').open = true;
   page.context.renderMergeTasks([{ taskUrl: 'https://example.test/stale', title: 'Stale task', destinationIds: ['github:1'] }]);
-  vm.runInContext("mergePairs = [{ source: { taskUrl: 'https://example.test/old' }, target: { taskUrl: 'https://example.test/new' } }]; mergePeople = new Set(['octocat']); renderMergeQueue();", page.context);
+  vm.runInContext("mergePairs = [{ source: { taskUrl: 'https://example.test/old' }, target: { taskUrl: 'https://example.test/new' } }]; renderMergeQueue();", page.context);
   page.nodes.get('merge-task-destination').value = 'github:2';
   const changing = page.nodes.get('merge-task-destination').listeners.change();
   assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
-  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/stale'), false);
-  assert.equal(page.nodes.get('merge-target-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/stale'), false);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.title === 'https://example.test/stale'), false);
+  assert.equal(page.nodes.get('merge-target-list').children.some(row => row.children?.[1]?.title === 'https://example.test/stale'), false);
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, true);
   releaseLoad(); await changing;
   const request = page.requests.filter(item => item.type === 'LOAD_TASKS').at(-1);
@@ -758,25 +955,73 @@ test('removing the selected merge repository cannot carry its queued pair into t
   assert.equal(page.nodes.get('merge-task-destination').value, 'github:2');
   assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
   assert.equal(page.nodes.get('merge-tasks-submit').disabled, true);
-  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.textContent === 'https://example.test/old'), false);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children?.[1]?.title === 'https://example.test/old'), false);
 });
 
-test('People multi-select filters checkboxes and Select all toggles every person', () => {
+test('all-people merge requires an explicit checkbox; changing scope clears queued pairs', async () => {
+  const tasks = [
+    { taskUrl: 'https://github.com/acme/routines/issues/1', title: 'Source', destinationIds: ['github:1'] },
+    { taskUrl: 'https://github.com/acme/routines/issues/2', title: 'Replacement', destinationIds: ['github:1'] },
+  ];
   const page = harness({ reply: request => request.type === 'LOAD_TASKS'
-    ? { tasks: [], currentUsers: { current: 'octocat' }, availableUsers: ['alice', 'bob', 'octocat'] } : {} });
+    ? { tasks, currentUsers: { 'github:1': 'octocat' }, availableUsers: ['alice', 'octocat'] }
+    : request.type === 'MERGE_TASKS' ? { mergedEntries: 1, mergedActive: false, destinationCount: 1 } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-tasks').open = true;
   page.nodes.get('merge-task-period').value = 'one-month';
-  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
-  page.context.renderMergePeople(['alice', 'bob', 'octocat']);
-  const filter = page.nodes.get('merge-people-filter');
-  filter.listeners.focus();
-  assert.equal(page.nodes.get('merge-people-select').open, true);
-  filter.value = 'bo'; filter.listeners.input();
-  const labels = page.nodes.get('merge-people-list').children;
-  assert.deepEqual(labels.map(label => [label.children[0].value, label.hidden]), [['alice', true], ['bob', false], ['octocat', true]]);
-  page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
-  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople].sort())', page.context)), ['alice', 'bob', 'octocat']);
-  page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
-  assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople])', page.context)), []);
+  await page.context.refreshMergeTasks();
+  const scope = page.nodes.get('merge-all-people');
+  assert.equal(Boolean(scope.checked), false);
+  assert.match(page.nodes.get('merge-scope-note').textContent, /Only your time entries/);
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 1);
+  scope.checked = true; scope.listeners.change();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  assert.match(page.nodes.get('merge-scope-note').textContent, /everyone/);
+  assert.equal(page.nodes.get('merge-tasks-submit').textContent, 'Merge for all people');
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').at(-1).payload.includeAllUsers, true);
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  await page.nodes.get('merge-tasks-submit').listeners.click();
+  const merge = page.requests.find(request => request.type === 'MERGE_TASKS');
+  assert.equal(merge.allUsers, true);
+  assert.equal('selectedUsers' in merge, false);
+  assert.equal(Boolean(scope.checked), false, 'a completed merge must return to the safer personal scope');
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_TASKS').at(-1).payload.includeAllUsers, false);
+});
+
+test('merge list prevents self-replacements, cycles, and intermediate merge targets', () => {
+  const tasks = [1, 2, 3].map(number => ({
+    taskUrl: `https://github.com/acme/routines/issues/${number}`,
+    title: `Task ${number}`, destinationIds: ['github:1'],
+  }));
+  const page = harness();
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time' },
+  } } });
+  page.context.renderMergeTasks(tasks);
+  page.context.selectMergeTask('source', tasks[0].taskUrl);
+  assert.equal(page.nodes.get('merge-target-list').children.some(row => row.children[1]?.title === tasks[0].taskUrl), false);
+  page.context.selectMergeTask('target', tasks[0].taskUrl);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 0);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 1);
+  page.context.selectMergeTask('source', tasks[1].taskUrl);
+  assert.equal(vm.runInContext('mergeSelection.source', page.context), '');
+  page.context.selectMergeTask('source', tasks[2].taskUrl);
+  assert.equal(page.nodes.get('merge-target-list').children.some(row => row.children[1]?.title === tasks[0].taskUrl), false);
+  page.context.selectMergeTask('target', tasks[0].taskUrl);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 1);
+  page.context.selectMergeTask('target', tasks[1].taskUrl);
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 2, 'multiple sources may still merge into one target');
+  page.nodes.get('merge-queue-list').children[0].children[3].listeners.click();
+  assert.equal(vm.runInContext('mergePairs.length', page.context), 1);
+  assert.equal(page.nodes.get('merge-source-list').children.some(row => row.children[1]?.title === tasks[0].taskUrl), true);
 });
 
 test('repository suggestions stay collapsed until typing and show at most eight matching names', () => {
