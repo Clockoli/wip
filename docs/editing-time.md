@@ -48,6 +48,7 @@ If the batch cannot fit or overlaps another device's work, it stays locally stor
 - An unchanged range preserves the original timestamps, including seconds.
 - Existing zero-duration or longer-than-24-hour records remain editable without changing their times; an interval changed to exceed 24 hours is rejected rather than shortened.
 - Cancel does not mutate the record.
+- Escape closes the form on the first press, including when the Task search field is focused; it does not save the draft or close the underlying panel.
 
 You can also drag and resize entries in Timeline and Calendar; see [Move and resize entries](activity.md#move-and-resize-entries).
 
