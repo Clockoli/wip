@@ -24,9 +24,17 @@ The toolbar popup supports any HTTP(S) active tab. The injected stopwatch and na
 
 The panel uses the active tab's current URL and title when you start.
 
-Above the timeline, the active-task strip shows **Not tracking** and **Track this task**, or a **Tracking now** card with the running task link, elapsed time to the minute, today's tracked total, editable Stop description, and **Stop and save**. The panel keeps Description narrow and groups **Start**, **Duration**, and **Today** in the same compact style as Activity; on wide screens its card is centered. An unavailable daily total displays **…**.
+Above the timeline, the toolbar popup and GitHub panel show the same **Statistic** and **Tracking now** information as Activity: the selected week's total and task count, today's tracked time, and a running strip with the task title, editable Description, **Started**, **Duration**, and **Stop and save**. In the compact toolbar popup, the Statistic card sits above the tracking strip; in the full-width GitHub panel, it sits beside the strip as on Activity. Without an active timer, both popup strips show **Not tracking**, **Start a task to begin**, and up to three distinct recent tasks for quick start. **Track this task** appears at the right end of the header beside the view switcher, outside the running strip. An unavailable daily total displays **…**.
 
-The centered **Timeline**, **Calendar**, and **List** tabs sit beneath the tracking status in Activity, the toolbar popup, and the GitHub panel. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
+The accessible **Timeline**, **Calendar**, and **List** icon switcher sits in the header beside the close control on GitHub, or beside the wordmark in the toolbar popup; on Activity it sits beside the theme control. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
+
+## Tracking strip layout
+
+When a timer is running, Activity stacks **Tracking now**, the task title, and its editable description on the left. The description fills the space to the metrics column, including when empty. **Started** and **Duration** sit on the right, with **Stop and save** below them at the same width as the metrics above. On narrow screens, these controls stack beneath the description, with the time controls and Stop button aligned to the right.
+
+The full-width injected panel and the toolbar popup use the same two-column arrangement: the description fills the available left column and **Stop and save** matches the width of the Started/Duration group above it. In the narrowest popup, the description spans the card while the time controls and Stop button remain aligned on the right beneath it.
+
+Top tasks, Reports, and Settings keep their compact tracking card, which still shows **Today**. There the running description expands across the available space between the task title and time controls; on narrow screens it occupies its own row.
 
 ## Start and stop on GitHub
 
@@ -51,7 +59,7 @@ Clockoli maintains one global GitHub-backed active timer per user across all con
 
 ## Switch to another task
 
-When another task is open, **Switch to this task** sits beside the view tabs, outside the running card. It saves the active timer and starts the current page. The smaller GitHub stopwatch dialog offers **Save and switch to this task** for the same action.
+When another task is running, the green **Switch to this task** appears at the right end of the header beside the view switcher, outside the running strip. It saves the active timer and starts the current page. The smaller GitHub stopwatch dialog offers **Save and switch to this task** for the same action.
 
 For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it, and resumes that ordering after a restart. This preserves one timer even though the two repositories cannot be updated in one Git commit. The active timer and accepted queued writes retain their destination even if [routing](projects-and-routing.md) later changes.
 
@@ -63,7 +71,7 @@ Every Stop or switch asks for confirmation when the active entry exceeds 12 hour
 
 ## Change the running start
 
-The running-status strip on Activity, Top tasks, Reports, Settings, and the panel provides inline **Start**: click to select the time, type `1000` for `10:00`, then press Enter or the checkmark to save without changing the timer's date. Only the running start timestamp is sent; an overlap rejection leaves the draft and original timer in place, and a green **✓ Saved** appears after local acceptance.
+The running-status strip on Activity, Top tasks, Reports, Settings, and the panel provides inline **Started**. The time is an underlined text field, not a separate pencil button: click it to select the time, type `1000` for `10:00`, then press Enter or the checkmark to save without changing the timer's date. Only the running start timestamp is sent; an overlap rejection leaves the draft and original timer in place with an error, and a green **✓ Saved** appears after local acceptance.
 
 To change the start date as well, use **Edit** on the running block in Timeline or Calendar; see [Edit a running timer's start](editing-time.md#edit-a-running-timers-start).
 
@@ -76,6 +84,8 @@ All editable time **Description** fields in the running tracker, GitHub panel, A
 - a visible green **✓ Saved** confirms acceptance without waiting for GitHub.
 
 A description-only Enter never stops the running timer. Description editors expand when opened and as you type, showing up to eight or nine lines. Longer text has a visible **↓ More lines — scroll** hint and remains accessible within the scrollable editor. Both the local queue and GitHub JSON/JSONL preserve embedded newlines. Descriptions are optional and limited to 2,000 characters.
+
+When Activity opens with a running timer, or the Clockoli panel is opened from a page, the running description receives focus once the panel is ready. Type a description, press Tab to focus **Stop and save** (skipping Started), then press Enter to stop and save the timer. Shift+Tab and direct editing of Started remain available. If Stop is disabled, Tab does not force focus onto it.
 
 ## Recent entries in the panel
 

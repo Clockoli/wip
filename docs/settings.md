@@ -40,7 +40,7 @@ Ordered URL rules choose the time repository for each new Start. See [Projects a
 
 Merge tasks replaces one task identity with another in one time repository, for example an imported Clockify task with its real GitHub issue URL.
 
-1. Choose the **Period** (Last 30 days, Last 3 months, or **All time**), the **Time repository**, and the people whose records to include. Use **All time** if the imported entry falls outside the default last 30 days.
+1. Choose the **Period** (Last 30 days, Last 3 months, or **All time**), the **Time repository**, and the people whose records to include. Use **All time** if the imported entry falls outside the default last 30 days. The People control shows selected accounts with their repository collaborator avatars when available, or initials otherwise; open it to filter or change the selection.
 2. In **Task to replace**, search by title or identity and select the task. An imported `owner/project/task-slug` identity can be selected.
 3. In **Replace with**, select the replacement. It must be an already-tracked HTTP(S) URL in that selection.
 4. Repeat to build the **Merge list**, review it, and select **Merge**.
@@ -94,4 +94,4 @@ A single-repository compatibility option for existing PAT setups or environments
 
 ## Appearance
 
-Use the appearance control in the upper-right corner of Clockoli pages to switch between light and dark themes. The choice is saved locally and shared with other extension pages and the toolbar popup. Before choosing, Clockoli follows the browser's color scheme. Appearance preferences are not written to GitHub.
+Use the appearance control beside the Clockoli logo on Clockoli pages to switch between light and dark themes. The moon switches to dark; the sun switches to light. The choice is saved locally and shared with other extension pages and the toolbar popup. Before choosing, Clockoli follows the browser's color scheme. Appearance preferences are not written to GitHub.

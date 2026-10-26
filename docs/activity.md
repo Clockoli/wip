@@ -12,7 +12,7 @@ Activity loads the current user's completed entries from the selected time repos
 
 ## Browse weeks
 
-Activity, the toolbar panel, and the GitHub panel show one Monday–Sunday week with navigation arrows at the left and right edges, the week label centered between them, and **Total** beneath it. The left and right arrows move one week; Next is disabled on the current week, so future weeks cannot be opened. There is no period selector.
+Activity, the toolbar panel, and the GitHub panel show one Monday–Sunday week. In Timeline and Calendar, week arrows sit at the left and right edges of the chart header, on a subtle gradient backing instead of a separate empty row; the selected week's short label and Total are in the summary card. List places the short range between its arrows beside Refresh. The left and right arrows move one week; Next is disabled on the current week, so future weeks cannot be opened. There is no period selector.
 
 Switching between Timeline, Calendar, and List resets the displayed week to the current week; navigating within one view retains its selected week. Activity and the toolbar panel share the selected view in local extension storage and restore it when reopened. Live timer updates do not navigate away from an explicitly selected historical week.
 
@@ -20,13 +20,18 @@ Browsing loads records for the displayed week, including work started earlier th
 
 ## Weekly summary
 
-The Activity Calendar displays a **weekly summary** for the selected week: total tracked time, average tracked time per calendar day (including weekends), number of time entries, and number of distinct tasks worked on. Statistics reflect the same locally accepted records shown in the timeline, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike.
+Activity shows three compact metrics in a summary panel headed by the selected week's short date range. On wide screens it sits beside the tracking-status strip (approximately one-eighth of the row for statistics, seven-eighths for tracking); on narrow screens the two panels stack.
 
-Timeline, Calendar, and List show the selected week's **Total** above the view, including running time only on the current week; it updates when browsing weeks. List search filters entries without changing this week-wide total.
+- **Today** shows tracked time for the current local day, regardless of the selected week. On Activity and both popup surfaces, Today appears here instead of in the running-timer strip.
+- **Total tracked** and **Tasks worked on** cover the selected Monday–Sunday week. Running time counts only on the current week; totals update when browsing weeks. List search filters entries without changing this week-wide total.
+
+Statistics reflect locally accepted records, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike.
+
+In Activity and both popup surfaces, the summary panel replaces a duplicate Total above List, Timeline, and Calendar. The Timeline, Calendar, and List icon switcher sits beside the light/dark theme button in the page navigation; each icon has an accessible name.
 
 ## Timeline and Calendar
 
-Activity and the toolbar panel mount the same interactive Timeline and Calendar component. Both visual views show loaded entries; the active timer appears only when viewing the current week.
+Activity and both popup surfaces mount the same interactive Timeline and Calendar component. Both visual views show loaded entries; the active timer appears only when viewing the current week. In Activity, the toolbar popup, and the full-width GitHub panel, a gutter separates Timeline and Calendar from the summary and tracking panels.
 
 - Timeline and Calendar show tracked time for each local calendar day, including zero days. Intervals spanning midnight contribute to each affected day.
 - A completed zero-duration entry remains visible as a minimum-size block with its original equal Start and End times; it does not add tracked time.
@@ -47,10 +52,12 @@ On both Activity and the toolbar panel, Calendar displays a large in-place loadi
 
 ## Select an entry
 
-Single- and double-clicking a Timeline or Calendar block both select it and show its details. Neither gesture starts or stops a timer; use **Track time** or **Stop and save** in the details to change tracking. Selected task details appear above the week navigation in Calendar, and below the chart in Timeline. The selected entry's Start and End details show only the local time (HH:MM), without a date.
+Hovering over or focusing a Timeline or Calendar block shows its details in a compact floating card; clicking selects it without keeping the card open after the mouse leaves. A touchscreen tap also reveals the card. Neither single nor double click starts or stops a timer; use **Track time** or **Stop and save** in the details to change tracking. The selected entry's Start and End details show only the local time (HH:MM), without a date.
+
+Activity, the toolbar popup, and the GitHub panel use the same card: a task icon, single-line truncated title, inline local start–end range and duration, description when available, icon-only **Delete** and **Edit** actions, and a pastel **Track time** button. It opens immediately on hover and stays open while the pointer crosses the gap to the card, even slowly; moving away closes it without pinning. In Calendar, the card opens to the right of the record when space allows, or to the left near the right edge; narrow panels fall back to above or below. The card stays within the GitHub panel when space is limited. Start/End/Duration badges appear only while dragging an entry.
 
 - Completed entries offer **Edit** beside their other detail actions; it opens the same prefilled form as List in Activity, the extension toolbar popup, and the GitHub-page panel. The GitHub-page panel keeps the dialog in an extension-owned closed Shadow DOM.
-- The details preview omits the empty **Add description** field and keeps its action buttons at the right edge. Existing descriptions remain editable there; completed entries with no description can add one through **Edit**.
+- The details card omits the empty **Add description** field. Existing descriptions remain editable there; completed entries with no description can add one through **Edit**.
 - Both the running interval and completed intervals of the task currently being tracked show **Stop and save**. It stops and saves the current timer and never changes the selected completed interval. The running duration remains visible in the task details and header. Once stopped, a completed interval offers **Track time** again.
 - A completed imported task without an HTTP(S) URL can be restarted from either view in both surfaces; in the GitHub panel, the background verifies the source record before switching timers. Arbitrary page-originated task identities remain disallowed.
 
@@ -76,11 +83,11 @@ Overlapping visible timeline blocks produce one warning naming the entries and i
 
 ## List
 
-List shows the selected week's completed entries. In Activity, each completed task has a start-tracking icon; the icon becomes stop when that task is running. Starting another task stops the current timer first. Locally stored entries use the same tracking actions as entries already on GitHub. Invalid task identities have no tracking action.
+List shows the selected week's completed entries in inset cards grouped by date, without a separate Tracked time heading. In Activity, each completed task has a start-tracking icon; the icon becomes stop when that task is running. Starting another task stops the current timer first. Locally stored entries use the same tracking actions as entries already on GitHub. Invalid task identities have no tracking action.
 
 ### Search all history
 
-In Activity List, entering a URL or title searches completed activity across all available weeks and selected time repositories, independently of the displayed week. The search box appears below the view tabs.
+In Activity and toolbar-popup List views, entering a URL or title searches completed activity across all available weeks and selected time repositories, independently of the displayed week. Search fills the toolbar beside week navigation and Refresh on desktop; in the compact popup and on narrow screens it takes its own row above them. The field keeps its accessible Search activity name without a visible caption. The GitHub panel's List searches only the selected week.
 
 - The first search loads history on demand; a loading message appears until results are ready.
 - Matching records appear in pages of up to 20, newest first, with Previous/Next page controls and the matching-record range; changing the query returns to page one. Pagination is over the loaded history, not a separate repository request for each page.
@@ -89,7 +96,11 @@ In Activity List, entering a URL or title searches completed activity across all
 
 ### List in the toolbar panel
 
-In the toolbar panel's List view, completed entries from the selected week are grouped by date, with task colors matching the timeline, start–stop times, durations, pending status, and **Continue**. The week arrows and selected-week Total remain visible in List. Continue saves any running task before restarting the selected task. Stationary **Today** and **This week** totals include applicable running time; unavailable totals display **…**, including when GitHub summary reads fail. Older entries remain available in Activity.
+In the toolbar panel's List view, completed entries from the selected week are grouped by date in separate inset cards, with task colors matching the timeline, start–stop times, durations, pending status, and **Continue**. Search entries above them works as in Activity, with the same loading, incomplete-history, retry, and pagination behavior. The week arrows surround a short range beside Refresh; the summary card holds today's total and the selected week's Total tracked and Tasks worked on. Continue saves any running task before restarting the selected task. Unavailable values display **…** or **—** instead of a misleading number. Older entries remain available in Activity.
+
+## Task icons
+
+Imported tasks without a web URL show an inverted Clockoli broccoli-clock silhouette inside a circular mark in Activity List, Calendar, record details, and Top tasks. The circle follows the selected light or dark theme. GitHub task favicons switch to a light silhouette in the dark theme; other URL tasks retain their site favicon or monogram.
 
 ## Changes waiting to sync
 
