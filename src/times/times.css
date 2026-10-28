@@ -37,6 +37,10 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
   background-color:var(--bgColor-default);
   box-shadow:none
 }
+#activity-running-status.running-status.is-pending-stop .running-status-row{
+  border-left:4px solid var(--borderColor-attention-emphasis);
+  background:linear-gradient(100deg,var(--bgColor-attention-muted),var(--bgColor-default) 65%)
+}
 #activity-running-status.running-status.is-active .running-status-row{display:grid;grid-template-columns:minmax(0,1fr) max-content;grid-template-rows:auto auto 1fr;align-items:start;gap:8px 22px}
 #activity-running-status.is-active .running-status-live{grid-column:1;grid-row:1;justify-self:start}
 #activity-running-status.is-active .running-status-task{grid-column:1;grid-row:2;max-width:100%}

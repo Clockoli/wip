@@ -112,6 +112,55 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
+test('toolbar-injected HTTP panel searches and clears its List filter', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-action-search-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-action-search-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const contentPath = join(extension, 'src/content/github.js');
+    await writeFile(contentPath, (await readFile(contentPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    manifest.host_permissions.push('https://example.com/*'); // Test-only access for programmatic injection.
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
+    const background = await readFile(new URL('src/background/service-worker.js', ROOT), 'utf8');
+    const injection = background.match(/files: (\['src\/domain\/recovery-actions\.js'[^\]]*'src\/content\/github\.js'\])/);
+    expect(injection).not.toBeNull();
+    const files = JSON.parse(injection[1].replaceAll("'", '"'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
+    await page.route('https://example.com/clockoli-test', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><main>Test task page</main></body></html>' }));
+    await page.goto('https://example.com/clockoli-test');
+    await worker.evaluate(async files => {
+      const [tab] = await chrome.tabs.query({ url: 'https://example.com/clockoli-test' });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+    }, files);
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'List', exact: true }).click();
+    const filter = panel.getByRole('searchbox', { name: 'Search current week' });
+    const records = panel.locator('.entry-record');
+    await expect(records).toHaveCount(3);
+    await filter.fill('Same day task');
+    await expect(records).toHaveCount(1);
+    await expect(records).toContainText('Same day task');
+    await filter.fill('');
+    await expect(records).toHaveCount(3);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
@@ -273,7 +322,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await expect(root.locator('.calendar-day-header')).toHaveCount(7);
     await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     await expect(summary).not.toContainText('Daily average');
-    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–\d+/);
+    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–(?:\w+ )?\d+/);
     await expect(summary.locator('.activity-weekly-label')).toBeHidden();
     await expect(root.locator('.week-navigation-label')).toBeHidden();
     await expect(root.locator('.times-list-total')).toBeHidden();
@@ -644,6 +693,146 @@ async function withActivityWorker(source, run) {
     await rm(profile, { recursive: true, force: true });
   }
 }
+
+test('Activity List requires confirmation before discarding an unsaved completion', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'conflict',
+    conflictReason: 'active_changed_no_completion', destinationId: 'github:1',
+  }];`)
+    .replace("else if (message.type === 'GET_PAGE_STATE')", `else if (message.type === 'RESOLVE_PENDING') {
+      if (message.id !== 'stopped-timer' || message.action !== 'discard_unsaved_completion') {
+        respond({ ok: false, error: { message: 'Unexpected recovery action' } }); return;
+      }
+      pendingWrites = []; respond({ ok: true, data: {} });
+    }
+    else if (message.type === 'GET_PAGE_STATE')`);
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict').getByText('Completion was not saved')).toBeVisible();
+    await expect(page.locator('#activity-running-status .running-status-idle')).toHaveText('Stop needs attention');
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(1);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual(['RESOLVE_PENDING']);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity List distinguishes unsynced changes from conflicts', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'pending',
+    destinationId: 'github:1',
+  }];`);
+  await withActivityWorker(source, async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+  });
+});
+
+function remoteActivityWorkerSource() {
+  return workerSource.replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+    `else if (message.type === 'GET_REMOTE_TIMER_STATUS') respond({ ok: true, data: { remoteTimers:
+      globalThis.remotePresent ? [{ destinationId: 'github:1', startedAt: '2026-10-27T08:00:00.000Z',
+        timezone: 'Europe/Warsaw' }] : [] } });
+    else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });`)
+    .replace('let active = null;', 'globalThis.remotePresent = true;\nlet active = null;');
+}
+
+test('Activity List shows a GitHub-only timer separately from completed rows and rechecks it safely', async () => {
+  const source = remoteActivityWorkerSource();
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    await expect(page.locator('#clockoli-times-root .entry-overlap')).toHaveCount(0);
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.remotePresent = false; });
+    await warning.getByRole('button', { name: 'Recheck GitHub timer' }).click();
+    await expect(warning).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity rechecks a GitHub-only timer when the pending completion leaves the queue', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'verifyActive' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toBeVisible();
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
+    const checksBefore = await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length);
+    await worker.evaluate(() => { globalThis.remotePresent = false; pendingWrites = []; });
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toHaveCount(0, { timeout: 12_000 });
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length)).toBeGreaterThan(checksBefore);
+    await expect(warning).toHaveCount(0, { timeout: 12_000 });
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+  });
+});
+
+test('Activity shows an unsynced Stop beside idle status in every view without offering a second Stop', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'commitCompletion', destinationId: 'github:1' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    const status = page.locator('#activity-running-status');
+    await expect(status.locator('.running-status-idle')).toHaveText('Stop waiting to sync');
+    await expect(status.locator('.running-status-idle-hint')).toHaveText('Do not stop this timer again');
+    await expect(status.locator('.running-status-stop')).toBeHidden();
+    await expect(status).toHaveClass(/is-pending-stop/);
+    expect(await status.evaluate(node => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--borderColor-attention-emphasis)';
+      node.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(node.querySelector('.running-status-row')).borderLeftColor === expected;
+    })).toBe(true);
+    for (const view of ['Timeline', 'Calendar', 'List']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
+      const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+      await expect(warning).toBeVisible();
+      await expect(warning).toContainText('Stop is already queued locally');
+    }
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity checks the remote timer even when the selected week read fails', async () => {
+  const source = remoteActivityWorkerSource().replace(
+    "if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });",
+    "if (message.type === 'LOAD_TIMES') respond({ ok: false, error: { message: 'Week unavailable' } });\n  else if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root .remote-timer-warning')).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.includes('GET_REMOTE_TIMER_STATUS'))).toBe(true);
+  });
+});
 
 test('Activity removes view controls when its configuration disappears', async () => {
   const source = workerSource.replace('let active = null;', 'globalThis.configured = true;\nlet active = null;')
@@ -1631,13 +1820,22 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     expect(panelNowPosition).toBeLessThan(1.05);
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await panelNeighbor.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
-    const { panelFrom, panelTo, panelViewport } = await panelSource.evaluate(element => {
-      const root = element.getRootNode();
-      const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
-      return { panelFrom: element.getBoundingClientRect().toJSON(),
-        panelTo: neighbor.getBoundingClientRect().toJSON(),
-        panelViewport: root.querySelector('.viewport').getBoundingClientRect().toJSON() };
-    });
+    let panelGeometry;
+    await expect.poll(async () => {
+      panelGeometry = await panelSource.evaluate(element => {
+        if (!element.isConnected) return null;
+        const root = element.getRootNode();
+        const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
+        const viewport = root.querySelector('.viewport');
+        if (!neighbor || !viewport) return null;
+        const panelFrom = element.getBoundingClientRect(), panelTo = neighbor.getBoundingClientRect();
+        if (!panelFrom.width || !panelFrom.height || !panelTo.width || !panelTo.height) return null;
+        return { panelFrom: panelFrom.toJSON(), panelTo: panelTo.toJSON(),
+          panelViewport: viewport.getBoundingClientRect().toJSON() };
+      });
+      return Boolean(panelGeometry);
+    }).toBe(true);
+    const { panelFrom, panelTo, panelViewport } = panelGeometry;
     const destinationX = Math.max(panelViewport.x + 8, panelTo.x + 6);
     expect(destinationX).toBeLessThan(panelTo.x + panelTo.width / 2);
     await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
@@ -2007,7 +2205,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await worker.evaluate(() => { globalThis.searchMode = 'error'; });
     await page.getByRole('searchbox', { name: 'Search activity' }).fill('Archived');
     await page.getByRole('button', { name: 'Next week' }).click();
-    await expect(page.getByRole('status')).toContainText('History unavailable');
+    await expect(page.getByRole('status').filter({ hasText: 'History unavailable' })).toBeVisible();
     await expect(page.locator('.activity-list .entry-record')).toHaveCount(0);
     await worker.evaluate(() => { globalThis.searchMode = 'partial'; });
     await page.getByRole('button', { name: 'Retry search' }).click();

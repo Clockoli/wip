@@ -1,6 +1,6 @@
 import { mountRunningStatus } from '../ui/running-status.js';
 import { mountAddTime } from '../ui/add-time.js';
-import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../domain/tasks.js';
+import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey } from '../domain/tasks.js';
 import { formatClockDuration } from '../domain/reporting.js';
 
 const PERIOD_KEY = 'clockoli.tasks.period';
@@ -10,11 +10,17 @@ const ISSUE_OPEN_PATH = 'M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM8 0a8 8 0 1
 const PULL_OPEN_PATH = 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z';
 const TASK_COLORS = ['#e76f51','#2a9d8f','#b8860b','#5f8f52','#d66b2c','#477ca8','#8f4fc7','#d94c78','#27866a','#c76f0a','#659344','#4c6f8c','#d52f33','#0087a3','#806b99','#b88400','#2886a8','#914657','#55766e','#c95e43'];
 const $ = id => document.getElementById(id);
-const state = { tasks: [], active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null, partial: false };
+const state = { tasks: [], searchCandidates: [], searchLoaded: false, searchLoading: false, searchRefreshPending: false, searchId: 0,
+  timeRepositoryCount: 0,
+  active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null, partial: false };
 let tick = null;
 let pendingRefresh = null;
 let pendingRender = false;
 let filterFocused = false;
+const taskSearch = globalThis.ClockoliTaskSearch.mount($('task-filter'), { onInput: () => {
+  render({ force: true });
+  if (taskSearch.query) void loadSearchCandidates();
+} });
 
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
@@ -30,7 +36,11 @@ function localDateValue(date = new Date()) {
 }
 
 function taskUrlOf(value) { return value?.taskUrl || value?.issue?.url || ''; }
-function sameTask(a, b) { return Boolean(taskUrlOf(a) && taskUrlOf(a) === taskUrlOf(b)); }
+function sameTask(a, b) {
+  const url = taskUrlOf(a), destinationId = a?.destinationId || a?.destinationIds?.[0];
+  return Boolean(url && url === taskUrlOf(b) && (/^https?:\/\//i.test(url)
+    || (destinationId && destinationId === (b?.destinationId || b?.destinationIds?.[0]))));
+}
 
 function taskColor(value) {
   let hash = 2166136261;
@@ -96,13 +106,38 @@ function taskIcon(task) {
 }
 
 function visibleTasks() {
-  const query = $('task-filter').value.trim().toLowerCase();
-  const filtered = state.tasks.filter(task => {
-    if (!query) return true;
-    const searchable = `${task.title} ${task.taskUrl} ${task.issue ? `${task.issue.owner}/${task.issue.repo} #${task.issue.number} ${task.issue.type}` : ''}`.toLowerCase();
-    return searchable.includes(query);
-  });
+  const own = state.tasks;
+  const ownKeys = new Set(own.map(trackedTaskKey));
+  const candidates = taskSearch.query ? state.searchCandidates
+    .filter(task => !ownKeys.has(trackedTaskKey(task)))
+    .map(task => ({ ...task, totalSeconds: 0, sessionCount: 0, untrackedByYou: true })) : [];
+  const filtered = taskSearch.matches([...own, ...candidates]);
   return sortTrackedTasks(filtered, { active: state.active, now: Date.now() });
+}
+
+async function loadSearchCandidates(force = false) {
+  if (!taskSearch.query || (state.searchLoaded && !force && visibleTasks().length)) return;
+  if (state.searchLoading) { if (force || state.searchQuery !== taskSearch.query) state.searchRefreshPending = true; return; }
+  const searchId = ++state.searchId;
+  state.searchLoading = true; state.searchQuery = taskSearch.query;
+  try {
+    const data = await send({ type: 'SEARCH_TASKS', query: taskSearch.query });
+    if (searchId !== state.searchId) return;
+    state.searchCandidates = data?.configured && Array.isArray(data.tasks) ? data.tasks : [];
+    if (Array.isArray(data?.readStatus)) state.timeRepositoryCount = Math.max(state.timeRepositoryCount, data.readStatus.length);
+    state.searchLoaded = !data?.partial && !data?.conflicts?.length;
+    if (data?.partial || data?.conflicts?.length) setError('Some tracked tasks could not be searched. Results may be incomplete.');
+    render({ force: true });
+  } catch (error) { if (searchId === state.searchId) setError(error); }
+  finally {
+    if (searchId === state.searchId) {
+      state.searchLoading = false;
+      if (state.searchRefreshPending) {
+        state.searchRefreshPending = false;
+        if (taskSearch.query) void loadSearchCandidates(true);
+      }
+    }
+  }
 }
 
 function taskTotalSeconds(task) {
@@ -116,7 +151,7 @@ function makeTimerButton(task) {
   button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
-    task = state.tasks.find(item => item.taskUrl === task.taskUrl);
+    task = visibleTasks().find(item => trackedTaskKey(item) === trackedTaskKey(task));
     if (!task) return;
     const active = sameTask(state.active, task);
     const restoreFocus = document.activeElement === button;
@@ -134,12 +169,14 @@ function makeTimerButton(task) {
         if (state.active) {
           const elapsed = currentElapsedSeconds(), previous = state.tasks.find(item => sameTask(item, state.active));
           if (elapsed > 12 * 3600 && !confirm(`The current entry is ${Math.floor(elapsed / 3600)} hours long. Save it and start this task?`)) return;
-          const result = await send({ type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.title });
+          const result = await send({ type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.title,
+            ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId || task.destinationIds?.[0] } : {}) });
           if (previous) { previous.totalSeconds += Math.max(0, Number(result?.stopped?.entry?.durationSeconds) || elapsed); previous.activeStartedAt = null; }
           state.active = result.active;
           if (result.pending) state.pendingWrites.push({ id: result.stopped?.entry?.id || 'switch-pending', status: 'pending', stage: 'verifyActive' });
         } else {
-          state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title });
+          state.active = await send({ type: 'START', taskUrl: task.taskUrl, taskTitle: task.title,
+            ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId || task.destinationIds?.[0] } : {}) });
           if (state.active?._pending) state.pendingWrites.push({ id: 'start-pending', status: 'pending', stage: 'startNext' });
         }
         task.activeStartedAt = state.active.startedAt;
@@ -186,13 +223,13 @@ function reconcileList() {
 
 function updateRows() {
   for (const row of $('task-list').children) {
-    const task = state.tasks.find(item => item.taskUrl === row.dataset.taskUrl);
+    const task = visibleTasks().find(item => trackedTaskKey(item) === row.dataset.taskKey);
     const button = row.querySelector('.timer-button'), active = sameTask(state.active, task);
     row.classList.toggle('running', active);
     button.classList.toggle('stop', active);
     button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
     button.disabled = Boolean(!task || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
-    if (task) row.querySelector('.tracked-time').textContent = formatClockDuration(taskTotalSeconds(task));
+    if (task) row.querySelector('.tracked-time').textContent = task.untrackedByYou ? '—' : formatClockDuration(taskTotalSeconds(task));
   }
 }
 
@@ -210,8 +247,8 @@ function render({ force = false } = {}) {
   }
   updateRows();
   if (state.active) tick = setInterval(() => {
-    const expectedOrder = visibleTasks().map(task => task.taskUrl);
-    const renderedOrder = [...list.children].map(row => row.dataset.taskUrl);
+    const expectedOrder = visibleTasks().map(trackedTaskKey);
+    const renderedOrder = [...list.children].map(row => row.dataset.taskKey);
     if (expectedOrder.length !== renderedOrder.length || expectedOrder.some((url, index) => renderedOrder[index] !== url)) { render(); return; }
     updateRows();
   }, SECOND_MS);
@@ -221,7 +258,7 @@ function render({ force = false } = {}) {
 function rebuildList(tasks) {
   const list = $('task-list'), focused = document.activeElement;
   const focusedRow = focused?.closest('.task-row');
-  const focusUrl = focusedRow?.dataset.taskUrl;
+  const focusKey = focusedRow?.dataset.taskKey;
   const focusSelector = focused?.classList.contains('timer-button') ? '.timer-button'
     : focused?.classList.contains('task-title') ? '.task-title' : '.task-url';
   const scroller = document.scrollingElement;
@@ -234,7 +271,7 @@ function rebuildList(tasks) {
   $('empty-message').textContent = filtered ? 'No tasks match.' : 'Nothing tracked yet. Open a task page and click Clockoli to start.';
   $('clear-filter').hidden = !filtered;
   for (const task of tasks) {
-    const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl;
+    const row = document.createElement('article'); row.className = 'task-row'; row.dataset.taskUrl = task.taskUrl; row.dataset.taskKey = trackedTaskKey(task);
     row.setAttribute('style', `--task-color:${taskColor(task)}`);
     row.addEventListener('pointerleave', reconcileList);
     const main = document.createElement('div'); main.className = 'task-main';
@@ -249,13 +286,19 @@ function rebuildList(tasks) {
       title.textContent = task.title; title.title = task.title; title.setAttribute('style', `color:${taskColor(task)}`); copy.append(title);
     }
     copy.append(url);
+    const timeRepository = task.timeRepository || task.timeRepositories?.[0];
+    if (state.timeRepositoryCount > 1 && !navigable && timeRepository) {
+      const repository = document.createElement('span'); repository.className = 'task-repository';
+      repository.textContent = timeRepository; copy.append(repository);
+    }
     main.append(copy);
     const actions = document.createElement('div'); actions.className = 'task-actions';
     const total = document.createElement('span'); total.className = 'tracked-time'; total.setAttribute('aria-label', 'Accumulated time');
+    if (task.untrackedByYou) { total.textContent = '—'; total.setAttribute('aria-label', 'No personal time in the selected period'); }
     actions.append(total, makeTimerButton(task)); row.append(main, actions); list.append(row);
   }
-  if (focusUrl) {
-    const replacement = [...list.children].find(row => row.dataset.taskUrl === focusUrl)?.querySelector(focusSelector);
+  if (focusKey) {
+    const replacement = [...list.children].find(row => row.dataset.taskKey === focusKey)?.querySelector(focusSelector);
     (replacement || $('task-filter')).focus({ preventScroll: true });
   }
   scroller.scrollTop = scrollTop; scroller.scrollLeft = scrollLeft;
@@ -297,10 +340,12 @@ async function load() {
     if (requestId !== state.requestId) return;
     state.configured = Boolean(result.configured);
     if (!state.configured) {
-      state.tasks = []; state.active = null; state.pendingWrites = [];
+      state.tasks = []; state.active = null; state.pendingWrites = []; state.timeRepositoryCount = 0;
       render({ force: true }); return;
     }
     state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? []; state.partial = Boolean(result.partial);
+    state.timeRepositoryCount = result.sourceRepositories?.length ?? result.readStatus?.length ?? 0;
+    if (taskSearch.query) void loadSearchCandidates(true);
     const failed = (result.readStatus || []).filter(item => item.status === 'error').length;
     const conflictCount = result.conflicts?.length || 0;
     $('partial-status').hidden = !state.partial;
@@ -327,9 +372,8 @@ $('refresh-tasks').addEventListener('click', async () => {
   finally { button.disabled = state.loading; }
 });
 $('task-list').addEventListener('focusout', reconcileList);
-$('task-filter').addEventListener('input', () => render({ force: true }));
 function clearFilter() {
-  $('task-filter').value = ''; $('task-filter').focus({ preventScroll: true }); render({ force: true });
+  taskSearch.clear();
 }
 $('clear-filter').addEventListener('click', clearFilter);
 $('task-filter').addEventListener('keydown', event => {
@@ -338,7 +382,7 @@ $('task-filter').addEventListener('keydown', event => {
   if (event.key !== 'Enter' || event.repeat) return;
   const tasks = visibleTasks();
   const rows = [...$('task-list').children];
-  if (tasks.length !== 1 || rows.length !== 1 || rows[0].dataset.taskUrl !== tasks[0].taskUrl || sameTask(state.active, tasks[0])) return;
+  if (tasks.length !== 1 || rows.length !== 1 || rows[0].dataset.taskKey !== trackedTaskKey(tasks[0]) || sameTask(state.active, tasks[0])) return;
   event.preventDefault();
   $('task-list').querySelector('.timer-button')?.click();
 });

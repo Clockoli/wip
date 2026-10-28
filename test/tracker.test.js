@@ -169,6 +169,118 @@ test('Stop and switch keep the saved active description unless explicitly replac
     'an explicitly cleared description must remain empty');
 });
 
+test('a queued Stop drains against a titled task index without losing earlier records', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const prior = entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Earlier title' });
+  const path = 'times/2026-10/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([prior]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [prior],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text,
+    { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const tracker = service({ github, store, clock: () => new Date('2026-10-27T12:00:00.000Z') });
+  const stopped = await tracker.queueStop();
+  assert.equal(stopped.pending, true);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.deepEqual(saved.map(record => record.id), [prior.id, running.id]);
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(index.tasks[issue.url].sessionCount, 2);
+  assert.equal(index.tasks[issue.url].title, 'Reviewing');
+  assert.equal(index.tasks[issue.url].totalSeconds, 18000);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
+test('a stale queued Stop resumes a twelve-operation lifecycle against a titled index', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-10/alice.jsonl', activePath = 'active/alice.json';
+  const previous = [
+    entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Reviewing' }),
+    entry('2026-10-26T10:00:00.000Z', '2026-10-26T11:00:00.000Z', { taskTitle: 'Reviewing' }),
+  ];
+  const otherTasks = Array.from({ length: 813 }, (_, index) => {
+    const startedAt = new Date(Date.parse('2026-09-01T00:00:00.000Z') + index * 60_000).toISOString();
+    const endedAt = new Date(Date.parse(startedAt) + 30_000).toISOString();
+    return entry(startedAt, endedAt, { taskUrl: `https://example.test/task/${index}`, taskTitle: `Task ${index}` });
+  });
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords(otherTasks), 'september-sha');
+  seedText(github, path, serializeMonthlyRecords(previous), 'october-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [...otherTasks, ...previous],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get(activePath).text,
+    { user: 'alice', path: activePath, sha: 'active-sha' });
+  store.value.recentCache = previous.map((record, index) => ({ ...record, _path: path, _sha: 'october-sha', _index: index }));
+  let now = '2026-10-27T12:30:00.000Z';
+  const tracker = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await tracker.queueStop();
+  // The first Stop has been accepted locally, but the old worker cannot read
+  // the titled index. Its durable operation is already at commitCompletion.
+  store.value.pendingWrites[0].stage = 'commitCompletion';
+  store.value.pendingWrites[0].retryCount = 876;
+  store.value.pendingWrites[0].lastError = 'Clockoli task index summary is invalid';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0, original: previous[0],
+    edits: { description: 'First correction' } });
+  now = '2026-10-27T13:00:00.000Z';
+  let current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T13:05:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-27T14:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-27T14:30:00.000Z'; await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T15:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-28T08:00:00.000Z'; current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-28T08:10:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-28T08:20:00.000Z';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0,
+    original: stripInternalForTest(store.value.recentCache.find(record => record.id === previous[0].id)),
+    edits: { description: 'Final correction' } });
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 1, original: previous[1],
+    edits: { description: 'Second correction' } });
+  now = '2026-10-28T09:00:00.000Z'; await tracker.queueStop();
+
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), [
+    'completeTimer', 'editEntry', 'startTimer', 'editActiveStart', 'completeTimer', 'startTimer',
+    'completeTimer', 'startTimer', 'editActiveStart', 'editEntry', 'editEntry', 'completeTimer',
+  ]);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }).tasks[issue.url].sessionCount, 2);
+  const originalRead = github.getText.bind(github);
+  github.getText = async file => {
+    if (file === TASK_INDEX_PATH) throw new Error('Clockoli task index summary is invalid');
+    return originalRead(file);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 12, 'a blocked first Stop must retain every later operation');
+  assert.equal(store.value.pendingWrites[0].stage, 'commitCompletion');
+  assert.equal(store.value.pendingWrites[0].retryCount, 877);
+  assert.ok(github.files.has(activePath), 'a blocked Stop must not delete the remote timer');
+
+  github.getText = originalRead;
+  const resumed = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, [], 'all synthetic operations should drain after worker restart');
+  assert.equal(github.files.has(activePath), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.equal(saved.length, 6);
+  assert.equal(saved.find(record => record.id === previous[0].id).description, 'Final correction');
+  assert.equal(saved.find(record => record.id === previous[1].id).description, 'Second correction');
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(Object.keys(index.tasks).length, 814);
+  assert.equal(index.tasks[issue.url].sessionCount, 6);
+  assert.equal(index.tasks[issue.url].recordIds.length, 6);
+});
+
 test('sync leaves an await-source start untouched without attempting a remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   store.value.pendingWrites = [{
@@ -188,7 +300,8 @@ test('completed-record mutations update the mandatory task index atomically', as
   const tracker = service({ github, store });
   const stopped = await tracker.stop();
   let index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id],
+    title: '', titleSourceId: stopped.entry.id, titleStartedAt: stopped.entry.startedAt });
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [
     'times/2026-08/alice.jsonl', 'active/alice.json', TASK_INDEX_PATH,
   ]);
@@ -199,7 +312,8 @@ test('completed-record mutations update the mandatory task index atomically', as
     edits: { endedAt: '2026-08-18T10:00:00.000Z' },
   });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id],
+    title: '', titleSourceId: saved.id, titleStartedAt: saved.startedAt });
 
   await tracker.deleteEntry({ path: edited._path, originalSha: edited._sha, index: edited._index, original: edited });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
@@ -248,8 +362,10 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.deepEqual(savedActive.metadata.clockoli.task_identity_history, [{ url: sourceUrl, title: 'Old task' }]);
   const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
   assert.equal(index.tasks[sourceUrl].sessionCount, 1);
-  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });
-  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id] });
+  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id],
+    title: 'Canonical task', titleSourceId: july.id, titleStartedAt: july.startedAt });
+  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id],
+    title: 'Second canonical task', titleSourceId: august.id, titleStartedAt: august.startedAt });
   assert.equal(github.atomicWrites.length, 1);
 });
 
@@ -1641,6 +1757,25 @@ test('direct completed edit rejects an overlap with remote active without writin
   assert.equal(github.files.get(path).sha, 'monthly-sha');
 });
 
+test('an idle-looking local state reports the remote timer boundary on a rejected edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-10/alice.jsonl';
+  const first = entry('2026-10-27T08:00:00.000Z', '2026-10-27T11:13:00.000Z');
+  const second = entry('2026-10-27T12:41:00.000Z', '2026-10-27T21:40:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-10-27T07:30:00.000Z')), 'active-sha');
+  store.value.recentCache = [first, second].map((item, index) => ({ ...item, _path: path, _sha: 'monthly-sha', _index: index }));
+  const tracker = service({ github, store, clock: () => new Date('2026-10-28T12:00:00.000Z') });
+  for (const [index, end] of [[0, '2026-10-27T10:00:00.000Z'], [1, '2026-10-27T17:00:00.000Z']]) {
+    await assert.rejects(() => tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index,
+      original: { id: store.value.recentCache[index].id }, edits: { endedAt: end } }),
+    error => /overlap the running timer/i.test(error.message)
+      && error.message.includes('2026-10-27T07:30:00.000Z'));
+  }
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('an existing overlap does not block a description-only correction', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T10:30:00.000Z');
@@ -1896,14 +2031,16 @@ test('recent load backfills missing issue titles once with the current SHA', asy
   const first = await tracker.loadMenuData(50);
   assert.equal(first.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1);
-  assert.equal(github.writes.length, 1);
-  assert.equal(github.writes[0].sha, 'daily');
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [path, TASK_INDEX_PATH]);
+  assert.equal(github.atomicWrites[0].changes[0].sha, 'daily');
   assert.equal(JSON.parse(github.files.get(path).text).work_item.title, 'Ranking regression');
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text).tasks[issue.url].title, 'Ranking regression');
 
   const second = await tracker.loadMenuData(50);
   assert.equal(second.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1, 'persisted titles are not resolved again');
-  assert.equal(github.writes.length, 1, 'persisted titles are not rewritten again');
+  assert.equal(github.atomicWrites.length, 1, 'persisted titles are not rewritten again');
 });
 
 test('recent load persists a current-page title into a legacy active timer with its current SHA', async () => {
@@ -2547,6 +2684,20 @@ test('completed Add time is accepted and projected locally without any GitHub re
   assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' })[0].id, added.entry.id);
 });
 
+test('activity projection reports indexed IDs replaced by queued deletes and edits', async () => {
+  const store = new MemoryStore(), tracker = service({ github: new FakeGitHub(), store });
+  const deleted = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const moved = entry('2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z');
+  store.value.pendingWrites = [
+    { operation: 'deleteEntry', request: { original: deleted } },
+    { operation: 'editEntry', queuedAt: '2026-08-19T00:00:00.000Z',
+      request: { original: moved, edits: { taskUrl: 'https://example.org/new' }, path: 'times/2026-08/alice.jsonl' } },
+  ];
+  const projected = await tracker.projectActivityRecords([]);
+  assert.deepEqual(projected.replacedRecordIds, [deleted.id, moved.id]);
+  assert.deepEqual(projected.records.map(record => record.taskUrl), ['https://example.org/new']);
+});
+
 test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.addTime({ taskUrl: issue.url,
@@ -2756,6 +2907,21 @@ test('Add time reuses only an existing imported task identity and keeps writes a
   })));
   const result = await tracker.addTime(request);
   assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
+});
+
+test('Add time accepts a teammate imported identity only after the shared index verifies it', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const imported = 'acme/project/colleague-task';
+  const request = { taskUrl: imported, taskTitle: 'Colleague task',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  const calls = [];
+  tracker.reports = { loadRepositoryTask: async (taskUrl, options) => {
+    calls.push([taskUrl, options.scanAllUsers]); return [{ taskUrl, user: 'bob' }];
+  } };
+  const result = await tracker.addTime(request);
+  assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(calls, [[imported, true]]);
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
 });
 

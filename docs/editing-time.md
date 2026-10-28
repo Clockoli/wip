@@ -8,7 +8,7 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 The **Add time** button next to the page tabs on **Top tasks** and **Activity** adds a **single** time entry; it is not available in the toolbar panel.
 
-1. Search completed history by task title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
+1. Search tracked tasks from all joined people in the connected time repositories by title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
 2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
 3. Add an optional description and choose **Add**.
 
@@ -20,7 +20,13 @@ Rules for the interval:
 - Running timers started through Add time must be no more than 24 hours old at creation; a timer that continues beyond 24 hours is not automatically stopped.
 - Future timestamps are rejected.
 
-Search loads history on demand without writing. Imported identities must already exist in the selected time repository's task index; arbitrary new imported identities are rejected. URL tasks use [project routing](projects-and-routing.md); selected imported tasks use their existing time repository. Adding time never silently stops a running timer in another repository.
+Imported identities must already exist in a verified person's task index in the selected time repository; arbitrary new imported identities are rejected. URL tasks use [project routing](projects-and-routing.md); selected imported tasks remain bound to their chosen time repository. Adding time never silently stops a running timer in another repository.
+
+### Search for a task
+
+Clockoli builds an extension-local IndexedDB catalog from each person's Git-backed task index. After a completed record (including a Stop) synchronizes, it refreshes the other personal indexes and rebuilds the catalog without writing to their branches. A catalog hit needs no GitHub request. A miss refreshes the indexes and retries before reporting no match; the first search on a new device also builds the catalog. Branch ETag and blob SHA caches avoid redownloading unchanged data after a service-worker restart. Old task indexes without titles are enriched locally from validated monthly history on first search, which may take longer. Search is bounded and may show partial results when a repository cannot be read; it does not silently claim that an incomplete catalog is exhaustive.
+
+Only tasks with a nonempty title appear in cross-user suggestions. Untitled tasks and time records stay in their personal indexes and Activity, and a pasted HTTP(S) URL can still create a task without a title. Imported task suggestions show their time repository only when more than one is connected; similar-looking GitHub URLs and imported identities remain separate. While the Task field searches, it shows a spinner and **Searching tasks…**; a pasted URL remains usable if lookup fails.
 
 After Add, the dialog closes as soon as the change has been durably accepted in local extension storage, without a GitHub-saving spinner or page reload. GitHub synchronization is silent and is scheduled after 15 seconds without local changes. Known local intervals and the current timer are checked for overlap immediately.
 

@@ -29,15 +29,16 @@ import { importClockifyOrganization } from '../services/clockify-organization-im
 import '../services/clockify-record-import.js';
 import { TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
-import { annotateDestinationRecord, loadDestinationRecords, mergeDestinationTaskSummaries, ReportService, withoutInternalMetadata } from '../services/reports.js';
+import { annotateDestinationRecord, loadDestinationRecords, mergeDestinationRecords, mergeDestinationTaskSummaries, ReportService, withoutInternalMetadata } from '../services/reports.js';
 import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
+import { mergeTaskCatalogIndexes, taskCandidates } from '../services/task-catalog.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { addTimeForSender, assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, destinationIdForCompletedMutation, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -49,6 +50,7 @@ const executor = new SerialExecutor();
 const acceptanceExecutor = new SerialExecutor();
 const loadCoordinator = new ConfigurationLoadCoordinator(executor);
 const reportLoads = new Map();
+let directCompletedWrites = 0;
 const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
@@ -264,7 +266,7 @@ async function repositoryInvitationService(destinationId, { measureMigration = f
   return new RepositoryInvitationService({ github: githubForConfig(config, { measureMigration }), installationId: config.installationId });
 }
 
-async function contextForDestination(destinationId, { localOnly = false } = {}) {
+async function contextForDestination(destinationId, { localOnly = false, persistUser = true } = {}) {
   await requireConfiguredDestinationId(store, destinationId);
   const snapshot = await configuredSnapshot({ localOnly, destinationId });
   const { config, auth } = snapshot;
@@ -276,7 +278,7 @@ async function contextForDestination(destinationId, { localOnly = false } = {}) 
   if (!user) {
     user = auth.githubLogin || (localOnly ? null : await github.getAuthenticatedUser());
     if (!user) throw new Error('Refresh the GitHub connection to load your tracking identity.');
-    await destinationStore.patchState({ user });
+    if (persistUser) await destinationStore.patchState({ user });
   }
   const reports = new ReportService({ github, cache: store });
   return {
@@ -552,6 +554,125 @@ async function loadTasks(message, sender) {
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
+async function searchTasks(sender, query = '', { refresh = false } = {}) {
+  const loadEpoch = await loadCoordinator.beginLoad();
+  await store.ensureDataVersion(5); loadCoordinator.assertCurrent(loadEpoch);
+  const snapshot = await configuredSnapshot({ localOnly: true }); loadCoordinator.assertCurrent(loadEpoch);
+  const { auth } = snapshot, destinations = selectReadDestinations(snapshot);
+  if (!auth || !destinations.length) return { configured: false, tasks: [] };
+  const scope = { generation: snapshot.generation ?? 0, authGeneration: snapshot.authGeneration ?? 0,
+    repositories: destinations.map(destination => `${destination.id}@${destination.owner}/${destination.repo}@${destination.defaultBranch || destination.branch || 'main'}`) };
+  const searchText = query.trim().toLowerCase();
+  const requestOwner = sender?.documentId ?? sender?.url ?? 'extension';
+  const loadKey = `all:task-search:${requestOwner}`, previous = reportLoads.get(loadKey);
+  if (previous) {
+    previous.controller.abort();
+    await previous.promise.catch(() => {});
+    loadCoordinator.assertCurrent(loadEpoch);
+  }
+  const controller = new AbortController();
+  const promise = (async () => {
+    const requestedAt = Date.now();
+    const budgets = { maxFiles: 120, maxBytes: 20 * 1024 * 1024, maxRecords: 50000,
+      maxUsers: Math.max(1, Math.floor(100 / destinations.length)),
+      maxTotalFiles: Math.max(1, Math.floor(500 / destinations.length)),
+      maxTotalBytes: Math.max(1, Math.floor(60 * 1024 * 1024 / destinations.length)),
+      maxTotalRecords: Math.max(1, Math.floor(100000 / destinations.length)) };
+    const tracking = await store.getTrackingSnapshot();
+    const cacheRevision = await store.getTaskSearchRevision();
+    const cacheDirty = await store.isTaskSearchDirty();
+    const hasPending = destinations.some(destination =>
+      tracking.destinationStates?.entries?.[destination.id]?.pendingWrites?.length);
+    const cached = searchText && !refresh && !hasPending ? await store.getTaskSearchCache?.(scope) : null;
+    const cachedTasks = cached && taskCandidates(cached.indexTasks.map(task => ({ ...task, taskTitle: task.title })));
+    const hit = cachedTasks?.some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
+    const indexed = hit ? { indexTasks: cached.indexTasks, records: cachedTasks,
+      readStatus: cached.readStatus, partial: false, conflicts: [], fallback: false }
+      : await loadDestinationRecords(destinations, async (destination, signal) => {
+        signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+        const reports = new ReportService({ github: githubForConfig(destination), cache: store, concurrency: 10 });
+        const catalog = await reports.loadRepositoryTaskCatalog({
+          defaultBranch: destination.defaultBranch || destination.branch || 'main', signal, budgets,
+        });
+        return [catalog];
+      }, { signal: controller.signal, merge: mergeTaskCatalogIndexes });
+    if (!indexed.fallback) {
+      loadCoordinator.assertCurrent(loadEpoch);
+      if (!hit && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
+          && !indexed.partial && !indexed.conflicts.length) {
+        const saved = await store.saveTaskSearchCache?.({ version: 1, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
+          readStatus: indexed.readStatus }, scope, cacheRevision);
+        if (saved === false) throw new DOMException('Task search configuration changed.', 'AbortError');
+        loadCoordinator.assertCurrent(loadEpoch);
+      }
+      if (hasPending) {
+        const projected = [], pendingFailures = [];
+        for (const destination of destinations) {
+          if (!tracking.destinationStates?.entries?.[destination.id]?.pendingWrites?.length) continue;
+          try {
+            const tracker = await trackerForDestination(destination.id, { localOnly: true });
+            const { records, replacedRecordIds } = await tracker.projectActivityRecords([]);
+            projected.push({ destination, records, replacedRecordIds });
+          } catch (error) {
+            if (error?.name === 'AbortError' || controller.signal.aborted) throw error;
+            pendingFailures.push(destination.id);
+          }
+        }
+        const pending = mergeDestinationRecords(projected, destinations.map(destination => destination.id));
+        const replaced = new Map(projected.map(item => [item.destination.id, new Set(item.replacedRecordIds)]));
+        const cached = indexed.indexTasks.filter(task => task.recordIds.some(id => !replaced.get(task.destinationId)?.has(id)))
+          .map(task => ({ taskUrl: task.taskUrl,
+            taskTitle: task.recordIds.some(id => replaced.get(task.destinationId)?.has(id))
+              && (!task.titleSourceId || replaced.get(task.destinationId).has(task.titleSourceId)) ? '' : task.title,
+            destinationId: task.destinationId, timeRepository: task.timeRepository }));
+        return { configured: true, tasks: taskCandidates([...cached, ...pending.records]),
+          readStatus: indexed.readStatus, partial: true, conflicts: [...indexed.conflicts, ...pending.conflicts],
+          ...(pendingFailures.length ? { pendingProjectionUnavailable: true } : {}) };
+      }
+      if (hit && await store.getTaskSearchRevision() !== cacheRevision) {
+        throw new DOMException('Task search changed during the read.', 'AbortError');
+      }
+      return { configured: true, tasks: indexed.records, readStatus: indexed.readStatus,
+        partial: indexed.partial, conflicts: indexed.conflicts };
+    }
+    const loaded = await loadDestinationRecords(destinations, async (destination, signal) => {
+      signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+      const reports = new ReportService({ github: githubForConfig(destination), cache: store, concurrency: 2 });
+      const records = await reports.loadRepositoryRange({ startDate: '0001-01-01', endDate: '9999-12-31' }, {
+        defaultBranch: destination.defaultBranch || destination.branch || 'main', signal, includeStorageMetadata: true,
+        budgets, preserveDuplicateIds: true,
+      });
+      const tracker = await trackerForDestination(destination.id, { localOnly: true });
+      const projected = await tracker.projectActivityRecords(records);
+      signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
+      // The pending overlay coalesces IDs for Activity; retain every original
+      // collision so the exact-search merge can reject divergent bodies.
+      const seen = new Set();
+      const duplicateBodies = records.filter(record => {
+        if (seen.has(record.id)) return true;
+        seen.add(record.id); return false;
+      });
+      return [...projected.records, ...duplicateBodies];
+    }, { signal: controller.signal, merge: (results, order) => mergeDestinationRecords(results, order, {
+      rejectSameDestinationDuplicates: true,
+    }) });
+    loadCoordinator.assertCurrent(loadEpoch);
+    return { configured: true, tasks: taskCandidates(loaded.records),
+      readStatus: loaded.readStatus, partial: loaded.partial, conflicts: loaded.conflicts };
+  })().catch(error => {
+      if (error?.code === 'all_destinations_failed'
+          && error.readStatus?.some(item => item.error?.code === 'task_scan_budget')) {
+        const limited = new Error('Task search exceeds the safe history limit. Results are unavailable; contact your repository administrator.');
+        limited.code = 'task_scan_budget';
+        throw limited;
+      }
+      throw error;
+  });
+  reportLoads.set(loadKey, { controller, promise });
+  try { return await promise; }
+  finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
+}
+
 async function cancelReports(channel = null) {
   const active = [...reportLoads.entries()]
     .filter(([key]) => !channel || key.endsWith(`:${channel}`))
@@ -571,13 +692,13 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 ]);
 
 const READ_RETRY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT',
-  'GET_STATE', 'GET_PAGE_STATE', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
+  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT', 'SEARCH_TASKS',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
   'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES',
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
-  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
+  'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
   'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
 ]);
 
@@ -678,6 +799,24 @@ async function globalTrackerState({ refresh = false, includeSummary = false } = 
     result.remoteWriteConfirmed = !summaryError && summaries.every(destinationSaveConfirmed);
   }
   return result;
+}
+
+async function remoteTimerStatus() {
+  const snapshot = await configuredSnapshot({ localOnly: true });
+  const destinationIds = Object.keys(snapshot.registry?.destinations ?? {});
+  if (!snapshot.auth || !destinationIds.length) return { remoteTimers: [] };
+  const tracking = await store.getTrackingSnapshot();
+  const remoteTimers = [];
+  for (const destinationId of destinationIds) {
+    const tracker = await trackerForDestination(destinationId, { localOnly: true, persistUser: false });
+    const [remote, state] = await Promise.all([tracker.readRemoteActive(), tracker.getState()]);
+    const local = tracking.activeTimer?.destinationId === destinationId ? state.active : null;
+    if (remote && (remote.id !== local?.id || remote.startedAt !== local.startedAt
+        || taskUrlOf(remote) !== taskUrlOf(local))) {
+      remoteTimers.push({ destinationId, startedAt: remote.startedAt, timezone: remote.timezone });
+    }
+  }
+  return { remoteTimers };
 }
 
 async function loadRecentAcrossDestinations(message, sender, extensionOrigin) {
@@ -1154,6 +1293,17 @@ async function handle(message, sender) {
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
+  if (message.type === 'GET_REMOTE_TIMER_STATUS') {
+    if (sender?.url !== chrome.runtime.getURL('src/times/times.html') || Object.keys(message).join(',') !== 'type') {
+      throw new Error('Invalid Activity remote timer payload or sender');
+    }
+    return remoteTimerStatus();
+  }
+  if (message.type === 'SEARCH_TASKS') {
+    if (Object.keys(message).sort().join(',') !== 'query,type' || typeof message.query !== 'string'
+        || message.query.length > 300) throw new Error('Invalid task search query');
+    return searchTasks(sender, message.query);
+  }
   if (message.type === 'SEARCH_ACTIVITY') {
     if (message.payload !== undefined) throw new Error('Activity search does not accept a range');
     return loadTimes({ payload: { startDate: '0001-01-01', endDate: '9999-12-31' }, search: true }, sender);
@@ -1180,6 +1330,17 @@ async function handle(message, sender) {
       pendingCount: state.pendingWrites.length,
     };
   }
+  const completedWrite = async write => {
+    directCompletedWrites++;
+    try {
+      await chrome.alarms.create('task-search-refresh', { delayInMinutes: 1 });
+      await store.invalidateTaskSearchCache();
+      return await write();
+    } finally {
+      directCompletedWrites--;
+      await refreshTaskSearchAfterSync();
+    }
+  };
   switch (message.type) {
     case 'ADD_TIME': {
       const { type, ...fields } = message;
@@ -1199,7 +1360,9 @@ async function handle(message, sender) {
     }
     case 'START': {
       const taskUrl = taskUrlForStart(message.taskUrl ?? message.issue, sender, extensionOrigin);
-      const destinationId = await resolveStartDestinationId(store, taskUrl);
+      const selectedDestinationId = requestedStartDestinationId(taskUrl, message.destinationId, sender, extensionOrigin);
+      const destinationId = selectedDestinationId ? await requireConfiguredDestinationId(store, selectedDestinationId)
+        : await resolveStartDestinationId(store, taskUrl);
       const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const result = await tracker.start(taskUrl, message.taskTitle ?? message.issueTitle ?? '', message.description || '', { background: true });
       if (result._pending) requestPendingSync();
@@ -1227,7 +1390,9 @@ async function handle(message, sender) {
       }
       const taskUrl = timelineTask ? taskUrlForTimelineSwitch(requestedTask, sender, extensionOrigin, message.sourceEntry, storedRecords)
         : taskUrlForStart(requestedTask, sender, extensionOrigin);
-      const targetDestinationId = await resolveStartDestinationId(store, taskUrl);
+      const selectedDestinationId = requestedStartDestinationId(taskUrl, message.destinationId, sender, extensionOrigin, 'SWITCH_TASK');
+      const targetDestinationId = selectedDestinationId ? await requireConfiguredDestinationId(store, selectedDestinationId)
+        : await resolveStartDestinationId(store, taskUrl);
       const sourceDestinationId = await activeDestinationId(store);
       if (!sourceDestinationId || sourceDestinationId === targetDestinationId) {
         const tracker = await trackerForDestination(targetDestinationId, { localOnly: true });
@@ -1240,7 +1405,7 @@ async function handle(message, sender) {
       const sourceState = await sourceTracker.getState();
       const current = sourceState.active;
       if (!current) throw new Error('The active timer changed before this switch was accepted. Retry the action.');
-      if (taskUrlOf(current) === taskUrl) return { stopped: null, active: { ...current, destinationId: sourceDestinationId }, pending: false, destinationId: sourceDestinationId };
+      if (taskUrlOf(current) === taskUrl && !selectedDestinationId) return { stopped: null, active: { ...current, destinationId: sourceDestinationId }, pending: false, destinationId: sourceDestinationId };
       const changedAt = new Date();
       const source = sourceTracker.prepareQueuedStop(current, message.description, { endedAt: changedAt });
       let nextId = createUlid(changedAt.getTime());
@@ -1282,7 +1447,7 @@ async function handle(message, sender) {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      return (await trackerForDestination(destinationId)).editEntries(payload);
+      return completedWrite(async () => (await trackerForDestination(destinationId)).editEntries(payload));
     }
     case 'EDIT_ACTIVE_START': {
       const destinationId = await activeDestinationId(store, { required: true });
@@ -1336,46 +1501,48 @@ async function handle(message, sender) {
       const selectedUsers = [...new Set((Array.isArray(message.selectedUsers) ? message.selectedUsers : [])
         .map(user => String(user || '').trim()).filter(Boolean))];
       if (!selectedUsers.length) throw new Error('Choose at least one person before merging tasks.');
-      let mergedEntries = 0, mergedActive = false, completedDestinations = 0;
-      const failures = [];
-      for (const destination of destinations) {
-        try {
-          const currentUser = await destinationUser(destination, snapshot.auth);
-          const localTracker = await trackerForDestination(destination.id);
-          const state = await localTracker.getState();
-          if (state.pendingWrites?.length) throw new Error('Sync pending changes before merging tasks.');
-          const branches = await discoverUserStorageBranches(githubForConfig(destination));
-          const byLogin = new Map(branches.map(branch => [branch.login.toLowerCase(), branch]));
-          const targets = selectedUsers.map(user => {
-            if (user.toLowerCase() === currentUser.toLowerCase()) return { user: currentUser, tracker: localTracker };
-            const branch = byLogin.get(user.toLowerCase());
-            if (!branch) throw new Error(`Clockoli storage for ${user} is no longer available. Reload Settings.`);
-            const detachedStore = { getState: async () => ({ pendingWrites: [], recentCache: [] }), patchState: async () => {} };
-            return { user: branch.login, tracker: new TrackerService({ github: branch.github, store: detachedStore, user: branch.login, actorId: `github:${branch.id}`, actorName: branch.login, recentDays: destination.recentDays || 7 }) };
-          });
-          for (const { tracker } of targets) {
-            const result = await tracker.mergeTasks(request);
-            mergedEntries += result.mergedEntries; mergedActive ||= result.mergedActive;
-          }
-          completedDestinations += 1;
-        } catch (error) { failures.push({ destination, error }); }
-      }
-      if (failures.length) {
-        const labels = failures.map(({ destination }) => destination.label || `${destination.owner}/${destination.repo}`).join(', ');
-        const completedLabel = `${completedDestinations} time ${completedDestinations === 1 ? 'repository' : 'repositories'}`;
-        const error = new Error(completedDestinations
-          ? `The merge finished in ${completedLabel} but could not finish in ${labels}. Retry to finish the remaining entries.`
-          : `Could not merge tasks in ${labels}. ${failures[0].error.message}`);
-        error.code = completedDestinations ? 'partial_task_merge' : failures[0].error.code;
-        throw error;
-      }
-      return { mergedEntries, mergedActive, destinationCount: completedDestinations };
+      return completedWrite(async () => {
+        let mergedEntries = 0, mergedActive = false, completedDestinations = 0;
+        const failures = [];
+        for (const destination of destinations) {
+          try {
+            const currentUser = await destinationUser(destination, snapshot.auth);
+            const localTracker = await trackerForDestination(destination.id);
+            const state = await localTracker.getState();
+            if (state.pendingWrites?.length) throw new Error('Sync pending changes before merging tasks.');
+            const branches = await discoverUserStorageBranches(githubForConfig(destination));
+            const byLogin = new Map(branches.map(branch => [branch.login.toLowerCase(), branch]));
+            const targets = selectedUsers.map(user => {
+              if (user.toLowerCase() === currentUser.toLowerCase()) return { user: currentUser, tracker: localTracker };
+              const branch = byLogin.get(user.toLowerCase());
+              if (!branch) throw new Error(`Clockoli storage for ${user} is no longer available. Reload Settings.`);
+              const detachedStore = { getState: async () => ({ pendingWrites: [], recentCache: [] }), patchState: async () => {} };
+              return { user: branch.login, tracker: new TrackerService({ github: branch.github, store: detachedStore, user: branch.login, actorId: `github:${branch.id}`, actorName: branch.login, recentDays: destination.recentDays || 7 }) };
+            });
+            for (const { tracker } of targets) {
+              const result = await tracker.mergeTasks(request);
+              mergedEntries += result.mergedEntries; mergedActive ||= result.mergedActive;
+            }
+            completedDestinations += 1;
+          } catch (error) { failures.push({ destination, error }); }
+        }
+        if (failures.length) {
+          const labels = failures.map(({ destination }) => destination.label || `${destination.owner}/${destination.repo}`).join(', ');
+          const completedLabel = `${completedDestinations} time ${completedDestinations === 1 ? 'repository' : 'repositories'}`;
+          const error = new Error(completedDestinations
+            ? `The merge finished in ${completedLabel} but could not finish in ${labels}. Retry to finish the remaining entries.`
+            : `Could not merge tasks in ${labels}. ${failures[0].error.message}`);
+          error.code = completedDestinations ? 'partial_task_merge' : failures[0].error.code;
+          throw error;
+        }
+        return { mergedEntries, mergedActive, destinationCount: completedDestinations };
+      });
     }
     case 'DELETE_ENTRY': {
       const destinationId = await requireConfiguredDestinationId(store,
         destinationIdForCompletedMutation(message.type, message.payload, sender, extensionOrigin));
       const { destinationId: _destinationId, ...payload } = message.payload;
-      return (await trackerForDestination(destinationId)).deleteEntry(payload);
+      return completedWrite(async () => (await trackerForDestination(destinationId)).deleteEntry(payload));
     }
     case 'RESOLVE_PENDING': {
       const snapshot = await store.getTrackingSnapshot();
@@ -1395,7 +1562,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_REMOTE_TIMER_STATUS', 'SEARCH_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
@@ -1509,6 +1676,32 @@ async function shouldContinuePendingSync() {
   const entries = snapshot.destinationStates?.entries ?? {};
   return destinationIds.some(destinationId => hasRunnablePending(entries[destinationId]?.pendingWrites));
 }
+async function refreshTaskSearchAfterSync({ retry = false } = {}) {
+  try {
+    const revision = await store.getTaskSearchRevision?.();
+    const before = await store.getTrackingSnapshot();
+    const completed = new Set(['completeTimer', 'completeTimerAndStart', 'addTime', 'bulkAddTimes', 'editEntry', 'editEntries', 'deleteEntry']);
+    const hasCompletedPending = snapshot => Object.values(snapshot.destinationStates?.entries ?? {})
+      .some(entry => (entry.pendingWrites ?? []).some(write => completed.has(write.operation)));
+    if (retry && (hasCompletedPending(before) || directCompletedWrites)) {
+      await scheduleSyncAlarm('task-search-refresh', { delayInMinutes: 1 });
+      return;
+    }
+    // The alarm is one-shot. A successful foreground rebuild already made the
+    // cache clean; do not re-read GitHub when its scheduled wakeup arrives.
+    if (retry && await store.isTaskSearchDirty?.() === false) return;
+    const result = await searchTasks(null, '', { refresh: true });
+    const pending = await store.getTrackingSnapshot();
+    const complete = result.configured && !result.partial && !result.conflicts?.length
+      && !hasCompletedPending(pending) && !directCompletedWrites
+      && revision === await store.getTaskSearchRevision?.() && !(await store.isTaskSearchDirty?.());
+    // Never clear here: another write may arm a newer alarm after these checks.
+    if (retry && !complete) await scheduleSyncAlarm('task-search-refresh', { delayInMinutes: 1 });
+  } catch {
+    if (retry) await scheduleSyncAlarm('task-search-refresh', { delayInMinutes: 1 });
+    // A subsequent alarm or search miss can retry without blocking Git sync.
+  }
+}
 function syncPendingNow() {
   if (pendingSync) return pendingSync;
   pendingSyncFollowupRequested = false;
@@ -1521,11 +1714,32 @@ function syncPendingNow() {
       requestPendingSync();
       return;
     }
-    await syncPendingAll({ store, trackerForDestination, canSync: async () => {
-      const quietUntil = pendingSyncQuietUntil(await store.getTrackingSnapshot());
-      return quietUntil === null || Date.now() >= quietUntil;
-    } });
-  })).finally(() => {
+    const before = await store.getTrackingSnapshot();
+    const pendingIds = snapshot => Object.entries(snapshot.destinationStates?.entries ?? {})
+      .flatMap(([id, entry]) => (entry.pendingWrites ?? []).map((write, index) => `${id}:${write.id ?? index}`));
+    const completedWrites = new Set(['completeTimer', 'completeTimerAndStart', 'addTime', 'bulkAddTimes', 'editEntry', 'editEntries', 'deleteEntry']);
+    const beforeCompletedIds = Object.entries(before.destinationStates?.entries ?? {})
+      .flatMap(([id, entry]) => (entry.pendingWrites ?? [])
+        .map((write, index) => completedWrites.has(write.operation) ? `${id}:${write.id ?? index}` : null).filter(Boolean));
+    if (beforeCompletedIds.length) {
+      // Do not allow a completed operation to leave its queue without a durable wakeup.
+      await chrome.alarms.create('task-search-refresh', { delayInMinutes: 1 });
+      await store.invalidateTaskSearchCache();
+    }
+    let syncError = null;
+    try {
+      await syncPendingAll({ store, trackerForDestination, canSync: async () => {
+        const quietUntil = pendingSyncQuietUntil(await store.getTrackingSnapshot());
+        return quietUntil === null || Date.now() >= quietUntil;
+      } });
+    } catch (error) { syncError = error; }
+    const after = await store.getTrackingSnapshot();
+    const remaining = new Set(pendingIds(after));
+    return { changed: beforeCompletedIds.some(id => !remaining.has(id)), syncError };
+  })).then(async ({ changed, syncError } = {}) => {
+    if (changed) await refreshTaskSearchAfterSync();
+    if (syncError) throw syncError;
+  }).finally(() => {
     pendingSync = null;
     // A 15-second wakeup may have fired while a previous GitHub write was
     // still running. Do not drop the new local edit until the minute alarm.
@@ -1574,7 +1788,7 @@ async function toggleActionSurface(tab) {
     });
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
+      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/ui/task-search.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
     });
   } catch {
     return openTimesPage();
@@ -1605,6 +1819,7 @@ chrome.alarms.onAlarm.addListener(alarm => {
     void syncPendingNow().catch(() => {}).finally(() => pullRemoteNow().catch(() => {}));
   }
   if (alarm.name === 'sync-pending-idle-fallback') void syncPendingNow().catch(() => {});
+  if (alarm.name === 'task-search-refresh') void refreshTaskSearchAfterSync({ retry: true });
   if (alarm.name === 'clockify-migration-resume' || alarm.name === 'clockify-migration-retry') void resumeClockifyMigration().catch(() => {});
 });
 

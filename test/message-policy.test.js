@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, addTimeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from '../src/background/message-policy.js';
+import { assertMessageAllowed, addTimeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+  requestedStartDestinationId, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
@@ -88,6 +89,10 @@ test('week reads accept only a Monday–Sunday range from the extension or a Git
   assert.throws(() => assertMessageAllowed('LOAD_TIMES', content, origin), /not allowed/i);
   assert.equal(assertMessageAllowed('SEARCH_ACTIVITY', extension, origin), 'extension');
   assert.throws(() => assertMessageAllowed('SEARCH_ACTIVITY', content, origin), /not allowed/i);
+  assert.equal(requestedStartDestinationId('acme/project/imported', 'github:2', extension, origin), 'github:2');
+  assert.throws(() => requestedStartDestinationId('acme/project/imported', 'github:2', content, origin), /extension/i);
+  assert.throws(() => requestedStartDestinationId('https://example.com/task', 'github:2', extension, origin), /imported/i);
+  assert.throws(() => requestedStartDestinationId('acme/project/imported', 'github:0', extension, origin), /destination/i);
 });
 
 test('email-only CSV response is accepted only from the armed Clockify report tab and uses its URL year', async () => {

@@ -125,6 +125,7 @@
   let recentLoadId = 0;
   let timesLoadId = 0;
   let activityStateLoadId = 0;
+  let remoteTimerLoadId = 0;
   let activityCalendarLoadId = 0;
   let activityCalendarStatusText = '';
   let calendarWeekLoadingId = null, selectedTimesCalendarLoadingId = null;
@@ -213,6 +214,7 @@
   }
   function trackableTaskIdentityOf(value) { return storedTaskIdentityOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
+  function activitySearchFields(entry) { return [storedTaskIdentityOf(entry), taskTitleOf(entry)]; }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
     const result = el('div', undefined, `task-result${taskTitle ? '' : ' task-result-untitled'}${className ? ` ${className}` : ''}`);
@@ -1179,6 +1181,7 @@
 
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
+    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     recent = recentLoaded && (timesMode || selectedWeekStart !== null)
       ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
@@ -1195,6 +1198,9 @@
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
       reconcileTimelineQueuedOperations(pendingIds);
+      if (timesMode && [...previousPending].some(id => !pendingIds.has(id))) {
+        void refreshRemoteTimerStatus().catch(setError);
+      }
     }
     for (const [entryId] of timelineOptimisticCompletions) {
       if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
@@ -1222,7 +1228,9 @@
     if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
+    const remoteTimers = Object.hasOwn(data ?? {}, 'remoteTimers') ? data.remoteTimers : pageState.remoteTimers;
     pageState = reconcileTimelineAcceptedActive(data);
+    pageState.remoteTimers = data?.configured === false ? [] : remoteTimers;
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
@@ -1354,7 +1362,10 @@
         // The page-state cache is bounded and cannot replace a complete Activity week.
         if (timesMode) {
           const remainingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
-          if ([...pendingIds].some(id => !remainingIds.has(id))) await refreshRecent(true);
+          if ([...pendingIds].some(id => !remainingIds.has(id))) {
+            void refreshRemoteTimerStatus().catch(setError);
+            await refreshRecent(true);
+          }
         } else if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
         else updatePanelClocks();
@@ -2061,6 +2072,7 @@
   function recentRefreshButton() {
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
+      if (timesMode) void refreshRemoteTimerStatus().catch(setError);
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
@@ -2160,6 +2172,9 @@
     updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
+    // The active record is a separate read from the selected week's history.
+    // Check it even if that history fails and cached entries remain visible.
+    void refreshRemoteTimerStatus().catch(setError);
     try {
       // Hydrate durable local edits before the remote week read. Page state is
       // bounded, so it must not replace records already loaded for this week.
@@ -2213,13 +2228,28 @@
     }, 250);
   }
 
-  async function refreshActivityState() {
+  async function refreshRemoteTimerStatus() {
+    const loadId = ++remoteTimerLoadId;
+    const { remoteTimers } = await send({ type: 'GET_REMOTE_TIMER_STATUS' });
+    if (loadId !== remoteTimerLoadId || !timesMode) return;
+    const next = pageState.configured === false ? [] : remoteTimers ?? [];
+    const changed = JSON.stringify(pageState.remoteTimers ?? []) !== JSON.stringify(next);
+    pageState.remoteTimers = next;
+    if (changed) renderUi();
+  }
+
+  async function refreshActivityState(refresh = false) {
     const loadId = ++activityStateLoadId;
-    const state = await send({ type: 'GET_PAGE_STATE', refresh: false });
+    const state = await send({ type: 'GET_PAGE_STATE', refresh });
     if (loadId !== activityStateLoadId) return;
     const previous = pageState.active;
+    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     applyPageState(state);
-    if (!refreshMountedTimeline()) renderUi();
+    const timelineUpdated = refreshMountedTimeline();
+    if (!timelineUpdated) renderUi();
+    if (timesMode && [...previousPending].some(id => !pageState.pendingWrites?.some(item => item.id === id))) {
+      void refreshRemoteTimerStatus().catch(setError);
+    }
     if (previous && (previous.id !== pageState.active?.id || previous.startedAt !== pageState.active?.startedAt)) {
       await refreshRecent(true);
     }
@@ -2251,6 +2281,13 @@
   }
 
   function createActivityListRenderer(result, filter, onEmpty = null) {
+    const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+      timesFilter = filter.value;
+      activitySearchPage = 0;
+      if (timesFilter.trim()) scheduleActivitySearch();
+      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
+      renderFiltered();
+    }, textOf: activitySearchFields });
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
@@ -2263,7 +2300,7 @@
         : recordsWithDrafts(), timelineOptimisticCompletions.values())
         .filter(entry => query || (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
           || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
-      const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
+      const matches = taskSearch.matches(entries);
       if (query) {
         result.append(el('p', 'Search results across all weeks', 'muted'));
         if (activitySearchPartial) result.append(el('p', 'Some time repositories or conflicting records could not be searched. Results may be incomplete.', 'notice partial-read-warning'));
@@ -2307,13 +2344,6 @@
       }
     };
     renderActivitySearch = renderFiltered;
-    filter.addEventListener('input', () => {
-      timesFilter = filter.value;
-      activitySearchPage = 0;
-      if (timesFilter.trim()) scheduleActivitySearch();
-      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
-      renderFiltered();
-    });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
     return renderFiltered;
@@ -2391,6 +2421,33 @@
     refresh.hidden = activityViewMode !== 'list';
     toolbar.append(weekNavigation(), refresh);
     body.append(toolbar, listTotal);
+    for (const timer of pageState.remoteTimers ?? []) {
+      const started = new Intl.DateTimeFormat('en-GB', {
+        dateStyle: 'medium', timeStyle: 'short', timeZone: timer.timezone,
+      }).format(new Date(timer.startedAt));
+      const pendingStop = pageState.pendingWrites?.some(item => item.destinationId === timer.destinationId
+        && item.operation === 'completeTimer');
+      const warning = el('div', undefined, 'remote-timer-warning notice');
+      warning.setAttribute('role', 'alert');
+      warning.append(el('strong', 'GitHub had a running timer at the last check'),
+        el('div', pendingStop
+          ? `Started ${started} ${timer.timezone}. Stop is already queued locally for this repository. Do not stop again; keep this browser data until the queued changes sync. Open List to review pending changes.`
+          : `Started ${started} ${timer.timezone}. This remote timer may differ from local tracking. Open List and review pending changes before editing or removing either record.`));
+      warning.append(button('Recheck GitHub timer', 'secondary', async () => {
+        try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
+      }));
+      body.append(warning);
+    }
+    if (activityViewMode === 'list') {
+      const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
+      if (waiting.length) {
+        const count = waiting.length;
+        const notice = el('div', `${count} local ${count === 1 ? 'change is' : 'changes are'} waiting to sync with GitHub. Keep this browser data until it is saved.`, 'notice');
+        notice.setAttribute('role', 'status');
+        body.append(notice);
+      }
+      renderPendingConflicts(body);
+    }
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2595,8 +2652,9 @@
     const warning = el('div', undefined, 'timeline-edit-error error');
     warning.setAttribute('role', 'alert');
     warning.append(el('strong', 'Time entry was not moved.'),
-      el('div', `${error.message} Go to List for this week and resolve the overlapping entries manually.`),
-      button('Go to List', 'secondary', openTimelineList));
+      el('div', /running timer/i.test(error.message) ? error.message
+        : `${error.message} Go to List for this week and resolve the overlapping entries manually.`));
+    if (!/running timer/i.test(error.message)) warning.append(button('Go to List', 'secondary', openTimelineList));
     section.insertBefore(warning, section.querySelector('.timeline-shell'));
     return true;
   }
@@ -3665,15 +3723,15 @@
         listToolbar.append(refresh);
         if (popupMode) compactSurface.renderList = createActivityListRenderer(today, filter);
         else {
+          const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+            panelListFilter = filter.value; compactSurface.renderList();
+          }, textOf: activitySearchFields });
           compactSurface.renderList = (entries = compactSurface.listEntries || []) => {
             today.replaceChildren();
-            const query = panelListFilter.trim().toLowerCase();
-            const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query)
-              || taskTitleOf(entry).toLowerCase().includes(query)) : entries;
-            const empty = query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
+            const matches = taskSearch.matches(entries);
+            const empty = taskSearch.query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
             renderRecent(today, matches, empty, true, true);
           };
-          filter.addEventListener('input', () => { panelListFilter = filter.value; compactSurface.renderList(); });
         }
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;
@@ -4205,6 +4263,8 @@
       .activity-list .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       .activity-list .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
+      .remote-timer-warning { display:grid; gap:8px; margin:0 0 14px; padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-default,var(--ck-fg)); font-size:13px; overflow-wrap:anywhere }
+      .remote-timer-warning button { justify-self:start }
       :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
       :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
@@ -4671,7 +4731,10 @@
     void restoreActivityViewMode();
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) void refreshRecent(true).then(refreshActivityState).catch(setError);
+      if (!document.hidden) {
+        void refreshRemoteTimerStatus().catch(setError);
+        void refreshRecent(true).then(refreshActivityState).catch(setError);
+      }
     });
     setInterval(() => {
       if (!document.hidden) void refreshActivityState().catch(setError);

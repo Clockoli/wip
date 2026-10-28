@@ -11,11 +11,11 @@ const CLOCKIFY_MESSAGES = new Set([
   'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CSV_EMAIL_OFFER',
 ]);
 const EXTENSION_MESSAGES = new Set([
-  'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'SET_INTERFACE_WIDTH', 'GET_LOCAL_PREFERENCES',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
   'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
-  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'BULK_ADD_TIMES', 'ADD_TIME', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
+  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'SEARCH_TASKS', 'BULK_ADD_TIMES', 'ADD_TIME', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
   'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
   'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS', 'GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED',
@@ -90,6 +90,19 @@ export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
     if (pageTaskUrl !== requested) throw new Error('Requested task URL must match the current page');
   }
   return requested;
+}
+
+export function requestedStartDestinationId(taskUrl, destinationId, sender, extensionOrigin, type = 'START') {
+  if (destinationId === undefined) return null;
+  if (assertMessageAllowed(type, sender, extensionOrigin) !== 'extension') {
+    throw new Error('Only extension pages can select an imported task destination');
+  }
+  if (/^https?:\/\//i.test(taskUrl)) throw new Error('Only imported tasks may select a destination');
+  normalizeStoredTaskIdentity(taskUrl);
+  if (typeof destinationId !== 'string' || !DESTINATION_ID_RE.test(destinationId)) {
+    throw new Error('Invalid imported task destination');
+  }
+  return destinationId;
 }
 
 export function addTimeForSender(payload, sender, extensionOrigin) {

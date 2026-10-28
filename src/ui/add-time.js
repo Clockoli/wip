@@ -8,11 +8,17 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const heading = document.createElement('h2'); heading.id = 'add-time-title'; heading.textContent = 'Add new time';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'add-time-close';
   close.textContent = '×'; close.setAttribute('aria-label', 'Close Add time');
-  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = 'Find a task in your activity history or paste a task URL.';
+  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = 'Find a tracked task from any person in your time repositories or paste a task URL.';
   const taskLabel = document.createElement('label'); taskLabel.textContent = 'Task'; taskLabel.htmlFor = 'add-time-task';
   const search = document.createElement('input'); search.id = 'add-time-task'; search.type = 'search'; search.autocomplete = 'off';
   search.placeholder = 'Search title or URL, or paste a URL'; search.setAttribute('role', 'combobox');
   search.setAttribute('aria-controls', 'add-time-suggestions'); search.setAttribute('aria-expanded', 'false');
+  search.setAttribute('aria-busy', 'false');
+  const searchStatus = document.createElement('div'); searchStatus.className = 'add-time-search-status';
+  searchStatus.setAttribute('role', 'status'); searchStatus.setAttribute('aria-label', 'Searching tasks'); searchStatus.hidden = true;
+  const searchSpinner = document.createElement('span'); searchSpinner.className = 'add-time-search-spinner';
+  searchSpinner.setAttribute('aria-hidden', 'true');
+  searchStatus.append(searchSpinner, document.createTextNode('Searching tasks…'));
   const suggestions = document.createElement('div'); suggestions.id = 'add-time-suggestions'; suggestions.className = 'add-time-suggestions';
   suggestions.setAttribute('aria-label', 'Matching tasks');
   const times = document.createElement('div'); times.className = 'add-time-times';
@@ -57,15 +63,17 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, suggestions, times, hint, descriptionLabel, description, moreDescription, preview, error, actions);
+  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, times, hint, descriptionLabel, description, moreDescription, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
   saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
   button.insertAdjacentElement('afterend', saved);
   let savedTimer = null;
 
-  let tasks = [], selected = null, generation = 0, busy = false, searched = false, editing = null;
+  let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
+  let lastSearch = '', searchIncomplete = false, editing = null, showRepository = false;
   const setError = text => { error.textContent = text; error.hidden = !text; };
+  const setSearchBusy = value => { searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); };
   const taskIdentity = () => {
     if (selected && search.value.trim() === (selected.title || selected.taskUrl)) return selected;
     try {
@@ -75,14 +83,17 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     } catch { return null; }
   };
   const update = () => {
-    const query = search.value.trim().toLowerCase();
     suggestions.replaceChildren();
-    if (query && !selected) {
-      for (const task of tasks.filter(item => `${item.title || ''} ${item.taskUrl}`.toLowerCase().includes(query)).slice(0, 8)) {
+    if (taskSearch.query && !selected) {
+      for (const task of taskSearch.matches(tasks, () => true, 8)) {
         const option = document.createElement('button'); option.type = 'button'; option.className = 'add-time-option';
         const optionTitle = document.createElement('strong'); optionTitle.textContent = task.title || task.taskUrl;
         const url = document.createElement('span'); url.textContent = task.taskUrl;
         option.append(optionTitle, url);
+        if (showRepository && task.destinationId && task.timeRepository) {
+          const repository = document.createElement('span'); repository.textContent = task.timeRepository;
+          option.append(repository);
+        }
         option.addEventListener('click', () => { selected = task; search.value = task.title || task.taskUrl; update(); search.focus(); });
         suggestions.append(option);
       }
@@ -97,25 +108,43 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       preview.append(title, url);
     }
   };
-  search.addEventListener('input', async () => {
+  const onSearchInput = () => {
     selected = null; setError(''); update();
-    if (!search.value.trim() || searched) return;
-    searched = true; const request = generation;
-    try {
-      const data = await send({ type: 'SEARCH_ACTIVITY' });
-      if (request !== generation || !dialog.open) return;
-      if (!data?.configured) { setError('Set up Clockoli before adding time.'); return; }
-      const byUrl = new Map();
-      for (const record of data.recent ?? []) {
-        const taskUrl = record.taskUrl ?? record.issue?.url;
-        if (typeof taskUrl !== 'string' || !taskUrl || byUrl.has(taskUrl)) continue;
-        byUrl.set(taskUrl, { taskUrl, title: record.taskTitle ?? record.issueTitle ?? '', destinationId: record.destinationId });
+    clearTimeout(searchTimer);
+    const query = search.value.trim();
+    if (!query || (!searchIncomplete && taskSearch.matches(tasks, () => true, 1).length)) {
+      if (!query) lastSearch = '';
+      setSearchBusy(false); return;
+    }
+    if (searching) { setSearchBusy(true); return; }
+    if (query === lastSearch) { setSearchBusy(false); return; }
+    setSearchBusy(true);
+    searchTimer = setTimeout(async () => {
+      searching = true; lastSearch = query; const request = generation;
+      try {
+        const data = await send({ type: 'SEARCH_TASKS', query });
+        if (request !== generation || !dialog.open) return;
+        if (!data?.configured) { lastSearch = ''; searchIncomplete = true; setError('Set up Clockoli before adding time.'); return; }
+        tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        showRepository = Array.isArray(data.readStatus) ? data.readStatus.length > 1
+          : new Set(tasks.map(task => task.timeRepository).filter(Boolean)).size > 1;
+        searchIncomplete = Boolean(data.partial || data.conflicts?.length);
+        if (searchIncomplete) {
+          lastSearch = '';
+          setError('Some tracked tasks could not be searched. Results may be incomplete.');
+        }
+        update();
+      } catch (cause) { if (request === generation && dialog.open) { lastSearch = ''; searchIncomplete = true; setError(`${cause.message || 'Task search failed.'} You can still paste a URL.`); } }
+      finally {
+        if (request === generation) {
+          searching = false; setSearchBusy(false);
+          if (query !== search.value.trim() && search.value.trim()
+              && (searchIncomplete || !taskSearch.matches(tasks, () => true, 1).length)) onSearchInput();
+        }
       }
-      tasks = [...byUrl.values()];
-      if (data.partial || data.conflicts?.length) setError('Some activity could not be searched. Results may be incomplete.');
-      update();
-    } catch (cause) { if (request === generation && dialog.open) setError(`${cause.message || 'Activity search failed.'} You can still paste a URL.`); }
-  });
+    }, 180);
+  };
+  const taskSearch = globalThis.ClockoliTaskSearch.mount(search, { onInput: onSearchInput });
   cancel.addEventListener('click', () => { if (!busy) dialog.close(); });
   close.addEventListener('click', () => { if (!busy) dialog.close(); });
   dialog.addEventListener('keydown', event => {
@@ -128,7 +157,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('close', () => {
     if (dialog.open) return; // A later edit may already have reopened the dialog.
-    generation++; editing?.trigger?.focus?.(); editing = null;
+    generation++; clearTimeout(searchTimer); setSearchBusy(false); editing?.trigger?.focus?.(); editing = null;
   });
   const open = (entry = null, onEdit = null, trigger = button) => {
     saved.hidden = true;
@@ -137,7 +166,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     const runningEdit = Boolean(entry && (entry._active || entry.endedAt == null));
     editing = entry ? { entry, onEdit, trigger, running: runningEdit } : null;
     const now = new Date();
-    tasks = []; selected = null; searched = false; busy = false; search.value = '';
+    tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; searching = false; showRepository = false;
+    busy = false; search.value = ''; setSearchBusy(false);
     heading.textContent = runningEdit ? 'Edit timer start' : entry ? 'Edit time' : 'Add new time';
     close.setAttribute('aria-label', runningEdit ? 'Close Edit timer start' : entry ? 'Close Edit time' : 'Close Add time');
     add.textContent = entry ? 'Save' : 'Add';
@@ -221,7 +251,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       }
     } catch (cause) {
       const message = cause?.message || 'Could not save time.';
-      setError(editing && /overlap/i.test(message)
+      setError(editing && /overlap/i.test(message) && !/running timer/i.test(message)
         ? `${message} Go to List for the affected week and resolve the overlapping entries manually.` : message);
     }
     finally {

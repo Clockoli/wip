@@ -95,6 +95,37 @@ test('report cache is repository-scoped, persisted separately, and cleared with 
   assert.equal(await store.getReportCache('acme/time@main'), null);
 });
 
+test('unified task search cache survives restart but never crosses auth or configuration changes', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };
+  const value = { version: 1, scope, indexTasks: [{ taskUrl: 'https://example.org/one', title: 'One',
+    destinationId: 'github:1', recordIds: ['record-1'] }], readStatus: [{ destinationId: 'github:1', status: 'ok' }] };
+  assert.equal(await store.saveTaskSearchCache(value), true);
+  assert.deepEqual(await new ChromeStore(backend).getTaskSearchCache(scope), value);
+  assert.equal(await store.getTaskSearchCache({ ...scope, repositories: ['github:2@acme/other'] }), null);
+  assert.equal(await store.saveTaskSearchCache({ ...value, refreshedAt: 100 }), true);
+  assert.equal(await store.saveTaskSearchCache({ ...value, refreshedAt: 99 }), false, 'an older network read cannot replace a newer catalog');
+  await store.saveConfiguration({ owner: 'acme', repo: 'other' }, '', {});
+  assert.equal(await store.getTaskSearchCache(scope), null);
+  assert.equal(await store.saveTaskSearchCache(value), false, 'an old in-flight refresh cannot restore the prior scope');
+  await store.clearConfig();
+  assert.equal(backend.values.has('taskSearchCache'), false);
+});
+
+test('invalidation survives restart and rejects a refresh started before a completed write', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };
+  const value = { version: 1, scope, indexTasks: [], readStatus: [] };
+  const epoch = await store.getTaskSearchRevision();
+  assert.equal(await store.saveTaskSearchCache(value, scope, epoch), true);
+  await store.invalidateTaskSearchCache();
+  assert.equal(await new ChromeStore(backend).getTaskSearchCache(scope), null);
+  assert.equal(await new ChromeStore(backend).isTaskSearchDirty(), true);
+  assert.equal(await store.saveTaskSearchCache(value, scope, epoch), false);
+  assert.equal(await store.saveTaskSearchCache(value, scope, await store.getTaskSearchRevision()), true);
+  assert.equal(await new ChromeStore(backend).isTaskSearchDirty(), false);
+});
+
 test('task metadata cache is repository-scoped and cleared with configuration', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const cache = { repositoryKey: 'acme/time@main', fetchedAt: 123, entries: { 'https://github.com/acme/app/issues/1': { title: 'One' } } };

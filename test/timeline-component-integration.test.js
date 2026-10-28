@@ -36,6 +36,7 @@ test('GitHub panel uses the vendored TaskTimeline adapter and has no legacy time
     'src/ui/tracking-card.js',
     'src/ui/weekly-summary.js',
     'src/ui/instant-tooltips.js',
+    'src/ui/task-search.js',
     'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);

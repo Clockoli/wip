@@ -13,11 +13,16 @@ function dateValue(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? '').trim().slice(0, 300); }
+export function trackedTaskKey(value) {
+  const url = taskUrlOf(value);
+  return /^https?:\/\//i.test(url) ? url : `${url}\n${value?.destinationId || value?.destinationIds?.[0] || ''}`;
+}
 function sameTimer(left, right) {
   if (left?.id && right?.id && left.id === right.id) return true;
   if (right?.id && Array.isArray(left?.recordIds) && left.recordIds.includes(right.id)) return true;
   return typeof left?.startedAt === 'string' && typeof right?.startedAt === 'string'
     && left.user === right.user && taskUrlOf(left) === taskUrlOf(right)
+    && trackedTaskKey(left) === trackedTaskKey(right)
     && left.startedAt === right.startedAt;
 }
 
@@ -107,7 +112,7 @@ export function taskPeriodRange(period, today) {
 export function effectiveTrackedSeconds(task, { active = null, now = Date.now() } = {}) {
   const completed = Number(task?.totalSeconds);
   if (!Number.isFinite(completed) || completed < 0) throw new Error('Invalid tracked task duration');
-  if (!task.activeStartedAt || !active || taskUrlOf(active) !== taskUrlOf(task)) return completed;
+  if (!task.activeStartedAt || !active || trackedTaskKey(active) !== trackedTaskKey(task)) return completed;
   const startedAt = new Date(task.activeStartedAt).getTime(), current = new Date(now).getTime();
   if (!Number.isFinite(startedAt) || !Number.isFinite(current)) throw new Error('Invalid active task time');
   return completed + Math.max(0, Math.floor((current - startedAt) / 1000));
@@ -130,9 +135,10 @@ export function aggregateTrackedTasks(records, { user, currentUsers = null, meta
   for (const record of [...persisted, ...pending]) {
     if (!users.has(record?.user)) continue;
     const taskUrl = taskUrlOf(record), issue = record.issue ?? parseGitHubTaskUrl(taskUrl);
+    const key = trackedTaskKey(record);
     const seconds = Number(record.durationSeconds);
     if (!Number.isFinite(seconds) || seconds < 0) throw new Error('Invalid tracked task duration');
-    const existing = tasks.get(taskUrl) ?? {
+    const existing = tasks.get(key) ?? {
       taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0,
       destinationIds: new Set(), timeRepositories: new Set(),
     };
@@ -142,20 +148,21 @@ export function aggregateTrackedTasks(records, { user, currentUsers = null, meta
     if (record.timeRepository) existing.timeRepositories.add(record.timeRepository);
     for (const destinationId of record.duplicateDestinations ?? []) existing.destinationIds.add(destinationId);
     for (const repository of record.duplicateTimeRepositories ?? []) existing.timeRepositories.add(repository);
-    if (record.id && countedIds.has(record.id)) { tasks.set(taskUrl, existing); continue; }
+    if (record.id && countedIds.has(record.id)) { tasks.set(key, existing); continue; }
     if (record.id) countedIds.add(record.id);
-    existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(taskUrl, existing);
+    existing.totalSeconds += seconds; existing.sessionCount += 1; tasks.set(key, existing);
   }
   if (users.has(active?.user)) {
     const taskUrl = taskUrlOf(active), issue = active.issue ?? parseGitHubTaskUrl(taskUrl), startedAt = new Date(active.startedAt);
+    const key = trackedTaskKey(active);
     if (Number.isNaN(startedAt.getTime())) throw new Error('Invalid active task start time');
-    const existing = tasks.get(taskUrl) ?? {
+    const existing = tasks.get(key) ?? {
       taskUrl, ...(issue ? { issue } : {}), totalSeconds: 0, sessionCount: 0,
       destinationIds: new Set(), timeRepositories: new Set(),
     };
     if (active.destinationId) existing.destinationIds.add(active.destinationId);
     if (active.timeRepository) existing.timeRepositories.add(active.timeRepository);
-    existing.activeStartedAt = startedAt.toISOString(); tasks.set(taskUrl, existing);
+    existing.activeStartedAt = startedAt.toISOString(); tasks.set(key, existing);
   }
   return [...tasks.values()].map(task => {
     const details = metadata.get(task.taskUrl);

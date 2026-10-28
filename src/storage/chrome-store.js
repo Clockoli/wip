@@ -36,9 +36,9 @@ const LEGACY_TRACKING_KEYS = ['activeCache', 'recentCache', 'summaryCache', 'pen
 const V5_TRACKING_KEYS = [DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, 'dataVersion'];
 const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
-  'taskMetadataCache', 'reportCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
+  'taskMetadataCache', 'reportCache', 'taskSearchCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -604,7 +604,7 @@ export class ChromeStore {
   async removeDestination(destinationId) {
     return this.backend.mutateMany(
       ['dataVersion', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
-        PROJECTS, 'reportCache', 'taskMetadataCache', CONFIGURATION_GENERATION, SETTINGS_REVISION],
+        PROJECTS, 'reportCache', 'taskSearchCache', 'taskMetadataCache', CONFIGURATION_GENERATION, SETTINGS_REVISION],
       values => {
         const registry = values[DESTINATION_REGISTRY], destination = registry?.destinations?.[destinationId];
         if (values.dataVersion !== 5 || !destination) throw storageFormatError(`Destination ${destinationId} is not configured.`);
@@ -628,7 +628,7 @@ export class ChromeStore {
         return {
           set: {
             [DESTINATION_REGISTRY]: nextRegistry, [DESTINATION_STATES]: nextStates,
-            [REPOSITORY_VERIFICATION]: verification, reportCache: null, taskMetadataCache: null,
+            [REPOSITORY_VERIFICATION]: verification, reportCache: null, taskSearchCache: null, taskMetadataCache: null,
             [CONFIGURATION_GENERATION]: generation, [SETTINGS_REVISION]: revision,
           },
           result: { destinationId, generation, revision },
@@ -757,7 +757,7 @@ export class ChromeStore {
   async promoteToUserStorageBranch(expectedGeneration, expected, patch) {
     return this.backend.mutateMany(
       ['config', 'dataVersion', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER,
-        CONFIGURATION_GENERATION, 'activeCache', 'pendingWrites', 'recentCache', 'summaryCache', 'reportCache', 'taskMetadataCache'],
+        CONFIGURATION_GENERATION, 'activeCache', 'pendingWrites', 'recentCache', 'summaryCache', 'reportCache', 'taskSearchCache', 'taskMetadataCache'],
       values => {
         const generation = generationValue(values[CONFIGURATION_GENERATION]);
         if (generation !== expectedGeneration) return { result: false };
@@ -772,7 +772,7 @@ export class ChromeStore {
           return {
             set: {
               [DESTINATION_REGISTRY]: registry, [DESTINATION_STATES]: { ...values[DESTINATION_STATES], entries },
-              [CONFIGURATION_GENERATION]: generation + 1, reportCache: null, taskMetadataCache: null,
+              [CONFIGURATION_GENERATION]: generation + 1, reportCache: null, taskSearchCache: null, taskMetadataCache: null,
             },
             result: generation + 1,
           };
@@ -783,7 +783,7 @@ export class ChromeStore {
         return {
           set: {
             config: { ...config, ...structuredClone(patch) }, [CONFIGURATION_GENERATION]: generation + 1,
-            recentCache: [], summaryCache: null, reportCache: null, taskMetadataCache: null,
+            recentCache: [], summaryCache: null, reportCache: null, taskSearchCache: null, taskMetadataCache: null,
           },
           result: generation + 1,
         };
@@ -805,6 +805,49 @@ export class ChromeStore {
         ? current.reportCache.entries
         : current.reportCache?.repositoryKey ? { [current.reportCache.repositoryKey]: current.reportCache } : {};
       return { set: { reportCache: { version: 2, entries: { ...existing, [value.repositoryKey]: value } } }, result: true };
+    });
+  }
+
+  async getTaskSearchCache(scope) {
+    const values = await this.backend.getMany(['taskSearchCache', CONFIGURATION_GENERATION, AUTH_GENERATION]);
+    const { taskSearchCache } = values;
+    return generationValue(values[CONFIGURATION_GENERATION]) === scope.generation
+      && generationValue(values[AUTH_GENERATION]) === scope.authGeneration
+      && taskSearchCache?.version === 1 && JSON.stringify(taskSearchCache.scope) === JSON.stringify(scope)
+      && Array.isArray(taskSearchCache.indexTasks) && Array.isArray(taskSearchCache.readStatus)
+      ? taskSearchCache : null;
+  }
+
+  async getTaskSearchRevision() {
+    const { taskSearchCache } = await this.backend.getMany(['taskSearchCache']);
+    return taskSearchCache?.revision ?? 0;
+  }
+
+  async isTaskSearchDirty() {
+    const { taskSearchCache } = await this.backend.getMany(['taskSearchCache']);
+    return taskSearchCache?.dirty === true;
+  }
+
+  async invalidateTaskSearchCache() {
+    return this.backend.mutateMany(['taskSearchCache'], current => ({
+      set: { taskSearchCache: { revision: (current.taskSearchCache?.revision ?? 0) + 1, dirty: true } }, result: true,
+    }));
+  }
+
+  async saveTaskSearchCache(value, scope = value?.scope, expectedRevision = undefined) {
+    if (!scope || !Number.isSafeInteger(scope.generation) || !Number.isSafeInteger(scope.authGeneration)
+        || !Array.isArray(scope.repositories) || (value && (value.version !== 1 || !Array.isArray(value.indexTasks)
+          || !Array.isArray(value.readStatus) || JSON.stringify(value.scope) !== JSON.stringify(scope)))) {
+      throw new Error('Invalid task search cache');
+    }
+    return this.backend.mutateMany(['taskSearchCache', CONFIGURATION_GENERATION, AUTH_GENERATION], current => {
+      if (generationValue(current[CONFIGURATION_GENERATION]) !== scope.generation
+          || generationValue(current[AUTH_GENERATION]) !== scope.authGeneration) return { result: false };
+      if (expectedRevision !== undefined && (current.taskSearchCache?.revision ?? 0) !== expectedRevision) return { result: false };
+      if (value && JSON.stringify(current.taskSearchCache?.scope) === JSON.stringify(scope)
+          && (current.taskSearchCache.refreshedAt ?? 0) > (value.refreshedAt ?? 0)) return { result: false };
+      const revision = current.taskSearchCache?.revision ?? 0;
+      return { set: { taskSearchCache: value && { ...value, ...(revision ? { revision } : {}) } }, result: true };
     });
   }
 

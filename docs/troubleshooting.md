@@ -155,10 +155,13 @@ Clockoli warns before saving an entry longer than 12 hours. This catches forgott
 
 Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. Until it does, a new Start can report that the previous timer was saved locally but must sync first.
 
+Activity shows **Stop waiting to sync** instead of **Not tracking** while a completion is queued, or **Stop needs attention** if it has a conflict. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it. A separate GitHub timer warning appears in Timeline, Calendar, and List when the remote active record differs from local tracking; it does not turn a completed historical row into a running timer.
+
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
 - Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
 - If the panel shows **Retry** or another recovery action, follow it.
+- In **Activity → List**, pending local changes are identified separately from queued conflicts. If a conflict appears, review its recovery action there; never discard an unsaved completion until you have verified the time is recorded elsewhere.
 
 See [Sync and offline work](sync.md) for the full model.
 
@@ -208,7 +211,9 @@ The represented intervals still intersect after correction. Endpoint-touching re
 
 ### Timeline says a completed entry overlaps the running timer
 
-This can happen even when both records track the same task: they are separate time intervals. Compare the completed entry's **End** with the running timer's **Start**. An edit that would extend a completed entry past the running timer's Start is rejected before it is queued or saved; adjust the completed End to touch or precede the running Start. Existing overlaps are not silently shortened or deleted: review the affected times in Activity and correct the intended boundary.
+This can happen even when both records track the same task: they are separate time intervals. The error shows the running timer's **Start** in its recorded timezone and as an exact UTC timestamp. An edit whose completed **End** is later than that Start is rejected before it is queued or saved; an End exactly at Start is allowed. A running timer is not a completed entry in List, so List alone may not reveal the overlap. If Activity says **Not tracking** while this error appears, check **Activity → List** for pending local changes or a queued conflict and follow the offered recovery action. A locally accepted Stop may still be waiting to remove the remote active timer; queued writes retry automatically when access is restored. Do not clear local data or discard a pending write to make the edit pass; first verify what the remote active record and pending operation represent. After synchronization, refresh Activity and retry. Existing overlaps are not silently shortened or deleted.
+
+Activity now checks GitHub for a running timer when the week loads and shows a separate warning in all three views if that remote timer differs from local tracking. **Recheck GitHub timer** repeats the read without stopping it or discarding queued writes. A completed row's **Start tracking** / **Stop tracking** control refers to the task URL, not to the row's historical interval: multiple rows for the same task can all offer Stop while one local timer for that task is running. If the remote warning persists after local tracking stops, inspect the pending operation and verify the completed time before taking any destructive recovery action.
 
 ### Inline edit or Delete reports a stale or changed record
 

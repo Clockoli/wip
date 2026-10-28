@@ -51,6 +51,25 @@ test('tracked tasks aggregate current users by URL with sorted destination prove
   }]);
 });
 
+test('imported Top tasks keep personal totals and running time separate by destination', () => {
+  const taskUrl = 'acme/project/imported-task';
+  const records = [
+    { id: 'first', user: 'alice', taskUrl, taskTitle: 'First import', durationSeconds: 600,
+      destinationId: 'github:1', timeRepository: 'acme/first' },
+    { id: 'second', user: 'alice', taskUrl, taskTitle: 'Second import', durationSeconds: 1200,
+      destinationId: 'github:2', timeRepository: 'acme/second' },
+  ];
+  const active = { user: 'alice', taskUrl, destinationId: 'github:2', startedAt: '2026-08-20T10:00:00Z' };
+  const tasks = aggregateTrackedTasks(records, { user: 'alice', active });
+  assert.deepEqual(tasks.map(item => [item.destinationIds?.[0], item.totalSeconds, item.title]), [
+    ['github:2', 1200, 'Second import'], ['github:1', 600, 'First import'],
+  ]);
+  assert.equal(tasks[0].activeStartedAt, '2026-08-20T10:00:00.000Z');
+  assert.equal(tasks[1].activeStartedAt, undefined);
+  assert.equal(effectiveTrackedSeconds(tasks[1], { active, now: '2026-08-20T10:05:00Z' }), 600);
+  assert.equal(effectiveTrackedSeconds(tasks[0], { active, now: '2026-08-20T10:05:00Z' }), 1500);
+});
+
 test('an empty selected-user set is an empty Top tasks result, not a missing-owner error', () => {
   assert.deepEqual(aggregateTrackedTasks([], { currentUsers: [] }), []);
   assert.deepEqual(aggregateTrackedTasks([record(issue(1), 60, '2026-08-20')], { currentUsers: [] }), []);
