@@ -2420,20 +2420,24 @@
     refresh.hidden = activityViewMode !== 'list';
     toolbar.append(weekNavigation(), refresh);
     body.append(toolbar, listTotal);
+    for (const timer of pageState.remoteTimers ?? []) {
+      const started = new Intl.DateTimeFormat('en-GB', {
+        dateStyle: 'medium', timeStyle: 'short', timeZone: timer.timezone,
+      }).format(new Date(timer.startedAt));
+      const pendingStop = pageState.pendingWrites?.some(item => item.destinationId === timer.destinationId
+        && item.operation === 'completeTimer');
+      const warning = el('div', undefined, 'remote-timer-warning notice');
+      warning.setAttribute('role', 'alert');
+      warning.append(el('strong', 'GitHub had a running timer at the last check'),
+        el('div', pendingStop
+          ? `Started ${started} ${timer.timezone}. Stop is already queued locally for this repository. Do not stop again; keep this browser data until the queued changes sync. Open List to review pending changes.`
+          : `Started ${started} ${timer.timezone}. This remote timer may differ from local tracking. Open List and review pending changes before editing or removing either record.`));
+      warning.append(button('Recheck GitHub timer', 'secondary', async () => {
+        try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
+      }));
+      body.append(warning);
+    }
     if (activityViewMode === 'list') {
-      for (const timer of pageState.remoteTimers ?? []) {
-        const started = new Intl.DateTimeFormat('en-GB', {
-          dateStyle: 'medium', timeStyle: 'short', timeZone: timer.timezone,
-        }).format(new Date(timer.startedAt));
-        const warning = el('div', undefined, 'remote-timer-warning notice');
-        warning.setAttribute('role', 'alert');
-        warning.append(el('strong', 'GitHub had a running timer at the last check'),
-          el('div', `Started ${started} ${timer.timezone}. This remote timer is not a completed List entry and may differ from local tracking while changes are waiting to sync. Review pending changes before editing or removing either record.`));
-        warning.append(button('Recheck GitHub timer', 'secondary', async () => {
-          try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
-        }));
-        body.append(warning);
-      }
       const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
       if (waiting.length) {
         const count = waiting.length;

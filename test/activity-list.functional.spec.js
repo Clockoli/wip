@@ -665,6 +665,7 @@ test('Activity List requires confirmation before discarding an unsaved completio
     await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
     await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
     await expect(page.locator('#clockoli-times-root .conflict').getByText('Completion was not saved')).toBeVisible();
+    await expect(page.locator('#activity-running-status .running-status-idle')).toHaveText('Stop needs attention');
     page.once('dialog', dialog => dialog.dismiss());
     await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
     await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(1);
@@ -736,6 +737,38 @@ test('Activity rechecks a GitHub-only timer when the pending completion leaves t
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length)).toBeGreaterThan(checksBefore);
     await expect(warning).toHaveCount(0, { timeout: 12_000 });
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+  });
+});
+
+test('Activity shows an unsynced Stop beside idle status in every view without offering a second Stop', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'commitCompletion', destinationId: 'github:1' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    const status = page.locator('#activity-running-status');
+    await expect(status.locator('.running-status-idle')).toHaveText('Stop waiting to sync');
+    await expect(status.locator('.running-status-idle-hint')).toHaveText('Do not stop this timer again');
+    await expect(status.locator('.running-status-stop')).toBeHidden();
+    await expect(status).toHaveClass(/is-pending-stop/);
+    expect(await status.evaluate(node => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--borderColor-attention-emphasis)';
+      node.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(node.querySelector('.running-status-row')).borderLeftColor === expected;
+    })).toBe(true);
+    for (const view of ['Timeline', 'Calendar', 'List']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
+      const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+      await expect(warning).toBeVisible();
+      await expect(warning).toContainText('Stop is already queued locally');
+    }
+    expect(errors).toEqual([]);
   });
 });
 

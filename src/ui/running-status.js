@@ -304,9 +304,14 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
 
   function render() {
     const active = state.active;
+    const pendingStop = !active && state.pendingWrites?.some(item => item.operation === 'completeTimer');
+    const stoppedWithConflict = pendingStop && state.pendingWrites.some(item => item.operation === 'completeTimer' && item.status === 'conflict');
     container.classList.toggle('is-active', Boolean(active));
     container.classList.toggle('is-idle', Boolean(state.configured && !active));
-    idle.textContent = 'Not tracking';
+    container.classList.toggle('is-pending-stop', Boolean(pendingStop));
+    idle.textContent = stoppedWithConflict ? 'Stop needs attention' : pendingStop ? 'Stop waiting to sync' : 'Not tracking';
+    idleHint.textContent = stoppedWithConflict ? 'Review the conflict in Activity List'
+      : pendingStop ? 'Do not stop this timer again' : 'Start a task to begin';
     idle.hidden = Boolean(active);
     quickStart.hidden = !state.configured || Boolean(active);
     if (!quickStart.hidden) renderRecent();
