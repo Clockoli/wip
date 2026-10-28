@@ -1820,13 +1820,22 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     expect(panelNowPosition).toBeLessThan(1.05);
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await panelNeighbor.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
-    const { panelFrom, panelTo, panelViewport } = await panelSource.evaluate(element => {
-      const root = element.getRootNode();
-      const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
-      return { panelFrom: element.getBoundingClientRect().toJSON(),
-        panelTo: neighbor.getBoundingClientRect().toJSON(),
-        panelViewport: root.querySelector('.viewport').getBoundingClientRect().toJSON() };
-    });
+    let panelGeometry;
+    await expect.poll(async () => {
+      panelGeometry = await panelSource.evaluate(element => {
+        if (!element.isConnected) return null;
+        const root = element.getRootNode();
+        const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
+        const viewport = root.querySelector('.viewport');
+        if (!neighbor || !viewport) return null;
+        const panelFrom = element.getBoundingClientRect(), panelTo = neighbor.getBoundingClientRect();
+        if (!panelFrom.width || !panelFrom.height || !panelTo.width || !panelTo.height) return null;
+        return { panelFrom: panelFrom.toJSON(), panelTo: panelTo.toJSON(),
+          panelViewport: viewport.getBoundingClientRect().toJSON() };
+      });
+      return Boolean(panelGeometry);
+    }).toBe(true);
+    const { panelFrom, panelTo, panelViewport } = panelGeometry;
     const destinationX = Math.max(panelViewport.x + 8, panelTo.x + 6);
     expect(destinationX).toBeLessThan(panelTo.x + panelTo.width / 2);
     await github.mouse.move(panelFrom.x + panelFrom.width / 2, panelFrom.y + panelFrom.height / 2);
