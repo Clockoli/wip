@@ -3085,6 +3085,7 @@
     _renderCalendar() {
       if (!this.calendarView || this.viewMode !== 'calendar') return;
       if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
+      const focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]');
       const metrics = this._calendarMetricsForRender();
       this.calendarCanvas.innerHTML = '';
       this.calendarCanvas.style.width = `${metrics.width}px`;
@@ -3169,7 +3170,7 @@
         this.calendarCanvas.appendChild(line);
       }
 
-      this._renderCalendarTasks(metrics);
+      this._renderCalendarTasks(metrics, focusedTask);
       this._renderCalendarNowLine(metrics);
       if (!this.calendarScrollInitialized && this.calendarViewport.clientHeight > 0) {
         const starts = this._calendarSegments().map(segment =>
@@ -3402,7 +3403,7 @@
       this.calendarCanvas.appendChild(guide);
     }
 
-    _renderCalendarTasks(metrics = this._calendarMetrics || this._calendarMetricsForRender()) {
+    _renderCalendarTasks(metrics = this._calendarMetrics || this._calendarMetricsForRender(), focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]')) {
       for (const old of this.calendarCanvas.querySelectorAll('.calendar-task, .calendar-connector-dot')) old.remove();
       const items = this._layoutCalendarSegments(metrics);
       for (const item of items) {
@@ -3485,6 +3486,12 @@
       }
       this._renderCalendarConnectors(metrics, items);
       this._renderCalendarMagnetGuide(metrics);
+      if (focusedTask) {
+        const candidates = [...this.calendarCanvas.querySelectorAll('.calendar-task[data-task-key]')]
+          .filter(node => node.dataset.taskKey === focusedTask.dataset.taskKey);
+        (candidates.find(node => node.dataset.segmentStart === focusedTask.dataset.segmentStart) || candidates[0])
+          ?.focus({ preventScroll: true });
+      }
     }
 
     _renderCalendarNowLine(metrics = this._calendarMetrics) {

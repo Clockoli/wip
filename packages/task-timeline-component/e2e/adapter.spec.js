@@ -2901,6 +2901,22 @@ test('focused task keeps keyboard focus when timeline items render again', async
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
 });
 
+test('focused Calendar task keeps keyboard focus when a resize renders again', async ({ page }) => {
+  await mount(page);
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const block = page.locator('#timeline .calendar-task[data-task-key="entry:b"]').first();
+  await block.click();
+  expect(await page.evaluate(() => window.__timeline.__timeline.selectedKey)).toBe('entry:b');
+  await block.focus();
+  await expect(block).toBeFocused();
+  const original = await block.elementHandle();
+  await page.evaluate(() => window.__timeline.__timeline._onResize());
+  await expect.poll(() => original.evaluate(element => element.isConnected)).toBe(false);
+  await expect(block).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['edit', 'entry:b', 'move']]);
+});
+
 test('details descriptions expose a green check and save when it is clicked', async ({ page }) => {
   const now = Date.now();
   await mount(page, { items: [
