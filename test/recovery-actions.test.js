@@ -41,6 +41,7 @@ test('all required runtime surfaces load and use the shared recovery taxonomy', 
     'src/ui/tracking-card.js',
     'src/ui/weekly-summary.js',
     'src/ui/instant-tooltips.js',
+    'src/ui/task-search.js',
     'src/content/task-timeline-component.js',
     'src/content/github.js',
   ]);

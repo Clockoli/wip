@@ -8,10 +8,11 @@ import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
+const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 // The fake DOM does not mount the real timeline adapter. Render the shared panel's
 // non-timeline body so its tracker controls remain covered by these component tests.
-const domHarnessSource = trackingCardSource + '\n' + source.replace(
+const domHarnessSource = trackingCardSource + '\n' + taskSearchSource + '\n' + source.replace(
   'renderMenu({ compact: true, onClose: closeFullWidthPopup })',
   'renderMenu({ onClose: closeFullWidthPopup })',
 );
@@ -2076,6 +2077,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   });
   vm.runInContext(recoverySource, context);
   vm.runInContext(trackingCardSource, context);
+  vm.runInContext(taskSearchSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
     globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, queueActiveDescriptionEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
@@ -4594,6 +4596,25 @@ test('Activity displays and searches imported identities without creating a task
   assert.equal(root.querySelectorAll('.entry-record').length, 1);
   filter.value = 'absent'; filter.oninput({});
   assert.equal(root.querySelectorAll('.entry-record').length, 0);
+});
+
+test('Activity searches the displayed title and URL but not hidden issue fields', async () => {
+  const entry = { ...activityEntry('1', '2026-09-05', '08'), taskTitle: 'Fix renderer',
+    title: 'Outdated title', taskUrl: 'https://github.com/acme/app/pull/42',
+    issue: { type: 'pull_request', owner: 'acme', repo: 'app', number: 42 } };
+  const h = activityHarness([entry]);
+  const root = h.renderActivity();
+  const filter = root.querySelector('.times-filter').querySelector('input');
+  for (const term of ['Fix renderer', 'pull/42']) {
+    filter.value = term; filter.oninput({});
+    const search = [...h.timeouts.values()].find(item => item.delay === 250);
+    if (search) await search.callback();
+    assert.equal(root.querySelectorAll('.entry-record').length, 1, term);
+  }
+  for (const term of ['Outdated title', 'pull_request', 'Fix renderer https://']) {
+    filter.value = term; filter.oninput({});
+    assert.equal(root.querySelectorAll('.entry-record').length, 0, term);
+  }
 });
 
 test('Activity edits imported time and metadata without submitting a non-URL as a new task', async () => {

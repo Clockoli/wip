@@ -12,12 +12,27 @@ globalThis.deferAdd = false;
 globalThis.pendingAddRespond = null;
 globalThis.deferTasks = false;
 globalThis.pendingTasksRespond = null;
+globalThis.deferSearch = false;
+globalThis.failSearch = false;
+globalThis.searchRepositories = ['team/time'];
+globalThis.pendingSearchRespond = null;
+globalThis.pendingSearchResponse = null;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.messages.push(message);
-  if (message.type === 'SEARCH_ACTIVITY') respond({ ok: true, data: { configured: true, recent: [
-    { taskUrl: '${taskUrl}', taskTitle: 'Existing task', destinationId: 'github:1', entryDate: '2026-01-01' },
-    { taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', entryDate: '2025-01-01' }
-  ] } });
+  if (message.type === 'SEARCH_TASKS') {
+    const response = globalThis.failSearch ? { ok: false, error: { message: 'Search unavailable' } }
+      : { ok: true, data: { configured: true, tasks: [
+      { taskUrl: '${taskUrl}', title: 'Existing task', destinationIds: ['github:1'] },
+      { taskUrl: 'acme/project/imported', title: 'Imported conversational task', destinationId: 'github:2', timeRepository: 'team/time' },
+      { taskUrl: 'https://example.org/colleague-task', title: 'Colleague task', destinationIds: ['github:2'] }
+    ], readStatus: globalThis.searchRepositories.map(timeRepository => ({ timeRepository, status: 'ok' })) } };
+    if (globalThis.deferSearch) {
+      globalThis.pendingSearchRespond = respond;
+      globalThis.pendingSearchResponse = response;
+      return true;
+    }
+    respond(response);
+  }
   else if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { configured: true, recent: [], active: null, pendingWrites: [] } });
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
   else if (message.type === 'ADD_TIME') {
@@ -30,6 +45,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     globalThis.pendingTasksRespond = respond;
     return true;
   }
+  else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [
+    { taskUrl: '${taskUrl}', title: 'Existing task', totalSeconds: 3600, sessionCount: 1, destinationIds: ['github:1'] }
+  ], active: null, pendingWrites: [] } });
+  else if (message.type === 'START') respond({ ok: true, data: { taskUrl: message.taskUrl, startedAt: new Date().toISOString(), destinationId: message.destinationId || 'github:1' } });
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
 });
 `;
@@ -227,8 +246,11 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const base = `chrome-extension://${new URL(worker.url()).host}/src/`;
     const errors = [];
+    worker.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     for (const path of ['times/times.html', 'tasks/tasks.html']) {
       const page = await context.newPage();
+      await worker.evaluate(() => { globalThis.searchRepositories = ['team/time']; });
       page.on('pageerror', error => errors.push(error.message));
       const before = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
       await page.goto(base + path);
@@ -260,11 +282,33 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
         return new Date(`${document.getElementById('add-time-date').value}T${document.getElementById('add-time-start').value}`).toISOString();
       });
       const search = dialog.getByRole('combobox', { name: 'Task' });
+      await worker.evaluate(() => { globalThis.deferSearch = true; });
       await search.fill('Existing');
+      const searching = dialog.getByRole('status', { name: 'Searching tasks' });
+      await expect(searching).toBeVisible();
+      await expect(search).toHaveAttribute('aria-busy', 'true');
+      await expect(dialog.locator('.add-time-search-spinner')).toBeVisible();
+      await expect.poll(() => worker.evaluate(() => globalThis.pendingSearchResponse?.data?.readStatus?.length)).toBe(1);
+      await worker.evaluate(() => {
+        globalThis.deferSearch = false;
+        globalThis.pendingSearchRespond(globalThis.pendingSearchResponse);
+        globalThis.pendingSearchRespond = null;
+        globalThis.pendingSearchResponse = null;
+      });
+      await expect(searching).toBeHidden();
+      await expect(search).toHaveAttribute('aria-busy', 'false');
       await expect(dialog.getByRole('button', { name: /Existing task/ })).toBeVisible();
+      await search.fill('Imported');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).not.toContainText('team/time');
+      await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
       await expect(dialog.locator('.add-time-preview')).toContainText(taskUrl);
-      expect((await worker.evaluate(() => globalThis.messages)).some(message => message.type === 'SEARCH_ACTIVITY')).toBe(true);
+      expect((await worker.evaluate(() => globalThis.messages)).some(message => message.type === 'SEARCH_TASKS')).toBe(true);
+      await search.fill('Colleague');
+      await dialog.getByRole('button', { name: /Colleague task/ }).click();
+      await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
+      await search.fill('Existing');
+      await dialog.getByRole('button', { name: /Existing task/ }).click();
       await startTime.fill('09:15');
       await expect(endTime).toHaveValue('', 'changing Start in Add time must not create an End');
       await endTime.fill('10:45');
@@ -294,6 +338,32 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       let imported = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
       expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', startedAt: importedStart, endedAt: null, description: '' });
       await add.click();
+      await worker.evaluate(() => { globalThis.deferSearch = true; });
+      await search.fill('Existing');
+      await expect(searching).toBeVisible();
+      await expect.poll(() => worker.evaluate(() => Boolean(globalThis.pendingSearchRespond))).toBe(true);
+      await dialog.getByRole('button', { name: 'Close Add time' }).click();
+      await expect(searching).toBeHidden();
+      await worker.evaluate(() => {
+        globalThis.deferSearch = false;
+        globalThis.pendingSearchRespond(globalThis.pendingSearchResponse);
+        globalThis.pendingSearchRespond = null;
+        globalThis.pendingSearchResponse = null;
+        globalThis.failSearch = true;
+      });
+      await add.click();
+      await expect(searching).toBeHidden();
+      await search.fill('Missing');
+      await expect(dialog.getByRole('alert')).toContainText('Search unavailable');
+      await expect(searching).toBeHidden();
+      await expect(search).toHaveAttribute('aria-busy', 'false');
+      await worker.evaluate(() => { globalThis.failSearch = false; });
+      await search.fill('');
+      const beforeRetry = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'SEARCH_TASKS' && message.query === 'Missing').length;
+      await search.fill('Missing');
+      await expect.poll(async () => (await worker.evaluate(() => globalThis.messages))
+        .filter(message => message.type === 'SEARCH_TASKS' && message.query === 'Missing').length).toBe(beforeRetry + 1);
+      await expect(dialog.getByRole('alert')).toBeHidden();
       await search.fill('javascript:alert(1)');
       await expect(dialog.locator('.add-time-preview')).toBeHidden();
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
@@ -313,7 +383,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       const submitted = messages.filter(message => message.type === 'ADD_TIME');
       expect(submitted).toHaveLength(before + 3);
       expect(submitted.at(-1)).toEqual({ type: 'ADD_TIME', taskUrl: 'https://example.org/new-task', taskTitle: '', startedAt: urlStart, endedAt: null, description: '' });
-      expect(messages.some(message => message.type === 'SEARCH_ACTIVITY')).toBe(true);
+      expect(messages.some(message => message.type === 'SEARCH_TASKS')).toBe(true);
       await add.click();
       await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
@@ -407,6 +477,11 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect.poll(() => dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       await expect(startTime).toBeVisible();
       await expect(endTime).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await worker.evaluate(() => { globalThis.searchRepositories = ['team/time', 'another/time']; });
+      await add.click();
+      await search.fill('Imported');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toContainText('team/time');
       await page.close();
     }
     expect(errors).toEqual([]);

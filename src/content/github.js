@@ -214,6 +214,7 @@
   }
   function trackableTaskIdentityOf(value) { return storedTaskIdentityOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
+  function activitySearchFields(entry) { return [storedTaskIdentityOf(entry), taskTitleOf(entry)]; }
   function taskResult(value, className = '') {
     const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
     const result = el('div', undefined, `task-result${taskTitle ? '' : ' task-result-untitled'}${className ? ` ${className}` : ''}`);
@@ -2280,6 +2281,13 @@
   }
 
   function createActivityListRenderer(result, filter, onEmpty = null) {
+    const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+      timesFilter = filter.value;
+      activitySearchPage = 0;
+      if (timesFilter.trim()) scheduleActivitySearch();
+      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
+      renderFiltered();
+    }, textOf: activitySearchFields });
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
       const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
@@ -2292,7 +2300,7 @@
         : recordsWithDrafts(), timelineOptimisticCompletions.values())
         .filter(entry => query || (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
           || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
-      const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...entries];
+      const matches = taskSearch.matches(entries);
       if (query) {
         result.append(el('p', 'Search results across all weeks', 'muted'));
         if (activitySearchPartial) result.append(el('p', 'Some time repositories or conflicting records could not be searched. Results may be incomplete.', 'notice partial-read-warning'));
@@ -2336,13 +2344,6 @@
       }
     };
     renderActivitySearch = renderFiltered;
-    filter.addEventListener('input', () => {
-      timesFilter = filter.value;
-      activitySearchPage = 0;
-      if (timesFilter.trim()) scheduleActivitySearch();
-      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
-      renderFiltered();
-    });
     if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
     renderFiltered();
     return renderFiltered;
@@ -3722,15 +3723,15 @@
         listToolbar.append(refresh);
         if (popupMode) compactSurface.renderList = createActivityListRenderer(today, filter);
         else {
+          const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+            panelListFilter = filter.value; compactSurface.renderList();
+          }, textOf: activitySearchFields });
           compactSurface.renderList = (entries = compactSurface.listEntries || []) => {
             today.replaceChildren();
-            const query = panelListFilter.trim().toLowerCase();
-            const matches = query ? entries.filter(entry => (storedTaskIdentityOf(entry) || '').toLowerCase().includes(query)
-              || taskTitleOf(entry).toLowerCase().includes(query)) : entries;
-            const empty = query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
+            const matches = taskSearch.matches(entries);
+            const empty = taskSearch.query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
             renderRecent(today, matches, empty, true, true);
           };
-          filter.addEventListener('input', () => { panelListFilter = filter.value; compactSurface.renderList(); });
         }
         const timeline = renderPopupTimeline();
         compactSurface.timeline = timeline;

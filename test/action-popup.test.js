@@ -18,7 +18,7 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
 
   assert.match(worker, /async function toggleActionSurface\(tab\)/);
   assert.match(worker, /chrome\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \}[\s\S]*globalThis\.__CLOCKOLI_ACTION_SURFACE__ = true/);
-  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/ui\/tracking-card\.js', 'src\/content\/task-timeline-component\.js', 'src\/content\/github\.js'\]/);
+  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/ui\/tracking-card\.js', 'src\/ui\/task-search\.js', 'src\/content\/task-timeline-component\.js', 'src\/content\/github\.js'\]/);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.doesNotMatch(worker, /restoreActionPopup|REGISTER_GITHUB_ACTION_SURFACE/);
 

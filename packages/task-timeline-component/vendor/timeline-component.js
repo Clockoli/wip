@@ -3085,8 +3085,8 @@
     _renderCalendar() {
       if (!this.calendarView || this.viewMode !== 'calendar') return;
       if (!this.calendarWindowInitialized) this._initializeCalendarWindowFromTimeline();
-      const focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]');
       const metrics = this._calendarMetricsForRender();
+      const focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]');
       this.calendarCanvas.innerHTML = '';
       this.calendarCanvas.style.width = `${metrics.width}px`;
       this.calendarCanvas.style.height = `${metrics.height}px`;
@@ -3403,7 +3403,8 @@
       this.calendarCanvas.appendChild(guide);
     }
 
-    _renderCalendarTasks(metrics = this._calendarMetrics || this._calendarMetricsForRender(), focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]')) {
+    _renderCalendarTasks(metrics = this._calendarMetrics || this._calendarMetricsForRender(),
+      focusedTask = this.shadow.activeElement?.closest?.('.calendar-task[data-task-key]')) {
       for (const old of this.calendarCanvas.querySelectorAll('.calendar-task, .calendar-connector-dot')) old.remove();
       const items = this._layoutCalendarSegments(metrics);
       for (const item of items) {
@@ -3487,10 +3488,22 @@
       this._renderCalendarConnectors(metrics, items);
       this._renderCalendarMagnetGuide(metrics);
       if (focusedTask) {
-        const candidates = [...this.calendarCanvas.querySelectorAll('.calendar-task[data-task-key]')]
+        const sameTask = [...this.calendarCanvas.querySelectorAll('.calendar-task[data-task-key]')]
           .filter(node => node.dataset.taskKey === focusedTask.dataset.taskKey);
-        (candidates.find(node => node.dataset.segmentStart === focusedTask.dataset.segmentStart) || candidates[0])
-          ?.focus({ preventScroll: true });
+        const matching = sameTask.find(node => node.dataset.segmentStart === focusedTask.dataset.segmentStart);
+        if (matching) matching.focus({ preventScroll: true });
+        else {
+          const viewport = this.calendarViewport.getBoundingClientRect();
+          const visible = sameTask.find(node => {
+            const bounds = node.getBoundingClientRect();
+            return bounds.right > viewport.left && bounds.left < viewport.right
+              && bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+          });
+          const closest = sameTask.reduce((best, node) => !best
+            || Math.abs(Number(node.dataset.segmentStart) - Number(focusedTask.dataset.segmentStart))
+              < Math.abs(Number(best.dataset.segmentStart) - Number(focusedTask.dataset.segmentStart)) ? node : best, null);
+          (visible || closest)?.focus(visible ? { preventScroll: true } : undefined);
+        }
       }
     }
 

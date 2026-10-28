@@ -1947,14 +1947,16 @@ test('recent load backfills missing issue titles once with the current SHA', asy
   const first = await tracker.loadMenuData(50);
   assert.equal(first.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1);
-  assert.equal(github.writes.length, 1);
-  assert.equal(github.writes[0].sha, 'daily');
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [path, TASK_INDEX_PATH]);
+  assert.equal(github.atomicWrites[0].changes[0].sha, 'daily');
   assert.equal(JSON.parse(github.files.get(path).text).work_item.title, 'Ranking regression');
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text).tasks[issue.url].title, 'Ranking regression');
 
   const second = await tracker.loadMenuData(50);
   assert.equal(second.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1, 'persisted titles are not resolved again');
-  assert.equal(github.writes.length, 1, 'persisted titles are not rewritten again');
+  assert.equal(github.atomicWrites.length, 1, 'persisted titles are not rewritten again');
 });
 
 test('recent load persists a current-page title into a legacy active timer with its current SHA', async () => {
@@ -2598,6 +2600,20 @@ test('completed Add time is accepted and projected locally without any GitHub re
   assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' })[0].id, added.entry.id);
 });
 
+test('activity projection reports indexed IDs replaced by queued deletes and edits', async () => {
+  const store = new MemoryStore(), tracker = service({ github: new FakeGitHub(), store });
+  const deleted = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const moved = entry('2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z');
+  store.value.pendingWrites = [
+    { operation: 'deleteEntry', request: { original: deleted } },
+    { operation: 'editEntry', queuedAt: '2026-08-19T00:00:00.000Z',
+      request: { original: moved, edits: { taskUrl: 'https://example.org/new' }, path: 'times/2026-08/alice.jsonl' } },
+  ];
+  const projected = await tracker.projectActivityRecords([]);
+  assert.deepEqual(projected.replacedRecordIds, [deleted.id, moved.id]);
+  assert.deepEqual(projected.records.map(record => record.taskUrl), ['https://example.org/new']);
+});
+
 test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.addTime({ taskUrl: issue.url,
@@ -2807,6 +2823,21 @@ test('Add time reuses only an existing imported task identity and keeps writes a
   })));
   const result = await tracker.addTime(request);
   assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
+});
+
+test('Add time accepts a teammate imported identity only after the shared index verifies it', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const imported = 'acme/project/colleague-task';
+  const request = { taskUrl: imported, taskTitle: 'Colleague task',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  const calls = [];
+  tracker.reports = { loadRepositoryTask: async (taskUrl, options) => {
+    calls.push([taskUrl, options.scanAllUsers]); return [{ taskUrl, user: 'bob' }];
+  } };
+  const result = await tracker.addTime(request);
+  assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(calls, [[imported, true]]);
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
 });
 

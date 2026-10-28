@@ -204,7 +204,19 @@ Top tasks, Activity, participant totals, and Reports can read selected or all co
 
 Reports lists valid personal branches in each selected time repository, reads represented monthly JSONL files for the selected local-date range, and downloads immutable blobs as needed. It keeps **Task source** (the tracked URL's host or GitHub repository) separate from **Time repository** (the storage destination).
 
-On GitHub issue and pull-request pages, participant all-time totals read one `.clockoli/tasks.json` file from each relevant personal branch. The sidebar does not scan monthly history. Top tasks aggregate the same canonical URL across selected destinations and preserve destination provenance.
+On GitHub issue and pull-request pages, participant all-time totals read one `.clockoli/tasks.json` file from each relevant personal branch. The sidebar does not scan monthly history. Top tasks aggregate the same canonical HTTP(S) URL across selected destinations and preserve destination provenance; imported non-URL identities remain destination-specific.
+
+Task search on Top tasks and in Add time combines the task indexes of every marked personal branch in configured time repositories; unfiltered Top tasks and Activity records remain personal. Each index now stores a bounded title snapshot with its source record ID and timestamp when available. Search checks a branch ETag and the index blob SHA, reusing the IndexedDB report cache across service-worker restarts. For older index entries without a title snapshot, the first search reconstructs names from validated monthly records and caches them locally under the branch snapshot; unchanged branches do not download the history again. A changed branch rechecks its index and, when necessary, changed monthly blobs. Search does not rewrite teammates' branches. Overlapping record IDs across indexes trigger an exact monthly-record comparison before suggesting tasks. Accepted work still waiting to sync is projected locally alongside indexed candidates and marks the results incomplete until reconciliation. Reads are bounded per person and across configured repositories. Repository failures leave a visible incomplete-results warning; if all reads exceed the safe limit, search returns an error rather than silently omitting people. For imported non-URL identities, the source repository is retained and Add time verifies that a person's task index there still contains the identity before synchronizing.
+
+Only tasks with a nonempty title appear in the cross-user search catalog. Untitled task identities remain in their per-user Git indexes and completed records; they are not lost or treated as a successful title backfill. Unfiltered personal Top tasks and Activity remain unaffected.
+
+Maintainers can inspect older titleless indexes without writing to GitHub:
+
+```sh
+node scripts/preview-task-index-backfill.mjs --repo owner/time-repository
+```
+
+The preview uses the GitHub account currently signed into `gh` and reads only its ownership-marked `clockoli/users/{id}` branch in the specified time repository. It validates the index against every completed record in one Git tree snapshot, refuses incomplete reads and concurrent branch changes, then reports counts of existing titles, recoverable titles, untitled tasks, and ambiguous latest titles. It does not write the index, emit task titles or URLs, or inspect teammates' branches. Run it separately for each connected time repository. Publishing any proposed index-only backfill requires separate review and approval, an expected-SHA write, and a readback.
 
 Repository readers can see stored actor identities, work-item URLs and titles, timestamps, descriptions, metadata, metrics, and execution details. Local hourly rates and billable calculations are not stored in work records.
 

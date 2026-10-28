@@ -78,7 +78,7 @@ test('Calendar keeps unavailable resources without icons and uses Clockoli for i
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), '23d4645770c268978d9f435068632a6afe8f35515ac7fca9d961ae3c0b5f87ac');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), '7203e94323969bde4742791681cfd673fd114635cc5d4dc841210cbaef120ca9');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);
