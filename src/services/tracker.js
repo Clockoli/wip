@@ -64,7 +64,10 @@ function sameTimer(a, b) { return Boolean(a?.id && b?.id) && a.id === b.id; }
 function timerStartedAt(value) { return new Date(value?.startedAt).getTime(); }
 function assertNoActiveOverlap(entries, active) {
   if (active && entries.some(entry => entry.id !== active.id && new Date(entry.endedAt).getTime() > timerStartedAt(active))) {
-    throw new TrackerConflictError('This edit would overlap the running timer. Set the entry End no later than the timer Start.');
+    const localStart = new Intl.DateTimeFormat('en-GB', {
+      dateStyle: 'medium', timeStyle: 'short', timeZone: active.timezone,
+    }).format(new Date(active.startedAt));
+    throw new TrackerConflictError(`This edit would overlap the running timer (Start: ${localStart} ${active.timezone}; ${active.startedAt} UTC). Set the entry End no later than that Start. If Activity says Not tracking, check pending synchronization before changing either record.`);
   }
 }
 function assertNoCompletedOverlap(updated, entries) {

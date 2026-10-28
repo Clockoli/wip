@@ -120,6 +120,17 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     expect(await page.evaluate(() => [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))
       .toEqual(['2026-10-17T23:00:00.000Z', '2026-10-18T02:00:00.000Z']);
     await page.evaluate(url => {
+      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl: url, taskTitle: 'Existing task',
+        startedAt: '2026-10-18T08:00:00.000Z', endedAt: '2026-10-18T09:00:00.000Z', description: '' },
+      async () => { throw new Error('This edit would overlap the running timer (Start: 2026-10-18T08:30:00.000Z).'); });
+    }, taskUrl);
+    await end.fill('10:00');
+    await editing.getByRole('button', { name: 'Save' }).click();
+    await expect(editing.getByRole('alert')).toContainText('2026-10-18T08:30:00.000Z');
+    await expect(editing.getByRole('alert')).not.toContainText('Go to List');
+    await expect(editing).toBeVisible();
+    await editing.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(url => {
       const running = { id: 'running', taskUrl: url, taskTitle: 'Running task',
         startedAt: '2026-10-19T14:00:45.000Z', endedAt: null, _active: true, description: 'Keep this' };
       globalThis.activeEdits = [];

@@ -273,7 +273,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await expect(root.locator('.calendar-day-header')).toHaveCount(7);
     await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
     await expect(summary).not.toContainText('Daily average');
-    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–\d+/);
+    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–(?:\w+ )?\d+/);
     await expect(summary.locator('.activity-weekly-label')).toBeHidden();
     await expect(root.locator('.week-navigation-label')).toBeHidden();
     await expect(root.locator('.times-list-total')).toBeHidden();
@@ -644,6 +644,52 @@ async function withActivityWorker(source, run) {
     await rm(profile, { recursive: true, force: true });
   }
 }
+
+test('Activity List requires confirmation before discarding an unsaved completion', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'conflict',
+    conflictReason: 'active_changed_no_completion', destinationId: 'github:1',
+  }];`)
+    .replace("else if (message.type === 'GET_PAGE_STATE')", `else if (message.type === 'RESOLVE_PENDING') {
+      if (message.id !== 'stopped-timer' || message.action !== 'discard_unsaved_completion') {
+        respond({ ok: false, error: { message: 'Unexpected recovery action' } }); return;
+      }
+      pendingWrites = []; respond({ ok: true, data: {} });
+    }
+    else if (message.type === 'GET_PAGE_STATE')`);
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict').getByText('Completion was not saved')).toBeVisible();
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(1);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual(['RESOLVE_PENDING']);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity List distinguishes unsynced changes from conflicts', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'pending',
+    destinationId: 'github:1',
+  }];`);
+  await withActivityWorker(source, async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+  });
+});
 
 test('Activity removes view controls when its configuration disappears', async () => {
   const source = workerSource.replace('let active = null;', 'globalThis.configured = true;\nlet active = null;')
@@ -2007,7 +2053,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await worker.evaluate(() => { globalThis.searchMode = 'error'; });
     await page.getByRole('searchbox', { name: 'Search activity' }).fill('Archived');
     await page.getByRole('button', { name: 'Next week' }).click();
-    await expect(page.getByRole('status')).toContainText('History unavailable');
+    await expect(page.getByRole('status').filter({ hasText: 'History unavailable' })).toBeVisible();
     await expect(page.locator('.activity-list .entry-record')).toHaveCount(0);
     await worker.evaluate(() => { globalThis.searchMode = 'partial'; });
     await page.getByRole('button', { name: 'Retry search' }).click();

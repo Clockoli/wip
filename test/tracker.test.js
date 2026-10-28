@@ -1641,6 +1641,25 @@ test('direct completed edit rejects an overlap with remote active without writin
   assert.equal(github.files.get(path).sha, 'monthly-sha');
 });
 
+test('an idle-looking local state reports the remote timer boundary on a rejected edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-10/alice.jsonl';
+  const first = entry('2026-10-27T08:00:00.000Z', '2026-10-27T11:13:00.000Z');
+  const second = entry('2026-10-27T12:41:00.000Z', '2026-10-27T21:40:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-10-27T07:30:00.000Z')), 'active-sha');
+  store.value.recentCache = [first, second].map((item, index) => ({ ...item, _path: path, _sha: 'monthly-sha', _index: index }));
+  const tracker = service({ github, store, clock: () => new Date('2026-10-28T12:00:00.000Z') });
+  for (const [index, end] of [[0, '2026-10-27T10:00:00.000Z'], [1, '2026-10-27T17:00:00.000Z']]) {
+    await assert.rejects(() => tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index,
+      original: { id: store.value.recentCache[index].id }, edits: { endedAt: end } }),
+    error => /overlap the running timer/i.test(error.message)
+      && error.message.includes('2026-10-27T07:30:00.000Z'));
+  }
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('an existing overlap does not block a description-only correction', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T10:30:00.000Z');

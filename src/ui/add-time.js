@@ -221,7 +221,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       }
     } catch (cause) {
       const message = cause?.message || 'Could not save time.';
-      setError(editing && /overlap/i.test(message)
+      setError(editing && /overlap/i.test(message) && !/running timer/i.test(message)
         ? `${message} Go to List for the affected week and resolve the overlapping entries manually.` : message);
     }
     finally {

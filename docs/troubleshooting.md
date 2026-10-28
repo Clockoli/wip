@@ -159,6 +159,7 @@ Clockoli has preserved the Stop operation in extension-local storage but could n
 - Restore network/repository access.
 - Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
 - If the panel shows **Retry** or another recovery action, follow it.
+- In **Activity → List**, pending local changes are identified separately from queued conflicts. If a conflict appears, review its recovery action there; never discard an unsaved completion until you have verified the time is recorded elsewhere.
 
 See [Sync and offline work](sync.md) for the full model.
 
@@ -208,7 +209,7 @@ The represented intervals still intersect after correction. Endpoint-touching re
 
 ### Timeline says a completed entry overlaps the running timer
 
-This can happen even when both records track the same task: they are separate time intervals. Compare the completed entry's **End** with the running timer's **Start**. An edit that would extend a completed entry past the running timer's Start is rejected before it is queued or saved; adjust the completed End to touch or precede the running Start. Existing overlaps are not silently shortened or deleted: review the affected times in Activity and correct the intended boundary.
+This can happen even when both records track the same task: they are separate time intervals. The error shows the running timer's **Start** in its recorded timezone and as an exact UTC timestamp. An edit whose completed **End** is later than that Start is rejected before it is queued or saved; an End exactly at Start is allowed. A running timer is not a completed entry in List, so List alone may not reveal the overlap. If Activity says **Not tracking** while this error appears, check **Activity → List** for pending local changes or a queued conflict and follow the offered recovery action. A locally accepted Stop may still be waiting to remove the remote active timer; queued writes retry automatically when access is restored. Do not clear local data or discard a pending write to make the edit pass; first verify what the remote active record and pending operation represent. After synchronization, refresh Activity and retry. Existing overlaps are not silently shortened or deleted.
 
 ### Inline edit or Delete reports a stale or changed record
 

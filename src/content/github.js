@@ -2391,6 +2391,16 @@
     refresh.hidden = activityViewMode !== 'list';
     toolbar.append(weekNavigation(), refresh);
     body.append(toolbar, listTotal);
+    if (activityViewMode === 'list') {
+      const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
+      if (waiting.length) {
+        const count = waiting.length;
+        const notice = el('div', `${count} local ${count === 1 ? 'change is' : 'changes are'} waiting to sync with GitHub. Keep this browser data until it is saved.`, 'notice');
+        notice.setAttribute('role', 'status');
+        body.append(notice);
+      }
+      renderPendingConflicts(body);
+    }
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2595,8 +2605,9 @@
     const warning = el('div', undefined, 'timeline-edit-error error');
     warning.setAttribute('role', 'alert');
     warning.append(el('strong', 'Time entry was not moved.'),
-      el('div', `${error.message} Go to List for this week and resolve the overlapping entries manually.`),
-      button('Go to List', 'secondary', openTimelineList));
+      el('div', /running timer/i.test(error.message) ? error.message
+        : `${error.message} Go to List for this week and resolve the overlapping entries manually.`));
+    if (!/running timer/i.test(error.message)) warning.append(button('Go to List', 'secondary', openTimelineList));
     section.insertBefore(warning, section.querySelector('.timeline-shell'));
     return true;
   }
