@@ -197,6 +197,90 @@ test('a queued Stop drains against a titled task index without losing earlier re
   assert.equal(github.atomicWrites.length, 1);
 });
 
+test('a stale queued Stop resumes a twelve-operation lifecycle against a titled index', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-10/alice.jsonl', activePath = 'active/alice.json';
+  const previous = [
+    entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Reviewing' }),
+    entry('2026-10-26T10:00:00.000Z', '2026-10-26T11:00:00.000Z', { taskTitle: 'Reviewing' }),
+  ];
+  const otherTasks = Array.from({ length: 813 }, (_, index) => {
+    const startedAt = new Date(Date.parse('2026-09-01T00:00:00.000Z') + index * 60_000).toISOString();
+    const endedAt = new Date(Date.parse(startedAt) + 30_000).toISOString();
+    return entry(startedAt, endedAt, { taskUrl: `https://example.test/task/${index}`, taskTitle: `Task ${index}` });
+  });
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords(otherTasks), 'september-sha');
+  seedText(github, path, serializeMonthlyRecords(previous), 'october-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [...otherTasks, ...previous],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get(activePath).text,
+    { user: 'alice', path: activePath, sha: 'active-sha' });
+  store.value.recentCache = previous.map((record, index) => ({ ...record, _path: path, _sha: 'october-sha', _index: index }));
+  let now = '2026-10-27T12:30:00.000Z';
+  const tracker = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await tracker.queueStop();
+  // The first Stop has been accepted locally, but the old worker cannot read
+  // the titled index. Its durable operation is already at commitCompletion.
+  store.value.pendingWrites[0].stage = 'commitCompletion';
+  store.value.pendingWrites[0].retryCount = 876;
+  store.value.pendingWrites[0].lastError = 'Clockoli task index summary is invalid';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0, original: previous[0],
+    edits: { description: 'First correction' } });
+  now = '2026-10-27T13:00:00.000Z';
+  let current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T13:05:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-27T14:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-27T14:30:00.000Z'; await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T15:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-28T08:00:00.000Z'; current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-28T08:10:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-28T08:20:00.000Z';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0,
+    original: stripInternalForTest(store.value.recentCache.find(record => record.id === previous[0].id)),
+    edits: { description: 'Final correction' } });
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 1, original: previous[1],
+    edits: { description: 'Second correction' } });
+  now = '2026-10-28T09:00:00.000Z'; await tracker.queueStop();
+
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), [
+    'completeTimer', 'editEntry', 'startTimer', 'editActiveStart', 'completeTimer', 'startTimer',
+    'completeTimer', 'startTimer', 'editActiveStart', 'editEntry', 'editEntry', 'completeTimer',
+  ]);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }).tasks[issue.url].sessionCount, 2);
+  const originalRead = github.getText.bind(github);
+  github.getText = async file => {
+    if (file === TASK_INDEX_PATH) throw new Error('Clockoli task index summary is invalid');
+    return originalRead(file);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 12, 'a blocked first Stop must retain every later operation');
+  assert.equal(store.value.pendingWrites[0].stage, 'commitCompletion');
+  assert.equal(store.value.pendingWrites[0].retryCount, 877);
+  assert.ok(github.files.has(activePath), 'a blocked Stop must not delete the remote timer');
+
+  github.getText = originalRead;
+  const resumed = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, [], 'all synthetic operations should drain after worker restart');
+  assert.equal(github.files.has(activePath), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.equal(saved.length, 6);
+  assert.equal(saved.find(record => record.id === previous[0].id).description, 'Final correction');
+  assert.equal(saved.find(record => record.id === previous[1].id).description, 'Second correction');
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(Object.keys(index.tasks).length, 814);
+  assert.equal(index.tasks[issue.url].sessionCount, 6);
+  assert.equal(index.tasks[issue.url].recordIds.length, 6);
+});
+
 test('sync leaves an await-source start untouched without attempting a remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   store.value.pendingWrites = [{
