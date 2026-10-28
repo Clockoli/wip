@@ -1361,6 +1361,14 @@ for (const mode of ['timeline', 'calendar']) {
     const details = page.locator('#timeline .details');
     await record.focus();
     await expect(details).toBeVisible();
+    await page.evaluate(() => window.__timeline.__timeline._renderAll({ invalidateRulerScales: false }));
+    await expect(record).toBeFocused();
+    await expect(details).toBeVisible();
+    if (mode === 'calendar') {
+      await page.evaluate(() => window.__timeline.__timeline._renderCalendarTasks());
+      await expect(record).toBeFocused();
+      await expect(details).toBeVisible();
+    }
     await details.getByRole('button', { name: 'Edit' }).focus();
     await expect(details).toBeVisible();
     await details.getByRole('button', { name: 'Edit' }).evaluate(button => button.blur());
@@ -1476,6 +1484,37 @@ for (const mode of ['timeline', 'calendar']) {
     }
   });
 }
+
+test('Calendar keeps keyboard details visible when the focused day segment disappears', async ({ page }) => {
+  await page.clock.install({ time: new Date(2026, 9, 28, 12) });
+  const start = new Date(2026, 9, 26, 23).getTime();
+  const end = new Date(2026, 9, 31, 1).getTime();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await mount(page, { weeklyCalendar: true, entryForm: true, rows: [{ id: 'one', title: 'One' }],
+    items: [{ id: 'entry:a', url: 'https://example.com/a', title: 'Long task',
+      startedAt: start, endedAt: end, rowId: 'one', isEditable: true }] });
+  await page.locator('#timeline').evaluate(host => { host.style.width = '304px'; });
+  await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+  const segments = page.locator('#timeline .calendar-task[data-task-key="entry:a"]');
+  await expect(segments).toHaveCount(6);
+  await segments.last().evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
+  await segments.last().focus();
+  const details = page.locator('#timeline .details');
+  await expect(details).toBeVisible();
+  const before = await page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft);
+  expect(before).toBeGreaterThan(0);
+  await page.evaluate(end => {
+    const timeline = window.__timeline.__timeline;
+    timeline._findTask('entry:a').end = end;
+    timeline._renderCalendarTasks();
+  }, new Date(2026, 9, 26, 23, 45).getTime());
+  await expect(segments).toHaveCount(1);
+  await expect(segments.first()).toBeFocused();
+  const after = await page.evaluate(() => window.__timeline.__timeline.calendarViewport.scrollLeft);
+  expect(after).toBeLessThan(before);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(details).toBeVisible();
+});
 
 test('hides the sole project label across Timeline, Calendar and details, restoring it for multiple projects', async ({ page }) => {
   const now = Date.now();
