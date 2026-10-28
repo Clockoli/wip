@@ -798,7 +798,18 @@ for (const mode of ['timeline', 'calendar']) {
       await expect(block('b')).toBeVisible();
       await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
     }
-    const { source, target } = { source: await block('b').boundingBox(), target: await block('a').boundingBox() };
+    // Calendar scroll can rerender both blocks between two separate locator
+    // measurements. Capture the pair in the same browser frame instead.
+    const { source, target } = await (await page.waitForFunction(selector => {
+      const root = document.querySelector('#timeline').shadowRoot;
+      const sourceNode = root.querySelector(`${selector}[data-task-key="entry:b"]`);
+      const targetNode = root.querySelector(`${selector}[data-task-key="entry:a"]`);
+      if (!sourceNode || !targetNode) return false;
+      const source = sourceNode.getBoundingClientRect(), target = targetNode.getBoundingClientRect();
+      if (!source.width || !source.height || !target.width || !target.height) return false;
+      return { source: { x: source.x, y: source.y, width: source.width, height: source.height },
+        target: { x: target.x, y: target.y, width: target.width, height: target.height } };
+    }, mode === 'calendar' ? '.calendar-task' : '.task')).jsonValue();
     expect(source, 'drag source must be visible in the selected Calendar range').toBeTruthy();
     expect(target, 'drag target must be visible in the selected Calendar range').toBeTruthy();
     expect(source.width).toBeGreaterThan(0);
