@@ -52,6 +52,31 @@ test('task index applies exact edit, move, and delete deltas', () => {
   assert.equal(taskIndexRecord(changed, pull), null);
 });
 
+test('a queued completion preserves title snapshots already stored in a personal index', () => {
+  const index = { version: 1, storageLogin: 'alice', tasks: {
+    [issue]: { totalSeconds: 120, sessionCount: 1, recordIds: [i1],
+      title: 'Existing task', titleSourceId: i1, titleStartedAt: '2026-10-26T08:00:00.000Z' },
+  } };
+  const parsed = parseTaskIndex(JSON.stringify(index), { user: 'alice' });
+  const updated = applyTaskIndexChanges(parsed, { add: [{
+    ...entry(p1, issue, 60), taskTitle: 'Newer task title', startedAt: '2026-10-27T08:00:00.000Z',
+  }] });
+  assert.deepEqual(parseTaskIndex(serializeTaskIndex(updated), { user: 'alice' }).tasks[issue], {
+    totalSeconds: 180, sessionCount: 2, recordIds: [i1, p1],
+    title: 'Newer task title', titleSourceId: p1, titleStartedAt: '2026-10-27T08:00:00.000Z',
+  });
+});
+
+test('removing a title source retains other sessions without dangling title metadata', () => {
+  const index = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [
+    { ...entry(i1, issue, 60), taskTitle: 'Older title', startedAt: '2026-10-26T08:00:00.000Z' },
+    { ...entry(p1, issue, 120), taskTitle: 'Latest title', startedAt: '2026-10-27T08:00:00.000Z' },
+  ] });
+  const remaining = applyTaskIndexChanges(index, { remove: [entry(p1, issue, 120)] });
+  assert.deepEqual(remaining.tasks[issue], { totalSeconds: 60, sessionCount: 1, recordIds: [i1] });
+  assert.deepEqual(parseTaskIndex(serializeTaskIndex(remaining), { user: 'alice' }), remaining);
+});
+
 test('task index accepts and updates an unresolved Clockify identity without inventing a URL', () => {
   const index = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [entry(i1, unresolved, 120)] });
   assert.deepEqual(parseTaskIndex(serializeTaskIndex(index), { user: 'alice' }).tasks[unresolved], {

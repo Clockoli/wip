@@ -117,7 +117,7 @@ Clockoli has one supported persistent work-record format: schema `1`. There is n
 
 - An active file is one formatted JSON object with `activity.state: "running"`.
 - A monthly file is JSON Lines: one compact completed work-record object per non-empty line.
-- `.clockoli/tasks.json` is the mandatory exact per-task projection used for cross-user GitHub sidebar totals.
+- `.clockoli/tasks.json` is the mandatory exact per-task projection used for cross-user GitHub sidebar totals. A task summary can include a bounded title snapshot, its source record ID, and the source start time; completed-record writes preserve and update those fields atomically with the monthly file.
 - Every record has a stable ULID assigned at Start. Stop completes that same record ID.
 - Timestamps are stored in UTC, while `activity.local_date` and an IANA `activity.timezone` preserve calendar reporting semantics.
 - `actor` identifies who performed the work; `producer` identifies what wrote the record.

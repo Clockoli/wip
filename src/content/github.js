@@ -125,6 +125,7 @@
   let recentLoadId = 0;
   let timesLoadId = 0;
   let activityStateLoadId = 0;
+  let remoteTimerLoadId = 0;
   let activityCalendarLoadId = 0;
   let activityCalendarStatusText = '';
   let calendarWeekLoadingId = null, selectedTimesCalendarLoadingId = null;
@@ -1179,6 +1180,7 @@
 
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
+    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     recent = recentLoaded && (timesMode || selectedWeekStart !== null)
       ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
@@ -1195,6 +1197,9 @@
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
       reconcileTimelineQueuedOperations(pendingIds);
+      if (timesMode && [...previousPending].some(id => !pendingIds.has(id))) {
+        void refreshRemoteTimerStatus().catch(setError);
+      }
     }
     for (const [entryId] of timelineOptimisticCompletions) {
       if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
@@ -1222,7 +1227,9 @@
     if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
+    const remoteTimers = Object.hasOwn(data ?? {}, 'remoteTimers') ? data.remoteTimers : pageState.remoteTimers;
     pageState = reconcileTimelineAcceptedActive(data);
+    pageState.remoteTimers = data?.configured === false ? [] : remoteTimers;
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
@@ -1354,7 +1361,10 @@
         // The page-state cache is bounded and cannot replace a complete Activity week.
         if (timesMode) {
           const remainingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
-          if ([...pendingIds].some(id => !remainingIds.has(id))) await refreshRecent(true);
+          if ([...pendingIds].some(id => !remainingIds.has(id))) {
+            void refreshRemoteTimerStatus().catch(setError);
+            await refreshRecent(true);
+          }
         } else if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
         if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
         else updatePanelClocks();
@@ -2061,6 +2071,7 @@
   function recentRefreshButton() {
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
+      if (timesMode) void refreshRemoteTimerStatus().catch(setError);
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
@@ -2160,6 +2171,9 @@
     updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
+    // The active record is a separate read from the selected week's history.
+    // Check it even if that history fails and cached entries remain visible.
+    void refreshRemoteTimerStatus().catch(setError);
     try {
       // Hydrate durable local edits before the remote week read. Page state is
       // bounded, so it must not replace records already loaded for this week.
@@ -2213,13 +2227,28 @@
     }, 250);
   }
 
-  async function refreshActivityState() {
+  async function refreshRemoteTimerStatus() {
+    const loadId = ++remoteTimerLoadId;
+    const { remoteTimers } = await send({ type: 'GET_REMOTE_TIMER_STATUS' });
+    if (loadId !== remoteTimerLoadId || !timesMode) return;
+    const next = pageState.configured === false ? [] : remoteTimers ?? [];
+    const changed = JSON.stringify(pageState.remoteTimers ?? []) !== JSON.stringify(next);
+    pageState.remoteTimers = next;
+    if (changed) renderUi();
+  }
+
+  async function refreshActivityState(refresh = false) {
     const loadId = ++activityStateLoadId;
-    const state = await send({ type: 'GET_PAGE_STATE', refresh: false });
+    const state = await send({ type: 'GET_PAGE_STATE', refresh });
     if (loadId !== activityStateLoadId) return;
     const previous = pageState.active;
+    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     applyPageState(state);
-    if (!refreshMountedTimeline()) renderUi();
+    const timelineUpdated = refreshMountedTimeline();
+    if (!timelineUpdated) renderUi();
+    if (timesMode && [...previousPending].some(id => !pageState.pendingWrites?.some(item => item.id === id))) {
+      void refreshRemoteTimerStatus().catch(setError);
+    }
     if (previous && (previous.id !== pageState.active?.id || previous.startedAt !== pageState.active?.startedAt)) {
       await refreshRecent(true);
     }
@@ -2392,6 +2421,19 @@
     toolbar.append(weekNavigation(), refresh);
     body.append(toolbar, listTotal);
     if (activityViewMode === 'list') {
+      for (const timer of pageState.remoteTimers ?? []) {
+        const started = new Intl.DateTimeFormat('en-GB', {
+          dateStyle: 'medium', timeStyle: 'short', timeZone: timer.timezone,
+        }).format(new Date(timer.startedAt));
+        const warning = el('div', undefined, 'remote-timer-warning notice');
+        warning.setAttribute('role', 'alert');
+        warning.append(el('strong', 'GitHub had a running timer at the last check'),
+          el('div', `Started ${started} ${timer.timezone}. This remote timer is not a completed List entry and may differ from local tracking while changes are waiting to sync. Review pending changes before editing or removing either record.`));
+        warning.append(button('Recheck GitHub timer', 'secondary', async () => {
+          try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
+        }));
+        body.append(warning);
+      }
       const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
       if (waiting.length) {
         const count = waiting.length;
@@ -4216,6 +4258,8 @@
       .activity-list .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       .activity-list .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
+      .remote-timer-warning { display:grid; gap:8px; margin:0 0 14px; padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-default,var(--ck-fg)); font-size:13px; overflow-wrap:anywhere }
+      .remote-timer-warning button { justify-self:start }
       :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
       :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
@@ -4682,7 +4726,10 @@
     void restoreActivityViewMode();
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) void refreshRecent(true).then(refreshActivityState).catch(setError);
+      if (!document.hidden) {
+        void refreshRemoteTimerStatus().catch(setError);
+        void refreshRecent(true).then(refreshActivityState).catch(setError);
+      }
     });
     setInterval(() => {
       if (!document.hidden) void refreshActivityState().catch(setError);

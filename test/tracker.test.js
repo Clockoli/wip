@@ -169,6 +169,34 @@ test('Stop and switch keep the saved active description unless explicitly replac
     'an explicitly cleared description must remain empty');
 });
 
+test('a queued Stop drains against a titled task index without losing earlier records', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const prior = entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Earlier title' });
+  const path = 'times/2026-10/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([prior]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [prior],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text,
+    { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const tracker = service({ github, store, clock: () => new Date('2026-10-27T12:00:00.000Z') });
+  const stopped = await tracker.queueStop();
+  assert.equal(stopped.pending, true);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.deepEqual(saved.map(record => record.id), [prior.id, running.id]);
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(index.tasks[issue.url].sessionCount, 2);
+  assert.equal(index.tasks[issue.url].title, 'Reviewing');
+  assert.equal(index.tasks[issue.url].totalSeconds, 18000);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('sync leaves an await-source start untouched without attempting a remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   store.value.pendingWrites = [{
@@ -188,7 +216,8 @@ test('completed-record mutations update the mandatory task index atomically', as
   const tracker = service({ github, store });
   const stopped = await tracker.stop();
   let index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id],
+    title: '', titleSourceId: stopped.entry.id, titleStartedAt: stopped.entry.startedAt });
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [
     'times/2026-08/alice.jsonl', 'active/alice.json', TASK_INDEX_PATH,
   ]);
@@ -199,7 +228,8 @@ test('completed-record mutations update the mandatory task index atomically', as
     edits: { endedAt: '2026-08-18T10:00:00.000Z' },
   });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id],
+    title: '', titleSourceId: saved.id, titleStartedAt: saved.startedAt });
 
   await tracker.deleteEntry({ path: edited._path, originalSha: edited._sha, index: edited._index, original: edited });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
@@ -248,8 +278,10 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.deepEqual(savedActive.metadata.clockoli.task_identity_history, [{ url: sourceUrl, title: 'Old task' }]);
   const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
   assert.equal(index.tasks[sourceUrl].sessionCount, 1);
-  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });
-  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id] });
+  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id],
+    title: 'Canonical task', titleSourceId: july.id, titleStartedAt: july.startedAt });
+  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id],
+    title: 'Second canonical task', titleSourceId: august.id, titleStartedAt: august.startedAt });
   assert.equal(github.atomicWrites.length, 1);
 });
 

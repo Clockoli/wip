@@ -691,6 +691,67 @@ test('Activity List distinguishes unsynced changes from conflicts', async () => 
   });
 });
 
+function remoteActivityWorkerSource() {
+  return workerSource.replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+    `else if (message.type === 'GET_REMOTE_TIMER_STATUS') respond({ ok: true, data: { remoteTimers:
+      globalThis.remotePresent ? [{ destinationId: 'github:1', startedAt: '2026-10-27T08:00:00.000Z',
+        timezone: 'Europe/Warsaw' }] : [] } });
+    else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });`)
+    .replace('let active = null;', 'globalThis.remotePresent = true;\nlet active = null;');
+}
+
+test('Activity List shows a GitHub-only timer separately from completed rows and rechecks it safely', async () => {
+  const source = remoteActivityWorkerSource();
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    await expect(page.locator('#clockoli-times-root .entry-overlap')).toHaveCount(0);
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.remotePresent = false; });
+    await warning.getByRole('button', { name: 'Recheck GitHub timer' }).click();
+    await expect(warning).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity rechecks a GitHub-only timer when the pending completion leaves the queue', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'verifyActive' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toBeVisible();
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
+    const checksBefore = await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length);
+    await worker.evaluate(() => { globalThis.remotePresent = false; pendingWrites = []; });
+    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toHaveCount(0, { timeout: 12_000 });
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length)).toBeGreaterThan(checksBefore);
+    await expect(warning).toHaveCount(0, { timeout: 12_000 });
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+  });
+});
+
+test('Activity checks the remote timer even when the selected week read fails', async () => {
+  const source = remoteActivityWorkerSource().replace(
+    "if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });",
+    "if (message.type === 'LOAD_TIMES') respond({ ok: false, error: { message: 'Week unavailable' } });\n  else if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root .remote-timer-warning')).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.includes('GET_REMOTE_TIMER_STATUS'))).toBe(true);
+  });
+});
+
 test('Activity removes view controls when its configuration disappears', async () => {
   const source = workerSource.replace('let active = null;', 'globalThis.configured = true;\nlet active = null;')
     .replace('const state = () => ({ configured: true, active, recent:', 'const state = () => ({ configured: globalThis.configured, active, recent:');
