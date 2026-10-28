@@ -67,6 +67,17 @@ test('destination merge deduplicates canonical bodies and omits conflicting ULID
   assert.doesNotMatch(JSON.stringify(divergent.conflicts), /different private body/);
 });
 
+test('exact search rejects even identical duplicate IDs within one destination', () => {
+  const body = JSON.parse(block('https://example.com/work', '2026-08-17T09:00:00Z', '2026-08-17T10:00:00Z'));
+  const destination = { id: 'one', label: 'team/one' };
+  const records = [{ id: body.id, _record: body }, { id: body.id, _record: structuredClone(body) }];
+  assert.equal(mergeDestinationRecords([{ destination, records }]).records.length, 1,
+    'ordinary report callers retain their existing deduplication contract');
+  const exact = mergeDestinationRecords([{ destination, records }], [], { rejectSameDestinationDuplicates: true });
+  assert.deepEqual(exact.records, []);
+  assert.equal(exact.conflicts[0].code, 'record_id_conflict');
+});
+
 test('task summaries merge by canonical URL and user instead of an absent work-record ID', () => {
   const taskUrl = 'https://github.com/acme/app/issues/1';
   const destinations = [{ id: 'github:1', label: 'alice/time' }, { id: 'github:2', label: 'team/time' }];
@@ -253,6 +264,137 @@ test('task participant loading reads only the mandatory per-user task index', as
   assert.deepEqual(github.reads, [], 'sidebar task totals must not read monthly blobs');
 });
 
+test('task catalog reads marked personal indexes without downloading monthly history', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub();
+  primary.forBranch = branch => branch === 'main' ? primary : personal;
+  primary.listBranches = async () => ['clockoli/users/123'];
+  personal.repositoryKey = 'acme/time-data@clockoli/users/123';
+  personal.files = new Map([[TASK_INDEX_PATH, { sha: 'f'.repeat(40),
+    text: taskIndex('alice', [{ taskUrl: 'https://example.com/forgotten', durationSeconds: 30, taskTitle: 'Year-old work' }]) }]]);
+  personal.getText = async path => ({ path, text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  const cache = new MemoryReportCache();
+  const result = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(result.tasks.map(item => [item.taskUrl, item.title]), [['https://example.com/forgotten', 'Year-old work']]);
+  assert.deepEqual(result.tasks[0].recordIds, result.recordIds,
+    'the private catalog retains per-task IDs for pending deletion and move projection');
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH]);
+  assert.equal(personal.snapshots.length, 1);
+  personal.notModified = true;
+  const warm = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(warm.tasks, result.tasks);
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH], 'warm service-worker restart reads no unchanged blob');
+  assert.equal(personal.snapshots.at(-1).etag, personal.etag);
+  personal.notModified = false; personal.etag = '"two"';
+  personal.files.set(TASK_INDEX_PATH, { sha: C, text: taskIndex('alice', [
+    { taskUrl: 'https://example.com/forgotten', durationSeconds: 30, taskTitle: 'Revised title' },
+  ]) });
+  const changed = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(changed.tasks.map(item => item.title), ['Revised title']);
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH, TASK_INDEX_PATH]);
+});
+
+test('search fallback retains different bodies sharing an ID within a repository', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub();
+  primary.forBranch = branch => branch === 'main' ? primary : personal;
+  primary.listBranches = async () => ['clockoli/users/123'];
+  personal.repositoryKey = 'acme/time-data@clockoli/users/123';
+  const record = JSON.parse(block('https://github.com/acme/app/issues/1', '2025-01-01T09:00:00Z', '2025-01-01T10:00:00Z'));
+  const duplicate = structuredClone(record);
+  duplicate.activity.started_at = '2025-02-01T09:00:00.000Z';
+  duplicate.activity.ended_at = '2025-02-01T10:00:00.000Z';
+  duplicate.activity.local_date = '2025-02-01';
+  personal.files = new Map([
+    ['times/2025-01/alice.jsonl', { sha: A, text: monthly(JSON.stringify(record)) }],
+    ['times/2025-02/alice.jsonl', { sha: C, text: monthly(JSON.stringify(duplicate)) }],
+  ]);
+  personal.getText = async () => ({ text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  const service = new ReportService({ github: primary, cache: new MemoryReportCache() });
+  const range = { startDate: '2025-01-01', endDate: '2025-02-28' };
+  assert.equal((await service.loadRepositoryRange(range, { defaultBranch: 'main' })).length, 1);
+  const raw = await service.loadRepositoryRange(range, { defaultBranch: 'main', preserveDuplicateIds: true, includeStorageMetadata: true });
+  assert.equal(raw.length, 2);
+  const merged = mergeDestinationRecords([{ destination: { id: 'one', label: 'acme/time-data' }, records: raw }]);
+  assert.equal(merged.records.length, 0);
+  assert.equal(merged.conflicts[0].code, 'record_id_conflict');
+});
+
+test('task catalog fills missing old titles from completed history without writing to colleagues branches', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub();
+  primary.forBranch = branch => branch === 'main' ? primary : personal;
+  primary.listBranches = async () => ['clockoli/users/123'];
+  personal.repositoryKey = 'acme/time-data@clockoli/users/123';
+  const url = 'https://github.com/acme/app/issues/1';
+  const historical = block(url, '2025-01-01T09:00:00Z', '2025-01-01T10:00:00Z');
+  const record = JSON.parse(historical); record.work_item.title = 'Old task title';
+  personal.files = new Map([
+    ['times/2025-01/alice.jsonl', { sha: A, text: monthly(JSON.stringify(record)) }],
+    [TASK_INDEX_PATH, { sha: B, text: taskIndex('alice', [{ id: record.id, taskUrl: url, durationSeconds: 3600 }]) }],
+  ]);
+  const getText = personal.getText.bind(personal);
+  personal.getText = async path => path === '.clockoli/user.json'
+    ? { text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) }
+    : getText(path);
+  const cache = new MemoryReportCache();
+  const result = await new ReportService({ github: primary, cache })
+    .loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(result.tasks.map(item => [item.taskUrl, item.title]), [[url, 'Old task title']]);
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH, 'times/2025-01/alice.jsonl']);
+  personal.notModified = true;
+  const warm = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(warm.tasks, result.tasks);
+  assert.equal(personal.reads.length, 2, 'unchanged old index reuses locally reconstructed names');
+  personal.notModified = false; personal.etag = '"two"';
+  const revised = structuredClone(record); revised.work_item.title = 'Renamed old task';
+  personal.files.set('times/2025-01/alice.jsonl', { sha: C, text: monthly(JSON.stringify(revised)) });
+  const refreshed = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.equal(refreshed.tasks[0].title, 'Renamed old task');
+});
+
+test('legacy title reconstruction rejects a repeated record ID across monthly files', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub();
+  primary.forBranch = branch => branch === 'main' ? primary : personal;
+  primary.listBranches = async () => ['clockoli/users/123'];
+  personal.repositoryKey = 'acme/time-data@clockoli/users/123';
+  const url = 'https://github.com/acme/app/issues/1';
+  const record = JSON.parse(block(url, '2025-01-01T09:00:00Z', '2025-01-01T10:00:00Z'));
+  const duplicate = structuredClone(record);
+  duplicate.activity.started_at = '2025-02-01T09:00:00.000Z';
+  duplicate.activity.ended_at = '2025-02-01T10:00:00.000Z';
+  duplicate.activity.local_date = '2025-02-01';
+  personal.files = new Map([
+    ['times/2025-01/alice.jsonl', { sha: A, text: monthly(JSON.stringify(record)) }],
+    ['times/2025-02/alice.jsonl', { sha: C, text: monthly(JSON.stringify(duplicate)) }],
+    [TASK_INDEX_PATH, { sha: B, text: taskIndex('alice', [{ id: record.id, taskUrl: url, durationSeconds: 3600 }]) }],
+  ]);
+  const getText = personal.getText.bind(personal);
+  personal.getText = async path => path === '.clockoli/user.json'
+    ? { text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) }
+    : getText(path);
+  await assert.rejects(() => new ReportService({ github: primary, cache: new MemoryReportCache() })
+    .loadRepositoryTaskCatalog({ defaultBranch: 'main' }), /duplicate|match completed records/i);
+});
+
+test('task catalog refuses understated index bytes before persisting a cache entry', async () => {
+  const primary = new FakeGitHub(), personal = new FakeGitHub(), cache = new MemoryReportCache();
+  primary.forBranch = branch => branch === 'main' ? primary : personal;
+  primary.listBranches = async () => ['clockoli/users/123'];
+  personal.repositoryKey = 'acme/time-data@clockoli/users/123';
+  personal.files = new Map([[TASK_INDEX_PATH, { sha: A, text: taskIndex('alice', [
+    { taskUrl: 'https://example.com/old', durationSeconds: 30, taskTitle: 'A task title' },
+  ]) }]]);
+  personal.getText = async () => ({ text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  const snapshot = personal.listTextFilesSnapshot.bind(personal);
+  personal.listTextFilesSnapshot = async (...args) => {
+    const value = await snapshot(...args);
+    value.files[0].size = 1;
+    return value;
+  };
+  await assert.rejects(() => new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({
+    defaultBranch: 'main', budgets: { maxTotalBytes: 20, maxBytes: 20 },
+  }), error => error.code === 'task_scan_budget');
+  assert.equal(cache.saves, 0);
+});
+
 test('task participant loading fails closed when the first-version index is missing or malformed', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache();
   await assert.rejects(() => new ReportService({ github, cache }).loadRepositoryTask('https://github.com/acme/app/issues/1'), /task index/i);
@@ -376,6 +518,23 @@ test('current-user task loading enforces file and record budgets before returnin
   ), /record budget/i);
 });
 
+test('an understated blob size cannot persist content beyond the aggregate search byte limit', async () => {
+  const github = new FakeGitHub(), cache = new MemoryReportCache();
+  github.files = new Map([['times/2026-08/alice.jsonl', { sha: A,
+    text: monthly(block('https://example.org/task', '2026-08-17T09:00:00Z', '2026-08-17T10:00:00Z')) }]]);
+  const original = github.listTextFilesSnapshot.bind(github);
+  github.listTextFilesSnapshot = async (...args) => {
+    const snapshot = await original(...args);
+    return { ...snapshot, files: snapshot.files.map(file => ({ ...file, size: 1 })) };
+  };
+  await assert.rejects(() => new ReportService({ github, cache }).loadRepositoryRange(
+    { startDate: '2026-08-01', endDate: '2026-08-31' },
+    { budgets: { maxFiles: 1, maxBytes: 100, maxRecords: 100,
+      maxTotalFiles: 1, maxTotalBytes: 100, maxTotalRecords: 100 } },
+  ), error => error.code === 'task_scan_budget' || /byte budget/i.test(error.message));
+  assert.deepEqual(Object.keys(cache.value?.blobs ?? {}), [], 'oversized content never enters the report cache');
+});
+
 test('current-user loading refreshes an incomplete size-less cache before byte preflight', async () => {
   const github = new FakeGitHub(), cache = new MemoryReportCache(), service = new ReportService({ github, cache });
   await service.loadRange({ startDate: '2026-08-01', endDate: '2026-08-31' });
@@ -419,6 +578,55 @@ test('repository reports read only canonical personal branches and never merge d
   assert.equal(primary.reads.length, 0, 'the default branch is metadata-only and never a legacy data source');
 });
 
+test('all-time task catalog can scan more than thirteen cached months per person', async () => {
+  const defaultGithub = new FakeGitHub(), personal = new FakeGitHub();
+  personal.files.clear();
+  defaultGithub.repositoryKey = 'acme/team@main';
+  personal.repositoryKey = 'acme/team@clockoli/users/123';
+  defaultGithub.forBranch = branch => branch === 'main' ? defaultGithub : personal;
+  defaultGithub.listBranches = async () => ['clockoli/users/123'];
+  personal.forBranch = defaultGithub.forBranch;
+  personal.listBranches = defaultGithub.listBranches;
+  personal.getText = async () => ({ text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  for (let month = 1; month <= 14; month++) {
+    const date = new Date(Date.UTC(2025, month - 1, 1)).toISOString().slice(0, 10);
+    const path = `times/${date.slice(0, 7)}/alice.jsonl`;
+    personal.files.set(path, { sha: month.toString(16).padStart(40, '0'),
+      text: monthly(block(`https://github.com/acme/app/issues/${month}`, `${date}T09:00:00Z`, `${date}T10:00:00Z`)) });
+  }
+  const values = new Map();
+  const cache = { getReportCache: async key => structuredClone(values.get(key) || null),
+    saveReportCache: async value => values.set(value.repositoryKey, structuredClone(value)) };
+  const service = new ReportService({ github: personal, cache });
+  const range = { startDate: '0001-01-01', endDate: '9999-12-31' };
+  const options = { defaultBranch: 'main', budgets: { maxFiles: 120, maxBytes: 100 * 1024 * 1024, maxRecords: 500000 } };
+  assert.equal((await service.loadRepositoryRange(range, options)).length, 14);
+  assert.equal(personal.reads.length, 14);
+  assert.equal((await new ReportService({ github: personal, cache }).loadRepositoryRange(range, options)).length, 14);
+  assert.equal(personal.reads.length, 14, 'worker restart reuses persisted SHA-keyed monthly blobs');
+});
+
+test('all-time task reads refuse an aggregate limit before downloading the next user files', async () => {
+  const defaultGithub = new FakeGitHub(), personal = new FakeGitHub();
+  personal.files.clear(); personal.repositoryKey = 'acme/team@clockoli/users/123';
+  defaultGithub.forBranch = branch => branch === 'main' ? defaultGithub : personal;
+  defaultGithub.listBranches = async () => ['clockoli/users/123'];
+  personal.forBranch = defaultGithub.forBranch;
+  personal.listBranches = defaultGithub.listBranches;
+  personal.getText = async () => ({ text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) });
+  for (let month = 1; month <= 3; month++) {
+    const path = `times/2026-0${month}/alice.jsonl`;
+    personal.files.set(path, { sha: month.toString(16).padStart(40, '0'),
+      text: monthly(block(`https://example.org/task/${month}`, `2026-0${month}-01T09:00:00Z`, `2026-0${month}-01T10:00:00Z`)) });
+  }
+  const service = new ReportService({ github: defaultGithub });
+  await assert.rejects(() => service.loadRepositoryRange({ startDate: '2026-01-01', endDate: '2026-03-31' }, {
+    defaultBranch: 'main', budgets: { maxFiles: 120, maxBytes: 20 * 1024 * 1024, maxRecords: 50000,
+      maxUsers: 10, maxTotalFiles: 2, maxTotalBytes: 30 * 1024 * 1024, maxTotalRecords: 100000 },
+  }), error => error.code === 'task_scan_budget');
+  assert.equal(personal.reads.length, 0, 'aggregate file budget is enforced before downloading blobs');
+});
+
 test('repository task loading reads one index per personal branch with bounded concurrency', async () => {
   const primary = new FakeGitHub(), users = ['alice', 'bob', 'carol'];
   const clients = new Map([['main', primary]]);
@@ -450,6 +658,21 @@ test('repository task loading reads one index per personal branch with bounded c
   assert.deepEqual(records.map(record => record.user).sort(), users);
   assert.equal(maxActive, 2, 'task index reads must not exceed the configured cap');
   assert.ok([...clients.values()].every(client => client.reads.length === 0), 'monthly blobs are never read');
+});
+
+test('imported task eligibility can be checked against other marked branches from a personal client', async () => {
+  const personal = new FakeGitHub(), teammate = new FakeGitHub();
+  personal.repositoryKey = 'acme/team@clockoli/users/1';
+  teammate.repositoryKey = 'acme/team@clockoli/users/2';
+  personal.listBranches = async () => ['clockoli/users/1', 'clockoli/users/2'];
+  personal.forBranch = branch => branch === 'clockoli/users/1' ? personal : teammate;
+  personal.getText = async path => ({ text: path === '.clockoli/user.json'
+    ? JSON.stringify({ version: 1, githubUserId: 1, storageLogin: 'alice' }) : taskIndex('alice', []) });
+  teammate.getText = async path => ({ text: path === '.clockoli/user.json'
+    ? JSON.stringify({ version: 1, githubUserId: 2, storageLogin: 'bob' })
+    : taskIndex('bob', [{ taskUrl: 'acme/project/imported', durationSeconds: 30 }]) });
+  const result = await new ReportService({ github: personal }).loadRepositoryTask('acme/project/imported', { scanAllUsers: true });
+  assert.deepEqual(result.map(item => item.user), ['bob']);
 });
 
 test('repository task loading aborts and settles sibling index reads before rejecting', async () => {

@@ -1635,9 +1635,7 @@ function renderMergeDestinationOptions() {
   }
 }
 function mergeTasksVisible(side) {
-  const query = $(`merge-${side}-filter`).value.trim().toLowerCase();
-  return mergeTasks.filter(task => (side === 'source' || isMergeTarget(task))
-    && (!query || `${task.title || ''} ${task.taskUrl}`.toLowerCase().includes(query)));
+  return mergeSearch[side].matches(mergeTasks, task => side === 'source' || isMergeTarget(task));
 }
 function isMergeTarget(task) {
   try { return normalizeTaskUrl(task.taskUrl) === task.taskUrl; }
@@ -2469,7 +2467,8 @@ $('import-settings-file').addEventListener('change', async () => {
   finally { input.value = ''; input.disabled = false; }
 });
 
-for (const side of ['source', 'target']) $(`merge-${side}-filter`).addEventListener('input', () => renderMergeTaskList(side));
+const mergeSearch = Object.fromEntries(['source', 'target'].map(side => [side,
+  globalThis.ClockoliTaskSearch.mount($(`merge-${side}-filter`), { onInput: () => renderMergeTaskList(side) })]));
 const mergePeopleSelect = $('merge-people-select');
 function setMergePeopleOpen(open) {
   mergePeopleSelect.open = open;

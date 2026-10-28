@@ -112,6 +112,55 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
+test('toolbar-injected HTTP panel searches and clears its List filter', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-action-search-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-action-search-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const contentPath = join(extension, 'src/content/github.js');
+    await writeFile(contentPath, (await readFile(contentPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    manifest.host_permissions.push('https://example.com/*'); // Test-only access for programmatic injection.
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
+    const background = await readFile(new URL('src/background/service-worker.js', ROOT), 'utf8');
+    const injection = background.match(/files: (\['src\/domain\/recovery-actions\.js'[^\]]*'src\/content\/github\.js'\])/);
+    expect(injection).not.toBeNull();
+    const files = JSON.parse(injection[1].replaceAll("'", '"'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
+    await page.route('https://example.com/clockoli-test', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><main>Test task page</main></body></html>' }));
+    await page.goto('https://example.com/clockoli-test');
+    await worker.evaluate(async files => {
+      const [tab] = await chrome.tabs.query({ url: 'https://example.com/clockoli-test' });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+    }, files);
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'List', exact: true }).click();
+    const filter = panel.getByRole('searchbox', { name: 'Search current week' });
+    const records = panel.locator('.entry-record');
+    await expect(records).toHaveCount(3);
+    await filter.fill('Same day task');
+    await expect(records).toHaveCount(1);
+    await expect(records).toContainText('Same day task');
+    await filter.fill('');
+    await expect(records).toHaveCount(3);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));

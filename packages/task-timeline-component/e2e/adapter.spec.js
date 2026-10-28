@@ -320,9 +320,9 @@ test('Activity Calendar places the upper entry card beside its block without cov
 });
 
 test('Activity Calendar chooses the clear left side when the right card would cover an adjacent project', async ({ page }) => {
+  await page.clock.install({ time: new Date(2026, 9, 21, 18) });
   await page.setViewportSize({ width: 1100, height: 720 });
-  const start = new Date();
-  start.setHours(10, 0, 0, 0);
+  const start = new Date(2026, 9, 21, 10);
   await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
     rows: [{ id: 'one', title: 'Project A' }, { id: 'two', title: 'Project B' }],
     items: [
@@ -798,12 +798,7 @@ for (const mode of ['timeline', 'calendar']) {
       await expect(block('b')).toBeVisible();
       await block('a').evaluate(element => element.scrollIntoView({ block: 'center' }));
     }
-    const { source, target } = mode === 'calendar' ? await page.evaluate(() => {
-      const canvas = window.__timeline.__timeline.calendarCanvas;
-      const source = canvas.querySelector('.calendar-task[data-task-key="entry:b"]');
-      const target = canvas.querySelector('.calendar-task[data-task-key="entry:a"]');
-      return { source: source?.getBoundingClientRect().toJSON(), target: target?.getBoundingClientRect().toJSON() };
-    }) : { source: await block('b').boundingBox(), target: await block('a').boundingBox() };
+    const { source, target } = { source: await block('b').boundingBox(), target: await block('a').boundingBox() };
     expect(source, 'drag source must be visible in the selected Calendar range').toBeTruthy();
     expect(target, 'drag target must be visible in the selected Calendar range').toBeTruthy();
     expect(source.width).toBeGreaterThan(0);

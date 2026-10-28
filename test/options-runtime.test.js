@@ -11,6 +11,7 @@ import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/val
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
 const widthCss = await readFile(new URL('../src/styles/interface-width.css', import.meta.url), 'utf8');
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
+const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 
 test('Settings stays in a centered column regardless of the shared width preference', () => {
   assert.match(html, /<main class="settings-main">/);
@@ -75,6 +76,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
     } } },
   });
+  vm.runInContext(taskSearchSource, context);
   vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
   return {
     nodes, requests, timers, context, windowListeners, documentListeners, tabListeners,

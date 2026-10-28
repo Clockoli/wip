@@ -8,3 +8,4 @@
 .task-row.running{background:color-mix(in srgb,var(--task-color) 12%,var(--bgColor-default))}
 .task-monogram{display:grid;place-items:center;font:var(--text-caption-shorthand);font-weight:600;line-height:1}
 .task-clockoli-icon{background:var(--fgColor-default);mask-size:contain;mask-position:center;mask-repeat:no-repeat}
+.task-repository{display:block;margin-top:4px;color:var(--fgColor-muted);font:var(--text-caption-shorthand)}

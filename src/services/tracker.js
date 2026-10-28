@@ -513,12 +513,23 @@ export class TrackerService {
     // Apply the complete pending queue before filtering: edits can move records
     // across the requested day boundary.
     const state = await this.store.getState();
-    const records = overlayPendingEntries(remoteRecords, state.pendingWrites ?? []);
+    const pendingWrites = state.pendingWrites ?? [];
+    const records = overlayPendingEntries(remoteRecords, pendingWrites);
+    const replacedRecordIds = pendingWrites.flatMap(operation => {
+      if (operation.operation === 'deleteEntry' || operation.operation === 'editEntry') {
+        return operation.request?.original?.id ? [operation.request.original.id] : [];
+      }
+      if (operation.operation === 'editEntries') {
+        return (operation.request?.entries ?? []).map(request => request.original?.id).filter(Boolean);
+      }
+      return [];
+    });
     return {
       records: records.filter(entry => (!from || entry.entryDate >= from)
         && (!through || entry.entryDate <= through)),
+      replacedRecordIds,
       recovery: recoveryProjection({
-        active: state.activeCache, recent: records, pendingWrites: state.pendingWrites ?? [],
+        active: state.activeCache, recent: records, pendingWrites,
       }),
     };
   }
@@ -1466,14 +1477,13 @@ export class TrackerService {
     }));
     if (!touched.length) return files;
     try {
-      let blobShas = {};
-      if (touched.length === 1) {
-        const file = touched[0], result = await this.putMonthly(file, file.entries, `time: add missing titles ${this.user} ${file.month}`);
-        blobShas[file.path] = result.sha;
-      } else {
-        const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
-        ({ blobShas } = await this.github.updateTextsAtomic(changes, `time: add missing titles ${this.user}`));
-      }
+      const changed = files.flatMap(file => file.entries.filter(entry => !taskTitleOf(entry) && titles.has(taskUrlOf(entry))));
+      const changedIds = new Set(changed.map(entry => entry.id));
+      const updated = touched.flatMap(file => file.entries.filter(entry => changedIds.has(entry.id)));
+      const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) }));
+      const { blobShas } = await this.updateCompletedRecords(changes, `time: add missing titles ${this.user}`, {
+        remove: changed, add: updated,
+      });
       const saved = new Map(touched.map(file => [file.path, {
         ...file,
         sha: blobShas[file.path],
@@ -2261,7 +2271,8 @@ export class TrackerService {
     if (state.pendingWrites?.length && !fixedId) throw new Error('Pending time writes must sync before adding time.');
     const indexFile = /^https?:\/\//.test(canonical) ? null : await this.readTaskIndex();
     if (indexFile && !Object.hasOwn(indexFile.index.tasks, canonical)) {
-      throw new Error('Select an existing imported task. New tasks require an HTTP(S) URL.');
+      const shared = await this.reports?.loadRepositoryTask?.(canonical, { scanAllUsers: true });
+      if (!shared?.length) throw new Error('Select an existing imported task. New tasks require an HTTP(S) URL.');
     }
     const active = fixedId ? await this.readRemoteActive() : await this.refreshActive();
     if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
