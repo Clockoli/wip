@@ -39,6 +39,42 @@ test('pending projection includes bounded redacted timing diagnostics only', () 
   assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 
+test('extension-only queued context identifies old edits and path mismatch without leaking raw records', () => {
+  const context = vm.createContext({});
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('function destinationSaveConfirmed(')), context);
+  const operation = {
+    id: 'queued-edit', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing',
+    request: { path: 'times/2026-11/alice.jsonl', original: {
+      id: 'original-id', entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T16:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task', description: 'SECRET DESCRIPTION',
+    }, edits: { endedAt: '2026-10-29T17:00:00.000Z', description: 'SECRET DRAFT' } },
+    conflictWith: { id: 'other-id', entryDate: '2026-10-29', startedAt: '2026-10-29T16:30:00.000Z',
+      endedAt: '2026-10-29T18:00:00.000Z', taskTitle: 'Other work', description: 'SECRET OTHER' },
+  };
+  const publicShape = plain(context.safePendingProjection(operation, destinationId));
+  assert.equal(Object.hasOwn(publicShape, 'subjects'), false);
+  assert.equal(Object.hasOwn(publicShape, 'conflictWith'), false);
+  const detail = plain(context.safePendingProjection(operation, destinationId, { includeDetails: true }));
+  assert.deepEqual(detail.subjects, [{
+    original: { entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T16:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task' },
+    proposed: { entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T17:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task' }, queuedMonth: '2026-11', descriptionChanged: true,
+  }]);
+  assert.deepEqual(detail.conflictWith, { entryDate: '2026-10-29', startedAt: '2026-10-29T16:30:00.000Z',
+    endedAt: '2026-10-29T18:00:00.000Z', taskTitle: 'Other work' });
+  assert.equal(JSON.stringify(detail).includes('SECRET'), false);
+  assert.equal(JSON.stringify(detail).includes('times/'), false);
+  assert.equal(JSON.stringify(detail).includes('original-id'), false);
+  const linked = { ...operation, operation: 'editEntries', request: { entries: Array.from({ length: 5 }, () => operation.request) } };
+  assert.equal(plain(context.safePendingProjection(linked, destinationId, { includeDetails: true })).subjects.length, 5);
+  const descriptionOnly = { ...operation, request: { ...operation.request, edits: { description: 'SECRET DRAFT' } } };
+  const descriptionDetail = plain(context.safePendingProjection(descriptionOnly, destinationId, { includeDetails: true }));
+  assert.equal(descriptionDetail.subjects[0].descriptionChanged, true);
+  assert.deepEqual(descriptionDetail.subjects[0].original, descriptionDetail.subjects[0].proposed);
+  assert.equal(JSON.stringify(descriptionDetail).includes('SECRET'), false);
+});
+
 test('Activity returns the current safe pending/conflict projection after records load', async () => {
   const state = { user: 'alice', activeCache: null, recentCache: [], pendingWrites: [] };
   const destination = { id: destinationId, owner: 'acme', repo: 'time', label: 'acme/time' };
@@ -264,12 +300,15 @@ test('weekly Activity overlays queued edits before overlap filtering, including 
 
 test('page state exposes full totals while retaining safe active and pending projections', async () => {
   const active = { id: 'running', taskUrl: 'https://example.org/task', startedAt: '2026-09-05T08:00:00Z', entryDate: '2026-09-05', timezone: 'Asia/Bangkok', private: 'not projected' };
+  const pending = { id: 'queued', operation: 'editEntry', stage: 'editEntry', status: 'conflict',
+    request: { path: 'times/2026-10/alice.jsonl', original: { entryDate: '2026-09-05', taskTitle: 'Private task',
+      startedAt: '2026-09-05T08:00:00Z', endedAt: '2026-09-05T09:00:00Z', description: 'SECRET' }, edits: {} } };
   const tracker = {
-    getState: async () => ({ active, recent: [], pendingWrites: [], todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
+    getState: async () => ({ active, recent: [], pendingWrites: [pending], todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
     loadMenuData: async () => ({ todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
   };
   const context = vm.createContext({ assertMessageAllowed,
-    chrome: { runtime: { getURL: () => origin } },
+    chrome: { runtime: { getURL: path => origin + (path || '') } },
     configuredSnapshot: async () => ({ registry, auth: {} }),
     trackerForDestination: async () => tracker,
     store: {
@@ -285,6 +324,12 @@ test('page state exposes full totals while retaining safe active and pending pro
   assert.equal(result.active.entryDate, active.entryDate);
   assert.equal(result.active.timezone, active.timezone);
   assert.equal(Object.hasOwn(result.active, 'private'), false);
+  assert.equal(result.pendingWrites[0].subjects[0].original.taskTitle, 'Private task');
+  const contentState = plain(await context.handle({ type: 'GET_PAGE_STATE' },
+    { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }));
+  assert.equal(Object.hasOwn(contentState.pendingWrites[0], 'subjects'), false);
+  assert.equal(JSON.stringify(contentState).includes('Private task'), false);
+  assert.equal(JSON.stringify(result).includes('SECRET'), false);
   await assert.rejects(() => context.handle({ type: 'LOAD_TIMES' }, { url: 'https://example.org' }), /extension|allowed|trusted/i);
 });
 

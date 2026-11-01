@@ -114,6 +114,7 @@
   let descriptionDraft = null;
   const timelineDescriptionDrafts = new Map();
   let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
+  let syncIssuesSignature = null, syncIssuesOpen = false, selectedSyncIssueId = null, syncIssueError = '';
   let recent = [];
   let quickStartRecent = [];
   let recentLoaded = false;
@@ -906,6 +907,10 @@
   function shiftWeek(direction) {
     const current = new Date(weekWindow().start);
     current.setDate(current.getDate() + 7 * direction);
+    return selectWeek(current);
+  }
+
+  function selectWeek(current) {
     if (current.getTime() > weekWindow(Date.now()).start) return;
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
@@ -2102,9 +2107,120 @@
     for (const [, group] of [...groups].sort(([left], [right]) => right.localeCompare(left))) container.append(recentGroup(group, overlaps));
   }
 
-  function renderPendingConflicts(container) {
-    const conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict');
+  function queuedDateLabel(value) {
+    if (!validEntryDate(value)) return '';
+    return new Date(`${value}T12:00:00Z`).toLocaleDateString('en-GB',
+      { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  function queuedTimeRange(record) {
+    if (!validTimestamp(record?.startedAt) || !validTimestamp(record?.endedAt)) return '';
+    const time = value => new Date(value).toLocaleTimeString('en-GB',
+      { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+    return `${time(record.startedAt)}–${time(record.endedAt)} UTC`;
+  }
+
+  function queuedRecordLabel(record) {
+    return [record?.taskTitle || record?.taskUrl || 'Untitled task', queuedDateLabel(record?.entryDate),
+      queuedTimeRange(record)].filter(Boolean).join(' · ');
+  }
+
+  function renderSyncIssues() {
+    const host = document.getElementById?.('activity-sync-status');
+    if (!host) return;
+    const writes = pageState.pendingWrites ?? [];
+    const conflicts = writes.filter(item => item.status === 'conflict');
+    const signature = JSON.stringify([selectedSyncIssueId, writes]);
+    if (signature === syncIssuesSignature && host.childElementCount) return;
+    const wasOpen = Boolean(host.querySelector('dialog')?.open || syncIssuesOpen);
+    const previousScroll = host.querySelector('.sync-issue-list')?.scrollTop ?? 0;
+    syncIssuesSignature = signature;
+    if (!conflicts.length) {
+      host.replaceChildren();
+      syncIssuesOpen = false;
+      selectedSyncIssueId = null;
+      syncIssueError = '';
+      if (wasOpen) document.querySelector('#activity-view-switcher [aria-pressed="true"]')?.focus();
+      return;
+    }
+    const waiting = writes.length - conflicts.length;
+    const banner = el('section', undefined, 'sync-status-banner has-conflicts');
+    banner.setAttribute('role', 'alert');
+    const copy = el('div', undefined, 'sync-status-copy');
+    copy.append(el('strong', `${conflicts.length} ${conflicts.length === 1 ? 'conflict' : 'conflicts'} need review`),
+    el('span', `${waiting ? `${waiting} waiting to sync. ` : ''}Keep this browser data until the changes are saved to GitHub.`));
+    const review = button('Review sync issues', 'sync-review-button', () => {
+      syncIssuesOpen = true;
+      host.querySelector('dialog')?.showModal();
+    });
+    banner.append(copy, review);
+
+    const dialog = el('dialog', undefined, 'sync-issues-dialog');
+    dialog.setAttribute('aria-labelledby', 'sync-issues-title');
+    dialog.addEventListener('close', () => { syncIssuesOpen = false; review.focus(); });
+    const heading = el('header', undefined, 'sync-issues-header');
+    const headingCopy = el('div');
+    const title = el('h2', 'Sync issues'); title.id = 'sync-issues-title';
+    headingCopy.append(title, el('p', `${conflicts.length} ${conflicts.length === 1 ? 'conflict' : 'conflicts'} · ${waiting} waiting. Changes listed here are stored in this browser, not yet confirmed on GitHub.`));
+    const close = button('Close', 'sync-issues-close', () => dialog.close());
+    heading.append(headingCopy, close);
+    const content = el('div', undefined, 'sync-issues-content');
+    const list = el('div', undefined, 'sync-issue-list');
+    list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Local changes');
+    const selected = writes.find(item => item.id === selectedSyncIssueId) || conflicts[0] || writes[0];
+    selectedSyncIssueId = selected.id;
+    for (const item of writes) {
+      const record = item.subjects?.[0]?.original || item.subjects?.[0]?.proposed;
+      const name = record?.taskTitle || record?.taskUrl || item.operation || item.stage || 'Queued change';
+      const date = queuedDateLabel(record?.entryDate);
+      const status = item.status === 'conflict' ? 'Conflict' : 'Pending sync';
+      const row = button(`${name}${date ? ` · ${date}` : ''} · ${status}`, 'sync-issue-item', () => {
+        selectedSyncIssueId = item.id;
+        syncIssueError = '';
+        syncIssuesSignature = null;
+        renderSyncIssues();
+        host.querySelector('.sync-issue-item[aria-pressed="true"]')?.focus();
+      });
+      row.setAttribute('aria-pressed', String(item.id === selected.id));
+      row.classList.toggle('is-conflict', item.status === 'conflict');
+      list.append(row);
+    }
+    const detail = el('section', undefined, 'sync-issue-detail');
+    detail.setAttribute('aria-label', 'Selected local change');
+    if (syncIssueError) { const error = el('p', syncIssueError, 'sync-issue-error'); error.setAttribute('role', 'alert'); detail.append(error); }
+    if (selected.status === 'conflict') renderPendingConflicts(detail, [selected]);
+    else {
+      detail.append(el('h3', 'Waiting to sync'),
+        el('p', 'This change is stored locally and has not yet been confirmed on GitHub. No action is needed while it waits.'));
+      for (const subject of selected.subjects ?? []) {
+        if (subject.original) detail.append(el('p', `Original: ${queuedRecordLabel(subject.original)}`));
+        if (subject.proposed) detail.append(el('p', `Queued change: ${queuedRecordLabel(subject.proposed)}`));
+      }
+    }
+    content.append(list, detail);
+    dialog.append(heading, content, el('p', 'Do not clear extension data while these changes are waiting. Retry rechecks GitHub before writing; discarding removes a local change only after confirmation.', 'sync-issues-footnote'));
+    host.replaceChildren(banner, dialog);
+    list.scrollTop = previousScroll;
+    if (wasOpen) dialog.showModal();
+  }
+
+  function renderPendingConflicts(container, conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict')) {
     for (const item of conflicts) {
+      const resolve = async (action, refresh) => {
+        try {
+          await send({ type: 'RESOLVE_PENDING', id: item.id, ...(action ? { action } : {}) });
+          syncIssueError = '';
+          recentLoaded = false;
+          await refreshState(refresh, true);
+        } catch (error) {
+          setError(error);
+          if (timesMode) {
+            syncIssueError = 'This change was not resolved. It remains stored locally; check the Activity error and try again.';
+            syncIssuesSignature = null;
+            renderSyncIssues();
+          }
+        }
+      };
       const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
       const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
       const changedAddTime = item.stage === 'startNext' && item.conflictReason === 'add_time_overlap_changed';
@@ -2136,31 +2252,41 @@
         : rejectedWrite ? 'Retry queued write' : queuedAddition ? 'Retry added time'
           : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
+      for (const subject of item.subjects ?? []) {
+        if (subject.original) box.append(el('div', `Original: ${queuedRecordLabel(subject.original)}`, 'queued-context'));
+        if (subject.proposed && (subject.original || queuedAddition)) {
+          box.append(el('div', `Queued ${subject.original ? 'change' : 'addition'}: ${queuedRecordLabel(subject.proposed)}`, 'queued-context'));
+        }
+        if (subject.descriptionChanged) box.append(el('div', 'Description changed (text remains in this browser).', 'queued-context'));
+        const date = subject.original?.entryDate || subject.proposed?.entryDate;
+        if (item.conflictReason === 'queued_entry_missing' && validEntryDate(date)) {
+          const expectedMonth = date.slice(0, 7);
+          const mismatch = subject.queuedMonth && subject.queuedMonth !== expectedMonth;
+          box.append(el('div', mismatch
+            ? `The original is dated ${expectedMonth}, but the queued edit points to ${subject.queuedMonth}. The original was not found there; retry checks its ID in the correct month.`
+            : `The original entry ID was not found in ${subject.queuedMonth || expectedMonth}. Retry checks its canonical month before saving.`, 'muted'));
+        }
+        if (validEntryDate(date)) box.append(button(`View week of ${queuedDateLabel(date)}`, 'secondary', async () => {
+          if (timesMode && syncIssuesOpen) document.querySelector('#activity-sync-status dialog')?.close();
+          await selectWeek(new Date(weekWindow(new Date(`${date}T12:00:00`)).start));
+        }));
+      }
+      if (item.conflictWith) box.append(el('div', `Overlaps: ${queuedRecordLabel(item.conflictWith)}`, 'queued-context'));
       box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
-        recentLoaded = false;
-        await refreshState(true, true);
+        await resolve(unsaved ? 'discard_unsaved_completion' : null, true);
       }));
       if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
         if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_addition' });
-        recentLoaded = false;
-        await refreshState(false, true);
+        await resolve('discard_queued_addition', false);
       }));
       if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
         if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_edit' });
-        recentLoaded = false;
-        await refreshState(true, true);
+        await resolve('discard_queued_edit', true);
       }));
       if (changedAddTime) box.append(button('Discard queued start', 'link-button', async () => {
         if (!confirm('Discard this queued start? GitHub must confirm the timer is not already running before the local start can be removed.')) return;
-        try {
-          await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_start' });
-          recentLoaded = false;
-          await refreshState(true, true);
-        } catch (error) { setError(error); }
+        await resolve('discard_queued_start', true);
       }));
       container.append(box);
     }
@@ -2245,6 +2371,7 @@
     const previous = pageState.active;
     const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     applyPageState(state);
+    if (timesMode) renderSyncIssues();
     const timelineUpdated = refreshMountedTimeline();
     if (!timelineUpdated) renderUi();
     if (timesMode && [...previousPending].some(id => !pageState.pendingWrites?.some(item => item.id === id))) {
@@ -2352,6 +2479,7 @@
   function renderTimesPage(preservedTimeline = null) {
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
+    renderSyncIssues();
     if (!pageState.configured && recentLoaded) {
       body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
       page.append(body); return page;
@@ -2437,16 +2565,6 @@
         try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
       }));
       body.append(warning);
-    }
-    if (activityViewMode === 'list') {
-      const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
-      if (waiting.length) {
-        const count = waiting.length;
-        const notice = el('div', `${count} local ${count === 1 ? 'change is' : 'changes are'} waiting to sync with GitHub. Keep this browser data until it is saved.`, 'notice');
-        notice.setAttribute('role', 'status');
-        body.append(notice);
-      }
-      renderPendingConflicts(body);
     }
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');

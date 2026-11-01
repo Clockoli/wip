@@ -82,6 +82,7 @@ class FakeNode {
     const index = this.parentElement.children.indexOf(this);
     return index > 0 ? this.parentElement.children[index - 1] : null;
   }
+  get childElementCount() { return this.children.length; }
   append(...nodes) {
     for (const node of nodes) {
       if (node && typeof node === 'object') {
@@ -1899,6 +1900,37 @@ test('Activity surfaces repository read failures and conflict omissions', async 
   assert.ok(warning);
   assert.match(warning.textContent, /1 time repository could not be loaded/i);
   assert.match(warning.textContent, /1 conflicting record was omitted/i);
+});
+
+test('Activity surfaces pending work and conflicts when opened from Reports in visual modes', async () => {
+  for (const mode of ['timeline', 'calendar']) {
+    documentNodes.clear(); createdNodes.length = 0;
+    const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+    const syncStatus = new FakeNode('div'); syncStatus.id = 'activity-sync-status'; syncStatus.isConnected = true; documentNodes.set(syncStatus.id, syncStatus);
+    const location = { protocol: 'chrome-extension:', hostname: 'clockoli', pathname: '/src/times/times.html', href: 'chrome-extension://clockoli/src/times/times.html' };
+    const document = {
+      documentElement: new FakeNode('html'), activeElement: null,
+      createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+      createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+      querySelector: () => null, addEventListener() {},
+    };
+    const pendingWrites = [{ id: 'edit-A', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing' },
+      { id: 'add-B', operation: 'addTime', status: 'pending' }];
+    const context = vm.createContext({
+      location, document, localStorage: { getItem: () => mode, setItem() {} },
+      chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`,
+        sendMessage(message, callback) { callback({ ok: true, data: { configured: true, recent: [], pendingWrites, pendingCount: 2 } }); },
+      } },
+      setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+    });
+    new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.ok(syncStatus.walk().some(node => node.className.includes('sync-status-banner') && node.getAttribute('role') === 'alert'), `${mode} shows the banner above the chart`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'sync-issues-dialog'), `${mode} provides the review dialog`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'conflict'), `${mode} shows the selected conflict and retry`);
+    assert.ok(syncStatus.walk().some(node => /waiting to sync/i.test(node.textContent || '')), `${mode} shows pending work`);
+  }
 });
 
 
@@ -4162,7 +4194,7 @@ test('pending edits and deletes never display a saving status in Timeline or Cal
 });
 
 test('Timeline can delete an already locally stored completion before GitHub sync', async () => {
-  const now = Date.now();
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
   const entry = {
     id: 'unsynced-entry', taskUrl: 'https://example.com/local-task', taskTitle: 'Local task',
     timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
@@ -4190,8 +4222,8 @@ test('Timeline can delete an already locally stored completion before GitHub syn
 });
 
 test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
-  const now = Date.now();
-  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/2026-10/alice.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
   const pending = { ...initial, pendingCount: 1, pendingWrites: [{ id: 'queued-delete', operation: 'deleteEntry', status: 'pending' }] };
   let current = initial;

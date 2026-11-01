@@ -72,9 +72,12 @@ function assertNoActiveOverlap(entries, active) {
 }
 function assertNoCompletedOverlap(updated, entries) {
   const start = new Date(updated.startedAt).getTime(), end = new Date(updated.endedAt).getTime();
-  if (entries.some(entry => entry.id !== updated.id
-      && new Date(entry.startedAt).getTime() < end && new Date(entry.endedAt).getTime() > start)) {
-    throw new TrackerConflictError('This edit would overlap another entry. Choose a free time range before moving it.');
+  const conflicting = entries.find(entry => entry.id !== updated.id
+    && new Date(entry.startedAt).getTime() < end && new Date(entry.endedAt).getTime() > start);
+  if (conflicting) {
+    const error = new TrackerConflictError('This edit would overlap another entry. Choose a free time range before moving it.');
+    error.conflictWith = conflicting;
+    throw error;
   }
 }
 function assertNoRunningCompletedOverlap(active, entries) {
@@ -212,6 +215,34 @@ function operationEditsEntry(operation, id) {
   return false;
 }
 
+function completedWriteFootprint(operation) {
+  const type = operation?.operation ?? operation?.stage;
+  const requests = type === 'editEntry' || type === 'deleteEntry' ? [operation.request]
+    : type === 'editEntries' ? operation.request?.entries : null;
+  const records = requests?.map(request => {
+    const original = request?.original, edits = request?.edits ?? {};
+    return [original, ...(type === 'deleteEntry' ? [] : [{ ...original,
+      startedAt: edits.startedAt ?? original?.startedAt, endedAt: edits.endedAt ?? original?.endedAt }])];
+  }).flat() ?? (type === 'addTime' ? [operation.entry]
+    : type === 'bulkAddTimes' ? operation.entries : null);
+  if (!Array.isArray(records) || !records.length) return null;
+  const intervals = records.map(record => ({
+    id: record?.id, start: new Date(record?.startedAt).getTime(), end: new Date(record?.endedAt).getTime(),
+  }));
+  if (intervals.some(item => !item.id || !Number.isFinite(item.start)
+      || !Number.isFinite(item.end) || item.end < item.start)) return null;
+  return intervals;
+}
+export function independentCompletedWrite(operation, blockedOperations) {
+  const next = completedWriteFootprint(operation);
+  if (!next?.length || !blockedOperations.length) return false;
+  for (const blocked of blockedOperations) {
+    const earlier = completedWriteFootprint(blocked);
+    if (!earlier?.length || next.some(candidate => earlier.some(prior => candidate.id === prior.id
+        || (candidate.start < prior.end && candidate.end > prior.start)))) return false;
+  }
+  return true;
+}
 function hasLaterEntryEdit(queue, operationId, id) {
   const index = (queue ?? []).findIndex(operation => operation.id === operationId);
   return index >= 0 && queue.slice(index + 1).some(operation => operationEditsEntry(operation, id));
@@ -964,11 +995,25 @@ export class TrackerService {
     for (const request of requests) {
       if (!sources.has(request.path)) sources.set(request.path, await this.readMonthly(request.path));
     }
-    const rebased = requests.map(request => {
-      const source = sources.get(request.path), position = locateEntry(source.entries, request.index, request.original);
+    const rebased = [];
+    for (const request of requests) {
+      let path = request.path, source = sources.get(path);
+      let position = locateEntry(source.entries, request.index, request.original);
+      if (position < 0 && request.original?.entryDate) {
+        // A stale local projection can carry a different month path. Never
+        // create or rewrite that file: find the same stable ID at its canonical
+        // recorded month before changing the durable queued request.
+        const canonical = monthlyRecordsPath(this.user, request.original.entryDate);
+        if (canonical !== path) {
+          if (!sources.has(canonical)) sources.set(canonical, await this.readMonthly(canonical));
+          const candidate = sources.get(canonical);
+          const candidatePosition = locateEntry(candidate.entries, request.index, request.original);
+          if (candidatePosition >= 0) { path = canonical; source = candidate; position = candidatePosition; }
+        }
+      }
       if (position < 0) throw new TrackerConflictError('The edited entry no longer exists in the latest Activity data. Reload Activity and review it before editing again.', 'queued_entry_missing');
-      return { ...request, originalSha: source.sha, index: position, original: stripInternal(source.entries[position]) };
-    });
+      rebased.push({ ...request, path, originalSha: source.sha, index: position, original: stripInternal(source.entries[position]) });
+    }
     operation.request = ['editEntry', 'deleteEntry'].includes(operationType) ? rebased[0] : { ...operation.request, entries: rebased };
   }
 
@@ -1002,9 +1047,17 @@ export class TrackerService {
 
   async syncPending({ canSync = async () => true } = {}) {
     const queue = await this.compactPendingQueue();
+    const blockedOperations = [];
     for (const operation of [...queue]) {
       if (!queue.some(item => item.id === operation.id)) continue;
       if (operation.stage === 'awaitSourceCompletion') break;
+      // A completed-record conflict need not hold unrelated time for days.
+      // Retain dependent writes in order; the independent ones still use
+      // normal SHA, task-index, and overlap checks before GitHub commits.
+      if (blockedOperations.length && !independentCompletedWrite(operation, blockedOperations)) {
+        blockedOperations.push(operation);
+        continue;
+      }
       // A newer local change must postpone every not-yet-started GitHub write,
       // even when several queued operations belong to the same repository.
       if (!(await canSync())) break;
@@ -1023,7 +1076,11 @@ export class TrackerService {
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
             await this.persistQueueOperation(operation);
           } else {
-            if (!['editEntry', 'editEntries', 'deleteEntry'].includes(operationType)) break;
+            if (!['editEntry', 'editEntries', 'deleteEntry'].includes(operationType)) {
+              if (!completedWriteFootprint(operation)) break;
+              blockedOperations.push(operation);
+              continue;
+            }
             operation.operation ??= operationType;
             await this.rebaseQueuedEntryEdit(operation);
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
@@ -1086,7 +1143,8 @@ export class TrackerService {
           const targets = new Set();
           for (const candidate of queue.slice(startIndex)) {
             if (candidate.operation !== 'editEntry' || candidate.status === 'conflict'
-                || !candidate.request?.original?.id || !candidate.request.path) break;
+                || !candidate.request?.original?.id || !candidate.request.path
+                || (blockedOperations.length && !independentCompletedWrite(candidate, blockedOperations))) break;
             const key = candidate.request.path + '\\u0000' + candidate.request.original.id;
             if (targets.has(key) || batch.length === 50) break;
             targets.add(key);
@@ -1280,6 +1338,10 @@ export class TrackerService {
         operation.status = error instanceof TrackerConflictError ? 'conflict' : 'pending';
         operation.conflictReason = error instanceof TrackerConflictError
           ? (error.reason || (['editEntry', 'editEntries', 'deleteEntry', 'addTime', 'bulkAddTimes'].includes(operation.operation) ? 'queued_entry_edit_conflict' : '')) : '';
+        operation.conflictWith = error instanceof TrackerConflictError && error.conflictWith
+          ? { id: error.conflictWith.id, entryDate: error.conflictWith.entryDate,
+            startedAt: error.conflictWith.startedAt, endedAt: error.conflictWith.endedAt,
+            taskTitle: error.conflictWith.taskTitle, taskUrl: error.conflictWith.taskUrl } : null;
         const remoteConflict = error instanceof TrackerConflictError && operation.stage === 'startNext' ? error.remoteActive : null;
         const keepPendingTarget = operation.nextActive && (!remoteConflict && (!(error instanceof TrackerConflictError) || operation.stage === 'startNext'));
         await this.persistQueueOperation(operation, { patch:
@@ -1287,6 +1349,11 @@ export class TrackerService {
             : keepPendingTarget ? { activeCache: { ...operation.nextActive, _path: activeRecordPath(this.user), _sha: null, _pending: true } } : {}
         });
         if (isNotFound(error)) throw error;
+        if (error instanceof TrackerConflictError && !String(operation.conflictReason || '').startsWith('queued_write_')
+            && completedWriteFootprint(operation)) {
+          blockedOperations.push(operation);
+          continue;
+        }
         break;
       } finally {
         const elapsedMs = Math.max(0, Date.now() - attemptStartedAt);
@@ -1729,7 +1796,13 @@ export class TrackerService {
 
   queuedEntry(state, request, historical) {
     const cached = (state.recentCache ?? []).find(entry => entry.id === request.original?.id && entry._path === request.path);
-    if (cached) return cached;
+    if (cached) {
+      const hasEarlierEdit = (state.pendingWrites ?? []).some(operation => operationEditsEntry(operation, cached.id));
+      if (!hasEarlierEdit && cached._path !== monthlyRecordsPath(this.user, cached.entryDate)) {
+        throw new TrackerConflictError('This entry points to a different monthly file. Reload Activity before editing.', 'queued_entry_path_mismatch');
+      }
+      return cached;
+    }
     const hasLocalAddition = (state.pendingWrites ?? []).some(operation => {
       const added = operation.operation === 'addTime' ? [operation.entry]
         : operation.operation === 'bulkAddTimes' ? operation.entries ?? [] : [];

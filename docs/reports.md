@@ -81,6 +81,8 @@ Each destination is loaded independently. If one fails, Clockoli keeps records f
 
 While the selected data is partial, Clockoli disables CSV, JSON, and print/PDF timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
 
+If local operations are waiting to sync, Reports warns that its displayed totals are **GitHub-only**: local changes are not included, even if the report has no entries or filters hide them. Routine pending work does not display a queue count or Activity review link. If a conflict needs review, Reports shows the queue count and conflict, and the Activity navigation tab marks it across standalone pages. Follow **Review in Activity** to inspect the original and proposed entries and jump directly to an older affected week in List, Timeline, or Calendar. Before exporting or printing, Reports rechecks local changes and refuses the action if synchronization is pending or cannot be verified. Timesheet exports and invoice creation, printing, and PDF saving are unavailable while local operations remain pending; load Reports again after they sync. A remote-only partial read still permits invoice creation for the filtered records as described above.
+
 ## How Reports reads repositories
 
 Reports lists valid personal branches in each selected time repository, reads represented monthly JSONL files for the selected date range, and downloads immutable blobs as needed. For each repository, it first checks the configured branch using an ETag; an unchanged branch can reuse the extension-local snapshot, and a changed branch downloads only monthly blobs whose Git SHA is not already cached. The cache is an optimization, not the authoritative time store.

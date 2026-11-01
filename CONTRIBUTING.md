@@ -86,7 +86,7 @@ Read `docs/spec-compliance.md` before changing architecture or behavior. Read `d
 - Validate complete JSON/JSONL files; do not silently skip malformed records.
 - Preserve local-date, timezone, monthly partition, actor, producer, metadata, and metrics semantics.
 - Use blob SHAs for rewrites and stable record IDs for lookup. Preflight linked or cross-month mutations and publish them atomically.
-- Preserve FIFO, operation-ID-aware pending mutations. A stale Stop must not clear or resurrect a newer timer.
+- Preserve operation-ID-aware pending mutations and FIFO for dependent writes and timer lifecycle. Only provably independent completed-record writes may bypass a conflicted completed-record mutation; never discard the blocker. A stale Stop must not clear or resurrect a newer timer.
 
 ### UI behavior
 

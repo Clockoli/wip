@@ -17,6 +17,8 @@
 @media(max-width:640px){.page-add-time{margin-left:auto;order:1}.page-tab-list{order:2;width:100%}}
 @media(max-width:640px){.page-brand-controls{width:100%}.page-brand-controls .page-brand{width:auto}}
 @media(max-width:400px){.page-tab-list{gap:0}.page-tab{gap:2px;padding-inline:2px;font-size:11px}.page-tab svg{width:13px;height:13px}}
+.pending-navigation-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;min-height:20px;padding:0 5px;border-radius:10px;background:var(--bgColor-attention-muted,#fff8c5);color:var(--fgColor-attention,#7d4e00);font:700 11px/1.2 var(--fontStack-sansSerif)}
+.pending-navigation-badge.has-conflict{background:var(--bgColor-danger-muted,#ffebe9);color:var(--fgColor-danger,#cf222e)}
 @media print{.page-tabs-shell{display:none}}
 /* The wordmark artwork is a dark green fixed by the brand; lift it for dark backgrounds. */
 @media(prefers-color-scheme:dark){.page-brand img{filter:saturate(1.4) brightness(2.1)}}

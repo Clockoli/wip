@@ -3955,17 +3955,20 @@ test('Calendar hover stays below day and project labels', async ({ page }) => {
   await page.evaluate(() => window.__timeline.setViewMode('calendar'));
   const task = page.locator('#timeline .calendar-task').first();
   await task.click();
-  await task.hover();
-  const layers = await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    return {
-      task: Number(getComputedStyle(root.querySelector('.calendar-task:hover')).zIndex),
-      project: Number(getComputedStyle(root.querySelector('.calendar-row-name')).zIndex),
-      header: Number(getComputedStyle(root.querySelector('.calendar-sticky-header')).zIndex),
-    };
-  });
-  expect(layers.task).toBeLessThan(layers.project);
-  expect(layers.task).toBeLessThan(layers.header);
+  // A debounced Calendar rerender may replace the hovered node after hover()
+  // returns. Re-hover the current node rather than measuring a detached one.
+  await expect.poll(async () => {
+    await task.hover();
+    return page.evaluate(() => {
+      const root = document.querySelector('#timeline').shadowRoot;
+      const hovered = root.querySelector('.calendar-task:hover');
+      const project = root.querySelector('.calendar-row-name');
+      const header = root.querySelector('.calendar-sticky-header');
+      if (!hovered || !project || !header) return null;
+      const layer = element => Number(getComputedStyle(element).zIndex);
+      return { belowProject: layer(hovered) < layer(project), belowHeader: layer(hovered) < layer(header) };
+    });
+  }).toEqual({ belowProject: true, belowHeader: true });
 });
 
 test('hover details hide after the pointer leaves and omit internal identifiers', async ({ page }) => {

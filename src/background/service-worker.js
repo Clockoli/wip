@@ -27,7 +27,7 @@ import '../services/clockify-identity-mapping.js';
 import '../services/clockify-import-cleanup.js';
 import { importClockifyOrganization } from '../services/clockify-organization-import.js';
 import '../services/clockify-record-import.js';
-import { TrackerService } from '../services/tracker.js';
+import { independentCompletedWrite, TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { annotateDestinationRecord, loadDestinationRecords, mergeDestinationRecords, mergeDestinationTaskSummaries, ReportService, withoutInternalMetadata } from '../services/reports.js';
 import { ExchangeRateService } from '../services/exchange-rates.js';
@@ -356,11 +356,19 @@ async function loadReport(message) {
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
     const users = [...new Set(Object.values(currentUsers).filter(Boolean))];
+    const tracking = await store.getTrackingSnapshot();
+    loadCoordinator.assertCurrent(loadEpoch);
+    const pendingWrites = destinations.flatMap(destination => (tracking.destinationStates?.entries?.[destination.id]?.pendingWrites ?? [])
+      .map(({ operation, status, stage, conflictReason }) => ({
+        destinationId: destination.id, operation, status, stage,
+        ...(conflictReason ? { conflictReason } : {}),
+      })));
     return {
       configured: true,
       sourceRepositories: destinations.map(destination => destination.label),
       currentUsers, currentUser: users[0] || '',
       ...loaded,
+      pendingWrites, pendingCount: pendingWrites.length, partial: loaded.partial || pendingWrites.length > 0,
       records: loaded.records.map(withoutInternalMetadata),
       billing: await store.getLocalPreferences(),
     };
@@ -460,7 +468,8 @@ async function loadTimes(message, sender) {
         : projected.records;
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
-    const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || []).map(operation => safePendingProjection(operation, destinationId)));
+    const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || [])
+      .map(operation => safePendingProjection(operation, destinationId, { includeDetails: true })));
     return {
       configured: true,
       recent: loaded.records.map(({ _record, ...record }) => record)
@@ -742,7 +751,39 @@ function safeActiveProjection(active, destinationId) {
   } : null;
 }
 
-function safePendingProjection(operation, destinationId) {
+function safeQueuedRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+  const result = {};
+  if (typeof record.entryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(record.entryDate)
+      && !Number.isNaN(Date.parse(`${record.entryDate}T00:00:00Z`))) result.entryDate = record.entryDate;
+  for (const field of ['startedAt', 'endedAt']) {
+    if (typeof record[field] === 'string' && Number.isFinite(Date.parse(record[field]))) result[field] = record[field];
+  }
+  if (typeof record.taskTitle === 'string') result.taskTitle = record.taskTitle.slice(0, 160);
+  if (typeof record.taskUrl === 'string') result.taskUrl = record.taskUrl.slice(0, 500);
+  return Object.keys(result).length ? result : null;
+}
+function queuedSubjects(operation) {
+  const type = operation.operation ?? operation.stage;
+  const requests = ['editEntry', 'deleteEntry'].includes(type) ? [operation.request]
+    : type === 'editEntries' ? operation.request?.entries : null;
+  if (Array.isArray(requests)) return requests.slice(0, 50).flatMap(request => {
+    const original = safeQueuedRecord(request?.original);
+    if (!original) return [];
+    const proposed = type === 'deleteEntry' ? null : safeQueuedRecord({ ...request.original, ...request.edits });
+    const queuedMonth = /^times\/(\d{4}-\d{2})\/[^/]+\.jsonl$/.exec(request.path || '')?.[1];
+    const descriptionChanged = typeof request?.edits?.description === 'string'
+      && request.edits.description !== (request.original.description ?? '');
+    return [{ original, ...(proposed ? { proposed } : {}), ...(queuedMonth ? { queuedMonth } : {}),
+      ...(descriptionChanged ? { descriptionChanged: true } : {}) }];
+  });
+  const entries = type === 'bulkAddTimes' ? operation.entries : [operation.entry];
+  return (Array.isArray(entries) ? entries : []).slice(0, 50).flatMap(entry => {
+    const proposed = safeQueuedRecord(entry);
+    return proposed ? [{ proposed }] : [];
+  });
+}
+function safePendingProjection(operation, destinationId, { includeDetails = false } = {}) {
   const { id, status, stage, conflictReason, queuedAt, retryCount, lastError } = operation;
   const diagnostics = Array.isArray(operation.diagnostics) ? operation.diagnostics.slice(-60).flatMap(event => {
     const at = typeof event?.at === 'string' && !Number.isNaN(new Date(event.at).getTime()) ? event.at : null;
@@ -755,6 +796,10 @@ function safePendingProjection(operation, destinationId) {
     ...(conflictReason ? { conflictReason } : {}),
     ...(lastError ? { lastError: diagnosticError(lastError) } : {}),
     ...(diagnostics.length ? { diagnostics } : {}),
+    ...(includeDetails ? {
+      subjects: queuedSubjects(operation),
+      ...(safeQueuedRecord(operation.conflictWith) ? { conflictWith: safeQueuedRecord(operation.conflictWith) } : {}),
+    } : {}),
   };
 }
 
@@ -764,7 +809,7 @@ function destinationSaveConfirmed(state) {
   return state?.remoteWriteConfirmed === true || (!pending && !hasLocalRecord);
 }
 
-async function globalTrackerState({ refresh = false, includeSummary = false } = {}) {
+async function globalTrackerState({ refresh = false, includeSummary = false, includePendingDetails = false } = {}) {
   const snapshot = await configuredSnapshot({ localOnly: true });
   const destinationIds = Object.keys(snapshot.registry?.destinations ?? {});
   if (!snapshot.auth || !destinationIds.length) return { configured: false, active: null, recent: [], pendingWrites: [] };
@@ -787,7 +832,7 @@ async function globalTrackerState({ refresh = false, includeSummary = false } = 
     .map(entry => ({ ...entry, destinationId })))
     .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt)).slice(0, 50);
   const pendingWrites = [...states].flatMap(([destinationId, state]) => (state.pendingWrites ?? [])
-    .map(operation => safePendingProjection(operation, destinationId)));
+    .map(operation => safePendingProjection(operation, destinationId, { includeDetails: includePendingDetails })));
   const result = { configured: true, active, recent, pendingWrites };
   if (includeSummary) {
     const summaries = [...states.values()];
@@ -1315,7 +1360,8 @@ async function handle(message, sender) {
   }
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const pageState = message.type === 'GET_PAGE_STATE';
-    const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState });
+    const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState,
+      includePendingDetails: !pageState || sender?.url === chrome.runtime.getURL('src/times/times.html') });
     if (!state.configured) return pageState
       ? { configured: false, active: null, pendingCount: 0, recent: [], interfaceWidth: (await store.getLocalPreferences()).interfaceWidth }
       : state;
@@ -1666,8 +1712,16 @@ function hasRunnablePending(queue) {
   if (first.status !== 'conflict') return true;
   const operation = first.operation ?? first.stage;
   const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
-  return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
-    || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+  if (retryableConflict && ((first.stage === 'startNext' && first.nextActive)
+    || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'))) return true;
+  if (!retryableConflict) return false;
+  const blocked = [first];
+  for (const candidate of queue.slice(1)) {
+    if (candidate.stage === 'awaitSourceCompletion') return false;
+    if (candidate.status !== 'conflict' && independentCompletedWrite(candidate, blocked)) return true;
+    blocked.push(candidate);
+  }
+  return false;
 }
 async function shouldContinuePendingSync() {
   const destinationIds = await store.getPendingDestinationIds();
