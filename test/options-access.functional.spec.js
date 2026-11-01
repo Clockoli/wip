@@ -19,6 +19,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       verificationStatus: 'write_verified', destinations,
     },
     RESUME_DEVICE_FLOW: null,
+    GET_STATE: { configured: true, active: null, pendingWrites: [] },
     GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
     GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
     GET_ADDON_SETTINGS: {},
@@ -94,7 +95,7 @@ async function expectReadOnlyRequests(worker) {
   const requests = await worker.evaluate(() => globalThis.requests);
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every(type => [
-    'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'GET_PAGE_STATE', 'GET_LOCAL_PREFERENCES',
+    'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'GET_STATE', 'GET_PAGE_STATE', 'GET_LOCAL_PREFERENCES',
     'GET_ADDON_SETTINGS', 'LOAD_TASKS', 'LOAD_REPOSITORY_COLLABORATORS',
   ].includes(type)), `Unexpected request types: ${requests.join(', ')}`).toBe(true);
 }
