@@ -4277,16 +4277,17 @@ test('queue diagnostics stay hidden unless enabled in Advanced settings', () => 
   assert.ok(harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics'));
 });
 
-async function runningStatusHarness(initial) {
+async function runningStatusHarness(initial, onReconnect, { onAuthExpired, onAuthRestored } = {}) {
   const moduleSource = await readFile(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
-  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [];
-  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null;
+  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [], optionOpens = [];
+  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null, refreshError = null;
   const document = {
     hidden: false, createElement: tag => new FakeNode(tag), getElementById: () => null,
     addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
   };
   const context = vm.createContext({
     document, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    chrome: { runtime: { openOptionsPage: () => { optionOpens.push(true); } } },
     dateValue, timeValue, parseTime, localTimestamp,
     Date: class extends Date { static now() { return now; } },
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
@@ -4300,6 +4301,7 @@ async function runningStatusHarness(initial) {
     if (message.type === 'GET_PAGE_STATE') {
       if (nextReads.length) return nextReads.shift();
       if (readError) throw readError;
+      if (message.refresh && refreshError) throw refreshError;
       return state;
     }
     if (message.type === 'START') {
@@ -4316,16 +4318,17 @@ async function runningStatusHarness(initial) {
     }
     throw new Error(`Unexpected message ${message.type}`);
   };
-  const destroy = context.mountRunningStatus(container, { send, onChange: change => { changes.push(change); } });
+  const destroy = context.mountRunningStatus(container, { send, onReconnect, onAuthExpired, onAuthRestored, onChange: change => { changes.push(change); } });
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   await settle();
   return {
-    container, document, events, timers, calls, confirmations, changes, destroy, settle,
+    container, document, events, timers, calls, confirmations, changes, optionOpens, destroy, settle,
     find: className => container.walk().find(node => node.className === className),
     setState: value => { state = value; }, advance: ms => { now += ms; },
     failStop: () => { stopError = new Error('Stop rejected'); },
     failStart: () => { startError = new Error('Start rejected'); },
     failRead: value => { readError = value ? new Error('Worker restarting') : null; },
+    failRefresh: value => { refreshError = value ? Object.assign(new Error('Clockoli could not renew GitHub access.'), { code: 'auth_expired' }) : null; },
     cancelConfirmation: () => { confirmed = false; },
     holdNextRead: () => {
       let resolve;
@@ -4342,6 +4345,85 @@ function runningStatusState(hours = 1) {
     startedAt: new Date(now.getTime() - hours * 3_600_000).toISOString(), entryDate: '2026-09-05',
   } };
 }
+
+test('expired GitHub access shows a recovery button beside the running-status error', async () => {
+  let reconnects = 0;
+  const summaryError = { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' };
+  const h = await runningStatusHarness({ configured: true, active: null, summaryError }, () => { reconnects++; });
+  const button = h.find('running-status-reconnect');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  assert.equal(button.textContent, 'Reconnect GitHub');
+  assert.equal(button.type, 'button');
+  button.onclick();
+  assert.equal(reconnects, 1);
+  h.setState({ configured: true, active: null, summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('an expired GitHub session on other pages opens Settings for sign-in', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null,
+    summaryError: { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' } });
+  const button = h.find('running-status-reconnect');
+  assert.equal(button.textContent, 'Sign in again with GitHub');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  button.onclick();
+  assert.equal(h.optionOpens.length, 1);
+  h.destroy();
+});
+
+test('local status polling preserves a failed GitHub renewal until a remote refresh succeeds', async () => {
+  let reconnects = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, () => { reconnects++; });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'));
+  h.timers.get(5_000)(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'), 'local-only polling must not erase the failed refresh');
+  h.find('running-status-reconnect').onclick();
+  assert.equal(reconnects, 1);
+  h.failRefresh(false);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('a handled renewal failure opens sign-in without a second error and clears after recovery', async () => {
+  let expired = 0, restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined, {
+    onAuthExpired: () => { expired++; }, onAuthRestored: () => { restored++; },
+  });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(expired, 1);
+  assert.equal(h.find('running-status-error').hidden, true);
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.timers.get(5_000)(); await h.settle();
+  assert.equal(h.find('running-status-error').hidden, true);
+  h.failRefresh(false);
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
+
+test('a remote summary error does not restore expired sign-in until a successful read', async () => {
+  let restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined,
+    { onAuthRestored: () => { restored++; } });
+  h.failRefresh(true);
+  await h.destroy.refresh(); await h.settle();
+  h.failRefresh(false);
+  h.setState({ configured: true, active: null,
+    summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 0);
+  assert.equal(h.find('running-status-error').textContent, 'Try later');
+  h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
 
 test('shared running status shows the idle badge and a fallback when there are no recent tasks', async () => {
   const h = await runningStatusHarness({ configured: true, active: null, recent: [], todayTrackedMs: null });

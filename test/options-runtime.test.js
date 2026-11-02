@@ -64,6 +64,10 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
     ClockoliRecovery: { actionFor: () => null },
     chrome: { tabs: { getCurrent: async () => ({ id: 11, windowId: 1 }), onActivated: { addListener(handler) { tabListeners.activated = handler; } } }, runtime: { sendMessage(request, callback) {
+      if (request.type === 'RESUME_DEVICE_FLOW') {
+        callback({ ok: true, data: null });
+        return;
+      }
       if (request.type === 'LOAD_REPOSITORY_COLLABORATORS' && !collaboratorReplies) {
         callback({ ok: true, data: { users: [], hasMore: false } });
         return;

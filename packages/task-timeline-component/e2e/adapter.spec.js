@@ -192,7 +192,8 @@ test('popup Calendar uses the same compact details layout as Activity', async ({
 });
 
 test('narrow popup Calendar falls back vertically and keeps the upper card actionable', async ({ page }) => {
-  const now = Date.now();
+  await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
+  const now = new Date('2026-10-14T12:00:00Z').getTime();
   await mount(page, { activityDashboard: true, toolbarPopup: true, entryForm: true, weeklyCalendar: true,
     rows: [{ id: 'one', title: 'One' }],
     items: [
@@ -283,7 +284,8 @@ test('popup Calendar places a right-edge entry card on its left', async ({ page 
 });
 
 test('Activity Calendar places the upper entry card beside its block without covering the next entry', async ({ page }) => {
-  const now = Date.now();
+  await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
+  const now = new Date('2026-10-14T12:00:00Z').getTime();
   await page.setViewportSize({ width: 1100, height: 720 });
   await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
     rows: [{ id: 'one', title: 'One' }],
@@ -406,7 +408,8 @@ test('Activity Calendar card stays reachable while the pointer crosses the gap s
 });
 
 test('Activity Calendar card stays visible while moving within a tall event before approaching its actions', async ({ page }) => {
-  const now = Date.now();
+  await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
+  const now = new Date('2026-10-14T12:00:00Z').getTime();
   await mount(page, { activityDashboard: true, entryForm: true, weeklyCalendar: true,
     rows: [{ id: 'one', title: 'One' }],
     items: [{ id: 'entry:a', url: 'https://example.com/task', title: 'Long task', rowId: 'one',
@@ -1470,7 +1473,8 @@ for (const mode of ['timeline', 'calendar']) {
   });
 
   test(`details without a description keep action buttons at the right edge in ${mode}`, async ({ page }) => {
-    const now = Date.now();
+    if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
+    const now = mode === 'calendar' ? new Date('2026-10-14T12:00:00Z').getTime() : Date.now();
     await mount(page, { entryForm: true, items: [
       { id: 'entry:old', url: 'https://example.com/old', title: 'Old', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true },
       { id: 'active:now', url: 'https://example.com/now', title: 'Now', startedAt: now - HOUR, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
@@ -1481,7 +1485,7 @@ for (const mode of ['timeline', 'calendar']) {
       await page.locator('#timeline').evaluate((host, width) => { host.style.width = `${width - 16}px`; }, width);
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       for (const id of ['entry:old', 'active:now']) {
-        await page.locator('body').hover({ position: { x: 1, y: 1 } });
+        await page.locator('body').click({ position: { x: 1, y: 1 } });
         await expect(page.locator('#timeline .details')).toBeHidden();
         await page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="${id}"]`).first().click();
         await expect(page.locator('#timeline .details')).toBeVisible();
@@ -2310,6 +2314,7 @@ for (const mode of ['timeline', 'calendar']) {
   const blockSelector = mode === 'calendar' ? '.calendar-task' : '.task';
 
   test('double-clicking a completed entry in ' + mode + ' only selects it', async ({ page }) => {
+    if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();
@@ -2328,6 +2333,7 @@ for (const mode of ['timeline', 'calendar']) {
   });
 
   test('double-clicking the running entry in ' + mode + ' does not stop it', async ({ page }) => {
+    if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const block = page.locator('#timeline ' + blockSelector + '[data-task-key="active:c"]').first();
@@ -2346,6 +2352,7 @@ for (const mode of ['timeline', 'calendar']) {
   });
 
   test('Track time stays on one line below the full-width description in ' + mode, async ({ page }) => {
+    if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     await page.evaluate(() => {
       window.__items[0].description = 'Existing note';
@@ -2397,6 +2404,7 @@ for (const mode of ['timeline', 'calendar']) {
   });
 
   test('Track time keeps its background on hover in ' + mode, async ({ page }) => {
+    if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const block = page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first();

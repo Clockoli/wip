@@ -203,6 +203,20 @@ test('Credential broker returns a current token after another request already re
   assert.equal(await broker.getAccessToken({ forceRefresh: true, rejectedToken: 'access-old' }), 'access-new');
 });
 
+test('rejected token renewal asks for reconnection without discarding the existing authorization', async () => {
+  const auth = {
+    mode: 'github_app', githubUserId: 123, githubLogin: 'alice', accessToken: 'access-old',
+    accessTokenExpiresAt: 10_000, refreshToken: 'refresh-old', refreshTokenExpiresAt: 99_999_999,
+  };
+  const store = new MemoryAuthStore({ auth });
+  const broker = new CredentialBroker({ clientId, store, now: () => 20_000,
+    fetchImpl: async () => response(200, { error: 'incorrect_client_credentials' }) });
+  await assert.rejects(() => broker.getAccessToken(), error =>
+    error.code === 'auth_expired' && /renew GitHub access.*Reconnect GitHub/i.test(error.message));
+  assert.deepEqual(store.auth, auth);
+  assert.equal(store.rotations, 0);
+});
+
 test('Credential broker preserves legacy PAT mode without attempting refresh', async () => {
   const store = new MemoryAuthStore({ auth: { mode: 'pat', accessToken: 'legacy-pat', generation: 1 }, authGeneration: 1 });
   const broker = new CredentialBroker({ clientId, store, fetchImpl: async () => { throw new Error('must not fetch'); } });
