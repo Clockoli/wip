@@ -10,6 +10,8 @@ import { taskUrlOf } from '../domain/values.js';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories', 'timeRepositories'];
 const $ = id => document.getElementById(id);
+// Safari ignores print requests from extension pages, so Print would do nothing there.
+const SAFARI_EXTENSION_PROTOCOL = 'safari-web-extension:';
 const state = {
   records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [],
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
@@ -17,7 +19,7 @@ const state = {
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
   invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
   preset: 'last-week', reportingUtc: false, settingsRevision: 0, calendarMonth: '', focusedDay: '', savingBasis: false,
-  invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [],
+  invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [], exportingPdf: false,
 };
 
 function send(message) {
@@ -170,6 +172,8 @@ function renderInvoiceDocument(container, invoice) {
 }
 
 const INVOICE_PDF_RENDER_SCALE = 3;
+// Lower than the invoice: a long timesheet renders to one canvas, and Safari caps canvas area.
+const TIMESHEET_PDF_RENDER_SCALE = 2;
 
 function replaceSellerNameWithRasterImage(source, value) {
   const heading = source.querySelector?.('.invoice-seller')?.children[0], canvas = document.createElement('canvas');
@@ -250,7 +254,7 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 
 function setDownloadsAvailable(available) {
   available = available && !state.loading && !state.partial;
-  for (const id of ['download-csv', 'download-json', 'download-pdf']) {
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
   }
@@ -977,9 +981,30 @@ $('download-csv').addEventListener('click', event => downloadTimesheet('csv', ev
 $('download-json').addEventListener('click', event => downloadTimesheet('json', event));
 function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); }
 
-$('download-pdf').addEventListener('click', event => {
+$('download-pdf').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || $('download-pdf').classList.contains('disabled')) return;
+  if (state.loading || state.partial || state.exportingPdf || $('download-pdf').classList.contains('disabled')) return;
+  // html2pdf renders its own copy, so the hidden timesheet never flashes onto the page.
+  const copy = $('print-timesheet').cloneNode(true), filename = `${pdfDocumentTitle()}.pdf`;
+  copy.classList.add('timesheet-pdf-export');
+  state.exportingPdf = true;
+  try {
+    if (typeof globalThis.html2pdf !== 'function') throw new Error('PDF export is unavailable. Reload Clockoli and try again.');
+    await globalThis.html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { backgroundColor: '#ffffff', scale: TIMESHEET_PDF_RENDER_SCALE, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.print-heading'] },
+    }).from(copy).save();
+  } catch (error) { setError(error); } finally { state.exportingPdf = false; }
+});
+
+$('print-report').hidden = location.protocol === SAFARI_EXTENSION_PROTOCOL;
+$('print-report').addEventListener('click', event => {
+  event.preventDefault();
+  if (state.loading || state.partial || $('print-report').classList.contains('disabled')) return;
   const previousTitle = document.title;
   document.title = pdfDocumentTitle();
   addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });

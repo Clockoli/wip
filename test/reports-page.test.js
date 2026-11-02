@@ -21,7 +21,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   for (const value of ['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task']) {
     assert.match(html, new RegExp(`<option value="${value}"`));
   }
-  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'timeRepositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['people-facet', 'projects-facet', 'repositories-facet', 'timeRepositories-facet', 'analytics-chart', 'download-csv', 'download-json', 'download-pdf', 'print-report', 'print-timesheet', 'print-brand', 'print-detail-table', 'print-task-table', 'loading-progress', 'loading-label']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Time by day, person and task/);
   assert.match(html, /Total time by task/);
   assert.match(js, /buildPrintableTimesheet\(filtered\)/);
@@ -32,6 +32,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(html, /aria-label="Search time repositories"/);
   assert.match(html, /aria-label="Download CSV timesheet"/);
   assert.match(html, /aria-label="Download JSON timesheet"/);
+  assert.match(html, /aria-label="Download PDF timesheet"/);
   assert.match(html, /aria-label="Print report"/);
   assert.doesNotMatch(html, /aria-label="Print report or save as PDF"/);
   assert.doesNotMatch(html, /id="settings"|id="source"/);
