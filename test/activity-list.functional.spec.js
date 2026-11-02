@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const currentWeekFriday = () => {
+  const friday = new Date();
+  friday.setDate(friday.getDate() - (friday.getDay() + 6) % 7 + 4);
+  friday.setHours(18, 0, 0, 0);
+  return friday;
+};
 const workerSource = `
 const day = new Date(); day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);
 const date = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-');
@@ -161,9 +167,122 @@ test('toolbar-injected HTTP panel searches and clears its List filter', async ()
   }
 });
 
+test('Activity keeps local sync and conflict warnings visible in Timeline and Calendar', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource
+      .replace('let active = null;', 'let configured = true; let active = null;')
+      .replace('const state = () => ({ configured: true, active,', 'const state = () => ({ configured, active,')
+      .replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'edit-A', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing',
+        subjects: [{ original: { entryDate: '2026-09-12', startedAt: '2026-09-12T08:00:00.000Z', endedAt: '2026-09-12T09:00:00.000Z',
+          taskTitle: 'Old task' }, proposed: { entryDate: '2026-09-12', startedAt: '2026-09-12T08:00:00.000Z',
+          endedAt: '2026-09-12T10:00:00.000Z', taskTitle: 'Old task' }, queuedMonth: '2026-10' }] },
+      { id: 'edit-C', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_edit_conflict',
+        subjects: [{ original: { entryDate: '2026-09-15', startedAt: '2026-09-15T08:00:00.000Z', endedAt: '2026-09-15T09:00:00.000Z',
+          taskTitle: 'Another edit' }, proposed: { entryDate: '2026-09-15', startedAt: '2026-09-15T08:00:00.000Z',
+          endedAt: '2026-09-15T10:00:00.000Z', taskTitle: 'Another edit' }, queuedMonth: '2026-09', descriptionChanged: true }],
+        conflictWith: { entryDate: '2026-09-15', startedAt: '2026-09-15T09:30:00.000Z', endedAt: '2026-09-15T11:00:00.000Z', taskTitle: 'Other task' } },
+      { id: 'add-B', operation: 'addTime', status: 'pending' },
+    ];`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const root = page.locator('#clockoli-times-root');
+    const status = page.locator('#activity-sync-status');
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await expect(status.getByRole('alert')).toContainText('2 conflicts');
+      await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible();
+    }
+    for (const mode of ['Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await worker.evaluate(() => {
+        globalThis.savedConflicts = pendingWrites;
+        pendingWrites = pendingWrites.filter(item => item.status === 'pending');
+      });
+      await expect(status).toBeEmpty({ timeout: 12_000 });
+      await worker.evaluate(() => { pendingWrites = globalThis.savedConflicts; });
+      await expect(status.getByRole('alert')).toContainText('2 conflicts', { timeout: 12_000 });
+    }
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Old task.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Another edit.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Pending sync/ })).toBeVisible();
+    await expect(dialog.getByText(/Original: Old task/)).toBeVisible();
+    await expect(dialog.getByText(/Queued change: Old task/)).toBeVisible();
+    await expect(dialog.getByText(/2026-09.*2026-10/)).toBeVisible();
+    if (process.env.CLOCKOLI_SYNC_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_SYNC_SCREENSHOT });
+    await dialog.getByRole('button', { name: /Another edit.*Conflict/ }).click();
+    await expect(dialog.getByText(/Overlaps: Other task/)).toBeVisible();
+    await expect(dialog.getByText(/Description changed/)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeFocused();
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await dialog.getByRole('button', { name: /Old task.*Conflict/ }).click();
+    expect(await worker.evaluate(() => trackingMessages.filter(type => type === 'RESOLVE_PENDING').length)).toBe(0);
+    await page.setViewportSize({ width: 390, height: 740 });
+    await expect(dialog.getByRole('button', { name: 'Retry saved edit' })).toBeVisible();
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await dialog.getByRole('button', { name: 'Retry saved edit' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('not resolved');
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(3);
+    await dialog.getByRole('button', { name: /View week of.*12 Sep/ }).click();
+    await expect(dialog).toBeHidden();
+    await expect(root.locator('.week-navigation-label')).toContainText('2026-09-07');
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(dialog).toBeVisible();
+    await worker.evaluate(() => { pendingWrites = pendingWrites.filter(item => item.status === 'pending'); });
+    await expect(status).toBeEmpty({ timeout: 12_000 });
+    await expect(dialog).toHaveCount(0);
+    expect(await worker.evaluate(() => trackingMessages.filter(type => type === 'RESOLVE_PENDING').length)).toBe(1);
+    await worker.evaluate(() => { pendingWrites = globalThis.savedConflicts; });
+    await expect(status.getByRole('alert')).toContainText('2 conflicts', { timeout: 12_000 });
+    await worker.evaluate(() => {
+      const blocked = globalThis.savedConflicts[0];
+      pendingWrites = [blocked, { id: 'dependent-edit', operation: 'editEntry', stage: 'editEntry', status: 'pending',
+        subjects: [{ original: blocked.subjects[0].original }] }];
+    });
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await expect(status.getByRole('alert')).toContainText('1 conflict needs review', { timeout: 12_000 });
+      await expect(status.getByRole('alert')).toContainText('1 waiting to sync');
+      await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible();
+    }
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(page.getByRole('dialog', { name: 'Sync issues' }).getByRole('button', { name: /Old task.*Pending sync/ })).toBeVisible();
+    expect(await worker.evaluate(() => pendingWrites.map(item => item.id))).toEqual(['edit-A', 'dependent-edit']);
+    await page.keyboard.press('Escape');
+    await worker.evaluate(() => { configured = false; pendingWrites = []; });
+    await expect(root).toContainText('Choose where Clockoli should save your time', { timeout: 12_000 });
+    await expect(status).toBeEmpty();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
+  const fixtureTime = currentWeekFriday();
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
@@ -182,6 +301,7 @@ test('imported Activity records display the theme-colored Clockoli icon in List 
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.clock.install({ time: fixtureTime });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const maskPixels = await page.evaluate(async () => {
       const image = new Image();
@@ -292,11 +412,22 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
   test.setTimeout(30000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-profile-'));
+  const fixtureTime = currentWeekFriday();
+  const clockOffset = fixtureTime.getTime() - Date.now();
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
     const rendererPath = join(extension, 'src/content/github.js');
-    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    // Page clocks do not reach isolated content scripts; offset both Date.now() and new Date().
+    await writeFile(rendererPath, `if (location.protocol === 'https:') {
+      const RealDate = Date;
+      const offset = ${clockOffset};
+      globalThis.Date = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [RealDate.now() + offset])); }
+        static now() { return RealDate.now() + offset; }
+      };
+    }\n`
+      + (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
@@ -315,6 +446,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.setViewportSize({ width: 1774, height: 900 });
+    await page.clock.install({ time: fixtureTime });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const root = page.locator('#clockoli-times-root');
     const summary = page.locator('#activity-summary');
@@ -349,11 +481,20 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     const github = await context.newPage();
     github.on('pageerror', error => errors.push(error.message));
     await github.setViewportSize({ width: 1774, height: 900 });
+    await github.clock.install({ time: fixtureTime });
     await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
       status: 200, contentType: 'text/html',
       body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
     }));
     await github.goto('https://github.com/acme/app/issues/42');
+    const [isolatedClock] = await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'https://github.com/acme/app/issues/42' });
+      return chrome.scripting.executeScript({ target: { tabId: tab.id },
+        func: () => ({ now: Date.now(), constructed: new Date().getTime() }) });
+    });
+    const pageNow = await github.evaluate(() => Date.now());
+    expect(Math.abs(isolatedClock.result.now - isolatedClock.result.constructed)).toBeLessThan(1000);
+    expect(Math.abs(isolatedClock.result.now - pageNow)).toBeLessThan(10000);
     await github.locator('#clockoli-root .trigger-main').click();
     const panel = github.locator('#clockoli-full-width-popup-root');
     await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
@@ -713,21 +854,24 @@ test('Activity List requires confirmation before discarding an unsaved completio
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
     await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
-    await expect(page.locator('#clockoli-times-root .conflict').getByText('Completion was not saved')).toBeVisible();
+    await expect(page.locator('#activity-sync-status').getByRole('alert')).toContainText('1 conflict');
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const review = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(review.getByText('Completion was not saved')).toBeVisible();
     await expect(page.locator('#activity-running-status .running-status-idle')).toHaveText('Stop needs attention');
     page.once('dialog', dialog => dialog.dismiss());
-    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
-    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(1);
+    await review.getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(review.getByText('Completion was not saved')).toBeVisible();
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
     page.once('dialog', dialog => dialog.accept());
-    await page.locator('#clockoli-times-root .conflict').getByRole('button', { name: 'Discard unsaved completion' }).click();
-    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    await review.getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(review).toHaveCount(0);
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual(['RESOLVE_PENDING']);
     expect(errors).toEqual([]);
   });
 });
 
-test('Activity List distinguishes unsynced changes from conflicts', async () => {
+test('Activity keeps routine pending work unobtrusive in List, Timeline, and Calendar', async () => {
   const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
     id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'pending',
     destinationId: 'github:1',
@@ -735,9 +879,11 @@ test('Activity List distinguishes unsynced changes from conflicts', async () => 
   await withActivityWorker(source, async ({ context, extensionId }) => {
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
-    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
-    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
-    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    for (const view of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
+      await expect(page.locator('#activity-sync-status')).toBeEmpty();
+      await expect(page.getByRole('button', { name: 'Review sync issues' })).toHaveCount(0);
+    }
   });
 });
 
@@ -779,10 +925,10 @@ test('Activity rechecks a GitHub-only timer when the pending completion leaves t
     await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
     const warning = page.locator('#clockoli-times-root .remote-timer-warning');
     await expect(warning).toBeVisible();
-    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toBeVisible();
+    await expect(page.locator('#activity-sync-status')).toBeEmpty();
     const checksBefore = await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length);
     await worker.evaluate(() => { globalThis.remotePresent = false; pendingWrites = []; });
-    await expect(page.locator('#clockoli-times-root').getByText('1 local change is waiting to sync with GitHub. Keep this browser data until it is saved.')).toHaveCount(0, { timeout: 12_000 });
+    await expect(page.locator('#activity-sync-status')).toBeEmpty();
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length)).toBeGreaterThan(checksBefore);
     await expect(warning).toHaveCount(0, { timeout: 12_000 });
     expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);

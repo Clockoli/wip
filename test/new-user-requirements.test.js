@@ -130,7 +130,7 @@ test('tracker copy and navigation use URL tasks without item terminology', () =>
 
 test('opening the tracker renders cached entries and refreshes them without a second open', () => {
   assert.match(serviceWorker, /async function globalTrackerState[\s\S]*const recent = \[\.\.\.states\][\s\S]*const result = \{ configured: true, active, recent, pendingWrites \}/);
-  assert.match(serviceWorker, /message\.type === 'GET_PAGE_STATE'[\s\S]*globalTrackerState\(\{ refresh: Boolean\(message\.refresh\), includeSummary: pageState \}\)[\s\S]*return \{\s*\.\.\.state/);
+  assert.match(serviceWorker, /message\.type === 'GET_PAGE_STATE'[\s\S]*globalTrackerState\(\{ refresh: Boolean\(message\.refresh\), includeSummary: pageState,\s*includePendingDetails: !pageState \|\| sender\?\.url === chrome\.runtime\.getURL\('src\/times\/times\.html'\) \}\)[\s\S]*return \{\s*\.\.\.state/);
   assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
   assert.match(content, /loadingRecent \|\| !recentFresh/);

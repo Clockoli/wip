@@ -57,7 +57,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 - Git blob SHAs guard file rewrites; stable record IDs locate records independently of ordering or mutable content.
 - Start, Stop, and switch acceptance is persisted locally before asynchronous GitHub reconciliation.
-- Pending operations are FIFO and operation-ID-aware.
+- Pending operations are operation-ID-aware and FIFO for dependent edits, overlapping intervals, timer lifecycle work, and repository-wide failures. An independent completed-record mutation may bypass an unresolved completed-record conflict only after checking both original and proposed intervals and distinct record IDs; the conflicted operation remains durable and visible.
 - A matching concurrent completion is adopted by stable record ID instead of appended again.
 - A stale Stop never clears or resurrects a newer active timer.
 - Multi-file edits, boundary moves, and bulk imports preflight affected files and publish one atomic Git commit.

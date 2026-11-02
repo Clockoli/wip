@@ -9,7 +9,7 @@ const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
 const RECENT_TASK_LIMIT = 3;
 
-export function mountRunningStatus(container, { send, onChange, showToday = true }) {
+export function mountRunningStatus(container, { send, onChange, onReconnect, onAuthExpired, onAuthRestored, showToday = true }) {
   const document = container.ownerDocument || globalThis.document;
   const row = document.createElement('div'); row.className = 'running-status-row';
   const make = (tag, className) => {
@@ -54,6 +54,12 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
   startSaved.textContent = '✓ Saved'; startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
   startField.append(startLabel, saveStart, startSaved);
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
+  const reconnect = make('button', 'running-status-reconnect');
+  reconnect.type = 'button'; reconnect.textContent = onReconnect ? 'Reconnect GitHub' : 'Sign in again with GitHub';
+  reconnect.addEventListener('click', () => {
+    if (onReconnect) { onReconnect(); return; }
+    chrome.runtime.openOptionsPage()?.catch?.(() => showError(new Error('Could not open Settings. Open Clockoli Settings to sign in again.')));
+  });
   const idleGroup = make('div', 'running-status-idle-group');
   const idleHint = make('span', 'running-status-idle-hint');
   idleHint.textContent = 'Start a task to begin';
@@ -66,6 +72,7 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
   container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
+  let refreshFailure = null;
   let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
   let focusDescriptionOnLoad = true;
   let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
@@ -76,7 +83,15 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
 
   function showError(cause) {
-    error.textContent = cause?.message || ''; error.hidden = !error.textContent;
+    error.replaceChildren();
+    if (cause?.code === 'auth_expired' && onAuthExpired) {
+      onAuthExpired();
+      error.textContent = ''; error.hidden = true;
+      return;
+    }
+    error.textContent = cause?.code === 'auth_expired' ? 'GitHub sign-in required.' : cause?.message || '';
+    if (cause?.code === 'auth_expired') error.append(reconnect);
+    error.hidden = !error.textContent;
   }
 
   function resizeDescription() {
@@ -333,7 +348,9 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
       // Read durable local state first, even when GitHub cannot be reached.
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
-      state = local; readAt = Date.now(); reportDate = localDate(); render(); showError(local.summaryError);
+      state = local; readAt = Date.now(); reportDate = localDate(); render();
+      if (local.summaryError?.code === 'auth_expired') refreshFailure = local.summaryError;
+      showError(local.summaryError || refreshFailure);
       if (focusDescriptionOnLoad && state.active) {
         focusDescriptionOnLoad = false;
         if (!document.activeElement || document.activeElement === document.body) description.focus({ preventScroll: true });
@@ -341,10 +358,18 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
       if (refresh && local.configured) {
         const remote = await send({ type: 'GET_PAGE_STATE', refresh: true });
         if (destroyed || id !== requestId) return;
-        state = remote; readAt = Date.now(); reportDate = localDate(); render(); showError(remote.summaryError);
+        state = remote; readAt = Date.now(); reportDate = localDate(); render();
+        const wasExpired = refreshFailure?.code === 'auth_expired';
+        refreshFailure = remote.summaryError?.code === 'auth_expired' ? remote.summaryError
+          : remote.summaryError ? refreshFailure : null;
+        showError(remote.summaryError);
+        if (wasExpired && !remote.summaryError) onAuthRestored?.();
       }
     } catch (cause) {
-      if (!destroyed && id === requestId) showError(cause);
+      if (!destroyed && id === requestId) {
+        refreshFailure = cause?.code === 'auth_expired' ? cause : null;
+        showError(cause);
+      }
     }
   }
 
@@ -412,10 +437,12 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     if (!document.hidden && !busy) void readState(reportDate !== localDate());
   }, STATE_POLL_MS);
   void readState(true);
-  return () => {
+  const dispose = () => {
     destroyed = true; ++requestId; clearInterval(tick); clearInterval(poll);
     document.removeEventListener('visibilitychange', onVisibility);
   };
+  dispose.refresh = () => readState(true);
+  return dispose;
 }
 
 // Activity's content renderer is a classic script with a private message helper.

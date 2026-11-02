@@ -27,6 +27,10 @@ Unpacked extensions have no automatic update channel.
 
 ## GitHub connection
 
+### GitHub access expired or could not be renewed
+
+Clockoli normally renews its GitHub App access token automatically when it makes a GitHub request. If GitHub rejects that renewal, Settings shows **GitHub sign-in required** and the **Sign in again with GitHub** action instead of a raw renewal error. Complete the new one-time Device activation code; signing in to the GitHub website alone does not renew Clockoli's authorization. If another Clockoli tab completes authorization, Settings checks the changed credentials and closes the sign-in state after GitHub access succeeds. While a new authorization awaits repository validation, Settings shows that step instead of asking you to sign in again. Do not clear local data or sign out to retry: reconnection preserves configured time repositories and pending work. Use the same GitHub account; a replacement authorization for a different account cannot silently take over the existing repositories. If GitHub rejects the new code as well, check that the Clockoli GitHub App is available and try again with a fresh code.
+
 ### Device activation completed, but setup did not advance
 
 GitHub user authorization and GitHub App installation are separate.

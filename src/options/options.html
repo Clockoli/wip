@@ -46,18 +46,19 @@
     <div id="connected" hidden>
       <div class="account-summary">
         <div><span class="status-dot" aria-hidden="true"></span><strong id="connected-account">—</strong></div>
-        <span class="badge ready">Connected</span>
+        <span id="connected-status" class="badge ready">Connected</span>
       </div>
       <div class="connected-secondary-actions account-actions">
+        <button id="reconnect-github" type="button" class="secondary">Reconnect GitHub</button>
         <a id="manage-authorization" class="button-link secondary-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Manage GitHub authorization</a>
         <button id="disconnect" type="button" class="secondary">Sign out on this browser</button>
       </div>
-      <p class="help">Repository access is managed separately below. Signing out does not change repository data or uninstall the GitHub App.</p>
+      <p class="help">Clockoli refreshes GitHub access automatically. If renewal fails, reconnect without signing out; your time repositories and pending work stay in place. Repository access is managed separately below.</p>
     </div>
 
     <div id="onboarding">
       <div id="onboarding-flow">
-        <div class="setup-progress" aria-live="polite">
+        <div id="setup-progress" class="setup-progress" aria-live="polite">
           <span id="progress-label">Step <span id="current-step">1</span> of 2: <span id="current-step-name">Connect GitHub</span></span>
           <div class="progress-track" aria-hidden="true"><span id="progress-fill"></span></div>
         </div>
@@ -66,6 +67,10 @@
         </div>
 
         <section id="device-step" class="onboarding-step onboarding-hero" aria-labelledby="connection-title">
+          <div id="reauth-required" class="notice error-notice" role="status" hidden>
+            <strong>GitHub sign-in required</strong>
+            <p>GitHub did not renew Clockoli's access. Sign in again with the same account to continue. Your time repositories and pending work are still here.</p>
+          </div>
           <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
           <div id="authorize-panel" class="primary-action-block">
             <button id="authorize" type="button">Sign in with GitHub</button>
@@ -370,6 +375,7 @@
 </main>
 <script src="../ui/instant-tooltips.js"></script>
   <script src="../domain/recovery-actions.js"></script>
+<script type="module" src="../ui/pending-navigation.js"></script>
 <script type="module" src="../ui/interface-width.js"></script>
 <script type="module" src="options.js"></script>
 </body>

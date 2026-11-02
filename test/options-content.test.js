@@ -306,7 +306,7 @@ test('options mounts the shared running status directly below the tabs', () => {
   assert.match(source, /<\/nav>\s*<\/div>\s*<div id="running-status"/);
   assert.match(source, /href="\.\.\/styles\/running-status\.css"/);
   assert.match(script, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);
-  assert.match(script, /mountRunningStatus\(\$\('running-status'\), \{ send \}\)/);
+  assert.match(script, /mountRunningStatus\(\$\('running-status'\), \{ send, onAuthExpired: showSignInRequired, onAuthRestored: clearSignInRequired \}\)/);
 });
 
 

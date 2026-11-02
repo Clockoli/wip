@@ -82,6 +82,7 @@ class FakeNode {
     const index = this.parentElement.children.indexOf(this);
     return index > 0 ? this.parentElement.children[index - 1] : null;
   }
+  get childElementCount() { return this.children.length; }
   append(...nodes) {
     for (const node of nodes) {
       if (node && typeof node === 'object') {
@@ -1899,6 +1900,37 @@ test('Activity surfaces repository read failures and conflict omissions', async 
   assert.ok(warning);
   assert.match(warning.textContent, /1 time repository could not be loaded/i);
   assert.match(warning.textContent, /1 conflicting record was omitted/i);
+});
+
+test('Activity surfaces pending work and conflicts when opened from Reports in visual modes', async () => {
+  for (const mode of ['timeline', 'calendar']) {
+    documentNodes.clear(); createdNodes.length = 0;
+    const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+    const syncStatus = new FakeNode('div'); syncStatus.id = 'activity-sync-status'; syncStatus.isConnected = true; documentNodes.set(syncStatus.id, syncStatus);
+    const location = { protocol: 'chrome-extension:', hostname: 'clockoli', pathname: '/src/times/times.html', href: 'chrome-extension://clockoli/src/times/times.html' };
+    const document = {
+      documentElement: new FakeNode('html'), activeElement: null,
+      createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+      createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+      querySelector: () => null, addEventListener() {},
+    };
+    const pendingWrites = [{ id: 'edit-A', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing' },
+      { id: 'add-B', operation: 'addTime', status: 'pending' }];
+    const context = vm.createContext({
+      location, document, localStorage: { getItem: () => mode, setItem() {} },
+      chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`,
+        sendMessage(message, callback) { callback({ ok: true, data: { configured: true, recent: [], pendingWrites, pendingCount: 2 } }); },
+      } },
+      setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+    });
+    new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.ok(syncStatus.walk().some(node => node.className.includes('sync-status-banner') && node.getAttribute('role') === 'alert'), `${mode} shows the banner above the chart`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'sync-issues-dialog'), `${mode} provides the review dialog`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'conflict'), `${mode} shows the selected conflict and retry`);
+    assert.ok(syncStatus.walk().some(node => /waiting to sync/i.test(node.textContent || '')), `${mode} shows pending work`);
+  }
 });
 
 
@@ -4162,7 +4194,7 @@ test('pending edits and deletes never display a saving status in Timeline or Cal
 });
 
 test('Timeline can delete an already locally stored completion before GitHub sync', async () => {
-  const now = Date.now();
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
   const entry = {
     id: 'unsynced-entry', taskUrl: 'https://example.com/local-task', taskTitle: 'Local task',
     timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
@@ -4190,8 +4222,8 @@ test('Timeline can delete an already locally stored completion before GitHub syn
 });
 
 test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
-  const now = Date.now();
-  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/2026-10/alice.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
   const pending = { ...initial, pendingCount: 1, pendingWrites: [{ id: 'queued-delete', operation: 'deleteEntry', status: 'pending' }] };
   let current = initial;
@@ -4245,16 +4277,17 @@ test('queue diagnostics stay hidden unless enabled in Advanced settings', () => 
   assert.ok(harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics'));
 });
 
-async function runningStatusHarness(initial) {
+async function runningStatusHarness(initial, onReconnect, { onAuthExpired, onAuthRestored } = {}) {
   const moduleSource = await readFile(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
-  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [];
-  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null;
+  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [], optionOpens = [];
+  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null, refreshError = null;
   const document = {
     hidden: false, createElement: tag => new FakeNode(tag), getElementById: () => null,
     addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
   };
   const context = vm.createContext({
     document, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    chrome: { runtime: { openOptionsPage: () => { optionOpens.push(true); } } },
     dateValue, timeValue, parseTime, localTimestamp,
     Date: class extends Date { static now() { return now; } },
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
@@ -4268,6 +4301,7 @@ async function runningStatusHarness(initial) {
     if (message.type === 'GET_PAGE_STATE') {
       if (nextReads.length) return nextReads.shift();
       if (readError) throw readError;
+      if (message.refresh && refreshError) throw refreshError;
       return state;
     }
     if (message.type === 'START') {
@@ -4284,16 +4318,17 @@ async function runningStatusHarness(initial) {
     }
     throw new Error(`Unexpected message ${message.type}`);
   };
-  const destroy = context.mountRunningStatus(container, { send, onChange: change => { changes.push(change); } });
+  const destroy = context.mountRunningStatus(container, { send, onReconnect, onAuthExpired, onAuthRestored, onChange: change => { changes.push(change); } });
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   await settle();
   return {
-    container, document, events, timers, calls, confirmations, changes, destroy, settle,
+    container, document, events, timers, calls, confirmations, changes, optionOpens, destroy, settle,
     find: className => container.walk().find(node => node.className === className),
     setState: value => { state = value; }, advance: ms => { now += ms; },
     failStop: () => { stopError = new Error('Stop rejected'); },
     failStart: () => { startError = new Error('Start rejected'); },
     failRead: value => { readError = value ? new Error('Worker restarting') : null; },
+    failRefresh: value => { refreshError = value ? Object.assign(new Error('Clockoli could not renew GitHub access.'), { code: 'auth_expired' }) : null; },
     cancelConfirmation: () => { confirmed = false; },
     holdNextRead: () => {
       let resolve;
@@ -4310,6 +4345,85 @@ function runningStatusState(hours = 1) {
     startedAt: new Date(now.getTime() - hours * 3_600_000).toISOString(), entryDate: '2026-09-05',
   } };
 }
+
+test('expired GitHub access shows a recovery button beside the running-status error', async () => {
+  let reconnects = 0;
+  const summaryError = { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' };
+  const h = await runningStatusHarness({ configured: true, active: null, summaryError }, () => { reconnects++; });
+  const button = h.find('running-status-reconnect');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  assert.equal(button.textContent, 'Reconnect GitHub');
+  assert.equal(button.type, 'button');
+  button.onclick();
+  assert.equal(reconnects, 1);
+  h.setState({ configured: true, active: null, summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('an expired GitHub session on other pages opens Settings for sign-in', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null,
+    summaryError: { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' } });
+  const button = h.find('running-status-reconnect');
+  assert.equal(button.textContent, 'Sign in again with GitHub');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  button.onclick();
+  assert.equal(h.optionOpens.length, 1);
+  h.destroy();
+});
+
+test('local status polling preserves a failed GitHub renewal until a remote refresh succeeds', async () => {
+  let reconnects = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, () => { reconnects++; });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'));
+  h.timers.get(5_000)(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'), 'local-only polling must not erase the failed refresh');
+  h.find('running-status-reconnect').onclick();
+  assert.equal(reconnects, 1);
+  h.failRefresh(false);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('a handled renewal failure opens sign-in without a second error and clears after recovery', async () => {
+  let expired = 0, restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined, {
+    onAuthExpired: () => { expired++; }, onAuthRestored: () => { restored++; },
+  });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(expired, 1);
+  assert.equal(h.find('running-status-error').hidden, true);
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.timers.get(5_000)(); await h.settle();
+  assert.equal(h.find('running-status-error').hidden, true);
+  h.failRefresh(false);
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
+
+test('a remote summary error does not restore expired sign-in until a successful read', async () => {
+  let restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined,
+    { onAuthRestored: () => { restored++; } });
+  h.failRefresh(true);
+  await h.destroy.refresh(); await h.settle();
+  h.failRefresh(false);
+  h.setState({ configured: true, active: null,
+    summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 0);
+  assert.equal(h.find('running-status-error').textContent, 'Try later');
+  h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
 
 test('shared running status shows the idle badge and a fallback when there are no recent tasks', async () => {
   const h = await runningStatusHarness({ configured: true, active: null, recent: [], todayTrackedMs: null });

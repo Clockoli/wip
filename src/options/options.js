@@ -18,6 +18,12 @@ let deviceClipboardState = 'unknown';
 let deviceOpeningGitHubAutomatically = false;
 let deviceGitHubOpened = false;
 let showOnboarding = false;
+let reconnectingGitHub = false;
+let authExpired = false;
+let refreshRunningStatus = null;
+let authRecoveryChecking = false;
+let authRecoveryKnown = '';
+let authRecoveryTried = '';
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
 let repositoryTarget = '';
@@ -702,7 +708,9 @@ function renderDeviceHandoff(attempt) {
 
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
-  const step = onboardingStep({ authorized });
+  const step = authExpired && state?.candidateAuth ? 2
+    : authExpired || reconnectingGitHub || (state?.auth?.mode === 'github_app' && state?.deviceAttempt)
+    ? 1 : onboardingStep({ authorized });
   $('current-step').textContent = String(step);
   $('current-step-name').textContent = ['Connect GitHub', 'Connect time repositories'][step - 1];
   $('progress-fill').style.width = `${(step / 2) * 100}%`;
@@ -724,8 +732,9 @@ function renderState() {
   if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
-  const repositoryFlowOpen = Boolean(state?.candidateAuth) || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
-  $('connected').hidden = !accountConnected;
+  const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
+    || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
+  $('connected').hidden = !accountConnected || authExpired;
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
@@ -737,11 +746,19 @@ function renderState() {
   $('more-settings-toggle').hidden = Boolean(accountConnected);
   $('onboarding-flow').hidden = setupCancelled;
   $('setup-cancelled').hidden = !setupCancelled;
+  $('setup-progress').hidden = authExpired;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
+  $('reconnect-github').hidden = state.auth?.mode !== 'github_app' || authExpired;
+  $('reconnect-github').disabled = !state.appConfigured || Boolean(state.deviceAttempt) || reconnectingGitHub;
   $('device-initial-paste-shortcut').textContent = deviceKeyboardShortcut('V');
-  $('connection-status').textContent = accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
-  $('connection-status').className = `badge${accountConnected ? ' ready' : ''}`;
+  $('connection-status').textContent = authExpired && state.candidateAuth ? 'Checking repository access'
+    : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
+  $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
+  $('connected-status').textContent = authExpired ? 'Sign-in required' : 'Connected';
+  $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
+  $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
+  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Sign in with GitHub';
   $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
 
   if (state.config) {
@@ -824,18 +841,28 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
+      reconnectingGitHub = false;
+      state.deviceAttempt = null;
       message(`Device activation complete for ${result.githubLogin}. Connect your time repositories below.`, 'success');
       discoveryStatus = 'idle';
-      await refreshState();
+      try {
+        await refreshState();
+      } catch (error) {
+        // Authorization consumed this attempt; retry only the durable read, never the poll.
+        try { await refreshState(); }
+        catch { renderState(); message(`${error.message} Reload Settings to retry.`, 'error'); return; }
+      }
+      try { await refreshRunningStatus?.(); }
+      catch (error) { message(`${error.message} Reload Settings to retry.`, 'error'); }
       return;
     }
     state.deviceAttempt = result;
     renderDeviceAttempt(result);
   } catch (error) {
-    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing'].includes(error.code)) {
+    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing', 'invalid_device_flow'].includes(error.code)) {
       state.deviceAttempt = null;
-      $('device-panel').hidden = true;
-      $('authorize-panel').hidden = false;
+      reconnectingGitHub = false;
+      renderState();
       message(error.message, 'error');
       return;
     }
@@ -1875,9 +1902,17 @@ $('authorize').addEventListener('click', async () => {
     }
   } catch (error) {
     if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
+    if (!state.deviceAttempt) { reconnectingGitHub = false; renderState(); }
     message(error.message, 'error');
   }
   finally { $('authorize').disabled = !state?.appConfigured; }
+});
+
+$('reconnect-github').addEventListener('click', () => {
+  reconnectingGitHub = true;
+  setupCancelled = false;
+  renderState();
+  $('authorize').click();
 });
 
 $('open-device-page').addEventListener('click', () => {
@@ -2528,6 +2563,46 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
+function showSignInRequired() {
+  if (authExpired) return;
+  authExpired = true;
+  authRecoveryKnown = `${state?.auth?.accessTokenExpiresAt || ''}:${state?.auth?.refreshTokenExpiresAt || ''}`;
+  authRecoveryTried = '';
+  setupCancelled = false;
+  if (state?.auth?.mode === 'github_app') renderState();
+}
+
+function clearSignInRequired() {
+  if (!authExpired) return;
+  authExpired = false;
+  authRecoveryKnown = '';
+  void refreshState().catch(error => message(error.message, 'error'));
+}
+
+async function checkSignInRecovery() {
+  if (!authExpired || document.hidden || state?.deviceAttempt || authRecoveryChecking) return;
+  authRecoveryChecking = true;
+  try {
+    // A new authorization in another tab changes stored credentials. Do not retry
+    // the same rejected refresh token every five seconds.
+    const current = await send({ type: 'GET_ONBOARDING_STATE' });
+    const auth = current.auth;
+    const key = `${auth?.accessTokenExpiresAt || ''}:${auth?.refreshTokenExpiresAt || ''}`;
+    if (authExpired && !state?.deviceAttempt && auth?.mode === 'github_app'
+        && Number(auth.accessTokenExpiresAt) > Date.now()
+        && key !== authRecoveryKnown
+        && key !== authRecoveryTried) {
+      authRecoveryTried = key;
+      await refreshRunningStatus?.();
+      if (authExpired) authRecoveryKnown = key;
+    }
+  } catch { /* Keep sign-in available when the local state cannot be checked. */ }
+  finally { authRecoveryChecking = false; }
+}
+
 refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
 
-mountRunningStatus($('running-status'), { send });
+const disposeRunningStatus = mountRunningStatus($('running-status'), { send, onAuthExpired: showSignInRequired, onAuthRestored: clearSignInRequired });
+refreshRunningStatus = disposeRunningStatus.refresh;
+const authRecoveryTimer = setInterval(() => void checkSignInRecovery(), 5_000);
+window.addEventListener('pagehide', () => clearInterval(authRecoveryTimer));

@@ -12,6 +12,35 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
 #activity-summary{box-sizing:border-box;min-width:0;padding:12px 14px;border:1px solid var(--borderColor-muted);border-radius:12px;background:var(--bgColor-muted);font:400 14px/1.5 var(--fontStack-sansSerif)}
 #activity-summary:empty{display:none}
 #activity-summary:empty + #activity-running-status{grid-column:1/-1}
+#activity-sync-status:not(:empty){width:min(1800px,calc(100% - 80px));margin:14px auto 0;font:400 14px/1.5 var(--fontStack-sansSerif)}
+html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 80px)}
+.sync-status-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;box-sizing:border-box;padding:12px 16px;border:1px solid var(--borderColor-muted);border-left:4px solid var(--fgColor-accent);border-radius:10px;background:var(--bgColor-muted)}
+.sync-status-banner.has-conflicts{border-color:var(--borderColor-danger-muted);border-left-color:var(--fgColor-danger);background:var(--bgColor-danger-muted)}
+.sync-status-copy{display:grid;gap:2px;min-width:0}
+.sync-status-copy strong{font-size:15px}
+.sync-status-copy span{color:var(--fgColor-muted)}
+.sync-review-button,.sync-issues-close,.sync-issue-detail button{box-sizing:border-box;min-height:36px;padding:6px 12px;border:1px solid var(--borderColor-default);border-radius:7px;background:var(--bgColor-default);color:var(--fgColor-default);font:inherit;cursor:pointer}
+.sync-review-button{white-space:nowrap;font-weight:600}
+.sync-review-button:hover,.sync-issues-close:hover,.sync-issue-detail button:hover{background:var(--bgColor-muted)}
+.sync-issues-dialog{box-sizing:border-box;width:min(900px,calc(100% - 24px));max-width:none;max-height:min(80dvh,760px);padding:0;border:1px solid var(--borderColor-default);border-radius:14px;background:var(--bgColor-default);color:var(--fgColor-default);box-shadow:0 20px 60px #0005;font:400 14px/1.5 var(--fontStack-sansSerif)}
+.sync-issues-dialog::backdrop{background:#101820aa}
+.sync-issues-header{display:flex;justify-content:space-between;align-items:start;gap:16px;padding:20px 24px 16px;border-bottom:1px solid var(--borderColor-muted)}
+.sync-issues-header h2{margin:0 0 4px;font-size:21px}
+.sync-issues-header p{margin:0;color:var(--fgColor-muted)}
+.sync-issues-content{display:grid;grid-template-columns:minmax(190px,280px) minmax(0,1fr);min-height:270px;max-height:calc(min(80dvh,760px) - 165px);overflow:hidden}
+.sync-issue-list{display:grid;align-content:start;gap:8px;overflow:auto;padding:16px;border-right:1px solid var(--borderColor-muted);background:var(--bgColor-muted)}
+.sync-issue-item{width:100%;padding:11px 12px;border:1px solid var(--borderColor-muted);border-radius:8px;background:var(--bgColor-default);color:var(--fgColor-default);font:inherit;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+.sync-issue-item.is-conflict{border-left:4px solid var(--fgColor-danger)}
+.sync-issue-item[aria-pressed="true"]{outline:2px solid var(--fgColor-accent);outline-offset:1px}
+.sync-issue-detail{min-width:0;overflow:auto;padding:20px 24px;overflow-wrap:anywhere}
+.sync-issue-detail h3,.sync-issue-detail .conflict strong{display:block;margin:0 0 10px;font-size:18px}
+.sync-issue-detail p,.sync-issue-detail .conflict>div{margin:0 0 12px}
+.sync-issue-detail .sync-issue-error{padding:10px 12px;border:1px solid var(--borderColor-danger-muted);border-radius:7px;background:var(--bgColor-danger-muted);color:var(--fgColor-danger)}
+.sync-issue-detail .queued-context{padding:9px 12px;border:1px solid var(--borderColor-muted);border-radius:7px;background:var(--bgColor-muted)}
+.sync-issue-detail .conflict button{margin:4px 8px 4px 0}
+.sync-issue-detail .conflict .link-button{border-color:var(--borderColor-danger-muted);color:var(--fgColor-danger)}
+.sync-issues-footnote{margin:0;padding:12px 24px;border-top:1px solid var(--borderColor-muted);color:var(--fgColor-muted);font-size:12px}
+.sync-issues-dialog button:focus-visible,.sync-review-button:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
 #activity-summary .activity-weekly-heading{display:block;margin:0 0 6px;color:var(--fgColor-default);font-size:13px;font-weight:700}
 #activity-summary .activity-weekly-label{display:none}
 #activity-summary .activity-weekly-range{display:inline}
@@ -50,7 +79,8 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
 #activity-running-status .running-status-recent-task{min-height:44px}
 @media(max-width:1299px){.activity-overview-layout{grid-template-columns:minmax(190px,1fr) minmax(0,3fr)}}
 @media(max-width:900px){.activity-overview-layout{grid-template-columns:1fr}}
-@media(max-width:700px){.activity-overview-layout,html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 24px)}}
+@media(max-width:700px){.activity-overview-layout,html[data-clockoli-width="full"] .activity-overview-layout,#activity-sync-status:not(:empty),html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 24px)}}
+@media(max-width:640px){.sync-status-banner{align-items:stretch;flex-direction:column}.sync-issues-content{grid-template-columns:1fr;max-height:calc(85dvh - 150px);overflow:auto}.sync-issue-list{max-height:180px;border-right:0;border-bottom:1px solid var(--borderColor-muted)}.sync-issue-detail{overflow:visible}.sync-issues-dialog{max-height:85dvh}}
 @media(max-width:640px){
   #activity-running-status.running-status.is-active .running-status-row{grid-template-columns:minmax(0,1fr);grid-template-rows:none}
   #activity-running-status.is-active .running-status-live,
