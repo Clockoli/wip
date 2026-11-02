@@ -3079,7 +3079,7 @@ test('linked time edits save a crossed adjacent boundary in one monthly-file wri
   ]);
 });
 
-test('linked edits preserve a persisted imported identity but reject newly entered non-URL identities', async () => {
+test('linked edits preserve a persisted imported identity but reject unverified non-URL identities', async () => {
   const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', {
@@ -3093,7 +3093,7 @@ test('linked edits preserve a persisted imported identity but reject newly enter
   const tracker = service({ github });
   await assert.rejects(() => tracker.editEntries({ entries: [{ ...request,
     edits: { taskUrl: 'other/project/new-task' },
-  }] }), /Invalid task URL/);
+  }] }), /Select an existing imported task/);
   assert.equal(github.atomicWrites.length, 0);
   const [saved] = await tracker.editEntries({ entries: [{ ...request,
     edits: { endedAt: '2026-08-18T09:30:00.000Z', taskTitle: 'Reviewed', description: 'Updated' },
@@ -3349,6 +3349,166 @@ test('Add time writes an exact completed interval and task index atomically', as
   assert.equal(result.entry.taskTitle, 'Fix frontend');
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
   assert.equal(github.atomicWrites[0].guards.find(guard => guard.path === 'active/alice.json')?.sha, null);
+});
+
+test('queued edit can move to a proven imported task in the same repository without losing neighbors', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const neighbor = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([original, neighbor]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, neighbor, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })), 'index-sha');
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Imported task' } };
+  assert.equal((await tracker.queueEntryEdit(request)).pending, true);
+  assert.equal(store.value.pendingWrites.length, 1);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(item => item.id === original.id).taskUrl, imported);
+  assert.equal(serializeMonthlyRecords([saved.find(item => item.id === neighbor.id)]), serializeMonthlyRecords([neighbor]));
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), [TASK_INDEX_PATH, path]);
+});
+
+test('two independent imported-task edits batch and sync after a service restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const neighbor = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([original, neighbor]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, neighbor, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })), 'index-sha');
+  const tracker = service({ github, store });
+  for (const [index, record] of [original, neighbor].entries()) {
+    await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index, original: record,
+      edits: { taskUrl: imported, taskTitle: 'Routines dev call' } });
+  }
+  assert.equal(store.value.pendingWrites.length, 2);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })
+    .map(item => item.taskUrl), [imported, imported]);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
+test('imported task disappearing from the checked personal index cannot be recreated by an edit', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  const indexedTask = { id: fixedId, taskUrl: imported, durationSeconds: 60 };
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, indexedTask],
+  })), 'index-sha');
+  const tracker = service({ github });
+  const verify = tracker.assertKnownImportedTask.bind(tracker);
+  tracker.assertKnownImportedTask = async (...args) => {
+    const result = await verify(...args);
+    seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(result.index, {
+      remove: [indexedTask],
+    })), 'changed-index');
+    return result;
+  };
+  await assert.rejects(() => tracker.editEntry({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Routines dev call' } }), TrackerConflictError);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].taskUrl,
+    original.taskUrl);
+});
+
+test('an imported target removed after queue acceptance remains an actionable sync conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  const indexedTask = { id: fixedId, taskUrl: imported, durationSeconds: 60 };
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, indexedTask],
+  })), 'index-sha');
+  await service({ github, store }).queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Routines dev call' } });
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+    parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }), { remove: [indexedTask] })), 'changed-index');
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'edit_invalid_identity');
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('queued edit rejects an invented imported identity without accepting or writing it', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const tracker = service({ github, store });
+  await assert.rejects(() => tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: 'acme/project/invented-task', taskTitle: 'Invented' } }), /existing imported task/i);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('queued edit verifies a teammate imported identity through the shared repository index', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'acme/project/teammate-task', reads = [];
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const reports = { cachedMonthly: async () => null, loadRepositoryTask: async (taskUrl, options) => {
+    reads.push([taskUrl, options.scanAllUsers]); return [{ taskUrl, user: 'bob' }];
+  } };
+  const tracker = service({ github, store });
+  tracker.reports = reports;
+  const request = { path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Teammate task' } };
+  await tracker.queueEntryEdit(request);
+  const sync = service({ github, store });
+  sync.reports = reports;
+  await sync.syncPending();
+  assert.deepEqual(reads, [[imported, true], [imported, true]]);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].taskUrl, imported);
+});
+
+test('linked edits cannot create an unverified imported task identity', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const tracker = service({ github, store });
+  await assert.rejects(() => tracker.queueEntriesEdit({ entries: [{
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: 'acme/project/invented-task' },
+  }] }), /existing imported task/i);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('linked edits accept an existing imported identity without an HTTP URL and sync after restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const first = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const second = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', { issue: pull });
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [first, second, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })));
+  const tracker = service({ github, store });
+  const result = await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'monthly-sha', index: 0, original: first,
+      edits: { taskUrl: imported, taskTitle: 'Routines — #1 dev call' } },
+    { path, originalSha: 'monthly-sha', index: 1, original: second,
+      edits: { startedAt: '2026-08-18T08:01:00.000Z' } },
+  ] });
+  assert.equal(result.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.map(record => record.taskUrl), [imported, pull.url]);
+  assert.equal(saved[1].startedAt, '2026-08-18T08:01:00.000Z');
+  assert.equal(github.atomicWrites.length, 1);
 });
 
 test('Add time reuses only an existing imported task identity and keeps writes atomic', async () => {

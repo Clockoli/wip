@@ -170,6 +170,7 @@
   let timeEntryFormLoad = null;
   let timeEntryFormHost = null;
   let timeEntryFormDialog = null;
+  let timeEntrySearchRecord = null;
 
   const LONG_ENTRY_HOURS = 12;
   const HOUR_MS = 3_600_000;
@@ -1951,7 +1952,15 @@
         container.append(stylesheet, anchor);
         document.body.append(host);
         timeEntryFormHost = host;
-        const dialog = mountAddTime(anchor, { container, send: async () => ({ configured: true, recent: [] }) });
+        const dialog = mountAddTime(anchor, { container, searchIsCompleteCatalog: false, send: async request => {
+          if (request.type !== 'SEARCH_TASKS') return { configured: true, recent: [] };
+          const record = timeEntrySearchRecord;
+          if (!record?._path || !record?.id || !record?.destinationId || record._active) {
+            throw new Error('Completed entry is unavailable for task search.');
+          }
+          return send({ type: 'SEARCH_ENTRY_TASKS', destinationId: record.destinationId,
+            path: record._path, recordId: record.id, query: request.query });
+        } });
         timeEntryFormDialog = dialog;
         return dialog;
       })().catch(error => { timeEntryFormLoad = null; timeEntryFormHost?.remove(); timeEntryFormHost = null; timeEntryFormDialog = null; throw error; });
@@ -1962,6 +1971,7 @@
       beginRecordEdit(entry); return;
     }
     if (entry._active) {
+      timeEntrySearchRecord = null;
       if (pageState.active?.id !== entry.id) throw new Error('The running timer changed. Reload before editing it.');
       form.openEdit({ ...entry, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) }, async value => {
         if (value.startedAt !== entry.startedAt) await queueActiveStartEdit(entry, value.startedAt);
@@ -1969,12 +1979,17 @@
       return;
     }
     const current = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId) || entry;
+    timeEntrySearchRecord = current;
     form.openEdit({ taskUrl: storedTaskIdentityOf(current), taskTitle: taskTitleOf(current),
       destinationId: current.destinationId, startedAt: current.startedAt,
       endedAt: current.endedAt, description: current.description || '' }, async value => {
-        const identity = value.taskUrl === storedTaskIdentityOf(current)
-          ? value.taskUrl : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
-        if (!identity) throw new Error('Enter a valid HTTP(S) task URL.');
+        const imported = value.taskUrl && !/^https?:\/\//i.test(value.taskUrl);
+        if (imported && value.destinationId !== current.destinationId) {
+          throw new Error('The selected imported task belongs to a different time repository.');
+        }
+        const identity = value.taskUrl === storedTaskIdentityOf(current) ? value.taskUrl
+          : imported ? storedTaskIdentityOf(value.taskUrl) : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
+        if (!identity || imported && !value.destinationId) throw new Error('Select an existing imported task or enter an HTTP(S) task URL.');
         const edits = { ...(identity === storedTaskIdentityOf(current) && !taskUrlOf(current) ? {} : { taskUrl: identity }),
           taskTitle: value.taskTitle, startedAt: value.startedAt,
           endedAt: value.endedAt, description: value.description };

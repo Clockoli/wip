@@ -57,6 +57,8 @@ If the batch cannot fit or overlaps another device's work, it stays locally stor
 **Edit time** opens the same task/date/time/optional-description form used by **Add time**, prefilled with the selected completed record, without a duplicate task-title field. It is available from Activity List and from **Edit** in Timeline or Calendar details in Activity, the toolbar popup, and the GitHub-page panel.
 
 - Editing the same task preserves its title; selecting another task uses its title, while a newly pasted URL has no title.
+- An imported task without an HTTP(S) URL can replace the task only when it already exists in the entry's time repository. Clockoli verifies its identity against that repository before queuing the edit and again before synchronizing. An imported task from another repository cannot silently move the entry there; choose a task in the same repository or use an HTTP(S) URL.
+- In the GitHub-page panel, task suggestions for a completed entry are limited to titled imported tasks in that entry's time repository. The panel checks the stored entry before searching and does not expose the full cross-repository catalog to the page.
 - The one Date picker shows the entry's start day; changing it retains the two time-of-day fields. End is on that day unless its time is earlier than Start, in which case it is on the following day.
 - Editing only Start keeps the original End date, time, and seconds while Start remains before End.
 - An unchanged range preserves the original timestamps, including seconds.

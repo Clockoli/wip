@@ -222,7 +222,7 @@ export function applyActiveEdits(active, edits = {}, now = new Date()) {
 export function applyEntryEdits(entry, edits, now = new Date()) {
   validateEntry(entry);
   const currentUrl = taskUrlOf(entry), taskUrl = edits.taskUrl !== undefined || edits.issue !== undefined
-    ? normalizeTaskUrl(edits.taskUrl ?? edits.issue) : currentUrl;
+    ? normalizeStoredTaskIdentity(edits.taskUrl ?? edits.issue) : currentUrl;
   const startedAt = toIso(edits.startedAt ?? entry.startedAt), timezone = normalizeTimezone(edits.timezone ?? entry.timezone);
   const { issue: _issue, issueTitle: _issueTitle, taskUrl: _taskUrl, taskTitle: _taskTitle, ...base } = entry;
   const metadata = structuredClone(entry.metadata);

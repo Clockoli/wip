@@ -1,7 +1,8 @@
-import { normalizeIssue, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, parseIssueUrl } from '../domain/values.js';
+import { normalizeIssue, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, parseIssueUrl, validateEntryId, validatePathSegment } from '../domain/values.js';
 
 const CONTENT_MESSAGES = new Set([
   'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
+  'SEARCH_ENTRY_TASKS',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS',
   'SET_ACTION_ICON_FRAME',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
@@ -78,6 +79,24 @@ export function destinationIdForCompletedMutation(type, payload, sender, extensi
     throw new Error('Completed-record mutations require a valid destination ID');
   }
   return payload.destinationId;
+}
+
+export function entryTaskSearchForSender(message, sender, extensionOrigin) {
+  if (assertMessageAllowed('SEARCH_ENTRY_TASKS', sender, extensionOrigin) !== 'content'
+      || !sender?.tab || ![sender.url, sender.tab.url].every(value => {
+        try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'github.com'; }
+        catch { return false; }
+      }) || !message || Object.keys(message).sort().join(',') !== 'destinationId,path,query,recordId,type'
+      || message.type !== 'SEARCH_ENTRY_TASKS' || typeof message.destinationId !== 'string'
+      || !DESTINATION_ID_RE.test(message.destinationId) || typeof message.query !== 'string'
+      || !message.query.trim() || message.query.length > 300 || typeof message.path !== 'string') {
+    throw new Error('Invalid GitHub entry task search');
+  }
+  const path = message.path.match(/^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9_.-]{1,100})\.jsonl$/);
+  if (!path) throw new Error('Invalid GitHub entry task search path');
+  validatePathSegment(path[2], 'user');
+  validateEntryId(message.recordId);
+  return { destinationId: message.destinationId, path: message.path, recordId: message.recordId, query: message.query };
 }
 
 export function taskUrlForStart(payloadTaskUrl, sender, extensionOrigin) {
