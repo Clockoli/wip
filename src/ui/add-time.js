@@ -2,13 +2,16 @@ import { normalizeTaskUrl } from '../domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from './local-time.js';
 
 /** One extension-page time-entry form for creating and editing records. */
-export function mountAddTime(button, { send, onAdded = () => location.reload(), container = document.body }) {
+export function mountAddTime(button, { send, onAdded = () => location.reload(), container = document.body,
+  searchIsCompleteCatalog = true }) {
   const dialog = document.createElement('dialog'); dialog.className = 'add-time-dialog';
   dialog.setAttribute('aria-labelledby', 'add-time-title');
   const heading = document.createElement('h2'); heading.id = 'add-time-title'; heading.textContent = 'Add new time';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'add-time-close';
   close.textContent = '×'; close.setAttribute('aria-label', 'Close Add time');
-  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = 'Find a tracked task from any person in your time repositories or paste a task URL.';
+  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = searchIsCompleteCatalog
+    ? 'Find a tracked task from any person in your time repositories or paste a task URL.'
+    : 'Find a tracked imported task in this entry’s time repository or paste a task URL.';
   const taskLabel = document.createElement('label'); taskLabel.textContent = 'Task'; taskLabel.htmlFor = 'add-time-task';
   const search = document.createElement('input'); search.id = 'add-time-task'; search.type = 'search'; search.autocomplete = 'off';
   search.placeholder = 'Search title or URL, or paste a URL'; search.setAttribute('role', 'combobox');
@@ -78,7 +81,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   let savedTimer = null;
 
   let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
-  let lastSearch = '', searchIncomplete = false, editing = null, showRepository = false;
+  let lastSearch = '', searchIncomplete = false, catalogLoaded = false, editing = null, showRepository = false;
   let defaultStart = '', defaultDate = '', startEdited = false, dateEdited = false;
   start.addEventListener('input', () => { startEdited = true; });
   date.addEventListener('input', () => { dateEdited = true; });
@@ -122,7 +125,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     selected = null; setError(''); update();
     clearTimeout(searchTimer);
     const query = search.value.trim();
-    if (!query || (!searchIncomplete && taskSearch.matches(tasks, () => true, 1).length)) {
+    if (!query || (searchIsCompleteCatalog && catalogLoaded && !searchIncomplete && taskSearch.matches(tasks, () => true, 1).length)) {
       if (!query) lastSearch = '';
       setSearchBusy(false); return;
     }
@@ -134,11 +137,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       try {
         const data = await send({ type: 'SEARCH_TASKS', query });
         if (request !== generation || !dialog.open) return;
-        if (!data?.configured) { lastSearch = ''; searchIncomplete = true; setError('Set up Clockoli before adding time.'); return; }
+        if (!data?.configured) { lastSearch = ''; searchIncomplete = true; catalogLoaded = false; setError('Set up Clockoli before adding time.'); return; }
         tasks = Array.isArray(data.tasks) ? data.tasks : [];
         showRepository = Array.isArray(data.readStatus) ? data.readStatus.length > 1
           : new Set(tasks.map(task => task.timeRepository).filter(Boolean)).size > 1;
         searchIncomplete = Boolean(data.partial || data.conflicts?.length);
+        catalogLoaded = searchIsCompleteCatalog && !searchIncomplete;
         if (searchIncomplete) {
           lastSearch = '';
           setError('Some tracked tasks could not be searched. Results may be incomplete.');
@@ -149,7 +153,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
         if (request === generation) {
           searching = false; setSearchBusy(false);
           if (query !== search.value.trim() && search.value.trim()
-              && (searchIncomplete || !taskSearch.matches(tasks, () => true, 1).length)) onSearchInput();
+              && (searchIncomplete || !searchIsCompleteCatalog || !taskSearch.matches(tasks, () => true, 1).length)) onSearchInput();
         }
       }
     }, 180);
@@ -180,7 +184,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     const runningEdit = Boolean(entry && !boundary && (entry._active || entry.endedAt == null));
     editing = entry ? { entry, onEdit, trigger, running: runningEdit, boundary } : null;
     const now = new Date();
-    tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; searching = false; showRepository = false;
+    tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; catalogLoaded = false; searching = false; showRepository = false;
     busy = false; search.value = ''; setSearchBusy(false);
     overlapProgress.hidden = true; overlapStatus.hidden = true;
     heading.textContent = runningEdit ? 'Edit timer start' : boundary ? 'Resolve time overlap' : entry ? 'Edit time' : 'Add new time';
@@ -309,7 +313,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     try {
       const value = runningEdit ? { startedAt }
         : { taskUrl: task.taskUrl, taskTitle: task.title || '', startedAt, endedAt,
-          description: description.value.trim() };
+          description: description.value.trim(),
+          ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}) };
       const isEdit = Boolean(editing);
       const result = isEdit ? await editing.onEdit(value)
         : await send({ type: 'ADD_TIME', ...value,

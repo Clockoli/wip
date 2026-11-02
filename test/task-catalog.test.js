@@ -4,12 +4,60 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { mergeTaskCatalogIndexes, taskCandidates } from '../src/services/task-catalog.js';
 import { loadDestinationRecords, mergeDestinationRecords } from '../src/services/reports.js';
-import { assertMessageAllowed } from '../src/background/message-policy.js';
+import { assertMessageAllowed, entryTaskSearchForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://clockoli/';
 const sender = { url: `${origin}src/times/times.html` };
 const content = { url: 'https://github.com/acme/app/issues/1', tab: { url: 'https://github.com/acme/app/issues/1' } };
 const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+
+test('GitHub panel searches tasks only for a bounded request tied to its completed record', () => {
+  const request = { type: 'SEARCH_ENTRY_TASKS', destinationId: 'github:1',
+    path: 'times/2026-08/alice.jsonl', recordId: '01K3X7Q8N8F4J7R2JQZ5AKP1MD', query: 'Routines' };
+  assert.deepEqual(entryTaskSearchForSender(request, content, origin), {
+    destinationId: request.destinationId, path: request.path, recordId: request.recordId, query: request.query,
+  });
+  for (const [payload, source] of [
+    [request, { url: 'https://example.com/task', tab: { url: 'https://example.com/task' } }],
+    [request, { url: content.url }],
+    [{ ...request, destinationId: 'github:2;drop' }, content],
+    [{ ...request, path: '../bob.jsonl' }, content],
+    [{ ...request, recordId: 'bad' }, content],
+    [{ ...request, query: 'a'.repeat(301) }, content],
+    [{ ...request, extra: true }, content],
+  ]) assert.throws(() => entryTaskSearchForSender(payload, source, origin));
+  assert.throws(() => assertMessageAllowed('SEARCH_TASKS', content, origin), /not allowed/i);
+});
+
+test('GitHub panel task search checks stored record and returns only imported tasks from its destination', async () => {
+  const start = worker.indexOf('async function handle('), end = worker.indexOf('chrome.runtime.onMessage.addListener', start);
+  const calls = [], request = { type: 'SEARCH_ENTRY_TASKS', destinationId: 'github:1',
+    path: 'times/2026-08/alice.jsonl', recordId: '01K3X7Q8N8F4J7R2JQZ5AKP1MD', query: 'Routines' };
+  const context = vm.createContext({ assertMessageAllowed, entryTaskSearchForSender,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    requireConfiguredDestinationId: async (_store, destinationId) => {
+      calls.push('destination'); if (destinationId !== 'github:1') throw new Error('Unconfigured destination'); return destinationId;
+    }, trackerForDestination: async () => ({ readMonthly: async path => {
+      calls.push('monthly'); assert.equal(path, request.path);
+      return { entries: [{ id: request.recordId }] };
+    } }),
+    searchTasks: async () => { calls.push('search'); return { configured: true, tasks: [
+      { taskUrl: 'acme/project/one', title: 'Routines dev call', destinationId: 'github:1', timeRepository: 'secret/branch' },
+      { taskUrl: 'acme/project/other', title: 'Routines elsewhere', destinationId: 'github:2' },
+      { taskUrl: 'https://example.com/routines', title: 'Routines URL', destinationIds: ['github:1'] },
+    ], conflicts: [], partial: false }; },
+  });
+  vm.runInContext(worker.slice(start, end), context);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, content))), {
+    configured: true, tasks: [{ taskUrl: 'acme/project/one', title: 'Routines dev call', destinationId: 'github:1' }],
+    partial: false,
+  });
+  assert.deepEqual(calls, ['destination', 'monthly', 'search']);
+  await assert.rejects(context.handle({ ...request, recordId: '01K3X7Q8N8F4J7R2JQZ5AKP1ME' }, content), /not found|unavailable/i);
+  assert.deepEqual(calls, ['destination', 'monthly', 'search', 'destination', 'monthly']);
+  await assert.rejects(context.handle({ ...request, destinationId: 'github:2' }, content), /Unconfigured destination/);
+  assert.equal(calls.at(-1), 'destination');
+});
 
 test('task search is extension-only and rejects input before reading other users', async () => {
   assert.equal(assertMessageAllowed('SEARCH_TASKS', sender, origin), 'extension');

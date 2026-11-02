@@ -287,6 +287,55 @@ test('editing Start keeps the original End date and rejects a changed interval o
   }
 });
 
+test('Edit time searches the complete catalog even when its current task matches the query', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-task-search-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-task-search-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('pageerror', error => errors.push(error.message));
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.evaluate(taskUrl => globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl,
+      taskTitle: 'Existing task', destinationId: 'github:1', startedAt: '2026-10-18T09:00:00.000Z',
+      endedAt: '2026-10-18T10:00:00.000Z', description: '' }, () => {}), taskUrl);
+    const dialog = page.getByRole('dialog', { name: 'Edit time' });
+    const search = dialog.getByRole('combobox', { name: 'Task' });
+    await search.fill('task');
+    await expect(dialog.getByRole('button', { name: /Colleague task/ })).toBeVisible();
+    expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'SEARCH_TASKS' && message.query === 'task')).toHaveLength(1);
+    await dialog.getByRole('button', { name: /Colleague task/ }).click();
+    await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(taskUrl => {
+      globalThis.testImportedEdit = null;
+      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl,
+        taskTitle: 'Existing task', destinationId: 'github:2', startedAt: '2026-10-18T09:00:00.000Z',
+        endedAt: '2026-10-18T10:00:00.000Z', description: '' },
+      value => { globalThis.testImportedEdit = value; });
+    }, taskUrl);
+    await search.fill('Imported');
+    await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    expect(await page.evaluate(() => globalThis.testImportedEdit)).toMatchObject({
+      taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2',
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('shared Add time dialog on Activity and Top tasks searches safely and sends only confirmed entries', async () => {
   test.setTimeout(60000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-add-time-extension-'));

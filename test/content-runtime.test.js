@@ -18,6 +18,34 @@ const domHarnessSource = trackingCardSource + '\n' + taskSearchSource + '\n' + s
 );
 assert.notEqual(domHarnessSource, source);
 
+test('Edit time accepts a selected imported task only in the entry destination', async () => {
+  const begin = source.indexOf('  async function openTimeEntryForm(entry, trigger) {');
+  const end = source.indexOf('\n  function overlapClock(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const queued = [];
+  let save;
+  const context = vm.createContext({
+    ClockoliTimeEntryForm: { openEdit: (_entry, callback) => { save = callback; } },
+    extensionPageMode: true, recent: [],
+    storedTaskIdentityOf: value => normalizeStoredTaskIdentity(value),
+    taskUrlOf: value => { try { return normalizeTaskUrl(value); } catch { return null; } },
+    taskTitleOf: value => value.taskTitle,
+    taskFromUrl: value => { try { return { taskUrl: normalizeTaskUrl(value) }; } catch { return null; } },
+    queueCalendarEntry: async (_entry, edits) => queued.push(edits), renderUi: () => {},
+  });
+  vm.runInContext(`${source.slice(begin, end)}\nthis.openTimeEntryForm = openTimeEntryForm;`, context);
+  const original = { id: 'record', taskUrl: 'https://example.com/old', taskTitle: 'Old',
+    destinationId: 'github:1', startedAt: '2026-10-18T09:00:00.000Z', endedAt: '2026-10-18T10:00:00.000Z',
+    description: '', _path: 'times/2026-10/alice.jsonl' };
+  await context.openTimeEntryForm(original);
+  const selected = { taskUrl: 'acme/project/imported', taskTitle: 'Imported', destinationId: 'github:1',
+    startedAt: original.startedAt, endedAt: original.endedAt, description: '' };
+  await save(selected);
+  assert.equal(queued[0]?.taskUrl, selected.taskUrl);
+  await assert.rejects(() => save({ ...selected, destinationId: 'github:2' }), /time repository/i);
+  assert.equal(queued.length, 1);
+});
+
 test('an older overlap read cannot replace a newer recheck for the same queue', async () => {
   const begin = source.indexOf('  function loadStoppedOverlap(item) {');
   const end = source.indexOf('\n  function projectedStoppedOverlap(', begin);

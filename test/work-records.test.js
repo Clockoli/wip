@@ -107,7 +107,9 @@ test('unresolved imported identities round-trip as work records and appear in To
   assert.equal(JSON.parse(serializeMonthlyRecords([edited])).work_item.url, identity);
   const retitled = applyEntryEdits(parsed, { taskTitle: 'Fixed encoding' });
   assert.equal(JSON.parse(serializeMonthlyRecords([retitled])).work_item.url, identity);
-  assert.throws(() => applyEntryEdits(parsed, { taskUrl: 'manticoresoftware/NexusRepo/other' }), /Invalid task URL/);
+  assert.equal(applyEntryEdits(parsed, { taskUrl: 'manticoresoftware/NexusRepo/other' }).taskUrl,
+    'manticoresoftware/NexusRepo/other', 'stored-record codec accepts a valid imported identity; privileged edits must prove it exists');
+  assert.throws(() => applyEntryEdits(parsed, { taskUrl: 'manticoresoftware/NexusRepo/../other' }), /Invalid task URL/);
   assert.throws(() => buildActiveTimer({
     user: 'alice', actor, producer, taskUrl: identity, startedAt: '2026-08-18T15:00:00.000Z', timezone: 'UTC',
   }), /Invalid task URL/);

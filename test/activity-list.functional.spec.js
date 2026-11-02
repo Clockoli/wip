@@ -2676,12 +2676,15 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
-    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
+      "else if (message.type === 'GET_PAGE_STATE')",
+      "else if (message.type === 'SEARCH_TASKS') respond({ ok: true, data: { configured: true, tasks: [{ taskUrl: 'manticoresoftware/Routines/1-dev-call', title: 'Routines — #1 dev call', destinationId: 'github:1', timeRepository: 'team/time' }], readStatus: [{ timeRepository: 'team/time', status: 'ok' }] } });\n  else if (message.type === 'GET_PAGE_STATE')"));
     context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    worker.on('pageerror', error => errors.push(error.message));
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await page.getByRole('button', { name: 'Previous week' }).click();
@@ -2844,6 +2847,19 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await expect(dialog).toBeHidden();
     expect(await page.evaluate(() => window.__editValues[4].endedAt))
       .toBe(await page.evaluate(() => new Date(2024, 3, 1, 0, 15).toISOString()));
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    await row.hover();
+    await row.locator('.entry-edit').click();
+    await dialog.getByRole('combobox', { name: 'Task' }).fill('Routines');
+    await dialog.getByRole('button', { name: /Routines — #1 dev call/ }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(3);
+    expect(await worker.evaluate(() => globalThis.editPayloads.at(-1))).toMatchObject({
+      destinationId: 'github:1', original: { id: 'record' },
+      edits: { taskUrl: 'manticoresoftware/Routines/1-dev-call', taskTitle: 'Routines — #1 dev call' },
+    });
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

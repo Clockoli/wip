@@ -813,6 +813,19 @@ export class TrackerService {
     }
   }
 
+  async assertKnownImportedTask(taskUrl, indexFile = null, conflictReason = null) {
+    indexFile ||= await this.readTaskIndex();
+    if (!Object.hasOwn(indexFile.index.tasks, taskUrl)) {
+      const shared = await this.reports?.loadRepositoryTask?.(taskUrl, { scanAllUsers: true });
+      if (!shared?.length) {
+        const message = 'Select an existing imported task in this time repository.';
+        if (conflictReason) throw new TrackerConflictError(message, conflictReason);
+        throw new Error(message);
+      }
+    }
+    return indexFile;
+  }
+
   async updateCompletedRecords(changes, message, { remove = [], add = [], guards = [], expectedHeadSha = null, indexFile = null } = {}) {
     indexFile ||= await this.readTaskIndex();
     const index = applyTaskIndexChanges(indexFile.index, { remove, add });
@@ -2157,6 +2170,11 @@ export class TrackerService {
     const before = await this.store.getState();
     const candidate = this.queuedEntry(before, { path, original }, historical);
     if (!candidate) throw new TrackerConflictError('This time entry is no longer available locally. Reload before editing.');
+    const requestedTask = edits?.taskUrl ?? edits?.issue;
+    if (requestedTask !== undefined) {
+      const identity = normalizeStoredTaskIdentity(requestedTask);
+      if (!/^https?:\/\//.test(identity) && identity !== candidate.taskUrl) await this.assertKnownImportedTask(identity);
+    }
     const proposed = applyEntryEdits(candidate, edits, editClock(this.clock, candidate));
     const changedTime = proposed.startedAt !== candidate.startedAt || proposed.endedAt !== candidate.endedAt;
     const remoteActive = changedTime ? await this.readRemoteActive() : null;
@@ -2227,6 +2245,12 @@ export class TrackerService {
     const before = await this.store.getState();
     const candidates = entries.map(request => this.queuedEntry(before, request, historical));
     if (candidates.some(item => !item)) throw new TrackerConflictError('A linked time entry is no longer available locally. Reload before editing.');
+    for (const [index, request] of entries.entries()) {
+      const requested = request.edits?.taskUrl ?? request.edits?.issue;
+      if (requested === undefined || requested === candidates[index].taskUrl) continue;
+      const identity = normalizeStoredTaskIdentity(requested);
+      if (!/^https?:\/\//.test(identity)) await this.assertKnownImportedTask(identity);
+    }
     const proposed = entries.map((request, index) => applyEntryEdits(candidates[index], request.edits, editClock(this.clock, candidates[index])));
     const changed = proposed.filter((item, index) => item.startedAt !== candidates[index].startedAt || item.endedAt !== candidates[index].endedAt);
     const remoteActive = changed.length ? await this.readRemoteActive() : null;
@@ -2338,7 +2362,11 @@ export class TrackerService {
     if (source.sha !== originalSha) throw new TrackerConflictError('This monthly time file changed after you opened it. Reload before saving.');
     const position = locateEntry(source.entries, index, original);
     if (position < 0) throw new TrackerConflictError('This time entry changed after you opened it. Reload before saving.');
-    const normalized = { ...edits, ...((edits.taskUrl || edits.issue) ? { taskUrl: this.validateTaskUrl(edits.taskUrl ?? edits.issue) } : {}) };
+    const requestedTask = edits.taskUrl ?? edits.issue;
+    const taskUrl = requestedTask === undefined ? null : normalizeStoredTaskIdentity(requestedTask);
+    const indexFile = taskUrl && !/^https?:\/\//.test(taskUrl) && taskUrl !== source.entries[position].taskUrl
+      ? await this.assertKnownImportedTask(taskUrl, null, 'edit_invalid_identity') : null;
+    const normalized = { ...edits, ...(taskUrl ? { taskUrl } : {}) };
     const updated = applyEntryEdits(source.entries[position], normalized, editClock(this.clock, source.entries[position]));
     const timeChanged = updated.startedAt !== source.entries[position].startedAt || updated.endedAt !== source.entries[position].endedAt;
     const active = timeChanged ? await this.readRemoteActive() : null;
@@ -2363,7 +2391,7 @@ export class TrackerService {
         const { blobShas } = await this.updateCompletedRecords([
           { path: source.path, sha: source.sha, text: serializeMonthlyRecords(entries) },
         ], `time: edit ${this.user} ${source.month}`, {
-          remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null,
+          remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null, indexFile,
         });
         const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: blobShas[path] });
         if (updateCache) {
@@ -2383,7 +2411,7 @@ export class TrackerService {
         { path: destination.path, sha: destination.sha, text: serializeMonthlyRecords(destinationEntries) },
       ];
       const result = await this.updateCompletedRecords(changes, `time: move edited entry ${this.user}`, {
-        remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null,
+        remove: [source.entries[position]], add: [updated], guards, expectedHeadSha: overlap?.headSha ?? null, indexFile,
       });
       const savedSource = parseMonthlyRecords(serializeMonthlyRecords(sourceEntries), { user: this.user, month: source.month, path: source.path, sha: result.blobShas[source.path] ?? null });
       const savedDestination = parseMonthlyRecords(serializeMonthlyRecords(destinationEntries), { user: this.user, month: destination.month, path: destination.path, sha: result.blobShas[destination.path] });
@@ -2446,13 +2474,19 @@ export class TrackerService {
     }
     const identities = new Set(requests.map(request => `${request.path}\u0000${request.position}`));
     if (identities.size !== requests.length) throw new Error('Linked time entries must be distinct');
-    const updated = requests.map(request => {
-      const edits = { ...request.edits, ...((request.edits?.taskUrl || request.edits?.issue)
-        ? { taskUrl: this.validateTaskUrl(request.edits.taskUrl ?? request.edits.issue) } : {}) };
+    const updated = [];
+    let indexFile = null;
+    for (const request of requests) {
+      const requestedTask = request.edits?.taskUrl ?? request.edits?.issue;
+      const taskUrl = requestedTask === undefined ? null : normalizeStoredTaskIdentity(requestedTask);
+      if (taskUrl && !/^https?:\/\//.test(taskUrl) && taskUrl !== request.originalEntry.taskUrl) {
+        indexFile = await this.assertKnownImportedTask(taskUrl, indexFile, 'edit_invalid_identity');
+      }
+      const edits = { ...request.edits, ...(taskUrl ? { taskUrl } : {}) };
       const entry = applyEntryEdits(request.originalEntry, edits, editClock(this.clock, request.originalEntry));
       entry.entryDate = startDate(entry);
-      return entry;
-    });
+      updated.push(entry);
+    }
     const changedTimes = updated.filter((entry, index) => entry.startedAt !== requests[index].originalEntry.startedAt
       || entry.endedAt !== requests[index].originalEntry.endedAt);
     const active = changedTimes.length ? await this.readRemoteActive() : null;
@@ -2485,7 +2519,7 @@ export class TrackerService {
     try {
       const changes = touched.map(file => ({ path: file.path, sha: file.sha, text: serializeMonthlyRecords(file.entries) || null }));
       const { blobShas } = await this.updateCompletedRecords(changes, `time: edit linked entries ${this.user}`, {
-        remove: requests.map(request => request.originalEntry), add: updated, guards, expectedHeadSha: overlap?.headSha ?? null,
+        remove: requests.map(request => request.originalEntry), add: updated, guards, expectedHeadSha: overlap?.headSha ?? null, indexFile,
       });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), {
         user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null,
@@ -2675,11 +2709,7 @@ export class TrackerService {
     const state = await this.store.getState();
     if (state.activeCache && !end) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
     if (state.pendingWrites?.length && !fixedId) throw new Error('Pending time writes must sync before adding time.');
-    const indexFile = /^https?:\/\//.test(canonical) ? null : await this.readTaskIndex();
-    if (indexFile && !Object.hasOwn(indexFile.index.tasks, canonical)) {
-      const shared = await this.reports?.loadRepositoryTask?.(canonical, { scanAllUsers: true });
-      if (!shared?.length) throw new Error('Select an existing imported task. New tasks require an HTTP(S) URL.');
-    }
+    const indexFile = /^https?:\/\//.test(canonical) ? null : await this.assertKnownImportedTask(canonical);
     const active = fixedId ? await this.readRemoteActive() : await this.refreshActive();
     if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
     const { files, headSha } = await this.readAddTimeOverlapFiles(originalDay, now,

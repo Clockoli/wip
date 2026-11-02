@@ -35,7 +35,7 @@ export function parseGitHubProjectPaneIssueUrl(value) {
 }
 
 // Stored Clockify work may have a deterministic identity without a navigable URL.
-// Browser-created tasks still go through normalizeTaskUrl before reaching storage.
+// New URL tasks go through normalizeTaskUrl; an existing imported task can be reused.
 export function normalizeStoredTaskIdentity(value) {
   const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
   if (typeof candidate === 'string' && candidate.length <= TASK_URL_MAX) {
