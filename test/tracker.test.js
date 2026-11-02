@@ -127,6 +127,462 @@ function service(options = {}) {
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'], ...(options.timezone ? { timezone: options.timezone } : {}) });
 }
 
+function stoppedOverlapFixture() {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const previous = entry('2026-11-02T09:08:00.000Z', '2026-11-02T11:01:22.296Z', { taskTitle: 'Previous' });
+  const timer = active('2026-11-02T11:01:00.000Z', { taskTitle: 'New timer' });
+  const stopped = entry(timer.startedAt, '2026-11-02T11:36:00.000Z', { id: timer.id, taskTitle: timer.taskTitle });
+  seedText(github, path, serializeMonthlyRecords([previous]), 'previous-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [previous] })), 'index-sha');
+  const start = { operation: 'startTimer', id: timer.id, status: 'conflict', conflictReason: 'add_time_overlap_changed',
+    stage: 'startNext', requireNoOverlap: true, nextActive: timer, queuedAt: timer.startedAt };
+  const stop = { operation: 'completeTimer', id: timer.id, status: 'pending', stage: 'verifyActive',
+    monthlyPath: path, entry: stopped, activeSnapshot: timer, activeSha: null, queuedAt: stopped.endedAt };
+  const edit = { operation: 'editEntry', id: deterministicRecordId('2026-11-02T12:00:00.000Z'), status: 'pending', stage: 'editEntry',
+    request: { path, originalSha: 'previous-sha', index: 0, original: previous,
+      edits: { endedAt: '2026-11-02T11:00:00.000Z' } }, queuedAt: '2026-11-02T12:00:00.000Z' };
+  store.value.pendingWrites = [start, stop, edit];
+  store.value.recentCache = [{ ...stopped, _path: path, _pending: true }];
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:10:00.000Z') });
+  return { github, store, tracker, path, previous, timer, edit };
+}
+
+test('deleting the stopped local overlap atomically retains its independent saved edit', async () => {
+  const { github, store, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), { deleted: true });
+  assert.deepEqual(store.value.pendingWrites, [edit]);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.recentCache.some(item => item.id === timer.id), false);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })[0].id, previous.id);
+});
+
+test('local stopped deletion rejects a saved completion, remote active timer, and changed queue', async () => {
+  for (const remote of ['monthly', 'index', 'active', 'queue']) {
+    const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+    const pending = structuredClone(store.value.pendingWrites), recent = structuredClone(store.value.recentCache);
+    if (remote === 'monthly') seedText(github, path, serializeMonthlyRecords([previous, store.value.pendingWrites[1].entry]), 'saved');
+    if (remote === 'index') seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+      emptyTaskIndex('alice'), { add: [previous, store.value.pendingWrites[1].entry] })), 'saved-index');
+    if (remote === 'active') seedText(github, 'active/alice.json', serializeActiveRecord(timer), 'running');
+    if (remote === 'queue') store.value.pendingWrites.push({ operation: 'addTime', id: fixedId });
+    await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TrackerConflictError);
+    assert.deepEqual(store.value.pendingWrites, remote === 'queue' ? [...pending, { operation: 'addTime', id: fixedId }] : pending);
+    assert.deepEqual(store.value.recentCache, recent);
+    assert.equal(github.atomicWrites.length, 0);
+  }
+});
+
+test('deleting the previous overlap persists a guarded deletion before syncing the stopped timer', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: true, resolved: true });
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+  assert.deepEqual(saved.map(item => item.id), [timer.id]);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(Object.values(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }).tasks)
+    .some(task => task.recordIds.includes(previous.id)), false);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.recentCache.some(item => item.id === previous.id), false);
+});
+
+test('previous deletion preserves pending edit and timer on rejected GitHub write, then retries', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[3].request.edits.endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(github.files.get(path).sha, 'previous-sha');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).map(item => item.id), [timer.id]);
+  assert.equal(previous.id === timer.id, false);
+});
+
+test('previous deletion recovers a lost acknowledgement only after monthly and index readback', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let lost = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (lost) { lost = false; throw new TypeError('lost acknowledgement'); }
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).map(item => item.id), [timer.id]);
+});
+
+test('previous deletion refuses a changed remote entry without dropping dependent edit', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote changed' }]), 'changed');
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })[0].description, 'remote changed');
+});
+
+test('previous deletion retains the full dependency chain on permanent rejection', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  github.updateTextsAtomic = async () => {
+    const error = new Error('forbidden'); error.status = 403; error.code = 'permission'; throw error;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.get(path).sha, 'previous-sha');
+});
+
+test('previous deletion does not cancel its edit when readback has an orphaned index', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let lost = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (lost) {
+      lost = false;
+      seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+        emptyTaskIndex('alice'), { add: [previous] })), 'orphan-index');
+      throw new TypeError('lost acknowledgement');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(github.files.has(path), false);
+});
+
+test('stopped overlap deletion refuses malformed side and concurrent local queue replacement', async () => {
+  const { github, store, tracker, timer } = stoppedOverlapFixture();
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'both' }), TrackerConflictError);
+  const originalMutate = store.mutateState.bind(store);
+  store.mutateState = mutate => {
+    store.value.pendingWrites[2].request.edits.endedAt = '2026-11-02T10:55:00.000Z';
+    return originalMutate(mutate);
+  };
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('local stopped deletion fails closed when remote index readback is unavailable', async () => {
+  const { github, store, tracker, timer } = stoppedOverlapFixture();
+  const read = github.getText.bind(github), before = structuredClone(store.value);
+  github.getText = path => path === TASK_INDEX_PATH ? Promise.reject(new TypeError('offline')) : read(path);
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TypeError);
+  assert.deepEqual(store.value, before);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('remote deletion preserves a concurrent changed edit as a conflict without stranding the stopped timer', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    store.value.pendingWrites.find(item => item.operation === 'editEntry').request.edits.endedAt = '2026-11-02T10:59:00.000Z';
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: true, resolved: true });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].request.edits.endedAt, '2026-11-02T10:59:00.000Z');
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .map(item => item.id), [timer.id]);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('stopped overlap context uses unique fresh remote completion and identifies queued previous edit', async () => {
+  const { github, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.blocked.id, timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.queuedPrevious.id, previous.id);
+  assert.equal(context.queuedPrevious.endedAt, edit.request.edits.endedAt);
+  assert.equal(context.editable, true);
+  seedText(github, path, serializeMonthlyRecords([previous, entry('2026-11-02T11:00:00.000Z', '2026-11-02T11:03:00.000Z')]), 'changed');
+  assert.equal(await tracker.getStoppedOverlapContext(timer.id), null);
+});
+
+test('stopped overlap resolves a queued end edit with unchanged full-form fields', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites[2].request.edits = {
+    taskUrl: previous.taskUrl, taskTitle: previous.taskTitle,
+    startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+    description: previous.description,
+  };
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.editable, true);
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: true });
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).length, 2);
+});
+
+test('stopped overlap rejects a queued edit that also changes task metadata', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites[2].request.edits = {
+    taskTitle: 'Another title', endedAt: '2026-11-02T11:00:00.000Z',
+  };
+  assert.equal((await tracker.getStoppedOverlapContext(timer.id)).editable, false);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer', 'editEntry']);
+});
+
+test('stopped overlap still displays remote pair when extra queued work makes resolution unavailable', async () => {
+  const { store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites.push({ operation: 'addTime', id: deterministicRecordId('2026-11-02T13:00:00.000Z'),
+    status: 'pending', stage: 'addTime', queuedAt: '2026-11-02T13:00:00.000Z' });
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.blocked.id, timer.id);
+  assert.equal(context.editable, false);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+});
+
+test('stopped overlap still displays remote pair when competing edits make resolution unavailable', async () => {
+  const { store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites.push({ ...structuredClone(store.value.pendingWrites[2]),
+    id: deterministicRecordId('2026-11-02T13:00:00.000Z') });
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.queuedPrevious, null);
+  assert.equal(context.editable, false);
+});
+
+for (const side of ['previous', 'local']) test(`stopped overlap resolves ${side} without dropping queued work`, async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const result = await tracker.resolveStoppedOverlap(timer.id, side === 'previous'
+    ? { side, startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z' }
+    : { side, startedAt: '2026-11-02T11:01:22.296Z', endedAt: '2026-11-02T11:36:00.000Z' });
+  assert.deepEqual(result, { resolved: true });
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+  assert.equal(saved.length, 2);
+  assert.equal(saved.find(item => item.id === previous.id).endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(saved.find(item => item.id === timer.id).startedAt,
+    side === 'local' ? '2026-11-02T11:01:22.296Z' : timer.startedAt);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('stopped overlap refuses changed remote or invalid boundaries without queue or remote writes', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const pending = structuredClone(store.value.pendingWrites);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'local', startedAt: '2026-11-02T10:59:10.000Z', endedAt: '2026-11-02T11:36:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, pending);
+  seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'changed elsewhere', updatedAt: '2026-11-02T12:05:00.000Z' }]), 'changed');
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, pending);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('stopped overlap keeps a strict queued edit and dependent timer on a remote race', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (...args) => {
+    seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote change', updatedAt: '2026-11-02T12:05:00.000Z' }]), 'raced');
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry', 'startTimer', 'completeTimer']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 3);
+});
+
+test('stopped overlap resumes across restart after a transient start failure', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let fail = true;
+  github.updateTextsAtomic = (...args) => {
+    if (fail && args[0].some(item => item.path === 'active/alice.json')) { fail = false; throw new Error('offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).length, 2);
+});
+
+test('stopped overlap adopts a committed start after its acknowledgement is lost and drains Stop', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let loseAck = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (loseAck && args[0].some(item => item.path === 'active/alice.json')) {
+      loseAck = false;
+      throw new TypeError('start acknowledgement lost');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, timer.id);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .filter(item => item.id === timer.id).length, 1);
+});
+
+test('stopped overlap refuses to adopt its timer ID when another device moved its start', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let loseAck = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (loseAck && args[0].some(item => item.path === 'active/alice.json')) {
+      loseAck = false;
+      throw new TypeError('start acknowledgement lost');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  const remote = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  seedText(github, 'active/alice.json', serializeActiveRecord({
+    ...remote, startedAt: '2026-11-02T11:02:00.000Z', createdAt: '2026-11-02T11:02:00.000Z',
+    updatedAt: '2026-11-02T11:02:00.000Z',
+  }), 'moved-active');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt,
+    '2026-11-02T11:02:00.000Z');
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .some(item => item.id === timer.id), false);
+});
+
+test('strict overlap edit retries after unrelated head drift across restart without rebasing', async () => {
+  const { github, store, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  const originalSha = edit.request.originalSha;
+  const atomic = github.updateTextsAtomic.bind(github);
+  let race = true;
+  github.updateTextsAtomic = (...args) => {
+    if (race) { race = false; github.headSha = 'unrelated-head'; throw github.conflict(); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].request.originalSha, originalSha);
+  assert.equal(github.files.get(path).sha, originalSha);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .find(item => item.id === previous.id).endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('strict overlap edit stays blocked across restart when its monthly blob changed', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let race = true;
+  github.updateTextsAtomic = (...args) => {
+    if (race) {
+      race = false;
+      seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote change' }]), 'changed-month');
+      throw github.conflict();
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry', 'startTimer', 'completeTimer']);
+  assert.equal(github.files.get(path).sha, 'changed-month');
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('stopped overlap completion guards a new remote neighbor after queued start', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let raced = false;
+  github.updateTextsAtomic = (...args) => {
+    if (!raced && args[0].some(item => item.path === path && item.text?.includes(timer.id))) {
+      raced = true;
+      const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+      seedText(github, path, serializeMonthlyRecords([...saved, entry('2026-11-02T11:10:00.000Z', '2026-11-02T11:15:00.000Z')]), 'neighbor');
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).some(item => item.id === timer.id), false);
+});
+
+test('stopped overlap refuses a new remote active timer instead of replacing it', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  const rival = active('2026-11-02T11:05:00.000Z', { id: deterministicRecordId('2026-11-02T11:05:00.000Z') });
+  github.updateTextsAtomic = (...args) => {
+    if (args[0].some(item => item.path === 'active/alice.json')) {
+      seedText(github, 'active/alice.json', serializeActiveRecord(rival), 'rival');
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, rival.id);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+});
+
+test('stopped overlap leaves another locally active timer and unhandled queues untouched', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  const other = active('2026-11-02T12:00:00.000Z');
+  store.value.activeCache = other;
+  const queue = structuredClone(store.value.pendingWrites);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, queue);
+  assert.equal(store.value.activeCache.id, other.id);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('queued start/stop preparation is side-effect free and keeps destination metadata out of work JSON', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const running = { ...active(), _path: 'active/alice.json', _sha: 'active-sha', destinationId: 'must-not-persist' };

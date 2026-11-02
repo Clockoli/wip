@@ -702,13 +702,13 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const READ_RETRY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT', 'SEARCH_TASKS',
-  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'GET_STOPPED_OVERLAP', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
   'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES',
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
-  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'RESOLVE_STOPPED_OVERLAP',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -1604,6 +1604,38 @@ async function handle(message, sender) {
       requestPendingSync();
       return { ...result, destinationId: destinationIds[0] };
     }
+    case 'GET_STOPPED_OVERLAP':
+    case 'RESOLVE_STOPPED_OVERLAP':
+    case 'DELETE_STOPPED_OVERLAP': {
+      if (sender?.url !== chrome.runtime.getURL('src/times/times.html')) throw new Error('Only Activity can review this overlap.');
+      const keys = Object.keys(message).sort().join(',');
+      if (keys !== (message.type === 'GET_STOPPED_OVERLAP' ? 'destinationId,id,type'
+        : message.type === 'DELETE_STOPPED_OVERLAP' ? 'destinationId,id,side,type' : 'destinationId,endedAt,id,side,startedAt,type')
+          || typeof message.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(message.id)) {
+        throw new Error('Invalid overlap request.');
+      }
+      const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
+      const tracker = await trackerForDestination(destinationId,
+        message.type === 'GET_STOPPED_OVERLAP' ? { localOnly: true, persistUser: false } : {});
+      if (message.type === 'GET_STOPPED_OVERLAP') return tracker.getStoppedOverlapContext(message.id);
+      if (message.type === 'DELETE_STOPPED_OVERLAP') {
+        if (!['previous', 'local'].includes(message.side)) throw new Error('Invalid overlap delete.');
+        const result = await tracker.deleteStoppedOverlap(message.id, { side: message.side });
+        requestPendingSync();
+        return result;
+      }
+      const validOverlapTimestamp = value => typeof value === 'string'
+        && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+        && Number.isFinite(Date.parse(value));
+      if (!['previous', 'local'].includes(message.side)
+          || !validOverlapTimestamp(message.startedAt) || !validOverlapTimestamp(message.endedAt)) {
+        throw new Error('Invalid overlap edit.');
+      }
+      const result = await tracker.resolveStoppedOverlap(message.id,
+        { side: message.side, startedAt: message.startedAt, endedAt: message.endedAt });
+      requestPendingSync();
+      return result;
+    }
     default: throw new Error('Unknown extension message');
   }
 }
@@ -1612,7 +1644,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_REMOTE_TIMER_STATUS', 'SEARCH_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_REMOTE_TIMER_STATUS', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
