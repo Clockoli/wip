@@ -15,7 +15,7 @@ The **Add time** button next to the page tabs on **Top tasks** and **Activity** 
 Rules for the interval:
 
 - If End is earlier than Start, it falls on the next calendar day.
-- Start defaults to the current local minute each time the dialog opens; End starts empty. An empty Start uses now when End is also empty; an empty End starts a running timer.
+- Start displays the current local minute each time the dialog opens; End starts empty. With End empty and the displayed Start and Date untouched, **Add** starts the timer at the actual submission time, including seconds. An empty Start also uses now when End is empty. An explicitly edited Start uses the selected minute (at `:00` seconds), even if it matches the displayed minute; an empty End starts a running timer.
 - A single Add time interval may be at most 24 hours (exactly 24 is allowed); split longer work into separate entries.
 - Running timers started through Add time must be no more than 24 hours old at creation; a timer that continues beyond 24 hours is not automatically stopped.
 - Future timestamps are rejected.
@@ -34,7 +34,7 @@ After Add, the dialog closes as soon as the change has been durably accepted in 
 
 During background synchronization, completed additions validate the original start date's monthly file, the preceding day's partition and, if the interval crosses a month boundary, the end date's monthly file, plus the active timer; the monthly JSONL and task index update atomically. A queued addition remains valid for synchronization after midnight or a timezone change: its accepted entryDate and timezone are preserved. Running timers validate and guard the start and preceding day's files at sync.
 
-Remote overlap and concurrent repository changes are rejected or retained as actionable conflicts; accepted local work is never discarded silently. If those files change before a queued start syncs, the conflict offers rechecking for overlap and retrying, or explicitly discarding the unsaved start; retries never silently bypass changed files. Discard requires an online GitHub check and refuses to remove a start already running remotely; retry adopts that running timer instead. An unavailable check leaves the conflict in place and shows an error.
+Remote overlap and concurrent repository changes are rejected or retained as actionable conflicts; accepted local work is never discarded silently. A conflicted running timer remains visible at the top of Activity, but its unsaved start is not a completed entry in the list. **Review sync issues** identifies the queued task and exact local start time. **Start after previous entry** checks GitHub and aligns that queued start to the exact end of the one completed entry already running at its start, preserving the timer ID and time since that end. If there is another completed interval, a remote timer, an unavailable read or an intervening change, the queued timer remains available for review; retries never bypass changed files. Recheck can adopt a timer already running remotely. **Discard queued start** is destructive: it removes the local timer and its unsaved tracked time, only after an online GitHub check confirms that timer is not running there.
 
 ## Add many entries at once
 

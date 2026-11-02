@@ -1060,9 +1060,15 @@ test('changed Add time conflict offers revalidation and explicit queued-start di
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Recheck and retry start').at(-1);
+  const align = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start after previous entry').at(-1);
   const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
   assert.ok(retry?.onclick);
+  assert.ok(align?.onclick);
   assert.ok(discard?.onclick);
+  await align.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
+    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'align_queued_start' });
+  messages.length = 0;
   await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(confirmed, true);
   assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),

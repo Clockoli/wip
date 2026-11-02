@@ -75,6 +75,20 @@ test('extension-only queued context identifies old edits and path mismatch witho
   assert.equal(JSON.stringify(descriptionDetail).includes('SECRET'), false);
 });
 
+test('queued running start exposes only safe identity and precise start in extension detail', () => {
+  const context = vm.createContext({});
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('function destinationSaveConfirmed(')), context);
+  const operation = { id: 'queued', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+    nextActive: { id: 'private', taskTitle: 'Meeting', taskUrl: 'https://example.com/meeting',
+      entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z', description: 'SECRET NOTES' } };
+  assert.equal(Object.hasOwn(plain(context.safePendingProjection(operation, destinationId)), 'subjects'), false);
+  const detail = plain(context.safePendingProjection(operation, destinationId, { includeDetails: true }));
+  assert.deepEqual(detail.subjects, [{ proposed: { entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z',
+    taskTitle: 'Meeting', taskUrl: 'https://example.com/meeting' } }]);
+  assert.equal(JSON.stringify(detail).includes('SECRET'), false);
+  assert.equal(JSON.stringify(detail).includes('private'), false);
+});
+
 test('Activity returns the current safe pending/conflict projection after records load', async () => {
   const state = { user: 'alice', activeCache: null, recentCache: [], pendingWrites: [] };
   const destination = { id: destinationId, owner: 'acme', repo: 'time', label: 'acme/time' };

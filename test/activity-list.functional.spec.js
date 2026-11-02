@@ -279,6 +279,48 @@ test('Activity keeps local sync and conflict warnings visible in Timeline and Ca
   }
 });
 
+test('Activity names the locally queued running start and offers precise, non-discarding repair', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-start-conflict-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-start-conflict-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'queued-start', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+        conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: {
+          taskTitle: 'Meet - dev call', taskUrl: 'https://example.com/meeting', entryDate: date,
+          startedAt: date + 'T12:01:00.000Z' } }] }
+    ];`).replace("else if (message.type === 'GET_ACTIVITY_VIEW_MODE')", `else if (message.type === 'RESOLVE_PENDING') {
+    globalThis.lastResolve = message;
+    respond({ ok: true, data: { resolved: false } });
+  }
+  else if (message.type === 'GET_ACTIVITY_VIEW_MODE')`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(dialog.getByRole('button', { name: /Meet - dev call.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByText(/Queued start: Meet - dev call.*started 12:01:00\.000 local/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Start after previous entry' }).click();
+    expect(await worker.evaluate(() => globalThis.lastResolve)).toEqual({
+      type: 'RESOLVE_PENDING', id: 'queued-start', action: 'align_queued_start',
+    });
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
