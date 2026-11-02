@@ -247,6 +247,21 @@ test('Activity keeps local sync and conflict warnings visible in Timeline and Ca
     expect(await worker.evaluate(() => trackingMessages.filter(type => type === 'RESOLVE_PENDING').length)).toBe(1);
     await worker.evaluate(() => { pendingWrites = globalThis.savedConflicts; });
     await expect(status.getByRole('alert')).toContainText('2 conflicts', { timeout: 12_000 });
+    await worker.evaluate(() => {
+      const blocked = globalThis.savedConflicts[0];
+      pendingWrites = [blocked, { id: 'dependent-edit', operation: 'editEntry', stage: 'editEntry', status: 'pending',
+        subjects: [{ original: blocked.subjects[0].original }] }];
+    });
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await expect(status.getByRole('alert')).toContainText('1 conflict needs review', { timeout: 12_000 });
+      await expect(status.getByRole('alert')).toContainText('1 waiting to sync');
+      await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible();
+    }
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(page.getByRole('dialog', { name: 'Sync issues' }).getByRole('button', { name: /Old task.*Pending sync/ })).toBeVisible();
+    expect(await worker.evaluate(() => pendingWrites.map(item => item.id))).toEqual(['edit-A', 'dependent-edit']);
+    await page.keyboard.press('Escape');
     await worker.evaluate(() => { configured = false; pendingWrites = []; });
     await expect(root).toContainText('Choose where Clockoli should save your time', { timeout: 12_000 });
     await expect(status).toBeEmpty();

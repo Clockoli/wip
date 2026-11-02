@@ -2147,7 +2147,7 @@
     const banner = el('section', undefined, 'sync-status-banner has-conflicts');
     banner.setAttribute('role', 'alert');
     const copy = el('div', undefined, 'sync-status-copy');
-    copy.append(el('strong', `${conflicts.length} ${conflicts.length === 1 ? 'conflict' : 'conflicts'} need review`),
+    copy.append(el('strong', `${conflicts.length} ${conflicts.length === 1 ? 'conflict needs' : 'conflicts need'} review`),
     el('span', `${waiting ? `${waiting} waiting to sync. ` : ''}Keep this browser data until the changes are saved to GitHub.`));
     const review = button('Review sync issues', 'sync-review-button', () => {
       syncIssuesOpen = true;
