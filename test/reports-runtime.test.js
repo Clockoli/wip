@@ -27,7 +27,7 @@ const result = (records = [record('alice'), record('bob', 'other.com')], rates =
   billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
-function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
+function harness(preferences = {}, { delayInitialPreferences = false, protocol = 'chrome-extension:', withoutPdfLibrary = false } = {}) {
   const classList = owner => ({
     toggle(name, force) { const classes = new Set(owner.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); owner.className = [...classes].join(' '); },
     contains: name => owner.className.split(' ').includes(name),
@@ -65,6 +65,7 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
       return this.context;
     }
     toDataURL() { return 'data:image/png;base64,dGVzdA=='; }
+    cloneNode() { const copy = new Node(this.tagName); copy.className = this.className; copy.children = [...this.children]; return copy; }
     focus() { document.activeElement = this; }
     click() { downloads.push(this); }
     showModal() { this.open = true; }
@@ -90,7 +91,7 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
     return worker;
   };
   const context = vm.createContext({
-    ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
+    ...reporting, ...billing, ...invoicing, ...values, document, location: { protocol }, Blob, TextEncoder, html2pdf: withoutPdfLibrary ? undefined : html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), getComputedStyle: () => ({ fontStyle: 'normal', fontVariant: 'normal', fontWeight: '700', fontSize: '28px', fontFamily: 'sans-serif', lineHeight: '35px', color: '#000' }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
     chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length && !delayInitialPreferences) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
@@ -112,8 +113,8 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
   };
 }
 
-async function loaded(data = result()) {
-  const page = harness();
+async function loaded(data = result(), options = {}) {
+  const page = harness({}, options);
   await page.settle(); await page.reply(data);
   const load = page.load({ ...oldRange }); await page.reply(data); await load;
   return page;
@@ -121,7 +122,7 @@ async function loaded(data = result()) {
 
 test('period, exports, and chart controls use the compact always-visible layout', () => {
   const period = html.match(/<section\b[^>]*class="card period-card"[\s\S]*?<\/section>/)?.[0] || '';
-  for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.ok(period.includes(`id="${id}"`), id);
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) assert.ok(period.includes(`id="${id}"`), id);
   assert.doesNotMatch(html, /export-card|summary-grid|summary-card/);
   assert.doesNotMatch(html, /<h2[^>]*>Analytics<\/h2>|<summary>Chart options<\/summary>|Tracked time/);
   assert.match(html, /id="period-trigger"/);
@@ -183,7 +184,7 @@ test('partial multi-repository reports stay visible with exports disabled', asyn
   assert.equal(page.nodes.get('partial-status').hidden, false);
   assert.match(page.nodes.get('partial-status').textContent, /Exports are disabled/);
   assert.equal(page.selection('timeRepositories'), 'alice/time');
-  for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
 });
 
 test('conflict-only partial reports identify omitted conflicts without claiming a read failure', async () => {
@@ -197,7 +198,7 @@ test('conflict-only partial reports identify omitted conflicts without claiming 
   });
   assert.match(page.nodes.get('partial-status').textContent, /1 conflicting record was omitted/i);
   assert.doesNotMatch(page.nodes.get('partial-status').textContent, /could not be loaded/i);
-  for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
 });
 
 test('billing stays visible when a configured rate belongs to someone outside the selection', async () => {
@@ -214,10 +215,10 @@ test('pending period keeps the actual report and filters visible while every exp
   assert.equal(page.nodes.get('analytics-chart').children[0], chart);
   assert.equal(page.nodes.get('period-label')?.textContent, 'Aug 17, 2026 – Aug 23, 2026');
   assert.equal(page.nodes.get('print-period').textContent, '2026-08-17 — 2026-08-23');
-  for (const id of ['download-csv', 'download-json', 'download-pdf']) {
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) {
     assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true'); page.fire(id);
   }
-  assert.equal(page.downloads.length, 0); assert.equal(page.prints.length, 0);
+  assert.equal(page.downloads.length, 0); assert.equal(page.prints.length, 0); assert.equal(page.pdfExports.length, 0);
   page.context.render();
   assert.equal(page.nodes.get('loading').hidden, false);
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
@@ -226,6 +227,50 @@ test('pending period keeps the actual report and filters visible while every exp
   assert.equal(page.nodes.get('period-label').textContent, 'Aug 24, 2026 – Aug 30, 2026');
   page.fire('download-json'); assert.equal(page.downloads.length, 1);
   assert.match(page.downloads[0].download, /2026-08-24.*2026-08-30/);
+});
+
+test('PDF downloads a light copy of the printable timesheet without opening the print dialog', async () => {
+  const page = await loaded();
+  await page.fire('download-pdf');
+  assert.equal(page.prints.length, 0);
+  assert.equal(page.pdfExports.length, 1);
+  const [job] = page.pdfExports;
+  assert.notEqual(job.source, page.nodes.get('print-timesheet'));
+  assert.equal(job.source.classList.contains('print-timesheet'), true);
+  assert.equal(job.source.classList.contains('timesheet-pdf-export'), true);
+  assert.equal(page.nodes.get('print-timesheet').classList.contains('timesheet-pdf-export'), false);
+  assert.equal(job.options.filename, 'Clockoli-timesheet_2026-08-17_2026-08-23_alice.pdf');
+  assert.equal(job.options.jsPDF.format, 'a4');
+  assert.equal(job.options.pagebreak.avoid.includes('tr'), true);
+  assert.equal(page.nodes.get('error').hidden, true);
+});
+
+test('rapid PDF clicks start one export until the first finishes', async () => {
+  const page = await loaded();
+  const first = page.fire('download-pdf'); page.fire('download-pdf');
+  await first;
+  assert.equal(page.pdfExports.length, 1);
+  await page.fire('download-pdf');
+  assert.equal(page.pdfExports.length, 2);
+});
+
+test('PDF reports an unavailable PDF library instead of failing silently', async () => {
+  const page = await loaded(result(), { withoutPdfLibrary: true });
+  await page.fire('download-pdf');
+  assert.equal(page.nodes.get('error').hidden, false);
+  assert.match(page.textOf(page.nodes.get('error')), /PDF export is unavailable/);
+});
+
+test('Print opens the print dialog titled with the report filename', async () => {
+  const page = await loaded();
+  page.fire('print-report');
+  assert.deepEqual(page.prints, ['Clockoli-timesheet_2026-08-17_2026-08-23_alice']);
+  assert.equal(page.pdfExports.length, 0);
+});
+
+test('Safari hides Print because it ignores print requests from extension pages', async () => {
+  assert.equal((await loaded()).nodes.get('print-report').hidden, false);
+  assert.equal((await loaded(result(), { protocol: 'safari-web-extension:' })).nodes.get('print-report').hidden, true);
 });
 
 test('widening a period expands all-selected facets in totals and exports', async () => {
