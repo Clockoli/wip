@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const currentWeekFriday = () => {
+  const friday = new Date();
+  friday.setDate(friday.getDate() - (friday.getDay() + 6) % 7 + 4);
+  friday.setHours(18, 0, 0, 0);
+  return friday;
+};
 const workerSource = `
 const day = new Date(); day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);
 const date = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-');
@@ -276,6 +282,7 @@ test('Activity keeps local sync and conflict warnings visible in Timeline and Ca
 test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
+  const fixtureTime = currentWeekFriday();
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
@@ -294,6 +301,7 @@ test('imported Activity records display the theme-colored Clockoli icon in List 
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.clock.install({ time: fixtureTime });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const maskPixels = await page.evaluate(async () => {
       const image = new Image();
@@ -404,11 +412,22 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
   test.setTimeout(30000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-profile-'));
+  const fixtureTime = currentWeekFriday();
+  const clockOffset = fixtureTime.getTime() - Date.now();
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
     const rendererPath = join(extension, 'src/content/github.js');
-    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    // Page clocks do not reach isolated content scripts; offset both Date.now() and new Date().
+    await writeFile(rendererPath, `if (location.protocol === 'https:') {
+      const RealDate = Date;
+      const offset = ${clockOffset};
+      globalThis.Date = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [RealDate.now() + offset])); }
+        static now() { return RealDate.now() + offset; }
+      };
+    }\n`
+      + (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
@@ -427,6 +446,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.setViewportSize({ width: 1774, height: 900 });
+    await page.clock.install({ time: fixtureTime });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const root = page.locator('#clockoli-times-root');
     const summary = page.locator('#activity-summary');
@@ -461,11 +481,20 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     const github = await context.newPage();
     github.on('pageerror', error => errors.push(error.message));
     await github.setViewportSize({ width: 1774, height: 900 });
+    await github.clock.install({ time: fixtureTime });
     await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
       status: 200, contentType: 'text/html',
       body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
     }));
     await github.goto('https://github.com/acme/app/issues/42');
+    const [isolatedClock] = await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'https://github.com/acme/app/issues/42' });
+      return chrome.scripting.executeScript({ target: { tabId: tab.id },
+        func: () => ({ now: Date.now(), constructed: new Date().getTime() }) });
+    });
+    const pageNow = await github.evaluate(() => Date.now());
+    expect(Math.abs(isolatedClock.result.now - isolatedClock.result.constructed)).toBeLessThan(1000);
+    expect(Math.abs(isolatedClock.result.now - pageNow)).toBeLessThan(10000);
     await github.locator('#clockoli-root .trigger-main').click();
     const panel = github.locator('#clockoli-full-width-popup-root');
     await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
