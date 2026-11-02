@@ -394,6 +394,48 @@ test('read-only remote timer context does not persist a missing local user', asy
   assert.equal(writes, 0);
 });
 
+test('stopped overlap review and repair require Activity, a configured destination and a bounded edit', async () => {
+  const calls = [];
+  const context = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: path => origin + (path || '') } }, store: {},
+    requireConfiguredDestinationId: async (_store, id) => {
+      if (id !== destinationId) throw new Error('Unknown destination');
+      return id;
+    },
+    trackerForDestination: async id => {
+      calls.push(['tracker', id]);
+      return {
+        getStoppedOverlapContext: async timerId => { calls.push(['read', timerId]); return { blocked: { id: timerId } }; },
+        resolveStoppedOverlap: async (timerId, edit) => { calls.push(['edit', timerId, edit.side]); return { resolved: true }; },
+        deleteStoppedOverlap: async (timerId, options) => { calls.push(['delete', timerId, options.side]); return { resolved: true }; },
+      };
+    },
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  installWorkerHandler(context);
+  const read = { type: 'GET_STOPPED_OVERLAP', destinationId, id: 'timer-id' };
+  const edit = { type: 'RESOLVE_STOPPED_OVERLAP', destinationId, id: 'timer-id', side: 'previous',
+    startedAt: '2026-11-02T09:08:00.000Z', endedAt: '2026-11-02T11:00:00.000Z' };
+  const remove = { type: 'DELETE_STOPPED_OVERLAP', destinationId, id: 'timer-id', side: 'local' };
+  assert.deepEqual(plain(await context.handle(read, sender)), { blocked: { id: 'timer-id' } });
+  for (const message of [read, edit, remove]) {
+    await assert.rejects(() => context.handle(message, { url: `${origin}src/popup/popup.html` }), /Only Activity/i);
+    await assert.rejects(() => context.handle(message, { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }), /allowed/i);
+  }
+  await assert.rejects(() => context.handle({ ...edit, destinationId: 'github:2' }, sender), /Unknown destination/);
+  await assert.rejects(() => context.handle({ ...edit, side: 'other' }, sender), /Invalid overlap edit/);
+  await assert.rejects(() => context.handle({ ...edit, startedAt: 'garbage' }, sender), /Invalid overlap edit/);
+  await assert.rejects(() => context.handle({ ...edit, taskUrl: 'https://example.org' }, sender), /Invalid overlap request/);
+  await assert.rejects(() => context.handle({ ...remove, destinationId: 'github:2' }, sender), /Unknown destination/);
+  await assert.rejects(() => context.handle({ ...remove, side: 'other' }, sender), /Invalid overlap delete/);
+  await assert.rejects(() => context.handle({ ...remove, taskUrl: 'https://example.org' }, sender), /Invalid overlap request/);
+  assert.deepEqual(plain(await context.handle(edit, sender)), { resolved: true });
+  assert.deepEqual(plain(await context.handle(remove, sender)), { resolved: true });
+  assert.deepEqual(calls.filter(call => call[0] === 'edit'), [['edit', 'timer-id', 'previous']]);
+  assert.deepEqual(calls.filter(call => call[0] === 'delete'), [['delete', 'timer-id', 'local']]);
+  assert.equal(calls.filter(call => call[0] === 'sync').length, 2);
+});
+
 test('real page-state handler confirms a used destination without requiring summaries or records in unused ready destinations', async () => {
   const ids = ['github:1', 'github:2', 'github:3'];
   const multiRegistry = { defaultDestinationId: ids[0], destinations: Object.fromEntries(ids.map(id => [id, {}])) };

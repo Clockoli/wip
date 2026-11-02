@@ -24,9 +24,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const times = document.createElement('div'); times.className = 'add-time-times';
   times.setAttribute('role', 'group'); times.setAttribute('aria-label', 'Time range');
   const makeField = (text, id, type) => {
-    const label = document.createElement('label'); label.textContent = text;
+    const label = document.createElement('label');
+    const caption = document.createElement('span'); caption.textContent = text;
     const input = document.createElement('input'); input.type = type; input.id = id;
-    label.htmlFor = id; label.append(input); times.append(label); return input;
+    label.htmlFor = id; label.append(caption, input); times.append(label); return input;
   };
   const start = makeField('Start', 'add-time-start', 'text');
   const end = makeField('End (optional)', 'add-time-end', 'text');
@@ -42,6 +43,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const refreshDateMax = () => { date.max = dateValue(new Date()); };
   date.addEventListener('focus', refreshDateMax);
   const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Leave End empty to start a timer. One entry can be at most 24 hours.';
+  const boundaryHint = document.createElement('p'); boundaryHint.className = 'add-time-hint'; boundaryHint.hidden = true;
+  const overlapProgress = document.createElement('progress'); overlapProgress.className = 'add-time-progress';
+  overlapProgress.setAttribute('aria-label', 'Resolving overlap and syncing time'); overlapProgress.hidden = true;
+  const overlapStatus = document.createElement('p'); overlapStatus.className = 'add-time-status';
+  overlapStatus.setAttribute('role', 'status'); overlapStatus.textContent = 'Checking overlap and syncing queued time with GitHub…';
+  overlapStatus.hidden = true;
   const descriptionLabel = document.createElement('label'); descriptionLabel.textContent = 'Description (optional)'; descriptionLabel.htmlFor = 'add-time-description';
   const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
   const moreDescription = document.createElement('small');
@@ -63,7 +70,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, times, hint, descriptionLabel, description, moreDescription, preview, error, actions);
+  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, times, hint, boundaryHint, descriptionLabel, description, moreDescription, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
   saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
@@ -166,20 +173,42 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     saved.hidden = true;
     clearTimeout(savedTimer);
     generation++;
-    const runningEdit = Boolean(entry && (entry._active || entry.endedAt == null));
-    editing = entry ? { entry, onEdit, trigger, running: runningEdit } : null;
+    const boundary = entry?._overlapBoundary === 'end' || entry?._overlapBoundary === 'start'
+      ? entry._overlapBoundary : null;
+    if (boundary) boundaryHint.after(overlapProgress, overlapStatus);
+    else { overlapProgress.remove(); overlapStatus.remove(); }
+    const runningEdit = Boolean(entry && !boundary && (entry._active || entry.endedAt == null));
+    editing = entry ? { entry, onEdit, trigger, running: runningEdit, boundary } : null;
     const now = new Date();
     tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; searching = false; showRepository = false;
     busy = false; search.value = ''; setSearchBusy(false);
-    heading.textContent = runningEdit ? 'Edit timer start' : entry ? 'Edit time' : 'Add new time';
+    overlapProgress.hidden = true; overlapStatus.hidden = true;
+    heading.textContent = runningEdit ? 'Edit timer start' : boundary ? 'Resolve time overlap' : entry ? 'Edit time' : 'Add new time';
     close.setAttribute('aria-label', runningEdit ? 'Close Edit timer start' : entry ? 'Close Edit time' : 'Close Add time');
     add.textContent = entry ? 'Save' : 'Add';
     hint.hidden = Boolean(entry);
+    boundaryHint.hidden = !boundary;
+    boundaryHint.textContent = boundary === 'end'
+      ? 'Change the End time. The Start time stays unchanged.'
+      : 'Change the Start time. The End time stays unchanged.';
     times.dataset.runningEdit = String(runningEdit);
+    if (boundary) { times.dataset.overlapBoundary = boundary; dialog.dataset.overlapBoundary = boundary; }
+    else { delete times.dataset.overlapBoundary; delete dialog.dataset.overlapBoundary; }
     times.setAttribute('aria-label', runningEdit ? 'Timer start' : 'Time range');
-    intro.hidden = runningEdit; taskLabel.hidden = runningEdit; search.hidden = runningEdit;
-    suggestions.hidden = runningEdit; end.parentElement.hidden = runningEdit;
-    descriptionLabel.hidden = runningEdit; description.hidden = runningEdit;
+    intro.hidden = runningEdit || Boolean(boundary); taskLabel.hidden = runningEdit || Boolean(boundary);
+    search.hidden = runningEdit || Boolean(boundary);
+    suggestions.hidden = runningEdit || Boolean(boundary);
+    start.parentElement.hidden = boundary === 'end';
+    end.parentElement.hidden = runningEdit || boundary === 'start';
+    date.parentElement.hidden = Boolean(boundary);
+    end.parentElement.children[0].textContent = boundary ? 'End' : 'End (optional)';
+    descriptionLabel.hidden = runningEdit || Boolean(boundary); description.hidden = runningEdit || Boolean(boundary);
+    date.disabled = Boolean(boundary);
+    start.disabled = boundary === 'end'; end.disabled = boundary === 'start';
+    for (const input of [start, end]) {
+      input.placeholder = 'HH:MM';
+      input.maxLength = 5;
+    }
     refreshDateMax();
     date.value = dateValue(entry ? new Date(entry.startedAt) : now);
     start.value = timeValue(entry ? new Date(entry.startedAt) : now);
@@ -192,13 +221,48 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       tasks = [selected]; search.value = selected.title || selected.taskUrl;
     }
     resizeDescription();
-    if (runningEdit) moreDescription.hidden = true;
+    if (runningEdit || boundary) moreDescription.hidden = true;
     setError('');
-    update(); dialog.showModal(); (runningEdit ? start : search).focus();
+    update(); preview.hidden = Boolean(boundary) || preview.hidden;
+    dialog.showModal(); (boundary === 'end' ? end : runningEdit || boundary ? start : search).focus();
   };
   button.addEventListener('click', () => open());
   const submit = async () => {
     if (busy) return;
+    if (editing?.boundary) {
+      const { entry, boundary } = editing;
+      const originalStart = new Date(entry.startedAt), originalEnd = new Date(entry.endedAt);
+      const input = boundary === 'start' ? start : end;
+      const original = boundary === 'start' ? originalStart : originalEnd;
+      const parsed = parseTime(input.value);
+      const candidate = parsed && localTimestamp(dateValue(original), parsed);
+      if (!candidate) { setError('Enter a valid time (HH:MM).'); return; }
+      candidate.setSeconds(boundary === 'start' ? 1 : 0, 0);
+      const startedAt = boundary === 'start' && parsed !== timeValue(originalStart)
+        ? candidate.toISOString() : entry.startedAt;
+      const endedAt = boundary === 'end' && parsed !== timeValue(originalEnd)
+        ? candidate.toISOString() : entry.endedAt;
+      const now = new Date();
+      if (new Date(startedAt) > now || new Date(endedAt) > now) {
+        setError('Start and End cannot be in the future.'); return;
+      }
+      if (new Date(endedAt) <= new Date(startedAt)) { setError('End time must be after start time.'); return; }
+      if (new Date(endedAt) - new Date(startedAt) > 24 * 60 * 60 * 1000) {
+        setError('One entry cannot exceed 24 hours. Split the time into separate entries.'); return;
+      }
+      busy = true; add.disabled = true; cancel.disabled = true; close.disabled = true; setError('');
+      overlapProgress.hidden = false; overlapStatus.hidden = false;
+      try {
+        await editing.onEdit({ taskUrl: entry.taskUrl, taskTitle: entry.taskTitle || '', startedAt, endedAt,
+          description: entry.description || '' });
+        dialog.close();
+      } catch (cause) { setError(cause?.message || 'Could not save time.'); }
+      finally {
+        busy = false; add.disabled = false; cancel.disabled = false; close.disabled = false;
+        overlapProgress.hidden = true; overlapStatus.hidden = true;
+      }
+      return;
+    }
     const runningEdit = Boolean(editing?.running);
     const task = runningEdit ? null : taskIdentity();
     if (!runningEdit && !task) { setError('Select a task or enter an HTTP(S) URL.'); return; }

@@ -58,6 +58,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         startedAt: date + 'T12:30:00Z', endedAt: date + 'T13:00:00Z' },
     ] : [])],
     pendingWrites, pendingCount: pendingWrites.length });
+  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent) {
+    globalThis.finishOverlapRecent = () => respond({ ok: true, data: state() });
+    return true;
+  }
   if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
@@ -289,7 +293,7 @@ test('Activity names the locally queued running start and offers precise, non-di
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
     await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let pendingWrites = [];', `let pendingWrites = [
-      { id: 'queued-start', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+      { id: 'queued-start', destinationId: 'github:1', operation: 'startTimer', status: 'conflict', stage: 'startNext',
         conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: {
           taskTitle: 'Meet - dev call', taskUrl: 'https://example.com/meeting', entryDate: date,
           startedAt: date + 'T12:01:00.000Z' } }] }
@@ -313,6 +317,206 @@ test('Activity names the locally queued running start and offers precise, non-di
     expect(await worker.evaluate(() => globalThis.lastResolve)).toEqual({
       type: 'RESOLVE_PENDING', id: 'queued-start', action: 'align_queued_start',
     });
+    await worker.evaluate(() => { pendingWrites.push({ id: 'unrelated-edit', destinationId: 'github:1',
+      operation: 'editEntry', status: 'pending' }); });
+    await expect(dialog.getByRole('button', { name: 'Start after previous entry' })).toHaveCount(0, { timeout: 12_000 });
+    await expect(dialog.getByRole('button', { name: 'Discard queued start' })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity explains a blocked start followed by a local stop without offering unavailable repair', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-stopped-conflict-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-stopped-conflict-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'same-timer', destinationId: 'github:1', operation: 'startTimer', status: 'conflict',
+        stage: 'startNext', conflictReason: 'add_time_overlap_changed', subjects: [] },
+      { id: 'same-timer', destinationId: 'github:1', operation: 'completeTimer', status: 'pending',
+        stage: 'verifyActive', subjects: [{ proposed: { taskTitle: 'Meet - dev call',
+          taskUrl: 'https://example.com/meeting', entryDate: date,
+          startedAt: date + 'T12:01:00.000Z', endedAt: date + 'T12:30:00.000Z' } }] },
+      { id: 'other-edit', destinationId: 'github:1', operation: 'editEntry', status: 'pending',
+        subjects: [{ original: { taskTitle: 'Previous task', taskUrl: 'https://example.com/previous', entryDate: date,
+          startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:01:22.296Z' },
+          proposed: { taskTitle: 'Previous task', taskUrl: 'https://example.com/previous', entryDate: date,
+          startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:00:00.000Z' } }] }
+    ];`).replace("else if (message.type === 'GET_ACTIVITY_VIEW_MODE')", `else if (message.type === 'DELETE_STOPPED_OVERLAP') {
+      globalThis.overlapDeletes ||= []; globalThis.overlapDeletes.push(message);
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Current worker cannot verify this deletion' } }); return; }
+      respond({ ok: true, data: { deleted: true, resolved: true } });
+    }
+    else if (message.type === 'RESOLVE_STOPPED_OVERLAP') {
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Message RESOLVE_STOPPED_OVERLAP is not allowed from this sender' } }); return; }
+      globalThis.overlapEdits ||= []; globalThis.overlapEdits.push(message);
+      if (globalThis.deferOverlapResolution) {
+        globalThis.finishOverlapResolution = () => respond({ ok: true, data: { resolved: true } });
+        return true;
+      }
+      respond({ ok: true, data: { resolved: true } });
+    }
+    else if (message.type === 'GET_STOPPED_OVERLAP') {
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Message GET_STOPPED_OVERLAP is not allowed from this sender' } }); return; }
+      respond({ ok: true, data: { previous: { id: 'previous', destinationId: 'github:1', taskTitle: 'Previous task',
+        taskUrl: 'https://example.com/previous', entryDate: date, timezone: 'UTC',
+        startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:01:22.296Z' },
+        blocked: { id: 'same-timer', destinationId: 'github:1', taskTitle: 'Meet - dev call',
+          taskUrl: 'https://example.com/meeting', entryDate: date, timezone: 'UTC',
+          startedAt: date + 'T12:01:00.000Z', endedAt: date + 'T12:30:00.000Z' },
+        queuedPrevious: { endedAt: date + 'T12:00:00.000Z' }, editable: pendingWrites.length === 3 } });
+    }
+    else if (message.type === 'GET_ACTIVITY_VIEW_MODE')`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = true; });
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    const queued = dialog.locator('.sync-other-pending');
+    await expect(queued.locator('summary')).toContainText('All queued changes (3)');
+    await queued.locator('summary').click();
+    await queued.getByRole('button', { name: /Previous task.*Pending sync/ }).click();
+    await expect(dialog).toContainText('Waiting to sync');
+    await expect(dialog).toContainText('Queued change:');
+    await dialog.locator('.sync-issue-list').getByRole('button', { name: /Timer start.*Conflict/ }).click();
+    const pair = dialog.locator('.sync-overlap-pair');
+    await expect(pair.locator('.sync-overlap-card')).toHaveCount(2);
+    await expect(pair).toContainText('not yet checked on GitHub');
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete pending entry' })).toBeEnabled();
+    await expect(pair.locator('.entry-actions .entry-edit svg')).toHaveCount(2);
+    await expect(pair.locator('.entry-actions .entry-delete svg')).toHaveCount(2);
+    await expect(pair.locator('.sync-overlap-edit')).toHaveCount(2);
+    await expect(pair).not.toContainText(/\b\d\d:\d\d local\b/);
+    await expect(pair.getByRole('heading', { name: /Overlap/ })).not.toContainText('local');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(dialog).not.toContainText('Could not load both entries');
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    const editor = page.getByRole('dialog', { name: 'Resolve time overlap' });
+    await expect(editor.locator('#add-time-start')).toBeHidden();
+    await expect(editor.locator('#add-time-end')).toBeVisible();
+    await expect(editor.locator('#add-time-end')).toBeFocused();
+    await expect(editor.locator('label[for="add-time-end"]')).toContainText('End');
+    await expect(editor.locator('label[for="add-time-end"]')).not.toContainText('optional');
+    await editor.getByRole('button', { name: 'Save' }).click();
+    await expect(editor).toContainText('Reload Clockoli');
+    await expect(editor).not.toContainText('Message RESOLVE_STOPPED_OVERLAP');
+    await expect(editor.locator('.add-time-progress')).toBeHidden();
+    await expect(editor.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(3);
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editor).toBeHidden();
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = false; });
+    await pair.getByRole('button', { name: 'Recheck GitHub entry' }).click();
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled();
+    await expect(pair).toContainText('Previous task');
+    await expect(pair).toContainText('Meet - dev call');
+    await expect(pair).toContainText('12:01');
+    await expect(pair.getByRole('heading', { name: /Overlap.*12:01$/ })).toBeVisible();
+    await expect(pair).toContainText('12:00');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeVisible();
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeVisible();
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    await expect(editor.locator('#add-time-start')).toHaveValue('10:08');
+    await expect(editor.locator('#add-time-start')).toBeDisabled();
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:00');
+    await expect(editor.locator('#add-time-date')).toBeDisabled();
+    if (process.env.CLOCKOLI_STOPPED_EDITOR_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_STOPPED_EDITOR_SCREENSHOT });
+    await worker.evaluate(() => { pendingWrites[2].lastError = 'Pending sync changed'; });
+    await page.waitForTimeout(5500);
+    await expect(editor).toBeVisible();
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:00');
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await pair.getByRole('button', { name: 'Edit pending entry' }).click();
+    await expect(editor.locator('#add-time-start')).toBeVisible();
+    await expect(editor.locator('#add-time-start')).toBeFocused();
+    await expect(editor.locator('#add-time-end')).toBeHidden();
+    await expect(editor.locator('#add-time-start')).toHaveValue('12:01');
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:30');
+    await expect(editor.locator('#add-time-end')).toBeDisabled();
+    await editor.locator('#add-time-start').fill('12:02');
+    await worker.evaluate(() => { globalThis.deferOverlapResolution = true; });
+    await editor.getByRole('button', { name: 'Save' }).click();
+    const progress = editor.getByRole('progressbar', { name: 'Resolving overlap and syncing time' });
+    await expect(progress).toBeVisible();
+    expect(await progress.evaluate(node => ({ value: node.getAttribute('value'), width: node.getBoundingClientRect().width })))
+      .toMatchObject({ value: null, width: expect.any(Number) });
+    expect(await progress.evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThan(0);
+    await expect(editor.getByRole('status')).toContainText('syncing queued time with GitHub');
+    await expect(editor.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Close Edit time' })).toBeDisabled();
+    await worker.evaluate(() => {
+      globalThis.deferOverlapResolution = false; globalThis.deferOverlapRecent = true;
+      globalThis.finishOverlapResolution();
+    });
+    await expect(editor).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => typeof globalThis.finishOverlapRecent)).toBe('function');
+    await worker.evaluate(() => { globalThis.deferOverlapRecent = false; globalThis.finishOverlapRecent(); });
+    expect(await worker.evaluate(() => globalThis.overlapEdits)).toMatchObject([{
+      type: 'RESOLVE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'local',
+      startedAt: expect.stringContaining('T12:02:01.000Z'), endedAt: expect.stringContaining('T12:30:00.000Z'),
+    }]);
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    await editor.getByRole('button', { name: 'Save' }).click();
+    await expect(editor).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.overlapEdits)).toMatchObject([{}, {
+      type: 'RESOLVE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'previous',
+      startedAt: expect.stringContaining('T10:08:00.000Z'), endedAt: expect.stringContaining('T12:00:00.000Z'),
+    }]);
+    if (process.env.CLOCKOLI_STOPPED_SYNC_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_STOPPED_SYNC_SCREENSHOT });
+    await expect(dialog.getByRole('button', { name: 'Start after previous entry' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Discard queued start' })).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = true;
+      pendingWrites.unshift({ id: 'earlier-edit', destinationId: 'github:1',
+      operation: 'editEntry', status: 'pending', subjects: [{ proposed: { taskTitle: 'Earlier pending edit' } }] }); });
+    await expect(dialog.locator('.sync-overlap-card')).toHaveCount(2, { timeout: 12_000 });
+    await expect(dialog.locator('.sync-other-pending summary')).toContainText('All queued changes (4)');
+    await dialog.locator('.sync-other-pending summary').click();
+    await expect(dialog.locator('.sync-other-pending').getByRole('button', { name: /Earlier pending edit.*Pending sync/ })).toBeVisible();
+    await expect(pair).toContainText('not yet checked on GitHub');
+    await expect(pair).toContainText('Pending');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(dialog).not.toContainText('Could not load both entries');
+    await expect(dialog).not.toContainText('The exact earlier entry is not included');
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled({ timeout: 12_000 });
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete pending entry' })).toBeEnabled();
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('tracked time'); return prompt.dismiss(); });
+    await pair.getByRole('button', { name: 'Delete pending entry' }).click();
+    expect(await worker.evaluate(() => globalThis.overlapDeletes ?? [])).toEqual([]);
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('tracked time'); return prompt.accept(); });
+    await pair.getByRole('button', { name: 'Delete pending entry' }).click();
+    await expect(dialog).toContainText('Current worker cannot verify this deletion');
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(4);
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = false; });
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('earlier saved entry'); return prompt.accept(); });
+    await pair.getByRole('button', { name: 'Delete earlier entry' }).click();
+    expect(await worker.evaluate(() => globalThis.overlapDeletes)).toMatchObject([
+      { type: 'DELETE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'local' },
+      { type: 'DELETE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'previous' },
+    ]);
+    await page.setViewportSize({ width: 390, height: 740 });
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await expect(dialog.locator('.sync-overlap-pair .sync-overlap-card')).toHaveCount(2);
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(4);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

@@ -283,7 +283,7 @@ test('trusted extension pages can perform popup-only operations', () => {
   assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
   assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
-  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES']) {
+  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES', 'GET_STOPPED_OVERLAP', 'RESOLVE_STOPPED_OVERLAP']) {
     assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
     assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
   }

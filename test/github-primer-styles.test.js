@@ -226,7 +226,8 @@ test('print forces GitHub exact light data colors even when the live page is dar
 
 
 test('every destructive Delete control receives the complete Primer danger variant', () => {
-  assert.match(content, /button\('Delete', 'danger-outline entry-delete'/);
+  assert.match(content, /entryActionButton\('Delete', 'delete', async/);
+  assert.match(content, /kind === 'edit' \? 'link-button entry-edit' : 'danger-outline entry-delete'/);
   for (const [surface, css] of [['content', content]]) {
     assert.match(css, /\.danger\s*,\s*\.danger-outline\s*\{[^}]*button-danger-borderColor-rest[^}]*button-danger-bgColor-rest[^}]*button-danger-fgColor-rest/, `${surface} Delete lacks danger rest state`);
     assert.match(css, /\.danger:hover\s*,\s*\.danger-outline:hover\s*\{[^}]*button-danger-borderColor-hover[^}]*button-danger-bgColor-hover[^}]*button-danger-fgColor-hover/, `${surface} Delete lacks danger hover state`);

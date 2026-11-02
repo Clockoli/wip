@@ -18,6 +18,32 @@ const domHarnessSource = trackingCardSource + '\n' + taskSearchSource + '\n' + s
 );
 assert.notEqual(domHarnessSource, source);
 
+test('an older overlap read cannot replace a newer recheck for the same queue', async () => {
+  const begin = source.indexOf('  function loadStoppedOverlap(item) {');
+  const end = source.indexOf('\n  function projectedStoppedOverlap(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const requests = [], details = new Map();
+  let renders = 0;
+  const context = vm.createContext({
+    stoppedOverlapDetails: details, stoppedOverlapQueueSignature: 'same queue', syncIssuesOpen: true,
+    send: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    renderSyncIssues: () => { renders++; }, syncIssuesSignature: null,
+  });
+  vm.runInContext(`${source.slice(begin, end)}\nthis.load = loadStoppedOverlap;`, context);
+  const item = { destinationId: 'github:1', id: 'timer' }, key = 'github:1:timer';
+  context.load(item);
+  details.delete(key); // A user rechecks while the first GET is still in flight.
+  context.load(item);
+  requests[1].resolve({ verified: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(details.get(key)?.data?.verified, true);
+  const refreshedRenders = renders;
+  requests[0].reject(new Error('Stale read failed'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(details.get(key)?.data?.verified, true);
+  assert.equal(renders, refreshedRenders);
+});
+
 test('calendar tracking uses the stored identity in both the GitHub panel and Activity', () => {
   const begin = source.indexOf('  function trackableTaskIdentityOf(value) {');
   const end = source.indexOf('\n  function taskTitleOf(', begin);
@@ -1038,7 +1064,9 @@ test('changed Add time conflict offers revalidation and explicit queued-start di
   const messages = []; let confirmed = false;
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
-  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext', conflictReason: 'add_time_overlap_changed' };
+  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+    conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: { taskTitle: 'Meeting',
+      entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z' } }] };
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1192,7 +1220,8 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
   assert.equal(form.value.startedAt, entry.startedAt);
   assert.equal(form.value.endedAt, entry.endedAt);
   assert.equal(typeof form.onEdit, 'function');
-  assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
+  assert.match(source, /entryActionButton\('Edit time', 'edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
+  assert.match(source, /entryActionButton\('Delete', 'delete', async/);
 });
 
 test('Activity hydrates durable IndexedDB records before requesting remote history', () => {

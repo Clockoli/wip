@@ -28,6 +28,7 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
 .sync-issues-header h2{margin:0 0 4px;font-size:21px}
 .sync-issues-header p{margin:0;color:var(--fgColor-muted)}
 .sync-issues-content{display:grid;grid-template-columns:minmax(190px,280px) minmax(0,1fr);min-height:270px;max-height:calc(min(80dvh,760px) - 165px);overflow:hidden}
+.sync-issues-content.is-single-overlap{grid-template-columns:minmax(0,1fr);min-height:0}
 .sync-issue-list{display:grid;align-content:start;gap:8px;overflow:auto;padding:16px;border-right:1px solid var(--borderColor-muted);background:var(--bgColor-muted)}
 .sync-issue-item{width:100%;padding:11px 12px;border:1px solid var(--borderColor-muted);border-radius:8px;background:var(--bgColor-default);color:var(--fgColor-default);font:inherit;text-align:left;overflow-wrap:anywhere;cursor:pointer}
 .sync-issue-item.is-conflict{border-left:4px solid var(--fgColor-danger)}
@@ -39,6 +40,26 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
 .sync-issue-detail .queued-context{padding:9px 12px;border:1px solid var(--borderColor-muted);border-radius:7px;background:var(--bgColor-muted)}
 .sync-issue-detail .conflict button{margin:4px 8px 4px 0}
 .sync-issue-detail .conflict .link-button{border-color:var(--borderColor-danger-muted);color:var(--fgColor-danger)}
+.sync-overlap-pair{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+.sync-overlap-pair h3{grid-column:1/-1;margin:0 0 2px;color:var(--fgColor-danger)}
+.sync-overlap-card{display:flex;flex-direction:column;align-items:flex-start;min-width:0;gap:6px;padding:10px 12px;border:1px solid var(--borderColor-muted);border-radius:8px;background:var(--bgColor-muted)}
+.sync-overlap-card .sync-overlap-label{color:var(--fgColor-muted);font-size:12px;font-weight:700;text-transform:uppercase}
+.sync-overlap-card .entry-time-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin:0;font-variant-numeric:tabular-nums}
+.sync-overlap-card .entry-record-task-identity{display:flex;align-items:flex-start;gap:9px;width:100%;min-width:0}
+.sync-overlap-card .entry-record-favicon{width:18px;height:18px;flex:none;border-radius:4px}
+.sync-overlap-card .entry-record-task-result{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}
+.sync-overlap-card .task-url{color:var(--fgColor-muted)}
+.sync-overlap-card .task-title{font-weight:600}
+.sync-overlap-card .sync-overlap-range{font-variant-numeric:tabular-nums}
+.sync-overlap-card .sync-overlap-proposed{color:var(--fgColor-muted)}
+.sync-overlap-card .entry-actions{display:flex;align-items:center;gap:4px;flex:none}
+.sync-overlap-card .entry-actions button{display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:30px;margin:0;padding:0;overflow:hidden;border:1px solid var(--borderColor-default);border-radius:6px;background:var(--bgColor-default);color:var(--fgColor-muted);font-size:0;cursor:pointer}
+.sync-overlap-card .entry-actions svg{width:16px;height:16px;flex:none}
+.sync-overlap-card .entry-edit:hover{background:var(--bgColor-muted);color:var(--fgColor-default)}
+.sync-overlap-card .entry-delete:hover{border-color:var(--borderColor-danger-muted);background:var(--bgColor-danger-muted);color:var(--fgColor-danger)}
+.sync-overlap-card button:disabled{opacity:.55;cursor:not-allowed}
+.sync-overlap-unavailable{grid-column:1/-1;margin:0;color:var(--fgColor-muted)}
+.sync-other-pending{margin-top:16px;color:var(--fgColor-muted)}.sync-other-pending summary{cursor:pointer;font-weight:600}.sync-other-pending .sync-issue-list{max-height:240px;margin-top:8px;border:1px solid var(--borderColor-muted);border-radius:8px}
 .sync-issues-footnote{margin:0;padding:12px 24px;border-top:1px solid var(--borderColor-muted);color:var(--fgColor-muted);font-size:12px}
 .sync-issues-dialog button:focus-visible,.sync-review-button:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
 #activity-summary .activity-weekly-heading{display:block;margin:0 0 6px;color:var(--fgColor-default);font-size:13px;font-weight:700}
@@ -81,6 +102,7 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
 @media(max-width:900px){.activity-overview-layout{grid-template-columns:1fr}}
 @media(max-width:700px){.activity-overview-layout,html[data-clockoli-width="full"] .activity-overview-layout,#activity-sync-status:not(:empty),html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 24px)}}
 @media(max-width:640px){.sync-status-banner{align-items:stretch;flex-direction:column}.sync-issues-content{grid-template-columns:1fr;max-height:calc(85dvh - 150px);overflow:auto}.sync-issue-list{max-height:180px;border-right:0;border-bottom:1px solid var(--borderColor-muted)}.sync-issue-detail{overflow:visible}.sync-issues-dialog{max-height:85dvh}}
+@media(max-width:900px){.sync-overlap-pair{grid-template-columns:1fr}}
 @media(max-width:640px){
   #activity-running-status.running-status.is-active .running-status-row{grid-template-columns:minmax(0,1fr);grid-template-rows:none}
   #activity-running-status.is-active .running-status-live,
