@@ -936,8 +936,12 @@ export class TrackerService {
   async startQueuedActive(operation) {
     const path = activeRecordPath(this.user), queuedTarget = operation.nextActive;
     if (!queuedTarget) return null;
-    if (operation.requireNoOverlap && !operation.overlapGuards) {
-      const { files, headSha } = await this.readAddTimeOverlapFiles(queuedTarget.entryDate, this.clock());
+    // A pending start can remain local across days or months. Persisted guards
+    // only describe an earlier attempt; recheck the current horizon every time.
+    if (operation.requireNoOverlap) {
+      const now = this.clock();
+      const { files, headSha } = await this.readAddTimeOverlapFiles(queuedTarget.entryDate, now,
+        localDateInTimezone(now, this.timezone));
       const startMs = new Date(queuedTarget.startedAt).getTime(), nowMs = this.clock().getTime();
       if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < nowMs
           && new Date(entry.endedAt).getTime() > startMs))) {
@@ -976,6 +980,11 @@ export class TrackerService {
           throw error;
         }
         const remote = parseActiveRecord(file.text, { user: this.user, path, sha: file.sha });
+        if (operation.alignmentRequiresEmptyRemote) {
+          const conflict = new TrackerConflictError('A timer started on GitHub while the queued start was being aligned. The local start remains queued.', 'add_time_overlap_changed');
+          conflict.remoteActive = remote;
+          throw conflict;
+        }
         if (sameTimer(remote, target)) return remote;
         if (operation.overlapHeadSha) throw new TrackerConflictError('Completed time changed while starting this timer. Review Activity before retrying.', 'add_time_overlap_changed');
         // Deterministic conflict policy: the later timer start wins. Equal start times
@@ -1370,6 +1379,47 @@ export class TrackerService {
     const operation = (state.pendingWrites ?? []).find(item => item.id === id);
     if (!operation || operation.status !== 'conflict') throw new Error('Only a pending conflict can be resolved');
     if (operation.conflictReason === 'add_time_overlap_changed' && operation.stage === 'startNext') {
+      if (action === 'align_queued_start') {
+        if (operation.operation !== 'startTimer' || !operation.requireNoOverlap || !operation.nextActive) {
+          throw new TrackerConflictError('Only an unsaved Add time start can be aligned.');
+        }
+        const remoteActive = await this.readRemoteActive();
+        if (remoteActive) throw new TrackerConflictError('A timer is already running on GitHub. Recheck its state before changing the queued start.');
+        const now = this.clock();
+        const { files, headSha } = await this.readAddTimeOverlapFiles(operation.nextActive.entryDate, now,
+          localDateInTimezone(now, this.timezone));
+        const startMs = new Date(operation.nextActive.startedAt).getTime(), nowMs = this.clock().getTime();
+        const overlaps = files.flatMap(file => file.entries).filter(entry =>
+          new Date(entry.startedAt).getTime() < nowMs && new Date(entry.endedAt).getTime() > startMs);
+        if (overlaps.length !== 1 || new Date(overlaps[0].startedAt).getTime() > startMs
+            || new Date(overlaps[0].endedAt).getTime() >= nowMs) {
+          throw new TrackerConflictError('The queued start cannot safely follow one previous entry. Review Activity; the queued timer remains unchanged.');
+        }
+        const alignedStart = new Date(overlaps[0].endedAt).toISOString();
+        if (localDateInTimezone(alignedStart, operation.nextActive.timezone) !== operation.nextActive.entryDate) {
+          throw new TrackerConflictError('The queued start crosses a date boundary. Review Activity; the queued timer remains unchanged.');
+        }
+        await this.mutateState(latest => {
+          const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
+          const current = pendingWrites[index];
+          if (index !== pendingWrites.length - 1 || current?.status !== 'conflict'
+              || current.conflictReason !== 'add_time_overlap_changed' || current.stage !== 'startNext'
+              || current.nextActive?.startedAt !== operation.nextActive.startedAt
+              || latest.activeCache?.id !== current.nextActive.id
+              || latest.activeCache?.startedAt !== current.nextActive.startedAt) {
+            throw new TrackerConflictError('The queued timer changed before it could be aligned. Reload and review it.');
+          }
+          const nextActive = { ...current.nextActive, startedAt: alignedStart, createdAt: alignedStart,
+            updatedAt: this.clock().toISOString() };
+          validateActiveTimer(nextActive);
+          pendingWrites[index] = { ...current, nextActive, alignmentRequiresEmptyRemote: true,
+            overlapGuards: files.map(file => ({ path: file.path, sha: file.sha })),
+            overlapHeadSha: headSha, status: 'pending', lastError: '', conflictReason: '', conflictWith: null };
+          return { pendingWrites, activeCache: { ...latest.activeCache, ...nextActive, _pending: true } };
+        });
+        const remaining = await this.syncPending();
+        return { resolved: !remaining.some(item => item.id === id) };
+      }
       if (action === 'discard_queued_start') {
         const remoteActive = await this.readRemoteActive();
         if (remoteActive && sameTimer(remoteActive, operation.nextActive)) {
@@ -1385,12 +1435,18 @@ export class TrackerService {
         return { resolved: true, discarded: true };
       }
       const remoteActive = await this.readRemoteActive();
+      if (remoteActive && operation.alignmentRequiresEmptyRemote
+          && (!sameTimer(remoteActive, operation.nextActive)
+            || remoteActive.startedAt !== operation.nextActive.startedAt)) {
+        throw new TrackerConflictError('Another timer is running on GitHub. The aligned local start remains queued.', 'add_time_overlap_changed');
+      }
       if (remoteActive && sameTimer(remoteActive, operation.nextActive)) {
         await this.persistQueueOperation(operation, { remove: true, patch: { activeCache: remoteActive } });
         return { resolved: true, alreadyRunning: true };
       }
       const { files, headSha } = operation.requireNoOverlap
-        ? await this.readAddTimeOverlapFiles(operation.nextActive.entryDate, this.clock())
+        ? await this.readAddTimeOverlapFiles(operation.nextActive.entryDate, this.clock(),
+          localDateInTimezone(this.clock(), this.timezone))
         : { files: await Promise.all(operation.overlapGuards.map(guard => this.readMonthly(guard.path))), headSha: null };
       const startMs = new Date(operation.nextActive.startedAt).getTime(), nowMs = this.clock().getTime();
       if (files.some(file => file.entries.some(entry => new Date(entry.startedAt).getTime() < nowMs
@@ -2257,17 +2313,21 @@ export class TrackerService {
     return { files, headSha: snapshot.headSha || null };
   }
 
-  async readAddTimeOverlapFiles(day, now, endDay = null) {
+  async readAddTimeOverlapFiles(day, now, endDay = null, through = now) {
     const previousDay = new Date(`${day}T12:00:00.000Z`);
     previousDay.setUTCDate(previousDay.getUTCDate() - 1);
+    // A completed entry is partitioned by its own recorded timezone, which
+    // can be up to fourteen hours ahead of the device checking the overlap.
+    const aheadDay = new Date(through.getTime() + 14 * 60 * 60 * 1000).toISOString().slice(0, 10);
     // Historical additions may overlap a timer that started many days earlier.
     // Do not enumerate repository history for today's Add time.
     const snapshot = day === localDateInTimezone(now, this.timezone)
       ? null : await this.github.listTextFilesSnapshot('times/');
+    const throughMonth = aheadDay.slice(0, 7);
     const olderPaths = (snapshot?.files ?? []).map(file => file.path).filter(path =>
       /^times\/\d{4}-(?:0[1-9]|1[0-2])\//.test(path)
-      && path.endsWith(`/${this.user}.jsonl`) && path.slice(6, 13) < day.slice(0, 7));
-    const paths = [...new Set([day, previousDay.toISOString().slice(0, 10), ...(endDay ? [endDay] : [])]
+      && path.endsWith(`/${this.user}.jsonl`) && path.slice(6, 13) <= throughMonth);
+    const paths = [...new Set([day, previousDay.toISOString().slice(0, 10), aheadDay, ...(endDay ? [endDay] : [])]
       .map(date => monthlyRecordsPath(this.user, date)).concat(olderPaths))];
     return { files: await Promise.all(paths.map(path => this.readMonthly(path))), headSha: snapshot?.headSha || null };
   }
@@ -2353,7 +2413,7 @@ export class TrackerService {
     const active = fixedId ? await this.readRemoteActive() : await this.refreshActive();
     if (active && (!end || endMs > new Date(active.startedAt).getTime())) throw new Error('Added time would overlap the running timer.');
     const { files, headSha } = await this.readAddTimeOverlapFiles(originalDay, now,
-      end ? localDateInTimezone(end, accepted?.timezone ?? this.timezone) : null);
+      localDateInTimezone(end ?? now, accepted?.timezone ?? this.timezone), end ?? now);
     if (files.some(file => file.entries.some(entry => entry.id !== fixedId
         && new Date(entry.startedAt).getTime() < (endMs ?? now.getTime())
         && new Date(entry.endedAt).getTime() > startMs))) {

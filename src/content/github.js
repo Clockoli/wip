@@ -2114,7 +2114,12 @@
   }
 
   function queuedTimeRange(record) {
-    if (!validTimestamp(record?.startedAt) || !validTimestamp(record?.endedAt)) return '';
+    if (!validTimestamp(record?.startedAt)) return '';
+    if (!validTimestamp(record?.endedAt)) {
+      const started = new Date(record.startedAt).toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hour12: false });
+      return `started ${started} local`;
+    }
     const time = value => new Date(value).toLocaleTimeString('en-GB',
       { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
     return `${time(record.startedAt)}–${time(record.endedAt)} UTC`;
@@ -2241,7 +2246,7 @@
         : item.conflictReason === 'active_changed_no_completion'
           ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
           : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
-            : changedAddTime ? 'Completed time changed before this timer synced. Recheck for overlap or, while online, verify GitHub and discard the unsaved start.'
+            : changedAddTime ? 'This running timer is stored locally, not yet saved to GitHub. Start after previous entry checks GitHub and moves its start to the exact end of the one overlapping entry. If this cannot be done safely, the timer remains queued.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
                 : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
@@ -2254,8 +2259,8 @@
       box.append(el('strong', title), el('div', detail, 'muted'));
       for (const subject of item.subjects ?? []) {
         if (subject.original) box.append(el('div', `Original: ${queuedRecordLabel(subject.original)}`, 'queued-context'));
-        if (subject.proposed && (subject.original || queuedAddition)) {
-          box.append(el('div', `Queued ${subject.original ? 'change' : 'addition'}: ${queuedRecordLabel(subject.proposed)}`, 'queued-context'));
+        if (subject.proposed && (subject.original || queuedAddition || changedAddTime)) {
+          box.append(el('div', `Queued ${changedAddTime ? 'start' : subject.original ? 'change' : 'addition'}: ${queuedRecordLabel(subject.proposed)}`, 'queued-context'));
         }
         if (subject.descriptionChanged) box.append(el('div', 'Description changed (text remains in this browser).', 'queued-context'));
         const date = subject.original?.entryDate || subject.proposed?.entryDate;
@@ -2275,6 +2280,9 @@
       box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
         await resolve(unsaved ? 'discard_unsaved_completion' : null, true);
+      }));
+      if (changedAddTime) box.append(button('Start after previous entry', 'secondary wide', async () => {
+        await resolve('align_queued_start', true);
       }));
       if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
         if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;

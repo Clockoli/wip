@@ -72,6 +72,9 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
 
   let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
   let lastSearch = '', searchIncomplete = false, editing = null, showRepository = false;
+  let defaultStart = '', defaultDate = '', startEdited = false, dateEdited = false;
+  start.addEventListener('input', () => { startEdited = true; });
+  date.addEventListener('input', () => { dateEdited = true; });
   const setError = text => { error.textContent = text; error.hidden = !text; };
   const setSearchBusy = value => { searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); };
   const taskIdentity = () => {
@@ -180,6 +183,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     refreshDateMax();
     date.value = dateValue(entry ? new Date(entry.startedAt) : now);
     start.value = timeValue(entry ? new Date(entry.startedAt) : now);
+    defaultDate = date.value; defaultStart = start.value;
+    startEdited = false; dateEdited = false;
     end.value = entry && !runningEdit ? timeValue(new Date(entry.endedAt)) : '';
     description.value = entry?.description || '';
     if (entry) {
@@ -211,7 +216,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     const initialEnd = editing && !runningEdit && new Date(editing.entry.endedAt);
     const unchangedTimes = editing && date.value === dateValue(initialStart)
       && startTime === timeValue(initialStart) && (runningEdit || endTime === timeValue(initialEnd));
-    const startedAt = unchangedTimes ? editing.entry.startedAt : startDate ? startDate.toISOString() : now.toISOString();
+    const defaultRunningStart = !editing && !end.value && !startEdited && !dateEdited
+      && date.value === defaultDate && start.value === defaultStart;
+    const startedAt = unchangedTimes ? editing.entry.startedAt
+      : defaultRunningStart ? now.toISOString() : startDate ? startDate.toISOString() : now.toISOString();
     let endDate = null;
     if (endTime && startDate) {
       const day = new Date(`${date.value}T12:00:00`);

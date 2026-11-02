@@ -2977,7 +2977,12 @@ test('Add time queued timer cannot sync after a completed interval changes acros
 test('Add time queued start retries after revalidating a nonoverlapping monthly change', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
-  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z')]), 'raced');
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z')]), 'raced');
+    github.updateTextsAtomic = atomic;
+    return atomic(...args);
+  };
   await service({ github, store }).syncPending();
   const pending = store.value.pendingWrites[0];
   assert.equal(pending.status, 'conflict');
@@ -3000,6 +3005,190 @@ test('Add time queued start cannot revalidate overlap and can be explicitly disc
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(store.value.activeCache, null);
   assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('overlapping queued Add time start can align to the exact previous end without losing the running timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0], originalId = queued.nextActive.id;
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z')]), 'previous');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+  assert.deepEqual(await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') })
+    .resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: true });
+  const active = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(active.id, originalId);
+  assert.equal(active.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.equal(store.value.activeCache.startedAt, active.startedAt);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(github.atomicWrites.at(-1).guards, [{ path, sha: 'previous' }]);
+});
+
+test('alignment refuses a later completed interval, remote timer, or unavailable GitHub without altering the queued start', async () => {
+  for (const scenario of ['later', 'remote', 'offline']) {
+    const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+    const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+    await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+    seedText(github, path, serializeMonthlyRecords([entry(
+      scenario === 'later' ? '2026-11-02T12:03:00.000Z' : '2026-11-02T10:08:00.000Z',
+      scenario === 'later' ? '2026-11-02T12:04:00.000Z' : '2026-11-02T12:01:22.296Z',
+    )]), 'previous');
+    await tracker.syncPending();
+    const queued = structuredClone(store.value.pendingWrites[0]), cached = structuredClone(store.value.activeCache);
+    if (scenario === 'remote') seedText(github, 'active/alice.json', serializeActiveRecord(queued.nextActive), 'saved');
+    if (scenario === 'offline') github.getText = async () => { throw new TypeError('network unavailable'); };
+    await assert.rejects(() => tracker.resolvePendingConflict(queued.id, 'align_queued_start'));
+    assert.deepEqual(store.value.pendingWrites[0], queued);
+    assert.deepEqual(store.value.activeCache, cached);
+  }
+});
+
+test('alignment cannot skip a completion in the current month after a queued start crosses a month boundary', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-12-01T00:06:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T23:59:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-11-30T22:00:00.000Z', '2026-11-30T23:59:22.296Z'),
+  ]), 'november');
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:02:00.000Z', '2026-12-01T00:03:00.000Z'),
+  ]), 'december');
+  await tracker.syncPending();
+  const before = structuredClone(store.value.pendingWrites[0]);
+  await assert.rejects(() => tracker.resolvePendingConflict(queued.id, 'align_queued_start'), /cannot safely follow/i);
+  assert.deepEqual(store.value.pendingWrites[0], before);
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('running Add time checks the next-month partition when another timezone is already on the next day', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'Pacific/Niue', clock: () => new Date('2026-11-30T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T08:00:00.000Z' }, { background: true });
+  const path = 'times/2026-12/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-30T10:00:00.000Z', '2026-11-30T11:00:00.000Z',
+    { entryDate: '2026-12-01', timezone: 'Pacific/Kiritimati' })]), 'ahead');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+  assert.ok(github.reads.includes(path));
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('completed Add time also checks a timezone-ahead partition at the interval end', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'Pacific/Niue', clock: () => new Date('2026-11-30T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T08:00:00.000Z',
+    endedAt: '2026-11-30T11:30:00.000Z' }, { background: true });
+  const path = 'times/2026-12/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-30T10:00:00.000Z', '2026-11-30T11:00:00.000Z',
+    { entryDate: '2026-12-01', timezone: 'Pacific/Kiritimati' })]), 'ahead');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.ok(github.reads.includes(path));
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('alignment preserves a remotely started timer that races the guarded write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z')]), 'previous');
+  await tracker.syncPending();
+  const remote = active('2026-11-02T12:01:10.000Z', { id: deterministicRecordId('2026-11-02T12:01:10.000Z') });
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, 'active/alice.json', serializeActiveRecord(remote), 'remote');
+    return atomic(...args);
+  };
+  await tracker.resolvePendingConflict(queued.id, 'align_queued_start');
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, remote.id);
+  assert.equal(store.value.pendingWrites[0]?.status, 'conflict');
+  assert.equal(store.value.pendingWrites[0]?.nextActive.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.equal(github.atomicWrites.length, 0);
+  await assert.rejects(() => tracker.resolvePendingConflict(queued.id), /Another timer is running/i);
+  assert.equal(store.value.pendingWrites[0]?.status, 'conflict');
+});
+
+test('aligned start survives a failed atomic guard and retries from fresh monthly data', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0], previous = serializeMonthlyRecords([
+    entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z'),
+  ]);
+  seedText(github, path, previous, 'previous');
+  await tracker.syncPending();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let raced = false;
+  github.updateTextsAtomic = (...args) => {
+    if (!raced) { raced = true; seedText(github, path, previous, 'raced'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].nextActive.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.deepEqual(await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:06:00.000Z') })
+    .resolvePendingConflict(queued.id), { resolved: true });
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(saved.id, queued.nextActive.id);
+  assert.equal(saved.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.deepEqual(github.atomicWrites.at(-1).guards, [{ path, sha: 'raced' }]);
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('queued running Add time rechecks a new month after an earlier guarded write was unavailable', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  let now = '2026-11-30T00:05:00.000Z';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date(now) });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T00:00:00.000Z' }, { background: true });
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('temporarily offline'); }
+    return atomic(...args);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  now = '2026-12-01T00:05:00.000Z';
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:01:00.000Z', '2026-12-01T00:02:00.000Z'),
+  ]), 'december');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date(now) }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('aligned queued start rechecks a new month after a transient guarded-write failure', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  let now = '2026-11-30T00:05:00.000Z';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date(now) });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T00:00:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-11-29T22:00:00.000Z', '2026-11-30T00:00:22.296Z'),
+  ]), 'november');
+  await tracker.syncPending();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('temporarily offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  now = '2026-12-01T00:05:00.000Z';
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:01:00.000Z', '2026-12-01T00:02:00.000Z'),
+  ]), 'december');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date(now) }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].nextActive.startedAt, '2026-11-30T00:00:22.296Z');
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.atomicWrites.length, 0);
 });
 
 test('discard refuses a queued Add time start already committed despite a lost response', async () => {

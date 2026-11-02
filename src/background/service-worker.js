@@ -765,6 +765,10 @@ function safeQueuedRecord(record) {
 }
 function queuedSubjects(operation) {
   const type = operation.operation ?? operation.stage;
+  if (['startTimer', 'completeTimerAndStart'].includes(type)) {
+    const proposed = safeQueuedRecord(operation.nextActive);
+    return proposed ? [{ proposed }] : [];
+  }
   const requests = ['editEntry', 'deleteEntry'].includes(type) ? [operation.request]
     : type === 'editEntries' ? operation.request?.entries : null;
   if (Array.isArray(requests)) return requests.slice(0, 50).flatMap(request => {
