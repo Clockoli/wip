@@ -18,7 +18,7 @@ Cross-user suggestions require a nonempty task title. Untitled tasks remain in p
 
 ## Start a task again
 
-Each task, including unresolved Clockify imports with a bare `owner/project/task-slug` identity, shows accumulated time and a Start/Stop control. Starting another task stops the running timer first and keeps the imported identity unchanged. Page-originated starts and manually entered new tasks still require HTTP(S) URLs.
+Each task, including unresolved Clockify imports with a bare `owner/project/task-slug` identity, shows accumulated time, a play-icon **Start** control (or **Stop** with the elapsed time for the running task), and a plus-icon **Add time** control. Starting another task stops the running timer first and keeps the imported identity unchanged. **Add time** opens the shared form with that row's task selected, including its time repository for imported identities; it does not stop a running timer merely by opening the form. Page-originated starts and manually entered new tasks still require HTTP(S) URLs.
 
 Use **Add time** next to the page tabs to add a completed entry or start a timer for any task; see [Add a single entry](editing-time.md#add-a-single-entry).
 

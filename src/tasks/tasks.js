@@ -144,10 +144,26 @@ function taskTotalSeconds(task) {
   return effectiveTrackedSeconds(task, { active: state.active, now: Date.now() });
 }
 
+function updateTimerButton(button, active) {
+  button.classList.toggle('stop', active);
+  const label = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
+  button.setAttribute('aria-label', label);
+  if (active) {
+    if (button.querySelector('svg')) button.replaceChildren();
+    if (button.textContent !== label) button.textContent = label;
+  } else if (!button.querySelector('svg')) {
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M4 2.5a.75.75 0 0 1 1.14-.64l9 5.5a.75.75 0 0 1 0 1.28l-9 5.5A.75.75 0 0 1 4 13.5v-11Z');
+    icon.append(path); button.textContent = ''; button.replaceChildren(icon);
+  }
+}
+
 function makeTimerButton(task) {
   const active = sameTask(state.active, task), button = document.createElement('button');
-  button.type = 'button'; button.className = `timer-button${active ? ' stop' : ''}`;
-  button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
+  button.type = 'button'; button.className = 'timer-button'; button.title = active ? 'Stop' : 'Start';
+  updateTimerButton(button, active);
   button.disabled = Boolean(state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
   button.addEventListener('click', async () => {
     if (button.disabled) return;
@@ -226,8 +242,8 @@ function updateRows() {
     const task = visibleTasks().find(item => trackedTaskKey(item) === row.dataset.taskKey);
     const button = row.querySelector('.timer-button'), active = sameTask(state.active, task);
     row.classList.toggle('running', active);
-    button.classList.toggle('stop', active);
-    button.textContent = active ? `Stop: ${formatDuration(currentElapsedSeconds(), { current: true })}` : 'Start';
+    button.title = active ? 'Stop' : 'Start';
+    updateTimerButton(button, active);
     button.disabled = Boolean(!task || state.busyUrl || state.pendingWrites.some(item => item.status === 'conflict'));
     if (task) row.querySelector('.tracked-time').textContent = task.untrackedByYou ? '—' : formatClockDuration(taskTotalSeconds(task));
   }
@@ -260,6 +276,7 @@ function rebuildList(tasks) {
   const focusedRow = focused?.closest('.task-row');
   const focusKey = focusedRow?.dataset.taskKey;
   const focusSelector = focused?.classList.contains('timer-button') ? '.timer-button'
+    : focused?.classList.contains('task-add-time') ? '.task-add-time'
     : focused?.classList.contains('task-title') ? '.task-title' : '.task-url';
   const scroller = document.scrollingElement;
   const scrollTop = scroller.scrollTop, scrollLeft = scroller.scrollLeft;
@@ -295,7 +312,21 @@ function rebuildList(tasks) {
     const actions = document.createElement('div'); actions.className = 'task-actions';
     const total = document.createElement('span'); total.className = 'tracked-time'; total.setAttribute('aria-label', 'Accumulated time');
     if (task.untrackedByYou) { total.textContent = '—'; total.setAttribute('aria-label', 'No personal time in the selected period'); }
-    actions.append(total, makeTimerButton(task)); row.append(main, actions); list.append(row);
+    const addTime = document.createElement('button'); addTime.type = 'button'; addTime.className = 'task-add-time';
+    addTime.title = 'Add time'; addTime.setAttribute('aria-label', 'Add time');
+    const plus = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    plus.setAttribute('viewBox', '0 0 16 16'); plus.setAttribute('aria-hidden', 'true');
+    const plusPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    plusPath.setAttribute('d', 'M8 2.5v11M2.5 8h11');
+    plusPath.setAttribute('fill', 'none'); plusPath.setAttribute('stroke', 'currentColor');
+    plusPath.setAttribute('stroke-width', '1.5'); plusPath.setAttribute('stroke-linecap', 'round');
+    plus.append(plusPath); addTime.append(plus);
+    addTime.addEventListener('click', () => {
+      const current = visibleTasks().find(item => trackedTaskKey(item) === trackedTaskKey(task));
+      if (current) addTimeDialog.openForTask(current, addTime, () =>
+        [...$('task-list').children].find(item => item.dataset.taskKey === trackedTaskKey(current))?.querySelector('.task-add-time') || $('task-filter'));
+    });
+    actions.append(total, makeTimerButton(task), addTime); row.append(main, actions); list.append(row);
   }
   if (focusKey) {
     const replacement = [...list.children].find(row => row.dataset.taskKey === focusKey)?.querySelector(focusSelector);
@@ -400,4 +431,4 @@ $('period').value = PERIODS.has(savedPeriod) ? savedPeriod : 'two-weeks';
 void load();
 
 mountRunningStatus($('running-status'), { send, onChange: load });
-mountAddTime($('add-time-button'), { send, onAdded: load });
+const addTimeDialog = mountAddTime($('add-time-button'), { send, onAdded: load });
