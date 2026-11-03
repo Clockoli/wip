@@ -194,7 +194,7 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await date.fill('2026-10-17');
     await editing.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))
-      .toEqual(['2026-10-17T23:00:00.000Z', '2026-10-18T02:00:00.000Z']);
+      .toEqual(['2026-10-17T23:00:00.000Z', '2026-10-18T01:59:15.000Z']);
     await page.evaluate(url => {
       globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl: url, taskTitle: 'Existing task',
         startedAt: '2026-10-18T08:00:00.000Z', endedAt: '2026-10-18T09:00:00.000Z', description: '' },
@@ -241,7 +241,7 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
   }
 });
 
-test('editing Start keeps the original End date and rejects a changed interval over 24 hours', async () => {
+test('editing Start moves the overnight End and rejects an interval over 24 hours', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-end-date-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-end-date-profile-'));
   let context;
@@ -267,9 +267,10 @@ test('editing Start keeps the original End date and rejects a changed interval o
     const start = dialog.getByLabel('Start', { exact: true });
     const end = dialog.getByLabel('End (optional)');
 
-    await openEdit('2026-10-17T10:00:00.000Z', '2026-10-18T10:00:30.000Z');
-    await expect(end).toHaveValue('10:00');
+    await openEdit('2026-10-17T10:00:00.000Z', '2026-10-18T09:00:30.000Z');
+    await expect(end).toHaveValue('09:00');
     await start.fill('11:00');
+    await expect(end).toHaveValue('10:00');
     await dialog.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => globalThis.testEditPayload &&
       [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))

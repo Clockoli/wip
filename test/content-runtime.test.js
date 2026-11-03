@@ -1560,7 +1560,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T15:59:00.999+00:00'],
     ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
   ]);
   assert.equal(visibleOverlapWarnings().length, 0,
@@ -1576,7 +1576,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T14:30:00.999+00:00'],
     ['2026-08-21T13:30:06.768+00:00', '2026-08-21T13:30:06.768+00:00'],
     ['2026-08-21T13:00:00.222+00:00', '2026-08-21T13:30:06.768+00:00'],
   ]);
@@ -4792,6 +4792,66 @@ test('Activity searches the displayed title and URL but not hidden issue fields'
     filter.value = term; filter.oninput({});
     assert.equal(root.querySelectorAll('.entry-record').length, 0, term);
   }
+});
+
+test('Activity inline Start moves the whole interval while Stop only resizes it', async () => {
+  for (const side of ['start', 'stop']) {
+    const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+    const root = h.renderActivity();
+    const values = root.querySelectorAll('.inline-time-value');
+    const field = values[side === 'start' ? 1 : 3];
+    field.value = side === 'start' ? '16' : '46'; field.oninput({});
+    if (side === 'start') assert.equal(values[3].value, '46');
+    await root.querySelector('.inline-save').onclick({ isTrusted: true });
+    const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+    assert.equal(new Date(edits.startedAt).toISOString(), side === 'start' ? '2026-09-05T08:16:00.000Z' : '2026-09-05T08:00:00.000Z');
+    assert.equal(new Date(edits.endedAt).toISOString(), '2026-09-05T08:46:00.000Z');
+  }
+});
+
+test('inline Start shifts from the latest valid draft after Stop is temporarily empty', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+  const root = h.renderActivity(), values = root.querySelectorAll('.inline-time-value');
+  values[3].value = ''; values[3].oninput({});
+  values[1].value = '15'; values[1].oninput({});
+  values[3].value = '30'; values[3].oninput({});
+  values[1].value = '20'; values[1].oninput({});
+  assert.equal(values[3].value, '35');
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+  assert.equal(new Date(edits.startedAt).toISOString(), '2026-09-05T08:20:00.000Z');
+  assert.equal(new Date(edits.endedAt).toISOString(), '2026-09-05T08:35:00.000Z');
+});
+
+test('inline Start retains its last valid baseline across an invalid draft rerender', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+  let root = h.renderActivity(), values = root.querySelectorAll('.inline-time-value');
+  values[1].value = '15'; values[1].oninput({});
+  assert.equal(values[3].value, '45');
+  values[1].value = ''; values[1].oninput({});
+  root = h.renderActivity(); values = root.querySelectorAll('.inline-time-value');
+  assert.equal(values[1].value, '');
+  values[1].value = '20'; values[1].oninput({});
+  assert.equal(values[3].value, '50');
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+  assert.equal(new Date(edits.endedAt) - new Date(edits.startedAt), 30 * 60_000);
+});
+
+test('inline Start uses a linked neighbor Start as the latest duration baseline', async () => {
+  const later = { ...activityEntry('2', '2026-09-05', '09'), endedAt: '2026-09-05T10:00:00+00:00', durationSeconds: 3600 };
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08'), later]);
+  const root = h.renderActivity(), rows = root.querySelectorAll('.entry-record');
+  const older = rows[1].querySelectorAll('.inline-time-value');
+  const newer = rows[0].querySelectorAll('.inline-time-value');
+  assert.deepEqual([older[0].value, newer[0].value], ['08', '09']);
+  older[3].value = '15'; older[2].value = '09'; older[2].oninput({}); older[3].oninput({});
+  assert.equal(newer[1].value, '15');
+  newer[1].value = '20'; newer[1].oninput({});
+  assert.equal(newer[3].value, '05');
+  await rows[0].querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries;
+  assert.equal(new Date(edits.find(item => item.original.id === '2').edits.endedAt).toISOString(), '2026-09-05T10:05:00.000Z');
 });
 
 test('Activity edits imported time and metadata without submitting a non-URL as a new task', async () => {
