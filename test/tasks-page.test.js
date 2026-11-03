@@ -232,7 +232,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
     set disabled(value) { this.isDisabled = value; if (value && document.activeElement === this) document.activeElement = document.body; }
     get classList() { return { add: name => this.classList.toggle(name, true), contains: name => this.className.split(' ').includes(name), toggle: (name, enabled) => { const names = new Set(this.className.split(' ').filter(Boolean)); if (enabled) names.add(name); else names.delete(name); this.className = [...names].join(' '); } }; }
     append(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.push(node); } }
-    replaceChildren(...nodes) { if (this.contains(document.activeElement)) document.activeElement = document.body; for (const node of this.children) node.parentElement = null; this.children = []; this.append(...nodes); }
+    replaceChildren(...nodes) { if (this.children.some(child => child.contains(document.activeElement))) document.activeElement = document.body; for (const node of this.children) node.parentElement = null; this.children = []; this.append(...nodes); }
     contains(node) { return node === this || this.children.some(child => child.contains(node)); }
     matches(selector) { return selector === ':hover' ? Boolean(this.hovered) : selector.startsWith('.') ? selector.slice(1).split('.').every(name => this.classList.contains(name)) : selector === this.tag; }
     closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector) ?? null; }
@@ -477,7 +477,7 @@ test('Top tasks remains usable while a shared Stop clears active before the task
   assert.equal(typeof pendingRefresh, 'function');
   await pendingRefresh(); await page.settle();
   assert.equal(page.nodes.error.hidden, true, 'local completion must not show Invalid task URL');
-  assert.equal(page.rows()[0].querySelector('.timer-button').textContent, 'Start');
+  assert.equal(page.rows()[0].querySelector('.timer-button')['aria-label'], 'Start');
   finishLoad({ configured: true, active: null, pendingWrites: stopPending,
     tasks: [{ ...previousTask, totalSeconds: 3900, activeStartedAt: null }] });
   await stopping;
@@ -500,7 +500,7 @@ for (const pending of [false, true]) test(`shared strip Stop reconciles Top task
   page.document.scrollingElement.scrollTop = 320;
   await page.nodes['running-status'].querySelector('.running-status-stop').click();
   assert.equal(page.nodes['running-status'].querySelector('.running-status-idle').hidden, false);
-  assert.equal(page.rows()[0].querySelector('.timer-button').textContent, 'Start');
+  assert.equal(page.rows()[0].querySelector('.timer-button')['aria-label'], 'Start');
   assert.equal(page.rows()[0].classList.contains('running'), false);
   assert.equal(page.nodes['refresh-tasks'].disabled, false, 'background GitHub writes never disable manual refresh');
   assert.equal(page.timeouts.size, pending ? 1 : 0, 'only existing pending-write polling is scheduled');
@@ -601,7 +601,7 @@ test('launching a different task uses the durable stop-before-start switch and r
     await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.settle();
     assert.deepEqual(page.messages.map(message => message.type), fail
       ? ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK', 'GET_PAGE_STATE'] : ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK']);
-    assert.equal(page.rows()[0].querySelector('.timer-button').textContent, fail ? 'Start' : 'Stop: 0s');
+    assert.equal(page.rows()[0].querySelector('.timer-button')['aria-label'], fail ? 'Start' : 'Stop: 0s');
     if (fail) assert.equal(page.nodes.error.hidden, false);
   }
 });

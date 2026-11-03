@@ -9,3 +9,8 @@
 .task-monogram{display:grid;place-items:center;font:var(--text-caption-shorthand);font-weight:600;line-height:1}
 .task-clockoli-icon{background:var(--fgColor-default);mask-size:contain;mask-position:center;mask-repeat:no-repeat}
 .task-repository{display:block;margin-top:4px;color:var(--fgColor-muted);font:var(--text-caption-shorthand)}
+.timer-button:not(.stop),.task-add-time{display:inline-grid;place-items:center;width:34px;min-width:34px;height:34px;padding:0;border:1px solid var(--button-default-borderColor-rest);border-radius:6px;background:var(--button-default-bgColor-rest);color:var(--button-default-fgColor-rest);cursor:pointer}
+.timer-button:not(.stop):hover,.task-add-time:hover{background:var(--button-default-bgColor-hover)}
+.timer-button:not(.stop):disabled{border-color:var(--button-default-borderColor-disabled);background:var(--button-default-bgColor-disabled);color:var(--button-default-fgColor-disabled);cursor:default}
+.timer-button svg,.task-add-time svg{width:16px;height:16px;fill:currentColor}
+.task-add-time{margin-left:-8px}

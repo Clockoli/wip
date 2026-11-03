@@ -81,6 +81,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   let savedTimer = null;
 
   let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
+  let returnTrigger = null, returnFallback = null;
   let lastSearch = '', searchIncomplete = false, catalogLoaded = false, editing = null, showRepository = false;
   let defaultStart = '', defaultDate = '', startEdited = false, dateEdited = false;
   let editStartInstant = null, editEndInstant = null, endShifted = false;
@@ -191,9 +192,13 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('close', () => {
     if (dialog.open) return; // A later edit may already have reopened the dialog.
-    generation++; clearTimeout(searchTimer); setSearchBusy(false); editing?.trigger?.focus?.(); editing = null;
+    generation++; clearTimeout(searchTimer); setSearchBusy(false);
+    const target = editing?.trigger || returnTrigger;
+    const replacement = target?.isConnected === false ? returnFallback?.() : target;
+    replacement?.focus?.({ preventScroll: true });
+    editing = null; returnTrigger = null; returnFallback = null;
   });
-  const open = (entry = null, onEdit = null, trigger = button) => {
+  const open = (entry = null, onEdit = null, trigger = button, prefilledTask = null, focusFallback = null) => {
     saved.hidden = true;
     clearTimeout(savedTimer);
     generation++;
@@ -203,6 +208,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     else { overlapProgress.remove(); overlapStatus.remove(); }
     const runningEdit = Boolean(entry && !boundary && (entry._active || entry.endedAt == null));
     editing = entry ? { entry, onEdit, trigger, running: runningEdit, boundary } : null;
+    returnTrigger = prefilledTask ? trigger : null; returnFallback = focusFallback;
     const now = new Date();
     tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; catalogLoaded = false; searching = false; showRepository = false;
     busy = false; search.value = ''; setSearchBusy(false);
@@ -243,15 +249,17 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     editEndInstant = entry && !runningEdit ? new Date(entry.endedAt) : null;
     endShifted = false;
     description.value = entry?.description || '';
-    if (entry) {
-      selected = { taskUrl: entry.taskUrl, title: entry.taskTitle || '', destinationId: entry.destinationId };
+    if (entry || prefilledTask) {
+      selected = entry ? { taskUrl: entry.taskUrl, title: entry.taskTitle || '', destinationId: entry.destinationId }
+        : { taskUrl: prefilledTask.taskUrl, title: prefilledTask.title || '',
+          destinationId: prefilledTask.destinationId || prefilledTask.destinationIds?.[0] };
       tasks = [selected]; search.value = selected.title || selected.taskUrl;
     }
     resizeDescription();
     if (runningEdit || boundary) moreDescription.hidden = true;
     setError('');
     update(); preview.hidden = Boolean(boundary) || preview.hidden;
-    dialog.showModal(); (boundary === 'end' ? end : runningEdit || boundary ? start : search).focus();
+    dialog.showModal(); (boundary === 'end' ? end : runningEdit || boundary || prefilledTask ? start : search).focus();
   };
   button.addEventListener('click', () => open());
   const submit = async () => {
@@ -366,5 +374,6 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     event.preventDefault(); void submit();
   });
   dialog.openEdit = (entry, onEdit, trigger) => open(entry, onEdit, trigger);
+  dialog.openForTask = (task, trigger, focusFallback) => open(null, null, trigger, task, focusFallback);
   return dialog;
 }

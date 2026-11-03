@@ -71,7 +71,7 @@ test('Top tasks searches teammates without replacing personal period totals', as
       destinationId: 'github:1', startedAt: new Date().toISOString() }; });
     await page.reload();
     await page.locator('#task-filter').fill('Other imported');
-    await expect(page.locator('.task-row .timer-button')).toHaveText('Start');
+    await expect(page.locator('.task-row .timer-button')).toHaveAccessibleName('Start');
     await page.locator('.task-row .timer-button').click();
     await expect.poll(async () => (await worker.evaluate(() => globalThis.messages)).some(message =>
       message.type === 'SWITCH_TASK' && message.destinationId === 'github:2')).toBe(true);
@@ -86,7 +86,7 @@ test('Top tasks searches teammates without replacing personal period totals', as
     const own = page.locator('.task-row').filter({ hasText: 'First imported task' });
     const teammate = page.locator('.task-row').filter({ hasText: 'Other imported task' });
     await expect(own.locator('.tracked-time')).toHaveText('10m');
-    await expect(own.locator('.timer-button')).toHaveText('Start');
+    await expect(own.locator('.timer-button')).toHaveAccessibleName('Start');
     await expect(teammate.locator('.tracked-time')).toHaveText('—');
     await expect(teammate.locator('.timer-button')).toContainText('Stop:');
     await worker.evaluate(() => {

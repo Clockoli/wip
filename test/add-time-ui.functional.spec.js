@@ -17,6 +17,7 @@ globalThis.failSearch = false;
 globalThis.searchRepositories = ['team/time'];
 globalThis.pendingSearchRespond = null;
 globalThis.pendingSearchResponse = null;
+globalThis.topActive = null;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.messages.push(message);
   if (message.type === 'SEARCH_TASKS') {
@@ -34,7 +35,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     respond(response);
   }
   else if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { configured: true, recent: [], active: null, pendingWrites: [] } });
-  else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
+  else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { configured: true, active: globalThis.topActive, pendingWrites: [] } });
   else if (message.type === 'ADD_TIME') {
     if (globalThis.deferAdd) { globalThis.pendingAddRespond = respond; return true; }
     respond(globalThis.failAdd
@@ -47,7 +48,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [
     { taskUrl: '${taskUrl}', title: 'Existing task', totalSeconds: 3600, sessionCount: 1, destinationIds: ['github:1'] }
-  ], active: null, pendingWrites: [] } });
+  ], active: globalThis.topActive, pendingWrites: [] } });
   else if (message.type === 'START') respond({ ok: true, data: { taskUrl: message.taskUrl, startedAt: new Date().toISOString(), destinationId: message.destinationId || 'github:1' } });
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
 });
@@ -359,9 +360,63 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       const page = await context.newPage();
       await worker.evaluate(() => { globalThis.searchRepositories = ['team/time']; });
       page.on('pageerror', error => errors.push(error.message));
-      const before = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
+      let before = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
       await page.goto(base + path);
-      const add = page.getByRole('button', { name: 'Add time', exact: true });
+      if (path === 'tasks/tasks.html') {
+        const row = page.locator('.task-row').first();
+        const rowAdd = row.getByRole('button', { name: 'Add time' });
+        await expect(row.getByRole('button', { name: 'Start' })).toBeVisible();
+        for (const width of [1200, 390]) {
+          await page.setViewportSize({ width, height: 750 });
+          const layout = await row.evaluate(element => {
+            const [start, add] = [...element.querySelectorAll('.timer-button, .task-add-time')]
+              .map(button => button.getBoundingClientRect());
+            return { startWidth: start.width, addWidth: add.width, gap: add.left - start.right,
+              overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
+          });
+          expect(layout.startWidth).toBeGreaterThanOrEqual(32);
+          expect(layout.addWidth).toBeGreaterThanOrEqual(32);
+          expect(layout.gap).toBeGreaterThanOrEqual(4);
+          expect(layout.overflow).toBe(false);
+        }
+        await page.setViewportSize({ width: 1200, height: 750 });
+        await rowAdd.click();
+        const prefilled = page.getByRole('dialog', { name: 'Add new time' });
+        await expect(prefilled.getByRole('combobox', { name: 'Task' })).toHaveValue('Existing task');
+        await expect(prefilled.locator('.add-time-preview')).toContainText(taskUrl);
+        await expect(prefilled.getByLabel('End (optional)')).toHaveValue('');
+        await expect(prefilled.getByLabel('Start', { exact: true })).toBeFocused();
+        const priorAdd = await rowAdd.elementHandle();
+        await prefilled.getByLabel('Start', { exact: true }).hover();
+        await page.locator('#refresh-tasks').evaluate(button => button.click());
+        await expect.poll(() => priorAdd.evaluate(button => button.isConnected)).toBe(false);
+        await prefilled.getByRole('button', { name: 'Cancel' }).click();
+        await expect(page.locator('.task-row').first().getByRole('button', { name: 'Add time' })).toBeFocused();
+        expect((await worker.evaluate(() => globalThis.messages)).filter(message => ['START', 'SWITCH_TASK', 'ADD_TIME'].includes(message.type)).length)
+          .toBe(before);
+        await page.getByRole('textbox', { name: 'Filter tracked tasks' }).fill('Imported');
+        const importedRow = page.locator('.task-row').filter({ hasText: 'Imported conversational task' });
+        await importedRow.getByRole('button', { name: 'Add time' }).click();
+        await expect(prefilled.getByRole('combobox', { name: 'Task' })).toHaveValue('Imported conversational task');
+        await expect(prefilled.locator('.add-time-preview')).toContainText('acme/project/imported');
+        await prefilled.getByRole('button', { name: 'Add', exact: true }).click();
+        await expect(prefilled).not.toBeVisible();
+        expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1))
+          .toMatchObject({ taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2' });
+        await page.getByRole('textbox', { name: 'Filter tracked tasks' }).fill('');
+        before++;
+        await worker.evaluate(() => { globalThis.topActive = { taskUrl: 'https://example.org/another', startedAt: new Date().toISOString() }; });
+        await page.reload();
+        const withTimer = page.locator('.task-row').first();
+        await withTimer.getByRole('button', { name: 'Add time' }).click();
+        await expect(prefilled.getByRole('combobox', { name: 'Task' })).toHaveValue('Existing task');
+        await prefilled.getByRole('button', { name: 'Cancel' }).click();
+        expect((await worker.evaluate(() => globalThis.messages)).filter(message => ['START', 'STOP', 'SWITCH_TASK', 'ADD_TIME'].includes(message.type)).length)
+          .toBe(before);
+        await worker.evaluate(() => { globalThis.topActive = null; });
+        await page.reload();
+      }
+      const add = page.locator('#add-time-button');
       await expect(add).toBeVisible();
       const localTime = () => page.evaluate(() => {
         const now = new Date();
