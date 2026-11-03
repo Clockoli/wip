@@ -550,7 +550,10 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.times-calendar-status')).toHaveText('');
     expect(await calendarViewport.evaluate(element => element.scrollTop)).toBeCloseTo(manualScroll, 0);
     await activity.locator('#activity-view-switcher').getByRole('button', { name: 'List', exact: true }).click();
-    await expect(activityRoot.locator('.times-list-total')).toHaveText(/Total: 1h [1-9]\d*m/);
+    const currentWeekMinutes = 60 + Math.max(0, Math.floor((fixedNow.getTime() - initialStartedAt.getTime()) / 60_000));
+    const currentWeekTotal = Math.floor(currentWeekMinutes / 60) + 'h'
+      + (currentWeekMinutes % 60 ? ' ' + currentWeekMinutes % 60 + 'm' : '');
+    await expect(activityRoot.locator('.times-list-total')).toHaveText('Total: ' + currentWeekTotal);
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await activity.locator('#activity-view-switcher').getByRole('button', { name: 'Calendar', exact: true }).click();
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
@@ -582,8 +585,14 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     const githubRoot = page.locator('#clockoli-root');
     await expect(githubRoot).toBeVisible();
     await worker.evaluate(() => { active.description = ['First line', 'Second line', 'Third line', 'Fourth line'].join('\n'); });
+    // The popup shows its controls before its initial week load finishes.
+    // Wait for that load so a late refresh cannot replace the Start field mid-edit.
+    const popupWeekReadsBefore = await worker.evaluate(() => globalThis.weekReads.filter(entry => entry.type === 'LOAD_WEEK').length);
     await githubRoot.locator('.trigger-main').click();
     const popupRoot = page.locator('#clockoli-full-width-popup-root');
+    await expect.poll(() => worker.evaluate(() => globalThis.weekReads.filter(entry => entry.type === 'LOAD_WEEK').length))
+      .toBeGreaterThan(popupWeekReadsBefore);
+    await expect(popupRoot.locator('.task-timeline-host .task[data-task-key="entry:current-week"]')).toBeVisible();
     await expectRunningCardFits(popupRoot);
     const popupCard = popupRoot.locator('.active-task-strip.is-active');
     const startField = popupCard.locator('.running-status-start-field');

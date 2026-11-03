@@ -26,6 +26,8 @@ The panel uses the active tab's current URL and title when you start.
 
 Above the timeline, the toolbar popup and GitHub panel show the same **Statistic** and **Tracking now** information as Activity: the selected week's total and task count, today's tracked time, and a running strip with the task title, editable Description, **Started**, **Duration**, and **Stop and save**. In the compact toolbar popup, the Statistic card sits above the tracking strip; in the full-width GitHub panel, it sits beside the strip as on Activity. Without an active timer, both popup strips show **Not tracking**, **Start a task to begin**, and up to three distinct recent tasks for quick start. **Track this task** appears at the right end of the header beside the view switcher, outside the running strip. An unavailable daily total displays **…**.
 
+Quick start also appears on Activity, Top tasks, Reports, and Settings. Each recent task shows the description from its latest time entry, if present. Starting it reuses that description and focuses the running Description with its text selected: leave it to continue the same work, press Backspace to clear it, or type to replace it. Tasks without a saved description start with an empty focused field.
+
 The accessible **Timeline**, **Calendar**, and **List** icon switcher sits in the header beside the close control on GitHub, or beside the wordmark in the toolbar popup; on Activity it sits beside the theme control. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
 
 ## Tracking strip layout
