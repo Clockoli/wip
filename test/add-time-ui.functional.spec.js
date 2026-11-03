@@ -12,12 +12,27 @@ globalThis.deferAdd = false;
 globalThis.pendingAddRespond = null;
 globalThis.deferTasks = false;
 globalThis.pendingTasksRespond = null;
+globalThis.deferSearch = false;
+globalThis.failSearch = false;
+globalThis.searchRepositories = ['team/time'];
+globalThis.pendingSearchRespond = null;
+globalThis.pendingSearchResponse = null;
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   globalThis.messages.push(message);
-  if (message.type === 'SEARCH_ACTIVITY') respond({ ok: true, data: { configured: true, recent: [
-    { taskUrl: '${taskUrl}', taskTitle: 'Existing task', destinationId: 'github:1', entryDate: '2026-01-01' },
-    { taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', entryDate: '2025-01-01' }
-  ] } });
+  if (message.type === 'SEARCH_TASKS') {
+    const response = globalThis.failSearch ? { ok: false, error: { message: 'Search unavailable' } }
+      : { ok: true, data: { configured: true, tasks: [
+      { taskUrl: '${taskUrl}', title: 'Existing task', destinationIds: ['github:1'] },
+      { taskUrl: 'acme/project/imported', title: 'Imported conversational task', destinationId: 'github:2', timeRepository: 'team/time' },
+      { taskUrl: 'https://example.org/colleague-task', title: 'Colleague task', destinationIds: ['github:2'] }
+    ], readStatus: globalThis.searchRepositories.map(timeRepository => ({ timeRepository, status: 'ok' })) } };
+    if (globalThis.deferSearch) {
+      globalThis.pendingSearchRespond = respond;
+      globalThis.pendingSearchResponse = response;
+      return true;
+    }
+    respond(response);
+  }
   else if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { configured: true, recent: [], active: null, pendingWrites: [] } });
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { configured: true, active: null, pendingWrites: [] } });
   else if (message.type === 'ADD_TIME') {
@@ -30,9 +45,70 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     globalThis.pendingTasksRespond = respond;
     return true;
   }
+  else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [
+    { taskUrl: '${taskUrl}', title: 'Existing task', totalSeconds: 3600, sessionCount: 1, destinationIds: ['github:1'] }
+  ], active: null, pendingWrites: [] } });
+  else if (message.type === 'START') respond({ ok: true, data: { taskUrl: message.taskUrl, startedAt: new Date().toISOString(), destinationId: message.destinationId || 'github:1' } });
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
 });
 `;
+
+test('default running Add time starts at submission precision, while an explicit Start stays at the chosen minute', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-running-start-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-running-start-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('pageerror', error => errors.push(error.message));
+    await page.clock.install({ time: new Date('2026-11-02T12:01:21.000Z') });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Add time', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add new time' });
+    await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue('12:01');
+    await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+    await page.clock.setFixedTime(new Date('2026-11-02T12:01:45.321Z'));
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    let payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
+    expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:01:45.321Z');
+    expect(payloads.at(-1).endedAt).toBeNull();
+
+    await page.getByRole('button', { name: 'Add time', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+    await dialog.getByLabel('Start', { exact: true }).fill('12:00');
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
+    expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:00:00.000Z');
+
+    await page.getByRole('button', { name: 'Add time', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+    await dialog.getByLabel('Start', { exact: true }).fill('12:01');
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
+    expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:01:00.000Z', 'explicitly chosen minute must not be silently moved');
+    await page.clock.setFixedTime(new Date('2026-11-02T23:59:55.000Z'));
+    await page.getByRole('button', { name: 'Add time', exact: true }).click();
+    await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue('23:59');
+    await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+    await page.clock.setFixedTime(new Date('2026-11-03T00:00:05.987Z'));
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
+    expect(payloads.at(-1).startedAt).toBe('2026-11-03T00:00:05.987Z', 'untouched start follows submission across midnight');
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 test('Add and Edit time accept four-digit keyboard times with one date and an overnight End', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-time-fields-extension-'));
@@ -118,7 +194,18 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await date.fill('2026-10-17');
     await editing.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))
-      .toEqual(['2026-10-17T23:00:00.000Z', '2026-10-18T02:00:00.000Z']);
+      .toEqual(['2026-10-17T23:00:00.000Z', '2026-10-18T01:59:15.000Z']);
+    await page.evaluate(url => {
+      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl: url, taskTitle: 'Existing task',
+        startedAt: '2026-10-18T08:00:00.000Z', endedAt: '2026-10-18T09:00:00.000Z', description: '' },
+      async () => { throw new Error('This edit would overlap the running timer (Start: 2026-10-18T08:30:00.000Z).'); });
+    }, taskUrl);
+    await end.fill('10:00');
+    await editing.getByRole('button', { name: 'Save' }).click();
+    await expect(editing.getByRole('alert')).toContainText('2026-10-18T08:30:00.000Z');
+    await expect(editing.getByRole('alert')).not.toContainText('Go to List');
+    await expect(editing).toBeVisible();
+    await editing.getByRole('button', { name: 'Cancel' }).click();
     await page.evaluate(url => {
       const running = { id: 'running', taskUrl: url, taskTitle: 'Running task',
         startedAt: '2026-10-19T14:00:45.000Z', endedAt: null, _active: true, description: 'Keep this' };
@@ -154,7 +241,7 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
   }
 });
 
-test('editing Start keeps the original End date and rejects a changed interval over 24 hours', async () => {
+test('editing Start moves the overnight End and rejects an interval over 24 hours', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-end-date-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-end-date-profile-'));
   let context;
@@ -180,9 +267,10 @@ test('editing Start keeps the original End date and rejects a changed interval o
     const start = dialog.getByLabel('Start', { exact: true });
     const end = dialog.getByLabel('End (optional)');
 
-    await openEdit('2026-10-17T10:00:00.000Z', '2026-10-18T10:00:30.000Z');
-    await expect(end).toHaveValue('10:00');
+    await openEdit('2026-10-17T10:00:00.000Z', '2026-10-18T09:00:30.000Z');
+    await expect(end).toHaveValue('09:00');
     await start.fill('11:00');
+    await expect(end).toHaveValue('10:00');
     await dialog.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => globalThis.testEditPayload &&
       [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))
@@ -193,6 +281,55 @@ test('editing Start keeps the original End date and rejects a changed interval o
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog.getByRole('alert')).toContainText('cannot exceed 24 hours');
     expect(await page.evaluate(() => globalThis.testEditPayload)).toBeNull();
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Edit time searches the complete catalog even when its current task matches the query', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-task-search-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-task-search-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('pageerror', error => errors.push(error.message));
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.evaluate(taskUrl => globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl,
+      taskTitle: 'Existing task', destinationId: 'github:1', startedAt: '2026-10-18T09:00:00.000Z',
+      endedAt: '2026-10-18T10:00:00.000Z', description: '' }, () => {}), taskUrl);
+    const dialog = page.getByRole('dialog', { name: 'Edit time' });
+    const search = dialog.getByRole('combobox', { name: 'Task' });
+    await search.fill('task');
+    await expect(dialog.getByRole('button', { name: /Colleague task/ })).toBeVisible();
+    expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'SEARCH_TASKS' && message.query === 'task')).toHaveLength(1);
+    await dialog.getByRole('button', { name: /Colleague task/ }).click();
+    await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(taskUrl => {
+      globalThis.testImportedEdit = null;
+      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl,
+        taskTitle: 'Existing task', destinationId: 'github:2', startedAt: '2026-10-18T09:00:00.000Z',
+        endedAt: '2026-10-18T10:00:00.000Z', description: '' },
+      value => { globalThis.testImportedEdit = value; });
+    }, taskUrl);
+    await search.fill('Imported');
+    await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    expect(await page.evaluate(() => globalThis.testImportedEdit)).toMatchObject({
+      taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2',
+    });
+    expect(errors).toEqual([]);
   } finally {
     await context?.close();
     await rm(extension, { recursive: true, force: true });
@@ -216,8 +353,11 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const base = `chrome-extension://${new URL(worker.url()).host}/src/`;
     const errors = [];
+    worker.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     for (const path of ['times/times.html', 'tasks/tasks.html']) {
       const page = await context.newPage();
+      await worker.evaluate(() => { globalThis.searchRepositories = ['team/time']; });
       page.on('pageerror', error => errors.push(error.message));
       const before = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
       await page.goto(base + path);
@@ -245,15 +385,34 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       expect([beforeOpen, await localTime()].map(value => value.slice(0, 10))).toContain(await day.inputValue());
       expect([beforeOpen, await localTime()].map(value => value.slice(11))).toContain(await startTime.inputValue());
       await expect(endTime).toHaveValue('');
-      const startTimestamp = () => page.evaluate(() => {
-        return new Date(`${document.getElementById('add-time-date').value}T${document.getElementById('add-time-start').value}`).toISOString();
-      });
       const search = dialog.getByRole('combobox', { name: 'Task' });
+      await worker.evaluate(() => { globalThis.deferSearch = true; });
       await search.fill('Existing');
+      const searching = dialog.getByRole('status', { name: 'Searching tasks' });
+      await expect(searching).toBeVisible();
+      await expect(search).toHaveAttribute('aria-busy', 'true');
+      await expect(dialog.locator('.add-time-search-spinner')).toBeVisible();
+      await expect.poll(() => worker.evaluate(() => globalThis.pendingSearchResponse?.data?.readStatus?.length)).toBe(1);
+      await worker.evaluate(() => {
+        globalThis.deferSearch = false;
+        globalThis.pendingSearchRespond(globalThis.pendingSearchResponse);
+        globalThis.pendingSearchRespond = null;
+        globalThis.pendingSearchResponse = null;
+      });
+      await expect(searching).toBeHidden();
+      await expect(search).toHaveAttribute('aria-busy', 'false');
       await expect(dialog.getByRole('button', { name: /Existing task/ })).toBeVisible();
+      await search.fill('Imported');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).not.toContainText('team/time');
+      await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
       await expect(dialog.locator('.add-time-preview')).toContainText(taskUrl);
-      expect((await worker.evaluate(() => globalThis.messages)).some(message => message.type === 'SEARCH_ACTIVITY')).toBe(true);
+      expect((await worker.evaluate(() => globalThis.messages)).some(message => message.type === 'SEARCH_TASKS')).toBe(true);
+      await search.fill('Colleague');
+      await dialog.getByRole('button', { name: /Colleague task/ }).click();
+      await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
+      await search.fill('Existing');
+      await dialog.getByRole('button', { name: /Existing task/ }).click();
       await startTime.fill('09:15');
       await expect(endTime).toHaveValue('', 'changing Start in Add time must not create an End');
       await endTime.fill('10:45');
@@ -267,9 +426,10 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await search.fill('conversat');
       await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
       await expect(dialog.locator('.add-time-preview')).toContainText('acme/project/imported');
-      const importedStart = await startTimestamp();
       await worker.evaluate(() => { globalThis.deferAdd = true; });
+      const importedBefore = await page.evaluate(() => Date.now());
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      const importedAfter = await page.evaluate(() => Date.now());
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
@@ -281,8 +441,36 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       });
       await expect(dialog).not.toBeVisible();
       let imported = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
-      expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', startedAt: importedStart, endedAt: null, description: '' });
+      expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', startedAt: expect.any(String), endedAt: null, description: '' });
+      expect(new Date(imported.startedAt).getTime()).toBeGreaterThanOrEqual(importedBefore);
+      expect(new Date(imported.startedAt).getTime()).toBeLessThanOrEqual(importedAfter);
       await add.click();
+      await worker.evaluate(() => { globalThis.deferSearch = true; });
+      await search.fill('Existing');
+      await expect(searching).toBeVisible();
+      await expect.poll(() => worker.evaluate(() => Boolean(globalThis.pendingSearchRespond))).toBe(true);
+      await dialog.getByRole('button', { name: 'Close Add time' }).click();
+      await expect(searching).toBeHidden();
+      await worker.evaluate(() => {
+        globalThis.deferSearch = false;
+        globalThis.pendingSearchRespond(globalThis.pendingSearchResponse);
+        globalThis.pendingSearchRespond = null;
+        globalThis.pendingSearchResponse = null;
+        globalThis.failSearch = true;
+      });
+      await add.click();
+      await expect(searching).toBeHidden();
+      await search.fill('Missing');
+      await expect(dialog.getByRole('alert')).toContainText('Search unavailable');
+      await expect(searching).toBeHidden();
+      await expect(search).toHaveAttribute('aria-busy', 'false');
+      await worker.evaluate(() => { globalThis.failSearch = false; });
+      await search.fill('');
+      const beforeRetry = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'SEARCH_TASKS' && message.query === 'Missing').length;
+      await search.fill('Missing');
+      await expect.poll(async () => (await worker.evaluate(() => globalThis.messages))
+        .filter(message => message.type === 'SEARCH_TASKS' && message.query === 'Missing').length).toBe(beforeRetry + 1);
+      await expect(dialog.getByRole('alert')).toBeHidden();
       await search.fill('javascript:alert(1)');
       await expect(dialog.locator('.add-time-preview')).toBeHidden();
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
@@ -295,14 +483,17 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       await expect(dialog).toBeVisible();
       await worker.evaluate(() => { globalThis.failAdd = false; });
-      const urlStart = await startTimestamp();
+      const urlBefore = await page.evaluate(() => Date.now());
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      const urlAfter = await page.evaluate(() => Date.now());
       await expect(dialog).not.toBeVisible();
       messages = await worker.evaluate(() => globalThis.messages);
       const submitted = messages.filter(message => message.type === 'ADD_TIME');
       expect(submitted).toHaveLength(before + 3);
-      expect(submitted.at(-1)).toEqual({ type: 'ADD_TIME', taskUrl: 'https://example.org/new-task', taskTitle: '', startedAt: urlStart, endedAt: null, description: '' });
-      expect(messages.some(message => message.type === 'SEARCH_ACTIVITY')).toBe(true);
+      expect(submitted.at(-1)).toEqual({ type: 'ADD_TIME', taskUrl: 'https://example.org/new-task', taskTitle: '', startedAt: expect.any(String), endedAt: null, description: '' });
+      expect(new Date(submitted.at(-1).startedAt).getTime()).toBeGreaterThanOrEqual(urlBefore);
+      expect(new Date(submitted.at(-1).startedAt).getTime()).toBeLessThanOrEqual(urlAfter);
+      expect(messages.some(message => message.type === 'SEARCH_TASKS')).toBe(true);
       await add.click();
       await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
@@ -396,6 +587,11 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect.poll(() => dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       await expect(startTime).toBeVisible();
       await expect(endTime).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await worker.evaluate(() => { globalThis.searchRepositories = ['team/time', 'another/time']; });
+      await add.click();
+      await search.fill('Imported');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toContainText('team/time');
       await page.close();
     }
     expect(errors).toEqual([]);

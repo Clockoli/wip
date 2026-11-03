@@ -11,7 +11,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories', 'timeRepositories'];
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [],
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
   allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
@@ -249,7 +249,7 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 }
 
 function setDownloadsAvailable(available) {
-  available = available && !state.loading && !state.partial;
+  available = available && !state.loading && !state.partial && !state.pendingCount;
   for (const id of ['download-csv', 'download-json', 'download-pdf']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
@@ -281,7 +281,8 @@ function syncInvoiceComposition(filtered) {
 function setInvoiceAvailable(filtered) {
   const control = $('create-invoice');
   let reason = '';
-  if (!filtered.length) reason = 'No entries in this period to invoice';
+  if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
+  else if (!filtered.length) reason = 'No entries in this period to invoice';
   else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, recordDate(record)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
@@ -289,7 +290,30 @@ function setInvoiceAvailable(filtered) {
 }
 
 function setInvoiceActionsAvailable(available) {
-  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || state.loading;
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || state.loading || Boolean(state.pendingCount);
+}
+
+function renderPendingStatus(pendingWrites, pendingCount = 0) {
+  state.pendingCount = Math.max(pendingWrites.length, Number(pendingCount) || 0);
+  const conflicts = pendingWrites.filter(write => write.status === 'conflict').length;
+  $('pending-message').textContent = state.pendingCount
+    ? `This report is GitHub-only; local changes are not included. ${conflicts ? `${state.pendingCount} ${state.pendingCount === 1 ? 'operation' : 'operations'} waiting to sync; ${conflicts} ${conflicts === 1 ? 'conflict needs' : 'conflicts need'} review. ` : ''}Timesheet exports and invoices are unavailable until sync completes.` : '';
+  $('pending-status').hidden = !state.pendingCount;
+  $('pending-activity').hidden = !conflicts;
+}
+
+async function pendingSafeForAction() {
+  if (state.pendingCount) return false;
+  try {
+    const snapshot = await send({ type: 'GET_STATE' });
+    if (snapshot?.configured !== true || !Array.isArray(snapshot.pendingWrites)) throw new Error('Could not verify current local changes. Try again.');
+    if (!snapshot.pendingWrites.length) return true;
+    renderPendingStatus(snapshot.pendingWrites, snapshot.pendingCount);
+    setDownloadsAvailable(false);
+    setInvoiceAvailable(currentFilteredRecords());
+    setInvoiceActionsAvailable(false);
+    return false;
+  } catch (error) { setError(error); return false; }
 }
 
 function invoiceCurrencies(filtered) {
@@ -449,7 +473,7 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
-  if (!state.range || state.loading) return false;
+  if (!state.range || state.loading || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
   $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null; showInvoiceEmpty();
@@ -461,12 +485,12 @@ async function rebuildInvoicePreview() {
       if (payload.sourceCurrencies.length) {
         showInvoiceLoading();
         const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...payload, requestId: `invoice-${state.requestId}-${requestId}` } });
-        if (requestId !== state.invoiceRequestId) return false;
+        if (requestId !== state.invoiceRequestId || state.pendingCount) return false;
         exchangeRates = result.rates;
       }
     }
     const invoice = buildInvoice(filtered, invoiceBuildOptions(prospectiveInvoiceSequence(), exchangeRates));
-    if (requestId !== state.invoiceRequestId) return false;
+    if (requestId !== state.invoiceRequestId || state.pendingCount) return false;
     state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice); setInvoiceActionsAvailable(true);
     return true;
   } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); return false; }
@@ -480,14 +504,14 @@ function prepareInvoiceControls(filtered) {
 }
 
 async function ensureReservedInvoice() {
-  if (!state.invoice || state.loading) throw new Error('Invoice preview is not ready.');
+  if (!state.invoice || state.loading || state.pendingCount) throw new Error('Invoice preview is not ready.');
   if (state.invoiceReservedSequence === null) {
     const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;
     const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
     // Keep successful reservations for retries. A worker crash between commit and response can still leave a gap in v1, never a duplicate.
     state.invoiceReservedSequence = result.sequence;
     if (Number.isSafeInteger(result.revision) && result.revision >= 0) state.settingsRevision = result.revision;
-    if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey) throw new Error('Invoice changed while its number was being reserved. Try again.');
+    if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey || state.pendingCount) throw new Error('Invoice changed while its number was being reserved. Try again.');
   }
   state.invoice = buildInvoice(invoiceFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
   renderInvoiceDocument($('invoice-preview'), state.invoice);
@@ -837,7 +861,7 @@ async function loadRange(range) {
     if (requestId !== state.requestId) return;
     if (!result.configured) {
       $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
-      state.range = null; state.records = []; return;
+      state.range = null; state.records = []; state.pendingCount = 0; $('pending-status').hidden = true; return;
     }
     showProgress('Preparing report…', 80);
     const firstLoad = !state.range;
@@ -847,6 +871,9 @@ async function loadRange(range) {
     state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.sourceRepositories = result.sourceRepositories || (result.sourceRepository ? [result.sourceRepository] : []);
     state.partial = Boolean(result.partial); state.readStatus = result.readStatus || [];
+    const pendingWrites = Array.isArray(result.pendingWrites) ? result.pendingWrites : [];
+    renderPendingStatus(pendingWrites, result.pendingCount);
+    setInvoiceActionsAvailable(Boolean(state.invoice));
     const failed = state.readStatus.filter(item => item.status === 'error');
     const conflictCount = result.conflicts?.length || 0;
     $('partial-status').hidden = !state.partial;
@@ -960,10 +987,13 @@ $('reset-filters').addEventListener('click', () => {
   render();
 });
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
-function downloadTimesheet(format, event) {
+async function downloadTimesheet(format, event) {
   event.preventDefault();
+  if (state.loading || state.partial || state.pendingCount || !state.range) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId) return;
   const filtered = filterReportRecords(state.records, selectedFilters());
-  if (state.loading || state.partial || !state.range || !filtered.length) return;
+  if (state.loading || state.partial || state.pendingCount || !state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
     rates: state.billing.rates,
@@ -973,22 +1003,28 @@ function downloadTimesheet(format, event) {
   anchor.href = url; anchor.download = reportFilename(format, state.range.startDate, state.range.endDate); anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-$('download-csv').addEventListener('click', event => downloadTimesheet('csv', event));
-$('download-json').addEventListener('click', event => downloadTimesheet('json', event));
+$('download-csv').addEventListener('click', event => downloadTimesheet('csv', event).catch(setError));
+$('download-json').addEventListener('click', event => downloadTimesheet('json', event).catch(setError));
 function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); }
 
-$('download-pdf').addEventListener('click', event => {
+$('download-pdf').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || $('download-pdf').classList.contains('disabled')) return;
+  if (state.loading || state.partial || state.pendingCount || $('download-pdf').classList.contains('disabled')) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId
+      || state.loading || state.partial || state.pendingCount) return;
   const previousTitle = document.title;
   document.title = pdfDocumentTitle();
   addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });
   window.print();
 });
 
-$('create-invoice').addEventListener('click', event => {
+$('create-invoice').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || $('create-invoice').classList.contains('disabled')) return;
+  if (state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId
+      || state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {
@@ -1013,9 +1049,12 @@ function invoicePdfFilename(invoice) {
 }
 
 async function printInvoice({ saveAsPdf = false } = {}) {
+  if (state.loading || state.pendingCount || !state.invoice) return;
+  if (!(await pendingSafeForAction()) || state.loading || state.pendingCount || !state.invoice) return;
   setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
   try {
     const invoice = await ensureReservedInvoice();
+    if (!(await pendingSafeForAction()) || state.loading || state.pendingCount || !state.invoice) return;
     if (saveAsPdf) {
       await saveInvoicePdf(invoice);
       setInvoiceActionsAvailable(Boolean(state.invoice));
@@ -1029,8 +1068,8 @@ async function printInvoice({ saveAsPdf = false } = {}) {
   } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not process invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
 }
 
-$('invoice-print').addEventListener('click', () => void printInvoice());
-$('invoice-save-pdf').addEventListener('click', () => void printInvoice({ saveAsPdf: true }));
+$('invoice-print').addEventListener('click', () => printInvoice());
+$('invoice-save-pdf').addEventListener('click', () => printInvoice({ saveAsPdf: true }));
 
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });

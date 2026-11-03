@@ -22,7 +22,7 @@ test('weekly summary clips work to its Monday–Sunday window and counts distinc
   ];
   const actual = summarize(entries, start, start + 7 * 24 * hour, start + 8 * hour);
   assert.equal(actual.total, '5h 0m');
-  assert.equal(actual.average, '42m');
+  assert.equal(Object.hasOwn(actual, 'average'), false);
   assert.equal(actual.entries, 3);
   assert.equal(actual.tasks, 2);
 });
@@ -31,7 +31,7 @@ test('weekly summary handles no entries, invalid timestamps, and intervals outsi
   const summarize = weeklySummary();
   const start = Date.parse('2026-10-12T00:00:00Z'), end = start + 7 * 86400000;
   assert.deepEqual({ ...summarize([], start, end, start + 1) },
-    { total: '0m', average: '0m', entries: 0, tasks: 0 });
+    { total: '0m', entries: 0, tasks: 0 });
   assert.equal(summarize([
     { startedAt: NaN, endedAt: start + 10000, url: 'bad' },
     { startedAt: start, endedAt: start, url: 'same' },
@@ -43,6 +43,7 @@ test('Clockoli pages expose the theme button; popup applies the same selected th
   for (const page of ['src/times/times.html', 'src/tasks/tasks.html', 'src/reports/reports.html', 'src/options/options.html']) {
     assert.match(read(page), /class="page-theme-toggle"/, page);
     assert.match(read(page), /src="\.\.\/ui\/theme\.js"/, page);
+    assert.match(read(page), /class="page-theme-moon" viewBox="0 0 16 16"[^>]*><path d="M6 \.278/, `${page} should use a recognizable filled crescent`);
   }
   assert.match(read('src/popup/popup.html'), /src="\.\.\/ui\/theme\.js"/);
   const tokens = read('src/styles/github-primer.css');
@@ -66,16 +67,34 @@ test('weekly summary counts compact task identities and a just-started timer', (
   const now = start + 3600000, end = start + 7 * 86400000;
   const running = { startedAt: now, endedAt: null, isRunning: true, taskIdentity: 'acme/site/work-42' };
   assert.deepEqual({ ...summarize([running], start, end, now) },
-    { total: '0m', average: '0m', entries: 1, tasks: 1 });
+    { total: '0m', entries: 1, tasks: 1 });
   const completed = { startedAt: start, endedAt: start + 60000, taskIdentity: 'acme/site/work-42' };
   assert.deepEqual({ ...summarize([completed, running], start, end, now) },
-    { total: '1m', average: '0m', entries: 2, tasks: 1 });
+    { total: '1m', entries: 2, tasks: 1 });
 });
 
 test('calendar does not show an empty-day marker behind a newly started timer', () => {
   for (const file of ['packages/task-timeline-component/src/clockoli-adapter.js', 'src/content/task-timeline-component.js']) {
     assert.ok(read(file).includes("node.classList.contains('running')"), file);
   }
+});
+
+test('Activity has three compact metrics without Daily average and an icon view switcher', () => {
+  const ui = read('src/content/github.js');
+  const activity = ui.slice(ui.indexOf("const weeklySummary = el('section'"), ui.indexOf("const listTotal = el('div'", ui.indexOf("const weeklySummary = el('section'")));
+  assert.match(activity, /\['todayTrackedMs', 'Today'/);
+  assert.match(activity, /\['total', 'Total tracked'/);
+  assert.doesNotMatch(activity, /\['average', 'Daily average'/);
+  assert.match(activity, /\['tasks', 'Tasks worked on'/);
+  assert.doesNotMatch(activity, /\['entries', 'Time entries'/);
+  assert.match(activity, /control\.setAttribute\('aria-label', mode\[0\]/);
+  assert.match(read('src/times/times.css'), /\.activity-overview-layout\{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,7fr\)/);
+  assert.match(read('src/times/times.css'), /#activity-summary \.activity-weekly-cards\{display:grid;grid-template-columns:1fr/);
+  assert.match(read('src/times/times.html'), /class="activity-overview-layout"[\s\S]*id="activity-summary"[\s\S]*id="activity-running-status"/);
+  assert.match(ui, /\[shadow, fullWidthPopupShadow, timesMode \? document\.getElementById\?\.\('activity-summary'\) : null\]/);
+  assert.match(ui, /viewHost\.replaceChildren\(views\)/);
+  assert.match(read('src/times/times.html'), /id="activity-view-switcher"[\s\S]*class="page-theme-toggle"/);
+  assert.match(read('src/ui/theme.js'), /group\.append\(brand, control\)/);
 });
 
 test('manual themes control select arrows and print reports stay light', () => {

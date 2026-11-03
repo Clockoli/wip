@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const currentWeekFriday = () => {
+  const friday = new Date();
+  friday.setDate(friday.getDate() - (friday.getDay() + 6) % 7 + 4);
+  friday.setHours(18, 0, 0, 0);
+  return friday;
+};
 const workerSource = `
 const now = new Date();
 const monday = new Date(now); monday.setHours(0, 0, 0, 0);
@@ -38,6 +44,7 @@ for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} does not nav
   test.setTimeout(45000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-edge-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-edge-profile-'));
+  const fixtureTime = currentWeekFriday();
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
@@ -55,10 +62,11 @@ for (const view of ['Calendar', 'Timeline']) test(`Activity ${view} does not nav
     const page = await context.newPage();
     await page.setViewportSize({ width: 1280, height: 1100 });
     page.on('pageerror', error => errors.push(error.message));
+    await page.clock.install({ time: fixtureTime });
     const id = new URL(worker.url()).host;
     await page.goto(`chrome-extension://${id}/src/times/times.html`);
     const root = page.locator('#clockoli-times-root');
-    await root.getByRole('button', { name: view, exact: true }).click();
+    await page.locator('#activity-view-switcher').getByRole('button', { name: view, exact: true }).click();
     await expect.poll(() => worker.evaluate(() => globalThis.reads.length)).toBeGreaterThan(0);
     await expect(root.locator('.calendar-week-loading')).toBeHidden();
     await page.waitForTimeout(700);

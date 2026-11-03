@@ -127,6 +127,462 @@ function service(options = {}) {
     recentDays: options.recentDays ?? 7, allowedIssueOwners: ['acme'], ...(options.timezone ? { timezone: options.timezone } : {}) });
 }
 
+function stoppedOverlapFixture() {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const previous = entry('2026-11-02T09:08:00.000Z', '2026-11-02T11:01:22.296Z', { taskTitle: 'Previous' });
+  const timer = active('2026-11-02T11:01:00.000Z', { taskTitle: 'New timer' });
+  const stopped = entry(timer.startedAt, '2026-11-02T11:36:00.000Z', { id: timer.id, taskTitle: timer.taskTitle });
+  seedText(github, path, serializeMonthlyRecords([previous]), 'previous-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [previous] })), 'index-sha');
+  const start = { operation: 'startTimer', id: timer.id, status: 'conflict', conflictReason: 'add_time_overlap_changed',
+    stage: 'startNext', requireNoOverlap: true, nextActive: timer, queuedAt: timer.startedAt };
+  const stop = { operation: 'completeTimer', id: timer.id, status: 'pending', stage: 'verifyActive',
+    monthlyPath: path, entry: stopped, activeSnapshot: timer, activeSha: null, queuedAt: stopped.endedAt };
+  const edit = { operation: 'editEntry', id: deterministicRecordId('2026-11-02T12:00:00.000Z'), status: 'pending', stage: 'editEntry',
+    request: { path, originalSha: 'previous-sha', index: 0, original: previous,
+      edits: { endedAt: '2026-11-02T11:00:00.000Z' } }, queuedAt: '2026-11-02T12:00:00.000Z' };
+  store.value.pendingWrites = [start, stop, edit];
+  store.value.recentCache = [{ ...stopped, _path: path, _pending: true }];
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:10:00.000Z') });
+  return { github, store, tracker, path, previous, timer, edit };
+}
+
+test('deleting the stopped local overlap atomically retains its independent saved edit', async () => {
+  const { github, store, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), { deleted: true });
+  assert.deepEqual(store.value.pendingWrites, [edit]);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.recentCache.some(item => item.id === timer.id), false);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })[0].id, previous.id);
+});
+
+test('local stopped deletion rejects a saved completion, remote active timer, and changed queue', async () => {
+  for (const remote of ['monthly', 'index', 'active', 'queue']) {
+    const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+    const pending = structuredClone(store.value.pendingWrites), recent = structuredClone(store.value.recentCache);
+    if (remote === 'monthly') seedText(github, path, serializeMonthlyRecords([previous, store.value.pendingWrites[1].entry]), 'saved');
+    if (remote === 'index') seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+      emptyTaskIndex('alice'), { add: [previous, store.value.pendingWrites[1].entry] })), 'saved-index');
+    if (remote === 'active') seedText(github, 'active/alice.json', serializeActiveRecord(timer), 'running');
+    if (remote === 'queue') store.value.pendingWrites.push({ operation: 'addTime', id: fixedId });
+    await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TrackerConflictError);
+    assert.deepEqual(store.value.pendingWrites, remote === 'queue' ? [...pending, { operation: 'addTime', id: fixedId }] : pending);
+    assert.deepEqual(store.value.recentCache, recent);
+    assert.equal(github.atomicWrites.length, 0);
+  }
+});
+
+test('deleting the previous overlap persists a guarded deletion before syncing the stopped timer', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: true, resolved: true });
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+  assert.deepEqual(saved.map(item => item.id), [timer.id]);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(Object.values(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }).tasks)
+    .some(task => task.recordIds.includes(previous.id)), false);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(store.value.recentCache.some(item => item.id === previous.id), false);
+});
+
+test('previous deletion preserves pending edit and timer on rejected GitHub write, then retries', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[3].request.edits.endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(github.files.get(path).sha, 'previous-sha');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).map(item => item.id), [timer.id]);
+  assert.equal(previous.id === timer.id, false);
+});
+
+test('previous deletion recovers a lost acknowledgement only after monthly and index readback', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let lost = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (lost) { lost = false; throw new TypeError('lost acknowledgement'); }
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).map(item => item.id), [timer.id]);
+});
+
+test('previous deletion refuses a changed remote entry without dropping dependent edit', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote changed' }]), 'changed');
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })[0].description, 'remote changed');
+});
+
+test('previous deletion retains the full dependency chain on permanent rejection', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  github.updateTextsAtomic = async () => {
+    const error = new Error('forbidden'); error.status = 403; error.code = 'permission'; throw error;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(github.files.get(path).sha, 'previous-sha');
+});
+
+test('previous deletion does not cancel its edit when readback has an orphaned index', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let lost = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (lost) {
+      lost = false;
+      seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+        emptyTaskIndex('alice'), { add: [previous] })), 'orphan-index');
+      throw new TypeError('lost acknowledgement');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: false, resolved: false });
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['deleteEntry', 'startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(github.files.has(path), false);
+});
+
+test('stopped overlap deletion refuses malformed side and concurrent local queue replacement', async () => {
+  const { github, store, tracker, timer } = stoppedOverlapFixture();
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'both' }), TrackerConflictError);
+  const originalMutate = store.mutateState.bind(store);
+  store.mutateState = mutate => {
+    store.value.pendingWrites[2].request.edits.endedAt = '2026-11-02T10:55:00.000Z';
+    return originalMutate(mutate);
+  };
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer', 'editEntry']);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('local stopped deletion fails closed when remote index readback is unavailable', async () => {
+  const { github, store, tracker, timer } = stoppedOverlapFixture();
+  const read = github.getText.bind(github), before = structuredClone(store.value);
+  github.getText = path => path === TASK_INDEX_PATH ? Promise.reject(new TypeError('offline')) : read(path);
+  await assert.rejects(() => tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), TypeError);
+  assert.deepEqual(store.value, before);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('remote deletion preserves a concurrent changed edit as a conflict without stranding the stopped timer', async () => {
+  const { github, store, tracker, path, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    store.value.pendingWrites.find(item => item.operation === 'editEntry').request.edits.endedAt = '2026-11-02T10:59:00.000Z';
+    return result;
+  };
+  assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'previous' }), { deleted: true, resolved: true });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].request.edits.endedAt, '2026-11-02T10:59:00.000Z');
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .map(item => item.id), [timer.id]);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+});
+
+test('stopped overlap context uses unique fresh remote completion and identifies queued previous edit', async () => {
+  const { github, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.blocked.id, timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.queuedPrevious.id, previous.id);
+  assert.equal(context.queuedPrevious.endedAt, edit.request.edits.endedAt);
+  assert.equal(context.editable, true);
+  seedText(github, path, serializeMonthlyRecords([previous, entry('2026-11-02T11:00:00.000Z', '2026-11-02T11:03:00.000Z')]), 'changed');
+  assert.equal(await tracker.getStoppedOverlapContext(timer.id), null);
+});
+
+test('stopped overlap resolves a queued end edit with unchanged full-form fields', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites[2].request.edits = {
+    taskUrl: previous.taskUrl, taskTitle: previous.taskTitle,
+    startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+    description: previous.description,
+  };
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.editable, true);
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: true });
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).length, 2);
+});
+
+test('stopped overlap rejects a queued edit that also changes task metadata', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites[2].request.edits = {
+    taskTitle: 'Another title', endedAt: '2026-11-02T11:00:00.000Z',
+  };
+  assert.equal((await tracker.getStoppedOverlapContext(timer.id)).editable, false);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer', 'editEntry']);
+});
+
+test('stopped overlap still displays remote pair when extra queued work makes resolution unavailable', async () => {
+  const { store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites.push({ operation: 'addTime', id: deterministicRecordId('2026-11-02T13:00:00.000Z'),
+    status: 'pending', stage: 'addTime', queuedAt: '2026-11-02T13:00:00.000Z' });
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.blocked.id, timer.id);
+  assert.equal(context.editable, false);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+});
+
+test('stopped overlap still displays remote pair when competing edits make resolution unavailable', async () => {
+  const { store, tracker, previous, timer } = stoppedOverlapFixture();
+  store.value.pendingWrites.push({ ...structuredClone(store.value.pendingWrites[2]),
+    id: deterministicRecordId('2026-11-02T13:00:00.000Z') });
+  const context = await tracker.getStoppedOverlapContext(timer.id);
+  assert.equal(context.previous.id, previous.id);
+  assert.equal(context.queuedPrevious, null);
+  assert.equal(context.editable, false);
+});
+
+for (const side of ['previous', 'local']) test(`stopped overlap resolves ${side} without dropping queued work`, async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const result = await tracker.resolveStoppedOverlap(timer.id, side === 'previous'
+    ? { side, startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z' }
+    : { side, startedAt: '2026-11-02T11:01:22.296Z', endedAt: '2026-11-02T11:36:00.000Z' });
+  assert.deepEqual(result, { resolved: true });
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+  assert.equal(saved.length, 2);
+  assert.equal(saved.find(item => item.id === previous.id).endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(saved.find(item => item.id === timer.id).startedAt,
+    side === 'local' ? '2026-11-02T11:01:22.296Z' : timer.startedAt);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('stopped overlap refuses changed remote or invalid boundaries without queue or remote writes', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const pending = structuredClone(store.value.pendingWrites);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'local', startedAt: '2026-11-02T10:59:10.000Z', endedAt: '2026-11-02T11:36:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, pending);
+  seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'changed elsewhere', updatedAt: '2026-11-02T12:05:00.000Z' }]), 'changed');
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, pending);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('stopped overlap keeps a strict queued edit and dependent timer on a remote race', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = async (...args) => {
+    seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote change', updatedAt: '2026-11-02T12:05:00.000Z' }]), 'raced');
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry', 'startTimer', 'completeTimer']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites.length, 3);
+});
+
+test('stopped overlap resumes across restart after a transient start failure', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let fail = true;
+  github.updateTextsAtomic = (...args) => {
+    if (fail && args[0].some(item => item.path === 'active/alice.json')) { fail = false; throw new Error('offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).length, 2);
+});
+
+test('stopped overlap adopts a committed start after its acknowledgement is lost and drains Stop', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let loseAck = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (loseAck && args[0].some(item => item.path === 'active/alice.json')) {
+      loseAck = false;
+      throw new TypeError('start acknowledgement lost');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, timer.id);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .filter(item => item.id === timer.id).length, 1);
+});
+
+test('stopped overlap refuses to adopt its timer ID when another device moved its start', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let loseAck = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await atomic(...args);
+    if (loseAck && args[0].some(item => item.path === 'active/alice.json')) {
+      loseAck = false;
+      throw new TypeError('start acknowledgement lost');
+    }
+    return result;
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  const remote = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  seedText(github, 'active/alice.json', serializeActiveRecord({
+    ...remote, startedAt: '2026-11-02T11:02:00.000Z', createdAt: '2026-11-02T11:02:00.000Z',
+    updatedAt: '2026-11-02T11:02:00.000Z',
+  }), 'moved-active');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).startedAt,
+    '2026-11-02T11:02:00.000Z');
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .some(item => item.id === timer.id), false);
+});
+
+test('strict overlap edit retries after unrelated head drift across restart without rebasing', async () => {
+  const { github, store, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
+  const originalSha = edit.request.originalSha;
+  const atomic = github.updateTextsAtomic.bind(github);
+  let race = true;
+  github.updateTextsAtomic = (...args) => {
+    if (race) { race = false; github.headSha = 'unrelated-head'; throw github.conflict(); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].request.originalSha, originalSha);
+  assert.equal(github.files.get(path).sha, originalSha);
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path })
+    .find(item => item.id === previous.id).endedAt, '2026-11-02T11:00:00.000Z');
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('strict overlap edit stays blocked across restart when its monthly blob changed', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let race = true;
+  github.updateTextsAtomic = (...args) => {
+    if (race) {
+      race = false;
+      seedText(github, path, serializeMonthlyRecords([{ ...previous, description: 'remote change' }]), 'changed-month');
+      throw github.conflict();
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:11:00.000Z') }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['editEntry', 'startTimer', 'completeTimer']);
+  assert.equal(github.files.get(path).sha, 'changed-month');
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('stopped overlap completion guards a new remote neighbor after queued start', async () => {
+  const { github, store, tracker, path, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let raced = false;
+  github.updateTextsAtomic = (...args) => {
+    if (!raced && args[0].some(item => item.path === path && item.text?.includes(timer.id))) {
+      raced = true;
+      const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path });
+      seedText(github, path, serializeMonthlyRecords([...saved, entry('2026-11-02T11:10:00.000Z', '2026-11-02T11:15:00.000Z')]), 'neighbor');
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11', path }).some(item => item.id === timer.id), false);
+});
+
+test('stopped overlap refuses a new remote active timer instead of replacing it', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  const atomic = github.updateTextsAtomic.bind(github);
+  const rival = active('2026-11-02T11:05:00.000Z', { id: deterministicRecordId('2026-11-02T11:05:00.000Z') });
+  github.updateTextsAtomic = (...args) => {
+    if (args[0].some(item => item.path === 'active/alice.json')) {
+      seedText(github, 'active/alice.json', serializeActiveRecord(rival), 'rival');
+    }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), { resolved: false });
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, rival.id);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer']);
+});
+
+test('stopped overlap leaves another locally active timer and unhandled queues untouched', async () => {
+  const { github, store, tracker, previous, timer } = stoppedOverlapFixture();
+  const other = active('2026-11-02T12:00:00.000Z');
+  store.value.activeCache = other;
+  const queue = structuredClone(store.value.pendingWrites);
+  await assert.rejects(() => tracker.resolveStoppedOverlap(timer.id, {
+    side: 'previous', startedAt: previous.startedAt, endedAt: '2026-11-02T11:00:00.000Z',
+  }), TrackerConflictError);
+  assert.deepEqual(store.value.pendingWrites, queue);
+  assert.equal(store.value.activeCache.id, other.id);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('queued start/stop preparation is side-effect free and keeps destination metadata out of work JSON', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const running = { ...active(), _path: 'active/alice.json', _sha: 'active-sha', destinationId: 'must-not-persist' };
@@ -169,6 +625,118 @@ test('Stop and switch keep the saved active description unless explicitly replac
     'an explicitly cleared description must remain empty');
 });
 
+test('a queued Stop drains against a titled task index without losing earlier records', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const prior = entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Earlier title' });
+  const path = 'times/2026-10/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([prior]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [prior],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, 'active/alice.json', serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get('active/alice.json').text,
+    { user: 'alice', path: 'active/alice.json', sha: 'active-sha' });
+  const tracker = service({ github, store, clock: () => new Date('2026-10-27T12:00:00.000Z') });
+  const stopped = await tracker.queueStop();
+  assert.equal(stopped.pending, true);
+  assert.equal(store.value.pendingWrites[0].operation, 'completeTimer');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.files.has('active/alice.json'), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.deepEqual(saved.map(record => record.id), [prior.id, running.id]);
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(index.tasks[issue.url].sessionCount, 2);
+  assert.equal(index.tasks[issue.url].title, 'Reviewing');
+  assert.equal(index.tasks[issue.url].totalSeconds, 18000);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
+test('a stale queued Stop resumes a twelve-operation lifecycle against a titled index', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const path = 'times/2026-10/alice.jsonl', activePath = 'active/alice.json';
+  const previous = [
+    entry('2026-10-26T08:00:00.000Z', '2026-10-26T09:00:00.000Z', { taskTitle: 'Reviewing' }),
+    entry('2026-10-26T10:00:00.000Z', '2026-10-26T11:00:00.000Z', { taskTitle: 'Reviewing' }),
+  ];
+  const otherTasks = Array.from({ length: 813 }, (_, index) => {
+    const startedAt = new Date(Date.parse('2026-09-01T00:00:00.000Z') + index * 60_000).toISOString();
+    const endedAt = new Date(Date.parse(startedAt) + 30_000).toISOString();
+    return entry(startedAt, endedAt, { taskUrl: `https://example.test/task/${index}`, taskTitle: `Task ${index}` });
+  });
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords(otherTasks), 'september-sha');
+  seedText(github, path, serializeMonthlyRecords(previous), 'october-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [...otherTasks, ...previous],
+  })), 'index-sha');
+  const running = active('2026-10-27T08:00:00.000Z', { taskTitle: 'Reviewing', timezone: 'Europe/Warsaw' });
+  seedText(github, activePath, serializeActiveRecord(running), 'active-sha');
+  store.value.activeCache = parseActiveRecord(github.files.get(activePath).text,
+    { user: 'alice', path: activePath, sha: 'active-sha' });
+  store.value.recentCache = previous.map((record, index) => ({ ...record, _path: path, _sha: 'october-sha', _index: index }));
+  let now = '2026-10-27T12:30:00.000Z';
+  const tracker = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await tracker.queueStop();
+  // The first Stop has been accepted locally, but the old worker cannot read
+  // the titled index. Its durable operation is already at commitCompletion.
+  store.value.pendingWrites[0].stage = 'commitCompletion';
+  store.value.pendingWrites[0].retryCount = 876;
+  store.value.pendingWrites[0].lastError = 'Clockoli task index summary is invalid';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0, original: previous[0],
+    edits: { description: 'First correction' } });
+  now = '2026-10-27T13:00:00.000Z';
+  let current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T13:05:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-27T14:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-27T14:30:00.000Z'; await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-27T15:00:00.000Z'; await tracker.queueStop();
+  now = '2026-10-28T08:00:00.000Z'; current = await tracker.queueStart(issue.url, 'Reviewing');
+  now = '2026-10-28T08:10:00.000Z';
+  await tracker.queueActiveStartEdit({ original: { id: current.id, startedAt: current.startedAt }, startedAt: now });
+  now = '2026-10-28T08:20:00.000Z';
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 0,
+    original: stripInternalForTest(store.value.recentCache.find(record => record.id === previous[0].id)),
+    edits: { description: 'Final correction' } });
+  await tracker.queueEntryEdit({ path, originalSha: 'october-sha', index: 1, original: previous[1],
+    edits: { description: 'Second correction' } });
+  now = '2026-10-28T09:00:00.000Z'; await tracker.queueStop();
+
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), [
+    'completeTimer', 'editEntry', 'startTimer', 'editActiveStart', 'completeTimer', 'startTimer',
+    'completeTimer', 'startTimer', 'editActiveStart', 'editEntry', 'editEntry', 'completeTimer',
+  ]);
+  assert.equal(store.value.activeCache, null);
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }).tasks[issue.url].sessionCount, 2);
+  const originalRead = github.getText.bind(github);
+  github.getText = async file => {
+    if (file === TASK_INDEX_PATH) throw new Error('Clockoli task index summary is invalid');
+    return originalRead(file);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites.length, 12, 'a blocked first Stop must retain every later operation');
+  assert.equal(store.value.pendingWrites[0].stage, 'commitCompletion');
+  assert.equal(store.value.pendingWrites[0].retryCount, 877);
+  assert.ok(github.files.has(activePath), 'a blocked Stop must not delete the remote timer');
+
+  github.getText = originalRead;
+  const resumed = service({ github, store, clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) });
+  await resumed.syncPending();
+  assert.deepEqual(store.value.pendingWrites, [], 'all synthetic operations should drain after worker restart');
+  assert.equal(github.files.has(activePath), false);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-10' });
+  assert.equal(saved.length, 6);
+  assert.equal(saved.find(record => record.id === previous[0].id).description, 'Final correction');
+  assert.equal(saved.find(record => record.id === previous[1].id).description, 'Second correction');
+  const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
+  assert.equal(Object.keys(index.tasks).length, 814);
+  assert.equal(index.tasks[issue.url].sessionCount, 6);
+  assert.equal(index.tasks[issue.url].recordIds.length, 6);
+});
+
 test('sync leaves an await-source start untouched without attempting a remote write', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   store.value.pendingWrites = [{
@@ -188,7 +756,8 @@ test('completed-record mutations update the mandatory task index atomically', as
   const tracker = service({ github, store });
   const stopped = await tracker.stop();
   let index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 3600, sessionCount: 1, recordIds: [stopped.entry.id],
+    title: '', titleSourceId: stopped.entry.id, titleStartedAt: stopped.entry.startedAt });
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [
     'times/2026-08/alice.jsonl', 'active/alice.json', TASK_INDEX_PATH,
   ]);
@@ -199,7 +768,8 @@ test('completed-record mutations update the mandatory task index atomically', as
     edits: { endedAt: '2026-08-18T10:00:00.000Z' },
   });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
-  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id] });
+  assert.deepEqual(index.tasks[issue.url], { totalSeconds: 7200, sessionCount: 1, recordIds: [saved.id],
+    title: '', titleSourceId: saved.id, titleStartedAt: saved.startedAt });
 
   await tracker.deleteEntry({ path: edited._path, originalSha: edited._sha, index: edited._index, original: edited });
   index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
@@ -248,8 +818,10 @@ test('task merge atomically replaces every queued source URL and title across th
   assert.deepEqual(savedActive.metadata.clockoli.task_identity_history, [{ url: sourceUrl, title: 'Old task' }]);
   const index = parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' });
   assert.equal(index.tasks[sourceUrl].sessionCount, 1);
-  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id] });
-  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id] });
+  assert.deepEqual(index.tasks[targetUrl], { totalSeconds: 3600, sessionCount: 1, recordIds: [july.id],
+    title: 'Canonical task', titleSourceId: july.id, titleStartedAt: july.startedAt });
+  assert.deepEqual(index.tasks[secondTargetUrl], { totalSeconds: 7200, sessionCount: 1, recordIds: [august.id],
+    title: 'Second canonical task', titleSourceId: august.id, titleStartedAt: august.startedAt });
   assert.equal(github.atomicWrites.length, 1);
 });
 
@@ -1641,6 +2213,25 @@ test('direct completed edit rejects an overlap with remote active without writin
   assert.equal(github.files.get(path).sha, 'monthly-sha');
 });
 
+test('an idle-looking local state reports the remote timer boundary on a rejected edit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-10/alice.jsonl';
+  const first = entry('2026-10-27T08:00:00.000Z', '2026-10-27T11:13:00.000Z');
+  const second = entry('2026-10-27T12:41:00.000Z', '2026-10-27T21:40:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-10-27T07:30:00.000Z')), 'active-sha');
+  store.value.recentCache = [first, second].map((item, index) => ({ ...item, _path: path, _sha: 'monthly-sha', _index: index }));
+  const tracker = service({ github, store, clock: () => new Date('2026-10-28T12:00:00.000Z') });
+  for (const [index, end] of [[0, '2026-10-27T10:00:00.000Z'], [1, '2026-10-27T17:00:00.000Z']]) {
+    await assert.rejects(() => tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index,
+      original: { id: store.value.recentCache[index].id }, edits: { endedAt: end } }),
+    error => /overlap the running timer/i.test(error.message)
+      && error.message.includes('2026-10-27T07:30:00.000Z'));
+  }
+  assert.equal(store.value.activeCache, null);
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
 test('an existing overlap does not block a description-only correction', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   const completed = entry('2026-08-18T08:00:00.000Z', '2026-08-18T10:30:00.000Z');
@@ -1896,14 +2487,16 @@ test('recent load backfills missing issue titles once with the current SHA', asy
   const first = await tracker.loadMenuData(50);
   assert.equal(first.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1);
-  assert.equal(github.writes.length, 1);
-  assert.equal(github.writes[0].sha, 'daily');
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), [path, TASK_INDEX_PATH]);
+  assert.equal(github.atomicWrites[0].changes[0].sha, 'daily');
   assert.equal(JSON.parse(github.files.get(path).text).work_item.title, 'Ranking regression');
+  assert.equal(parseTaskIndex(github.files.get(TASK_INDEX_PATH).text).tasks[issue.url].title, 'Ranking regression');
 
   const second = await tracker.loadMenuData(50);
   assert.equal(second.recent[0].issueTitle, 'Ranking regression');
   assert.equal(github.metadataReads.length, 1, 'persisted titles are not resolved again');
-  assert.equal(github.writes.length, 1, 'persisted titles are not rewritten again');
+  assert.equal(github.atomicWrites.length, 1, 'persisted titles are not rewritten again');
 });
 
 test('recent load persists a current-page title into a legacy active timer with its current SHA', async () => {
@@ -2486,7 +3079,7 @@ test('linked time edits save a crossed adjacent boundary in one monthly-file wri
   ]);
 });
 
-test('linked edits preserve a persisted imported identity but reject newly entered non-URL identities', async () => {
+test('linked edits preserve a persisted imported identity but reject unverified non-URL identities', async () => {
   const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
   const identity = 'manticoresoftware/NexusRepo/Fixed-last-block-encoding';
   const original = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', {
@@ -2500,7 +3093,7 @@ test('linked edits preserve a persisted imported identity but reject newly enter
   const tracker = service({ github });
   await assert.rejects(() => tracker.editEntries({ entries: [{ ...request,
     edits: { taskUrl: 'other/project/new-task' },
-  }] }), /Invalid task URL/);
+  }] }), /Select an existing imported task/);
   assert.equal(github.atomicWrites.length, 0);
   const [saved] = await tracker.editEntries({ entries: [{ ...request,
     edits: { endedAt: '2026-08-18T09:30:00.000Z', taskTitle: 'Reviewed', description: 'Updated' },
@@ -2545,6 +3138,20 @@ test('completed Add time is accepted and projected locally without any GitHub re
   assert.equal(github.atomicWrites.length, 1);
   assert.deepEqual(github.atomicWrites[0].changes.map(item => item.path).sort(), [TASK_INDEX_PATH, 'times/2026-08/alice.jsonl']);
   assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text, { user: 'alice', month: '2026-08' })[0].id, added.entry.id);
+});
+
+test('activity projection reports indexed IDs replaced by queued deletes and edits', async () => {
+  const store = new MemoryStore(), tracker = service({ github: new FakeGitHub(), store });
+  const deleted = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const moved = entry('2026-08-18T09:00:00.000Z', '2026-08-18T10:00:00.000Z');
+  store.value.pendingWrites = [
+    { operation: 'deleteEntry', request: { original: deleted } },
+    { operation: 'editEntry', queuedAt: '2026-08-19T00:00:00.000Z',
+      request: { original: moved, edits: { taskUrl: 'https://example.org/new' }, path: 'times/2026-08/alice.jsonl' } },
+  ];
+  const projected = await tracker.projectActivityRecords([]);
+  assert.deepEqual(projected.replacedRecordIds, [deleted.id, moved.id]);
+  assert.deepEqual(projected.records.map(record => record.taskUrl), ['https://example.org/new']);
 });
 
 test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
@@ -2744,6 +3351,166 @@ test('Add time writes an exact completed interval and task index atomically', as
   assert.equal(github.atomicWrites[0].guards.find(guard => guard.path === 'active/alice.json')?.sha, null);
 });
 
+test('queued edit can move to a proven imported task in the same repository without losing neighbors', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const neighbor = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([original, neighbor]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, neighbor, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })), 'index-sha');
+  const tracker = service({ github, store });
+  const request = { path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Imported task' } };
+  assert.equal((await tracker.queueEntryEdit(request)).pending, true);
+  assert.equal(store.value.pendingWrites.length, 1);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.find(item => item.id === original.id).taskUrl, imported);
+  assert.equal(serializeMonthlyRecords([saved.find(item => item.id === neighbor.id)]), serializeMonthlyRecords([neighbor]));
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), [TASK_INDEX_PATH, path]);
+});
+
+test('two independent imported-task edits batch and sync after a service restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const neighbor = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([original, neighbor]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, neighbor, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })), 'index-sha');
+  const tracker = service({ github, store });
+  for (const [index, record] of [original, neighbor].entries()) {
+    await tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index, original: record,
+      edits: { taskUrl: imported, taskTitle: 'Routines dev call' } });
+  }
+  assert.equal(store.value.pendingWrites.length, 2);
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.deepEqual(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })
+    .map(item => item.taskUrl), [imported, imported]);
+  assert.equal(github.atomicWrites.length, 1);
+});
+
+test('imported task disappearing from the checked personal index cannot be recreated by an edit', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  const indexedTask = { id: fixedId, taskUrl: imported, durationSeconds: 60 };
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, indexedTask],
+  })), 'index-sha');
+  const tracker = service({ github });
+  const verify = tracker.assertKnownImportedTask.bind(tracker);
+  tracker.assertKnownImportedTask = async (...args) => {
+    const result = await verify(...args);
+    seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(result.index, {
+      remove: [indexedTask],
+    })), 'changed-index');
+    return result;
+  };
+  await assert.rejects(() => tracker.editEntry({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Routines dev call' } }), TrackerConflictError);
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].taskUrl,
+    original.taskUrl);
+});
+
+test('an imported target removed after queue acceptance remains an actionable sync conflict', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  const indexedTask = { id: fixedId, taskUrl: imported, durationSeconds: 60 };
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [original, indexedTask],
+  })), 'index-sha');
+  await service({ github, store }).queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Routines dev call' } });
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(
+    parseTaskIndex(github.files.get(TASK_INDEX_PATH).text, { user: 'alice' }), { remove: [indexedTask] })), 'changed-index');
+  await service({ github, store }).syncPending();
+  assert.equal(store.value.pendingWrites.length, 1);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'edit_invalid_identity');
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('queued edit rejects an invented imported identity without accepting or writing it', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const tracker = service({ github, store });
+  await assert.rejects(() => tracker.queueEntryEdit({ path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: 'acme/project/invented-task', taskTitle: 'Invented' } }), /existing imported task/i);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('queued edit verifies a teammate imported identity through the shared repository index', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const imported = 'acme/project/teammate-task', reads = [];
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const reports = { cachedMonthly: async () => null, loadRepositoryTask: async (taskUrl, options) => {
+    reads.push([taskUrl, options.scanAllUsers]); return [{ taskUrl, user: 'bob' }];
+  } };
+  const tracker = service({ github, store });
+  tracker.reports = reports;
+  const request = { path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: imported, taskTitle: 'Teammate task' } };
+  await tracker.queueEntryEdit(request);
+  const sync = service({ github, store });
+  sync.reports = reports;
+  await sync.syncPending();
+  assert.deepEqual(reads, [[imported, true], [imported, true]]);
+  assert.equal(parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' })[0].taskUrl, imported);
+});
+
+test('linked edits cannot create an unverified imported task identity', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const original = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  seedText(github, path, serializeMonthlyRecords([original]), 'monthly-sha');
+  const tracker = service({ github, store });
+  await assert.rejects(() => tracker.queueEntriesEdit({ entries: [{
+    path, originalSha: 'monthly-sha', index: 0, original,
+    edits: { taskUrl: 'acme/project/invented-task' },
+  }] }), /existing imported task/i);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('linked edits accept an existing imported identity without an HTTP URL and sync after restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
+  const first = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  const second = entry('2026-08-18T08:00:00.000Z', '2026-08-18T09:00:00.000Z', { issue: pull });
+  const imported = 'manticoresoftware/Routines/1-dev-call';
+  seedText(github, path, serializeMonthlyRecords([first, second]), 'monthly-sha');
+  seedText(github, TASK_INDEX_PATH, serializeTaskIndex(applyTaskIndexChanges(emptyTaskIndex('alice'), {
+    add: [first, second, { id: fixedId, taskUrl: imported, durationSeconds: 60 }],
+  })));
+  const tracker = service({ github, store });
+  const result = await tracker.queueEntriesEdit({ entries: [
+    { path, originalSha: 'monthly-sha', index: 0, original: first,
+      edits: { taskUrl: imported, taskTitle: 'Routines — #1 dev call' } },
+    { path, originalSha: 'monthly-sha', index: 1, original: second,
+      edits: { startedAt: '2026-08-18T08:01:00.000Z' } },
+  ] });
+  assert.equal(result.pending, true);
+  assert.equal(github.atomicWrites.length, 0);
+  await service({ github, store }).syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.deepEqual(saved.map(record => record.taskUrl), [imported, pull.url]);
+  assert.equal(saved[1].startedAt, '2026-08-18T08:01:00.000Z');
+  assert.equal(github.atomicWrites.length, 1);
+});
+
 test('Add time reuses only an existing imported task identity and keeps writes atomic', async () => {
   const github = new FakeGitHub(), tracker = service({ github });
   const imported = 'acme/project/imported-task';
@@ -2756,6 +3523,21 @@ test('Add time reuses only an existing imported task identity and keeps writes a
   })));
   const result = await tracker.addTime(request);
   assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
+});
+
+test('Add time accepts a teammate imported identity only after the shared index verifies it', async () => {
+  const github = new FakeGitHub(), tracker = service({ github });
+  const imported = 'acme/project/colleague-task';
+  const request = { taskUrl: imported, taskTitle: 'Colleague task',
+    startedAt: '2026-08-18T07:00:00.000Z', endedAt: '2026-08-18T08:00:00.000Z' };
+  const calls = [];
+  tracker.reports = { loadRepositoryTask: async (taskUrl, options) => {
+    calls.push([taskUrl, options.scanAllUsers]); return [{ taskUrl, user: 'bob' }];
+  } };
+  const result = await tracker.addTime(request);
+  assert.equal(result.entry.taskUrl, imported);
+  assert.deepEqual(calls, [[imported, true]]);
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path).sort(), ['.clockoli/tasks.json', 'times/2026-08/alice.jsonl']);
 });
 
@@ -2811,7 +3593,12 @@ test('Add time queued timer cannot sync after a completed interval changes acros
 test('Add time queued start retries after revalidating a nonoverlapping monthly change', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-08/alice.jsonl';
   await service({ github, store }).addTime({ taskUrl: issue.url, startedAt: '2026-08-18T08:45:00.000Z' });
-  seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z')]), 'raced');
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, path, serializeMonthlyRecords([entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z')]), 'raced');
+    github.updateTextsAtomic = atomic;
+    return atomic(...args);
+  };
   await service({ github, store }).syncPending();
   const pending = store.value.pendingWrites[0];
   assert.equal(pending.status, 'conflict');
@@ -2834,6 +3621,190 @@ test('Add time queued start cannot revalidate overlap and can be explicitly disc
   assert.equal(store.value.pendingWrites.length, 0);
   assert.equal(store.value.activeCache, null);
   assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('overlapping queued Add time start can align to the exact previous end without losing the running timer', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0], originalId = queued.nextActive.id;
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z')]), 'previous');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+  assert.deepEqual(await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') })
+    .resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: true });
+  const active = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(active.id, originalId);
+  assert.equal(active.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.equal(store.value.activeCache.startedAt, active.startedAt);
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.deepEqual(github.atomicWrites.at(-1).guards, [{ path, sha: 'previous' }]);
+});
+
+test('alignment refuses a later completed interval, remote timer, or unavailable GitHub without altering the queued start', async () => {
+  for (const scenario of ['later', 'remote', 'offline']) {
+    const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+    const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+    await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+    seedText(github, path, serializeMonthlyRecords([entry(
+      scenario === 'later' ? '2026-11-02T12:03:00.000Z' : '2026-11-02T10:08:00.000Z',
+      scenario === 'later' ? '2026-11-02T12:04:00.000Z' : '2026-11-02T12:01:22.296Z',
+    )]), 'previous');
+    await tracker.syncPending();
+    const queued = structuredClone(store.value.pendingWrites[0]), cached = structuredClone(store.value.activeCache);
+    if (scenario === 'remote') seedText(github, 'active/alice.json', serializeActiveRecord(queued.nextActive), 'saved');
+    if (scenario === 'offline') github.getText = async () => { throw new TypeError('network unavailable'); };
+    await assert.rejects(() => tracker.resolvePendingConflict(queued.id, 'align_queued_start'));
+    assert.deepEqual(store.value.pendingWrites[0], queued);
+    assert.deepEqual(store.value.activeCache, cached);
+  }
+});
+
+test('alignment cannot skip a completion in the current month after a queued start crosses a month boundary', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-12-01T00:06:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T23:59:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-11-30T22:00:00.000Z', '2026-11-30T23:59:22.296Z'),
+  ]), 'november');
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:02:00.000Z', '2026-12-01T00:03:00.000Z'),
+  ]), 'december');
+  await tracker.syncPending();
+  const before = structuredClone(store.value.pendingWrites[0]);
+  await assert.rejects(() => tracker.resolvePendingConflict(queued.id, 'align_queued_start'), /cannot safely follow/i);
+  assert.deepEqual(store.value.pendingWrites[0], before);
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('running Add time checks the next-month partition when another timezone is already on the next day', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'Pacific/Niue', clock: () => new Date('2026-11-30T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T08:00:00.000Z' }, { background: true });
+  const path = 'times/2026-12/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-30T10:00:00.000Z', '2026-11-30T11:00:00.000Z',
+    { entryDate: '2026-12-01', timezone: 'Pacific/Kiritimati' })]), 'ahead');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].conflictReason, 'add_time_overlap_changed');
+  assert.ok(github.reads.includes(path));
+  assert.equal(github.files.has('active/alice.json'), false);
+});
+
+test('completed Add time also checks a timezone-ahead partition at the interval end', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, timezone: 'Pacific/Niue', clock: () => new Date('2026-11-30T12:00:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T08:00:00.000Z',
+    endedAt: '2026-11-30T11:30:00.000Z' }, { background: true });
+  const path = 'times/2026-12/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-30T10:00:00.000Z', '2026-11-30T11:00:00.000Z',
+    { entryDate: '2026-12-01', timezone: 'Pacific/Kiritimati' })]), 'ahead');
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.ok(github.reads.includes(path));
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('alignment preserves a remotely started timer that races the guarded write', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, path, serializeMonthlyRecords([entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z')]), 'previous');
+  await tracker.syncPending();
+  const remote = active('2026-11-02T12:01:10.000Z', { id: deterministicRecordId('2026-11-02T12:01:10.000Z') });
+  const atomic = github.updateTextsAtomic.bind(github);
+  github.updateTextsAtomic = (...args) => {
+    seedText(github, 'active/alice.json', serializeActiveRecord(remote), 'remote');
+    return atomic(...args);
+  };
+  await tracker.resolvePendingConflict(queued.id, 'align_queued_start');
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, remote.id);
+  assert.equal(store.value.pendingWrites[0]?.status, 'conflict');
+  assert.equal(store.value.pendingWrites[0]?.nextActive.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.equal(github.atomicWrites.length, 0);
+  await assert.rejects(() => tracker.resolvePendingConflict(queued.id), /Another timer is running/i);
+  assert.equal(store.value.pendingWrites[0]?.status, 'conflict');
+});
+
+test('aligned start survives a failed atomic guard and retries from fresh monthly data', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), path = 'times/2026-11/alice.jsonl';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:05:00.000Z') });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-02T12:01:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0], previous = serializeMonthlyRecords([
+    entry('2026-11-02T10:08:00.000Z', '2026-11-02T12:01:22.296Z'),
+  ]);
+  seedText(github, path, previous, 'previous');
+  await tracker.syncPending();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let raced = false;
+  github.updateTextsAtomic = (...args) => {
+    if (!raced) { raced = true; seedText(github, path, previous, 'raced'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].nextActive.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.deepEqual(await service({ github, store, timezone: 'UTC', clock: () => new Date('2026-11-02T12:06:00.000Z') })
+    .resolvePendingConflict(queued.id), { resolved: true });
+  const saved = parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' });
+  assert.equal(saved.id, queued.nextActive.id);
+  assert.equal(saved.startedAt, '2026-11-02T12:01:22.296Z');
+  assert.deepEqual(github.atomicWrites.at(-1).guards, [{ path, sha: 'raced' }]);
+  assert.deepEqual(store.value.pendingWrites, []);
+});
+
+test('queued running Add time rechecks a new month after an earlier guarded write was unavailable', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  let now = '2026-11-30T00:05:00.000Z';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date(now) });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T00:00:00.000Z' }, { background: true });
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('temporarily offline'); }
+    return atomic(...args);
+  };
+  await tracker.syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  now = '2026-12-01T00:05:00.000Z';
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:01:00.000Z', '2026-12-01T00:02:00.000Z'),
+  ]), 'december');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date(now) }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('aligned queued start rechecks a new month after a transient guarded-write failure', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  let now = '2026-11-30T00:05:00.000Z';
+  const tracker = service({ github, store, timezone: 'UTC', clock: () => new Date(now) });
+  await tracker.addTime({ taskUrl: issue.url, startedAt: '2026-11-30T00:00:00.000Z' }, { background: true });
+  const queued = store.value.pendingWrites[0];
+  seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-11-29T22:00:00.000Z', '2026-11-30T00:00:22.296Z'),
+  ]), 'november');
+  await tracker.syncPending();
+  const atomic = github.updateTextsAtomic.bind(github);
+  let offline = true;
+  github.updateTextsAtomic = (...args) => {
+    if (offline) { offline = false; throw new TypeError('temporarily offline'); }
+    return atomic(...args);
+  };
+  assert.deepEqual(await tracker.resolvePendingConflict(queued.id, 'align_queued_start'), { resolved: false });
+  assert.equal(store.value.pendingWrites[0].status, 'pending');
+  now = '2026-12-01T00:05:00.000Z';
+  seedText(github, 'times/2026-12/alice.jsonl', serializeMonthlyRecords([
+    entry('2026-12-01T00:01:00.000Z', '2026-12-01T00:02:00.000Z'),
+  ]), 'december');
+  await service({ github, store, timezone: 'UTC', clock: () => new Date(now) }).syncPending();
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].nextActive.startedAt, '2026-11-30T00:00:22.296Z');
+  assert.equal(github.files.has('active/alice.json'), false);
+  assert.equal(github.atomicWrites.length, 0);
 });
 
 test('discard refuses a queued Add time start already committed despite a lost response', async () => {

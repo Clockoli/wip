@@ -90,7 +90,7 @@ An active file is one JSON object. A monthly file is JSON Lines with one compact
 
 The same ID is retained when a running record becomes completed. Rewriters preserve unknown root and nested fields, allowing additive evolution without erasing data from other producers. See [Data Format v1](data-format-v1.md) for the normative contract.
 
-`.clockoli/tasks.json` maps each canonical task identity to exact `totalSeconds`, `sessionCount`, and sorted `recordIds` values for that personal branch. Index keys are canonical HTTP(S) task URLs or bare unresolved Clockify identities in the form `owner/project/task-slug` (for example, `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). The bare identity is not a guessed URL; ordinary browser tracking still requires HTTP(S). The IDs let a queued completion be deduplicated exactly across an atomic-commit retry. GitHub sidebar totals read this small index from every user branch instead of scanning all monthly files. Missing, malformed, or inconsistent indexes fail closed; Clockoli does not report them as zero.
+`.clockoli/tasks.json` maps each canonical task identity to exact `totalSeconds`, `sessionCount`, and sorted `recordIds` values for that personal branch. New or edited entries can also carry a bounded `title` snapshot and its `titleSourceId`. Index keys are canonical HTTP(S) task URLs or bare unresolved Clockify identities in the form `owner/project/task-slug` (for example, `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). The bare identity is not a guessed URL; ordinary browser tracking still requires HTTP(S). The IDs let a queued completion be deduplicated exactly across an atomic-commit retry. GitHub sidebar totals read this small index from every user branch instead of scanning all monthly files. Missing, malformed, or inconsistent indexes fail closed; Clockoli does not report them as zero.
 
 ### URL normalization
 
@@ -170,7 +170,7 @@ Do not clear browser data or Clockoli local configuration while a Stop is waitin
 
 ## Aggregated reads and reports cache
 
-Tasks, Times, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
+Top tasks, Activity, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
 
 For each repository, Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
 

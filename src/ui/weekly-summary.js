@@ -8,7 +8,7 @@
   }
   function summarize(items, start, end, now) {
     if (!Array.isArray(items) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-      return { total: '0m', average: '0m', entries: 0, tasks: 0 };
+      return { total: '0m', entries: 0, tasks: 0 };
     }
     const taskUrls = new Set();
     let totalMs = 0, entries = 0;
@@ -25,8 +25,6 @@
     const minutes = Math.floor(totalMs / 60000);
     return {
       total: formatMinutes(minutes),
-      // This is per calendar day (including weekends), not per day with an entry.
-      average: formatMinutes(Math.floor(minutes / 7)),
       entries,
       tasks: taskUrls.size,
     };

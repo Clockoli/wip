@@ -16,13 +16,13 @@ The initial Clockoli prototype was imported from a local working copy. Its SHA-2
 53ada0a8efff547af3009d8ddbf56d73ed1fd6da40f1520f8ef6bc4571d1727f
 ```
 
-Clockoli patches `_renderDays()` so each band starts at local `00:00` instead of inheriting the arbitrary domain-start clock time. The reviewed patched SHA-256 is:
+Clockoli patches `_renderDays()` so each band starts at local `00:00` instead of inheriting the arbitrary domain-start clock time. The original reviewed patched SHA-256 was:
 
 ```text
 babd006be2f7c47768ba6b8aea960d650815af10eb50b1a867d8bee38ae1c8fe
 ```
 
-The Clockoli patch also keeps Calendar tasks below sticky labels, preserves focused tasks across Timeline renders so keyboard edits remain available, and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible.
+The Clockoli patch also keeps Calendar tasks below sticky labels, preserves focused tasks across Timeline and Calendar renders so keyboard edits remain available after a resize, and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible. The current reviewed vendor SHA-256 is pinned in `tests/adapter.test.js`.
 
 ## Commands
 

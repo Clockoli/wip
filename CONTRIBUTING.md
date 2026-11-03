@@ -26,6 +26,8 @@ timeline workspace checks.
 
 Chrome loads checked-in extension files directly. When changing the timeline source or adapter under `packages/task-timeline-component/`, regenerate `src/content/task-timeline-component.js` with `npm run build:timeline` before testing or loading the extension.
 
+Functional browser tests launch Chromium headlessly by default and should not open visible browser windows. Use a headed browser only for a deliberately requested manual visual check.
+
 To load the extension:
 
 1. Open `chrome://extensions`.
@@ -84,7 +86,7 @@ Read `docs/spec-compliance.md` before changing architecture or behavior. Read `d
 - Validate complete JSON/JSONL files; do not silently skip malformed records.
 - Preserve local-date, timezone, monthly partition, actor, producer, metadata, and metrics semantics.
 - Use blob SHAs for rewrites and stable record IDs for lookup. Preflight linked or cross-month mutations and publish them atomically.
-- Preserve FIFO, operation-ID-aware pending mutations. A stale Stop must not clear or resurrect a newer timer.
+- Preserve operation-ID-aware pending mutations and FIFO for dependent writes and timer lifecycle. Only provably independent completed-record writes may bypass a conflicted completed-record mutation; never discard the blocker. A stale Stop must not clear or resurrect a newer timer.
 
 ### UI behavior
 
@@ -166,8 +168,9 @@ When behavior depends on the current task, explicitly verify both a matching URL
 Update documentation in the same change when behavior, setup, privacy, storage, or troubleshooting changes. Keep these sources aligned:
 
 - `README.md` for the product overview;
-- `docs/getting-started.md` for user setup;
-- `docs/features.md` for behavior;
+- `docs/README.md` for the documentation index: its `## Category` headings and plain `- [Title](file.md)` entries drive the order and grouping on clockoli.com/docs. Each guide's `# Title` matches its index entry and is followed by a one-paragraph summary of at most 160 characters, used as the site's page description (`test/documentation-index.test.js` checks this);
+- `docs/install.md`, `docs/getting-started.md`, and `docs/concepts.md` for installation, user setup, and terminology;
+- the topic guide that owns the behavior, such as `docs/tracking.md`, `docs/activity.md`, `docs/editing-time.md`, `docs/reports.md`, `docs/invoicing.md`, or `docs/sync.md`;
 - `docs/data-and-privacy.md` for data flows and disclosure;
 - `docs/troubleshooting.md` for recovery steps;
 - `docs/data-format-v1.md` for the normative persistent format.

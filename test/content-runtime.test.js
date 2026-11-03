@@ -8,14 +8,69 @@ import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local
 
 const source = await readFile(new URL('../src/content/github.js', import.meta.url), 'utf8');
 const trackingCardSource = await readFile(new URL('../src/ui/tracking-card.js', import.meta.url), 'utf8');
+const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 const recoverySource = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 // The fake DOM does not mount the real timeline adapter. Render the shared panel's
 // non-timeline body so its tracker controls remain covered by these component tests.
-const domHarnessSource = trackingCardSource + '\n' + source.replace(
+const domHarnessSource = trackingCardSource + '\n' + taskSearchSource + '\n' + source.replace(
   'renderMenu({ compact: true, onClose: closeFullWidthPopup })',
   'renderMenu({ onClose: closeFullWidthPopup })',
 );
 assert.notEqual(domHarnessSource, source);
+
+test('Edit time accepts a selected imported task only in the entry destination', async () => {
+  const begin = source.indexOf('  async function openTimeEntryForm(entry, trigger) {');
+  const end = source.indexOf('\n  function overlapClock(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const queued = [];
+  let save;
+  const context = vm.createContext({
+    ClockoliTimeEntryForm: { openEdit: (_entry, callback) => { save = callback; } },
+    extensionPageMode: true, recent: [],
+    storedTaskIdentityOf: value => normalizeStoredTaskIdentity(value),
+    taskUrlOf: value => { try { return normalizeTaskUrl(value); } catch { return null; } },
+    taskTitleOf: value => value.taskTitle,
+    taskFromUrl: value => { try { return { taskUrl: normalizeTaskUrl(value) }; } catch { return null; } },
+    queueCalendarEntry: async (_entry, edits) => queued.push(edits), renderUi: () => {},
+  });
+  vm.runInContext(`${source.slice(begin, end)}\nthis.openTimeEntryForm = openTimeEntryForm;`, context);
+  const original = { id: 'record', taskUrl: 'https://example.com/old', taskTitle: 'Old',
+    destinationId: 'github:1', startedAt: '2026-10-18T09:00:00.000Z', endedAt: '2026-10-18T10:00:00.000Z',
+    description: '', _path: 'times/2026-10/alice.jsonl' };
+  await context.openTimeEntryForm(original);
+  const selected = { taskUrl: 'acme/project/imported', taskTitle: 'Imported', destinationId: 'github:1',
+    startedAt: original.startedAt, endedAt: original.endedAt, description: '' };
+  await save(selected);
+  assert.equal(queued[0]?.taskUrl, selected.taskUrl);
+  await assert.rejects(() => save({ ...selected, destinationId: 'github:2' }), /time repository/i);
+  assert.equal(queued.length, 1);
+});
+
+test('an older overlap read cannot replace a newer recheck for the same queue', async () => {
+  const begin = source.indexOf('  function loadStoppedOverlap(item) {');
+  const end = source.indexOf('\n  function projectedStoppedOverlap(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const requests = [], details = new Map();
+  let renders = 0;
+  const context = vm.createContext({
+    stoppedOverlapDetails: details, stoppedOverlapQueueSignature: 'same queue', syncIssuesOpen: true,
+    send: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    renderSyncIssues: () => { renders++; }, syncIssuesSignature: null,
+  });
+  vm.runInContext(`${source.slice(begin, end)}\nthis.load = loadStoppedOverlap;`, context);
+  const item = { destinationId: 'github:1', id: 'timer' }, key = 'github:1:timer';
+  context.load(item);
+  details.delete(key); // A user rechecks while the first GET is still in flight.
+  context.load(item);
+  requests[1].resolve({ verified: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(details.get(key)?.data?.verified, true);
+  const refreshedRenders = renders;
+  requests[0].reject(new Error('Stale read failed'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(details.get(key)?.data?.verified, true);
+  assert.equal(renders, refreshedRenders);
+});
 
 test('calendar tracking uses the stored identity in both the GitHub panel and Activity', () => {
   const begin = source.indexOf('  function trackableTaskIdentityOf(value) {');
@@ -81,6 +136,7 @@ class FakeNode {
     const index = this.parentElement.children.indexOf(this);
     return index > 0 ? this.parentElement.children[index - 1] : null;
   }
+  get childElementCount() { return this.children.length; }
   append(...nodes) {
     for (const node of nodes) {
       if (node && typeof node === 'object') {
@@ -1036,7 +1092,9 @@ test('changed Add time conflict offers revalidation and explicit queued-start di
   const messages = []; let confirmed = false;
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
-  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext', conflictReason: 'add_time_overlap_changed' };
+  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+    conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: { taskTitle: 'Meeting',
+      entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z' } }] };
   const document = {
     documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
@@ -1058,9 +1116,15 @@ test('changed Add time conflict offers revalidation and explicit queued-start di
   const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
   await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Recheck and retry start').at(-1);
+  const align = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start after previous entry').at(-1);
   const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
   assert.ok(retry?.onclick);
+  assert.ok(align?.onclick);
   assert.ok(discard?.onclick);
+  await align.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
+    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'align_queued_start' });
+  messages.length = 0;
   await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(confirmed, true);
   assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
@@ -1184,7 +1248,8 @@ test('recent rows expose durable titles and unified time-and-metadata editing tr
   assert.equal(form.value.startedAt, entry.startedAt);
   assert.equal(form.value.endedAt, entry.endedAt);
   assert.equal(typeof form.onEdit, 'function');
-  assert.match(source, /button\('Edit time', 'link-button entry-edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
+  assert.match(source, /entryActionButton\('Edit time', 'edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
+  assert.match(source, /entryActionButton\('Delete', 'delete', async/);
 });
 
 test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
@@ -1495,7 +1560,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T15:59:00.999+00:00'],
     ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
   ]);
   assert.equal(visibleOverlapWarnings().length, 0,
@@ -1511,7 +1576,7 @@ test('directly typed newer Start and previous Stop save as touching intervals wi
   await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
   request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
   assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T16:00:00.999+00:00'],
+    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T14:30:00.999+00:00'],
     ['2026-08-21T13:30:06.768+00:00', '2026-08-21T13:30:06.768+00:00'],
     ['2026-08-21T13:00:00.222+00:00', '2026-08-21T13:30:06.768+00:00'],
   ]);
@@ -1900,6 +1965,37 @@ test('Activity surfaces repository read failures and conflict omissions', async 
   assert.match(warning.textContent, /1 conflicting record was omitted/i);
 });
 
+test('Activity surfaces pending work and conflicts when opened from Reports in visual modes', async () => {
+  for (const mode of ['timeline', 'calendar']) {
+    documentNodes.clear(); createdNodes.length = 0;
+    const root = new FakeNode('div'); root.id = 'clockoli-times-root'; root.isConnected = true; documentNodes.set(root.id, root);
+    const syncStatus = new FakeNode('div'); syncStatus.id = 'activity-sync-status'; syncStatus.isConnected = true; documentNodes.set(syncStatus.id, syncStatus);
+    const location = { protocol: 'chrome-extension:', hostname: 'clockoli', pathname: '/src/times/times.html', href: 'chrome-extension://clockoli/src/times/times.html' };
+    const document = {
+      documentElement: new FakeNode('html'), activeElement: null,
+      createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
+      createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
+      querySelector: () => null, addEventListener() {},
+    };
+    const pendingWrites = [{ id: 'edit-A', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing' },
+      { id: 'add-B', operation: 'addTime', status: 'pending' }];
+    const context = vm.createContext({
+      location, document, localStorage: { getItem: () => mode, setItem() {} },
+      chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`,
+        sendMessage(message, callback) { callback({ ok: true, data: { configured: true, recent: [], pendingWrites, pendingCount: 2 } }); },
+      } },
+      setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
+    });
+    new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
+    new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.ok(syncStatus.walk().some(node => node.className.includes('sync-status-banner') && node.getAttribute('role') === 'alert'), `${mode} shows the banner above the chart`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'sync-issues-dialog'), `${mode} provides the review dialog`);
+    assert.ok(syncStatus.walk().some(node => node.className === 'conflict'), `${mode} shows the selected conflict and retry`);
+    assert.ok(syncStatus.walk().some(node => /waiting to sync/i.test(node.textContent || '')), `${mode} shows pending work`);
+  }
+});
+
 
 test('Times ignores a rejected initial load after navigating to another week', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -1977,7 +2073,7 @@ test('Times keeps every linked draft row mounted while filtering and saves the f
   const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   values[7].value = '15'; values[7].oninput({});
   assert.deepEqual(values.slice(0, 2).map(node => node.value), ['11', '15'], 'Y Start mirrors X Stop');
-  const filter = createdNodes.findLast(node => node.placeholder === 'URL or title');
+  const filter = createdNodes.findLast(node => node.getAttribute('aria-label') === 'Search activity');
   filter.value = '/x'; filter.oninput({});
   const filteredValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-8);
   assert.equal(filteredValues.length, 8, 'the linked Y row remains mounted even though it does not match the filter');
@@ -2076,6 +2172,7 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   });
   vm.runInContext(recoverySource, context);
   vm.runInContext(trackingCardSource, context);
+  vm.runInContext(taskSearchSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
     globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, queueActiveDescriptionEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
@@ -2169,6 +2266,8 @@ test('header totals-only polling preserves the description draft and updates exi
   const menu = root.querySelector('.menu'), input = menu.querySelector('.strip-description');
   const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
   const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
+  assert.ok(total, 'today total lives in the shared Statistic panel');
+  assert.equal(week, null, 'the running card does not duplicate weekly totals');
   const elapsed = menu.querySelector('.running-elapsed');
   input.value = 'Unsaved draft'; input.oninput?.({ target: input }); input.focus();
   for (const ms of [60_000, 60_500]) {
@@ -2181,7 +2280,7 @@ test('header totals-only polling preserves the description draft and updates exi
     assert.equal(h.document.activeElement, input);
     assert.equal(root.querySelector('[data-tracked-total="todayTrackedMs"]'), total);
     assert.equal(root.querySelector('[data-tracked-total="weekTrackedMs"]'), week);
-    assert.equal(total.textContent, '1m'); assert.equal(week.textContent, '1m');
+    assert.equal(total.textContent, '1m');
   }
   assert.equal(root.querySelector('.running-elapsed'), elapsed);
   assert.equal(elapsed.textContent, '1m');
@@ -2237,14 +2336,14 @@ test('header opening retries failed initial reads and retains Retry until recove
   assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
 });
 
-test('daily strip omits idle branding and panel List keeps its week navigation', () => {
+test('daily strip shows idle status and panel List keeps its week navigation', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const record = { id: 'today', taskUrl: 'https://example.com/today', taskTitle: 'Today task', entryDate: today, timezone: 'UTC', startedAt: new Date(now - 3600000).toISOString(), endedAt: new Date(now - 1800000).toISOString(), durationSeconds: 1800, _pending: true, _path: 'times/example' };
   const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, timelineEnabled: true, records: [record, { ...record, id: 'yesterday', taskTitle: 'Yesterday task', entryDate: '2000-01-01', startedAt: '2000-01-01T08:00:00Z', endedAt: '2000-01-01T08:30:00Z' }] });
   const menu = harness.renderMenu({ compact: true, onClose: () => {} });
   harness.attach(menu);
   let nodes = menu.walk();
-  assert.ok(!nodes.some(node => node.textContent === 'Not tracking'));
+  assert.ok(nodes.some(node => node.textContent === 'Not tracking'));
   assert.equal(menu.querySelector('.active-task-strip').querySelectorAll('.clockoli-mark').length, 0);
   assert.ok(nodes.some(node => node.textContent === 'Track this task'));
   assert.ok(nodes.some(node => node.textContent === 'Today task' && node.style.color === '#123456'));
@@ -2294,7 +2393,8 @@ test('active strip matches the Activity card without a favicon and saves its edi
   assert.ok(strip.classList.contains('is-active'));
   assert.equal(strip.querySelector('.running-status-live').textContent, 'Tracking now');
   assert.equal(strip.querySelector('.running-status-elapsed').getAttribute('role'), 'timer');
-  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
+  assert.equal(strip.querySelector('[data-tracked-total="todayTrackedMs"]'), null);
+  assert.equal(menu.querySelector('.activity-weekly-summary').querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '…');
   assert.equal(menu.querySelector('.strip-favicon'), null);
   assert.equal(menu.querySelector('.running-status-start').value, new Date(active.startedAt).toTimeString().slice(0, 5));
   const description = menu.querySelector('.strip-description');
@@ -3418,6 +3518,17 @@ test('Timeline details stops projecting a reverted draft over later authoritativ
 });
 
 for (const permissions of [[], ['favicon']]) {
+  test(`GitHub List favicon styling does not alter the permission fallback with permissions ${JSON.stringify(permissions)}`, () => {
+    const now = Date.parse('2026-09-05T12:00:00Z');
+    const entry = activityEntry('github-icon', '2026-09-05', '08', 'https://github.com/acme/app/issues/42');
+    const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
+      pageUrl: 'chrome-extension://clockoli/src/times/times.html', runtimeManifest: { permissions } });
+    const icon = harness.renderActivity().querySelector('.entry-record-favicon');
+    assert.equal(icon.tag, permissions.length ? 'img' : 'span');
+    assert.equal(icon.className.includes('site-github-favicon'), Boolean(permissions.length));
+    assert.equal(harness.timelineItems(0, now)[0].githubFavicon, true);
+  });
+
   test(`task favicon surfaces use ${permissions.length ? 'images' : 'monograms'} from the running manifest`, () => {
     const now = Date.parse('2026-09-05T12:00:00Z');
     const entry = activityEntry('site-icon', '2026-09-05', '08', 'https://www.example.com/work');
@@ -3451,15 +3562,17 @@ for (const permissions of [[], ['favicon']]) {
     assert.equal(resources.includes('/_favicon/'), Boolean(permissions.length));
   });
 
-  test(`imported task favicons stay hidden with permissions ${JSON.stringify(permissions)}`, () => {
+  test(`imported tasks show a theme-colored Clockoli mark with permissions ${JSON.stringify(permissions)}`, () => {
     const now = Date.parse('2026-09-05T12:00:00Z');
     const entry = activityEntry('imported-icon', '2026-09-05', '08', 'owner/repo/slug');
     const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] }, records: [entry], now,
       pageUrl: 'chrome-extension://clockoli/src/times/times.html', runtimeManifest: { permissions } });
     const icon = harness.renderActivity().querySelector('.entry-record-favicon');
-    assert.equal(icon.tag, 'img');
-    assert.equal(icon.hidden, true);
+    assert.equal(icon.tag, 'span');
+    assert.ok(icon.className.includes('site-clockoli-icon'));
+    assert.equal(icon.getAttribute('aria-hidden'), 'true');
     assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+    assert.match(harness.timelineItems(0, now)[0].fallbackIconUrl, /src\/assets\/clockoli-inverse-circle\.svg$/);
   });
 }
 
@@ -3474,6 +3587,27 @@ test('Timeline favicon projection survives an unavailable extension resource URL
   resourcesAvailable = false;
   assert.doesNotThrow(() => harness.timelineItems(0, now));
   assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+});
+
+test('Timeline favicon projection stops querying an invalidated extension context', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-reload', '2026-09-05', '08');
+  let checks = 0;
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {
+      get permissions() { checks += 1; throw new Error('Extension context invalidated.'); },
+    } });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, '');
+  assert.equal(checks, 1, 'the stale script must not retry extension APIs on every render');
+});
+
+test('Timeline favicon projection treats a missing manifest permission list as denied', () => {
+  const now = Date.parse('2026-09-05T12:00:00Z');
+  const entry = activityEntry('favicon-no-manifest', '2026-09-05', '08');
+  const harness = dailyPanelHarness({ state: { configured: true, active: null, pendingWrites: [] },
+    records: [entry], now, runtimeManifest: {} });
+  assert.equal(harness.timelineItems(0, now)[0].faviconUrl, null);
 });
 
 test('compact task switches preserve the edited active description in the completion', async () => {
@@ -3927,7 +4061,7 @@ test('mounted panel refresh updates controls, errors, totals and now while prese
   assert.equal(harness.document.activeElement.getAttribute('data-panel-action'), 'stop');
   harness.advance(60000); harness.updatePanelClocks();
   assert.equal(menu.querySelector('[data-tracked-total="todayTrackedMs"]').textContent, '3m');
-  assert.equal(menu.querySelector('[data-tracked-total="weekTrackedMs"]').textContent, '1h 2m');
+  assert.equal(menu.querySelector('[data-tracked-total="weekTrackedMs"]'), null);
 });
 
 test('visible overlap flags produce one named warning and open Activity without a mutation', async () => {
@@ -4123,7 +4257,7 @@ test('pending edits and deletes never display a saving status in Timeline or Cal
 });
 
 test('Timeline can delete an already locally stored completion before GitHub sync', async () => {
-  const now = Date.now();
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
   const entry = {
     id: 'unsynced-entry', taskUrl: 'https://example.com/local-task', taskTitle: 'Local task',
     timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
@@ -4151,8 +4285,8 @@ test('Timeline can delete an already locally stored completion before GitHub syn
 });
 
 test('deleting a Timeline block stays quiet through local queue acceptance and GitHub sync', async () => {
-  const now = Date.now();
-  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/entry.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
+  const now = new Date('2026-10-14T12:00:00.000Z').getTime();
+  const entry = { id: 'entry', taskUrl: 'https://example.com/work', timezone: 'UTC', startedAt: new Date(now - 2 * 60 * 60_000).toISOString(), endedAt: new Date(now - 60 * 60_000).toISOString(), _path: 'times/2026-10/alice.jsonl', _sha: 'sha', _index: 0, durationSeconds: 3600 };
   const initial = { configured: true, active: null, pendingCount: 0, pendingWrites: [], remoteWriteConfirmed: true };
   const pending = { ...initial, pendingCount: 1, pendingWrites: [{ id: 'queued-delete', operation: 'deleteEntry', status: 'pending' }] };
   let current = initial;
@@ -4206,10 +4340,10 @@ test('queue diagnostics stay hidden unless enabled in Advanced settings', () => 
   assert.ok(harness.renderMenu({ compact: true }).querySelector('.queue-diagnostics'));
 });
 
-async function runningStatusHarness(initial) {
+async function runningStatusHarness(initial, onReconnect, { onAuthExpired, onAuthRestored } = {}) {
   const moduleSource = await readFile(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
-  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [];
-  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null;
+  const container = new FakeNode('div'), events = new Map(), timers = new Map(), calls = [], confirmations = [], nextReads = [], changes = [], optionOpens = [];
+  let now = new Date(2026, 8, 5, 14).getTime(), state = initial, startError = null, stopError = null, confirmed = true, readError = null, refreshError = null;
   const document = {
     hidden: false, activeElement: null,
     createElement: tag => {
@@ -4223,6 +4357,7 @@ async function runningStatusHarness(initial) {
   };
   const context = vm.createContext({
     document, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    chrome: { runtime: { openOptionsPage: () => { optionOpens.push(true); } } },
     dateValue, timeValue, parseTime, localTimestamp,
     Date: class extends Date { static now() { return now; } },
     setInterval: (fn, delay) => { timers.set(delay, fn); return delay; }, clearInterval: id => timers.delete(id),
@@ -4236,6 +4371,7 @@ async function runningStatusHarness(initial) {
     if (message.type === 'GET_PAGE_STATE') {
       if (nextReads.length) return nextReads.shift();
       if (readError) throw readError;
+      if (message.refresh && refreshError) throw refreshError;
       return state;
     }
     if (message.type === 'START') {
@@ -4256,16 +4392,17 @@ async function runningStatusHarness(initial) {
     }
     throw new Error(`Unexpected message ${message.type}`);
   };
-  const destroy = context.mountRunningStatus(container, { send, onChange: change => { changes.push(change); } });
+  const destroy = context.mountRunningStatus(container, { send, onReconnect, onAuthExpired, onAuthRestored, onChange: change => { changes.push(change); } });
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
   await settle();
   return {
-    container, document, events, timers, calls, confirmations, changes, destroy, settle,
+    container, document, events, timers, calls, confirmations, changes, optionOpens, destroy, settle,
     find: className => container.walk().find(node => node.className === className),
     setState: value => { state = value; }, advance: ms => { now += ms; },
     failStop: () => { stopError = new Error('Stop rejected'); },
     failStart: () => { startError = new Error('Start rejected'); },
     failRead: value => { readError = value ? new Error('Worker restarting') : null; },
+    failRefresh: value => { refreshError = value ? Object.assign(new Error('Clockoli could not renew GitHub access.'), { code: 'auth_expired' }) : null; },
     cancelConfirmation: () => { confirmed = false; },
     holdNextRead: () => {
       let resolve;
@@ -4282,6 +4419,85 @@ function runningStatusState(hours = 1) {
     startedAt: new Date(now.getTime() - hours * 3_600_000).toISOString(), entryDate: '2026-09-05',
   } };
 }
+
+test('expired GitHub access shows a recovery button beside the running-status error', async () => {
+  let reconnects = 0;
+  const summaryError = { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' };
+  const h = await runningStatusHarness({ configured: true, active: null, summaryError }, () => { reconnects++; });
+  const button = h.find('running-status-reconnect');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  assert.equal(button.textContent, 'Reconnect GitHub');
+  assert.equal(button.type, 'button');
+  button.onclick();
+  assert.equal(reconnects, 1);
+  h.setState({ configured: true, active: null, summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('an expired GitHub session on other pages opens Settings for sign-in', async () => {
+  const h = await runningStatusHarness({ configured: true, active: null,
+    summaryError: { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' } });
+  const button = h.find('running-status-reconnect');
+  assert.equal(button.textContent, 'Sign in again with GitHub');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub sign-in required.');
+  button.onclick();
+  assert.equal(h.optionOpens.length, 1);
+  h.destroy();
+});
+
+test('local status polling preserves a failed GitHub renewal until a remote refresh succeeds', async () => {
+  let reconnects = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, () => { reconnects++; });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'));
+  h.timers.get(5_000)(); await h.settle();
+  assert.ok(h.find('running-status-reconnect'), 'local-only polling must not erase the failed refresh');
+  h.find('running-status-reconnect').onclick();
+  assert.equal(reconnects, 1);
+  h.failRefresh(false);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.destroy();
+});
+
+test('a handled renewal failure opens sign-in without a second error and clears after recovery', async () => {
+  let expired = 0, restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined, {
+    onAuthExpired: () => { expired++; }, onAuthRestored: () => { restored++; },
+  });
+  h.failRefresh(true);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(expired, 1);
+  assert.equal(h.find('running-status-error').hidden, true);
+  assert.equal(h.find('running-status-reconnect'), undefined);
+  h.timers.get(5_000)(); await h.settle();
+  assert.equal(h.find('running-status-error').hidden, true);
+  h.failRefresh(false);
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
+
+test('a remote summary error does not restore expired sign-in until a successful read', async () => {
+  let restored = 0;
+  const h = await runningStatusHarness({ configured: true, active: null }, undefined,
+    { onAuthRestored: () => { restored++; } });
+  h.failRefresh(true);
+  await h.destroy.refresh(); await h.settle();
+  h.failRefresh(false);
+  h.setState({ configured: true, active: null,
+    summaryError: { code: 'rate_limit', message: 'Try later' } });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 0);
+  assert.equal(h.find('running-status-error').textContent, 'Try later');
+  h.setState({ configured: true, active: null, todayTrackedMs: 0 });
+  await h.destroy.refresh(); await h.settle();
+  assert.equal(restored, 1);
+  h.destroy();
+});
 
 test('shared running status shows the idle badge and a fallback when there are no recent tasks', async () => {
   const h = await runningStatusHarness({ configured: true, active: null, recent: [], todayTrackedMs: null });
@@ -4641,6 +4857,85 @@ test('Activity displays and searches imported identities without creating a task
   assert.equal(root.querySelectorAll('.entry-record').length, 1);
   filter.value = 'absent'; filter.oninput({});
   assert.equal(root.querySelectorAll('.entry-record').length, 0);
+});
+
+test('Activity searches the displayed title and URL but not hidden issue fields', async () => {
+  const entry = { ...activityEntry('1', '2026-09-05', '08'), taskTitle: 'Fix renderer',
+    title: 'Outdated title', taskUrl: 'https://github.com/acme/app/pull/42',
+    issue: { type: 'pull_request', owner: 'acme', repo: 'app', number: 42 } };
+  const h = activityHarness([entry]);
+  const root = h.renderActivity();
+  const filter = root.querySelector('.times-filter').querySelector('input');
+  for (const term of ['Fix renderer', 'pull/42']) {
+    filter.value = term; filter.oninput({});
+    const search = [...h.timeouts.values()].find(item => item.delay === 250);
+    if (search) await search.callback();
+    assert.equal(root.querySelectorAll('.entry-record').length, 1, term);
+  }
+  for (const term of ['Outdated title', 'pull_request', 'Fix renderer https://']) {
+    filter.value = term; filter.oninput({});
+    assert.equal(root.querySelectorAll('.entry-record').length, 0, term);
+  }
+});
+
+test('Activity inline Start moves the whole interval while Stop only resizes it', async () => {
+  for (const side of ['start', 'stop']) {
+    const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+    const root = h.renderActivity();
+    const values = root.querySelectorAll('.inline-time-value');
+    const field = values[side === 'start' ? 1 : 3];
+    field.value = side === 'start' ? '16' : '46'; field.oninput({});
+    if (side === 'start') assert.equal(values[3].value, '46');
+    await root.querySelector('.inline-save').onclick({ isTrusted: true });
+    const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+    assert.equal(new Date(edits.startedAt).toISOString(), side === 'start' ? '2026-09-05T08:16:00.000Z' : '2026-09-05T08:00:00.000Z');
+    assert.equal(new Date(edits.endedAt).toISOString(), '2026-09-05T08:46:00.000Z');
+  }
+});
+
+test('inline Start shifts from the latest valid draft after Stop is temporarily empty', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+  const root = h.renderActivity(), values = root.querySelectorAll('.inline-time-value');
+  values[3].value = ''; values[3].oninput({});
+  values[1].value = '15'; values[1].oninput({});
+  values[3].value = '30'; values[3].oninput({});
+  values[1].value = '20'; values[1].oninput({});
+  assert.equal(values[3].value, '35');
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+  assert.equal(new Date(edits.startedAt).toISOString(), '2026-09-05T08:20:00.000Z');
+  assert.equal(new Date(edits.endedAt).toISOString(), '2026-09-05T08:35:00.000Z');
+});
+
+test('inline Start retains its last valid baseline across an invalid draft rerender', async () => {
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08')]);
+  let root = h.renderActivity(), values = root.querySelectorAll('.inline-time-value');
+  values[1].value = '15'; values[1].oninput({});
+  assert.equal(values[3].value, '45');
+  values[1].value = ''; values[1].oninput({});
+  root = h.renderActivity(); values = root.querySelectorAll('.inline-time-value');
+  assert.equal(values[1].value, '');
+  values[1].value = '20'; values[1].oninput({});
+  assert.equal(values[3].value, '50');
+  await root.querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0].edits;
+  assert.equal(new Date(edits.endedAt) - new Date(edits.startedAt), 30 * 60_000);
+});
+
+test('inline Start uses a linked neighbor Start as the latest duration baseline', async () => {
+  const later = { ...activityEntry('2', '2026-09-05', '09'), endedAt: '2026-09-05T10:00:00+00:00', durationSeconds: 3600 };
+  const h = activityHarness([activityEntry('1', '2026-09-05', '08'), later]);
+  const root = h.renderActivity(), rows = root.querySelectorAll('.entry-record');
+  const older = rows[1].querySelectorAll('.inline-time-value');
+  const newer = rows[0].querySelectorAll('.inline-time-value');
+  assert.deepEqual([older[0].value, newer[0].value], ['08', '09']);
+  older[3].value = '15'; older[2].value = '09'; older[2].oninput({}); older[3].oninput({});
+  assert.equal(newer[1].value, '15');
+  newer[1].value = '20'; newer[1].oninput({});
+  assert.equal(newer[3].value, '05');
+  await rows[0].querySelector('.inline-save').onclick({ isTrusted: true });
+  const edits = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries;
+  assert.equal(new Date(edits.find(item => item.original.id === '2').edits.endedAt).toISOString(), '2026-09-05T10:05:00.000Z');
 });
 
 test('Activity edits imported time and metadata without submitting a non-URL as a new task', async () => {

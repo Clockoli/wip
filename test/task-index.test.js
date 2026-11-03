@@ -52,6 +52,68 @@ test('task index applies exact edit, move, and delete deltas', () => {
   assert.equal(taskIndexRecord(changed, pull), null);
 });
 
+test('a queued completion preserves title snapshots already stored in a personal index', () => {
+  const index = { version: 1, storageLogin: 'alice', tasks: {
+    [issue]: { totalSeconds: 120, sessionCount: 1, recordIds: [i1],
+      title: 'Existing task', titleSourceId: i1, titleStartedAt: '2026-10-26T08:00:00.000Z' },
+  } };
+  const parsed = parseTaskIndex(JSON.stringify(index), { user: 'alice' });
+  const updated = applyTaskIndexChanges(parsed, { add: [{
+    ...entry(p1, issue, 60), taskTitle: 'Newer task title', startedAt: '2026-10-27T08:00:00.000Z',
+  }] });
+  assert.deepEqual(parseTaskIndex(serializeTaskIndex(updated), { user: 'alice' }).tasks[issue], {
+    totalSeconds: 180, sessionCount: 2, recordIds: [i1, p1],
+    title: 'Newer task title', titleSourceId: p1, titleStartedAt: '2026-10-27T08:00:00.000Z',
+  });
+});
+
+test('removing a title source retains other sessions without dangling title metadata', () => {
+  const index = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [
+    { ...entry(i1, issue, 60), taskTitle: 'Older title', startedAt: '2026-10-26T08:00:00.000Z' },
+    { ...entry(p1, issue, 120), taskTitle: 'Latest title', startedAt: '2026-10-27T08:00:00.000Z' },
+  ] });
+  const remaining = applyTaskIndexChanges(index, { remove: [entry(p1, issue, 120)] });
+  assert.deepEqual(remaining.tasks[issue], { totalSeconds: 60, sessionCount: 1, recordIds: [i1] });
+  assert.deepEqual(parseTaskIndex(serializeTaskIndex(remaining), { user: 'alice' }), remaining);
+});
+
+test('task index retains searchable titles and invalidates a removed title source', () => {
+  const titled = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [
+    { ...entry(i1, issue, 60), taskTitle: ' First task ' },
+    { ...entry(i2, issue, 120), taskTitle: 'Second task' },
+  ] });
+  assert.equal(parseTaskIndex(serializeTaskIndex(titled), { user: 'alice' }).tasks[issue].title, 'Second task');
+  const removed = applyTaskIndexChanges(titled, { remove: [entry(i2, issue, 120)] });
+  assert.equal(Object.hasOwn(removed.tasks[issue], 'title'), false);
+  const repaired = applyTaskIndexChanges(removed, { remove: [entry(i1, issue, 60)], add: [
+    { ...entry(i1, issue, 60), taskTitle: '' },
+  ] });
+  assert.equal(repaired.tasks[issue].title, '');
+  const corrupted = structuredClone(titled);
+  corrupted.tasks[issue].title = { unsafe: true };
+  assert.throws(() => parseTaskIndex(JSON.stringify(corrupted), { user: 'alice' }), /summary/i);
+});
+
+test('an untitled completion does not erase a known task title', () => {
+  const initial = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [
+    { ...entry(i1, issue, 60), taskTitle: 'Known task', startedAt: '2025-01-01T09:00:00.000Z' },
+  ] });
+  const next = applyTaskIndexChanges(initial, { add: [
+    { ...entry(i2, issue, 60), taskTitle: '', startedAt: '2026-01-01T09:00:00.000Z' },
+  ] });
+  assert.equal(next.tasks[issue].title, 'Known task');
+  assert.equal(next.tasks[issue].titleSourceId, i1);
+});
+
+test('editing an older record cannot replace the title of a newer session', () => {
+  const old = { ...entry(i1, issue, 60), taskTitle: 'Old title', startedAt: '2025-01-01T09:00:00.000Z' };
+  const recent = { ...entry(i2, issue, 60), taskTitle: 'New title', startedAt: '2026-01-01T09:00:00.000Z' };
+  const initial = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [old, recent] });
+  const edited = applyTaskIndexChanges(initial, { remove: [old], add: [{ ...old, description: 'Description only' }] });
+  assert.equal(edited.tasks[issue].title, 'New title');
+  assert.equal(edited.tasks[issue].titleSourceId, i2);
+});
+
 test('task index accepts and updates an unresolved Clockify identity without inventing a URL', () => {
   const index = applyTaskIndexChanges(emptyTaskIndex('alice'), { add: [entry(i1, unresolved, 120)] });
   assert.deepEqual(parseTaskIndex(serializeTaskIndex(index), { user: 'alice' }).tasks[unresolved], {

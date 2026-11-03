@@ -10,19 +10,60 @@ const destinations = [
   { id: 'github:21', owner: 'acme', repo: 'a-very-long-repository-name-for-narrow-screens', installationId: 10 },
 ];
 globalThis.requests = [];
+globalThis.deviceAttempt = null;
+globalThis.authorizedAgain = false;
+globalThis.rejectNextPoll = false;
+globalThis.failNextOnboardingRead = false;
+globalThis.expired = false;
+globalThis.reauthorizedExternally = false;
+globalThis.accessStillRejected = false;
+globalThis.silentPromotion = false;
+const originalAccessExpiry = Date.now() - 60_000;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   globalThis.requests.push(message.type);
+  if (message.type === 'START_DEVICE_FLOW') globalThis.deviceAttempt = {
+    attemptId: 'reconnect-attempt', userCode: 'ABCD-1234',
+    verificationUri: 'https://github.com/login/device', expiresAt: Date.now() + 900000,
+    nextPollAt: Date.now() + 900000, status: 'pending',
+  };
+  if (message.type === 'POLL_DEVICE_FLOW' && globalThis.authorizedAgain) {
+    globalThis.deviceAttempt = null;
+    globalThis.expired = false;
+  }
+  if (message.type === 'POLL_DEVICE_FLOW' && globalThis.rejectNextPoll) {
+    globalThis.deviceAttempt = null;
+    sendResponse({ ok: false, error: { code: 'invalid_device_flow', message: 'GitHub rejected this Clockoli authorization attempt. Start again.' } });
+    return;
+  }
+  if (message.type === 'GET_ONBOARDING_STATE' && globalThis.failNextOnboardingRead) {
+    globalThis.failNextOnboardingRead = false;
+    sendResponse({ ok: false, error: { code: 'temporary_failure', message: 'Temporary onboarding read failure' } });
+    return;
+  }
+  if (message.type === 'GET_PAGE_STATE' && message.refresh && globalThis.expired
+      && (!globalThis.reauthorizedExternally || globalThis.accessStillRejected)) {
+    sendResponse({ ok: false, error: { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' } });
+    return;
+  }
+  const onboardingState = {
+    ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat',
+      accessTokenExpiresAt: globalThis.reauthorizedExternally ? originalAccessExpiry + 28_800_000 : originalAccessExpiry },
+    candidateAuth: globalThis.authorizedAgain && !globalThis.silentPromotion ? { mode: 'github_app', githubLogin: 'octocat' } : null,
+    config: { owner: 'acme', repo: 'time-data', branch: 'main', recentDays: 7 },
+    verificationStatus: 'write_verified', destinations,
+  };
   const responses = {
-    GET_ONBOARDING_STATE: {
-      ready: true, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'octocat' },
-      config: { owner: 'acme', repo: 'time-data', branch: 'main', recentDays: 7 },
-      verificationStatus: 'write_verified', destinations,
-    },
-    RESUME_DEVICE_FLOW: null,
-    GET_PAGE_STATE: { configured: false, active: null, pendingWrites: [] },
+    GET_ONBOARDING_STATE: onboardingState,
+    RESUME_DEVICE_FLOW: globalThis.deviceAttempt,
+    START_DEVICE_FLOW: globalThis.deviceAttempt,
+    POLL_DEVICE_FLOW: globalThis.authorizedAgain
+      ? { status: 'authorized', githubUserId: 42, githubLogin: 'octocat' } : globalThis.deviceAttempt,
+    OPEN_DEVICE_FLOW_PAGE: { opened: true },
+    GET_STATE: { configured: true, active: null, pendingWrites: [] },
+    GET_PAGE_STATE: { configured: globalThis.expired || globalThis.authorizedAgain, active: null, pendingWrites: [] },
     GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
     GET_ADDON_SETTINGS: {},
-    DISCOVER_REPOSITORIES: { repositories: [{
+    DISCOVER_REPOSITORIES: { ...(globalThis.silentPromotion ? { onboardingState } : {}), repositories: [{
       installationId: 10, repoId: 22, owner: 'acme', repo: 'check-example',
       fullName: 'acme/check-example', eligible: true,
     }], installations: [] },
@@ -38,7 +79,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ], currentUsers: { 'github:20': 'octocat' }, availableUsers: ['octocat'],
     },
     LOAD_REPOSITORY_COLLABORATORS: {
-      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: false,
+      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: true,
+      avatarUsers: [{ login: 'Member', avatarUrl: null },
+        { login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/43?v=4' }],
       pendingUsers: [], pendingHasMore: false,
     },
   };
@@ -66,11 +109,17 @@ async function openOptions() {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extensionDirectory}`, `--load-extension=${extensionDirectory}`],
     });
+    const browserErrors = [];
+    context.on('console', entry => { if (entry.type() === 'error') browserErrors.push(entry.text()); });
+    context.on('pageerror', error => browserErrors.push(error.message));
+    await context.route('https://avatars.githubusercontent.com/u/43?v=4', route => route.fulfill({
+      status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="12" fill="#88aaff"/></svg>',
+    }));
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const page = await context.newPage();
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
     await expect(page.locator('.time-repository')).toHaveCount(2);
-    return { page, worker, context, extensionDirectory, profileDirectory };
+    return { page, worker, context, extensionDirectory, profileDirectory, browserErrors };
   } catch (error) {
     await context?.close();
     await rm(extensionDirectory, { recursive: true, force: true });
@@ -85,11 +134,179 @@ async function closeOptions(fixture) {
   await rm(fixture.profileDirectory, { recursive: true, force: true });
 }
 
+test('connected account can reauthorize without signing out or losing its repositories', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(page.locator('#reconnect-github')).toBeVisible();
+    await expect(page.locator('#connected-account')).toHaveText('@octocat');
+    await page.locator('#reconnect-github').click();
+    await expect(page.locator('#device-panel')).toBeVisible();
+    await expect(page.locator('#device-step')).toBeVisible();
+    await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('DISCONNECT_GITHUB_APP');
+    await page.reload();
+    await expect(page.locator('#device-panel')).toBeVisible();
+    await expect(page.locator('#device-step')).toBeVisible();
+    await worker.evaluate(() => { globalThis.authorizedAgain = true; });
+    await page.locator('#device-done').click();
+    await expect(page.locator('#device-panel')).toBeHidden();
+    await expect(page.locator('#connected-account')).toHaveText('@octocat');
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('DISCONNECT_GITHUB_APP');
+  } finally { await closeOptions(fixture); }
+});
+
+test('an authorized attempt survives a transient onboarding read failure without polling it again', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await worker.evaluate(() => { globalThis.expired = true; });
+    await page.reload();
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await page.locator('#authorize').click();
+    await expect(page.locator('#device-panel')).toBeVisible();
+    await worker.evaluate(() => {
+      globalThis.authorizedAgain = true;
+      globalThis.failNextOnboardingRead = true;
+    });
+    await page.locator('#device-done').click();
+    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    await expect(page.locator('#repository-step')).toBeVisible();
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    await page.waitForTimeout(5_200);
+    expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'POLL_DEVICE_FLOW').length)).toBe(1);
+    await page.reload();
+    await expect(page.locator('#repository-step')).toBeVisible();
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+  } finally { await closeOptions(fixture); }
+});
+
+test('renewal failure opens sign-in immediately without a duplicate status error', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await expect(page.locator('#reauth-required')).toBeHidden();
+    await worker.evaluate(() => { globalThis.expired = true; });
+    await page.reload();
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await expect(page.locator('#setup-progress')).toHaveCount(1);
+    await expect(page.locator('#setup-progress')).toBeHidden();
+    await expect(page.locator('#device-step')).toBeVisible();
+    await expect(page.locator('#authorize')).toBeVisible();
+    await expect(page.locator('#authorize')).toHaveText('Sign in again with GitHub');
+    await expect(page.locator('#connection-status')).toHaveText('Sign-in required');
+    await expect(page.locator('#connected')).toBeHidden();
+    await expect(page.locator('.running-status-error')).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('START_DEVICE_FLOW');
+    await page.waitForTimeout(5_200);
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await page.locator('#authorize').click();
+    await expect(page.locator('#device-step')).toBeVisible();
+    await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    await worker.evaluate(() => { globalThis.authorizedAgain = true; });
+    await page.locator('#device-done').click();
+    await expect(page.locator('#reauth-required')).toBeHidden();
+    await expect(page.locator('#connected')).toBeVisible();
+    await expect(page.locator('#connection-status')).toHaveText('Connected');
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('DISCONNECT_GITHUB_APP');
+  } finally { await closeOptions(fixture); }
+});
+
+test('sign-in required closes itself when another tab restores GitHub access', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    await worker.evaluate(() => { globalThis.expired = true; });
+    await page.reload();
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await worker.evaluate(() => { globalThis.reauthorizedExternally = true; });
+    await expect(page.locator('#reauth-required')).toBeHidden({ timeout: 12_000 });
+    await expect(page.locator('#connected')).toBeVisible();
+    await expect(page.locator('#connection-status')).toHaveText('Connected');
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+    const requests = await worker.evaluate(() => globalThis.requests);
+    expect(requests).not.toContain('START_DEVICE_FLOW');
+    expect(requests).not.toContain('DISCONNECT_GITHUB_APP');
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('new local authorization does not dismiss sign-in before GitHub access works', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await worker.evaluate(() => { globalThis.expired = true; });
+    await page.reload();
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await worker.evaluate(() => {
+      globalThis.reauthorizedExternally = true;
+      globalThis.accessStillRejected = true;
+    });
+    await page.waitForTimeout(5_500);
+    await expect(page.locator('#reauth-required')).toBeVisible();
+    await expect(page.locator('#connection-status')).toHaveText('Sign-in required');
+    const requests = await worker.evaluate(() => globalThis.requests);
+    expect(requests).not.toContain('DISCONNECT_GITHUB_APP');
+  } finally { await closeOptions(fixture); }
+});
+
+test('authorized device flow waiting for repository validation is not called sign-in required', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await worker.evaluate(() => { globalThis.expired = true; globalThis.authorizedAgain = true; });
+    await page.reload();
+    await expect(page.locator('#reauth-required')).toBeHidden();
+    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    await expect(page.locator('#repository-step')).toBeVisible();
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+  } finally { await closeOptions(fixture); }
+});
+
+test('silent repository promotion closes a stale sign-in state', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await worker.evaluate(() => { globalThis.expired = true; globalThis.authorizedAgain = true; });
+    await page.reload();
+    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    const priorDiscovery = await worker.evaluate(() => globalThis.requests.filter(type => type === 'DISCOVER_REPOSITORIES').length);
+    await worker.evaluate(() => { globalThis.reauthorizedExternally = true; globalThis.silentPromotion = true; });
+    await expect.poll(() => worker.evaluate(() => globalThis.requests.filter(type => type === 'DISCOVER_REPOSITORIES').length),
+      { timeout: 8_000 }).toBeGreaterThan(priorDiscovery);
+    await expect(page.locator('#connection-status')).toHaveText('Connected', { timeout: 10_000 });
+    await expect(page.locator('#onboarding')).toBeHidden();
+    await expect(page.locator('.time-repository')).toHaveCount(2);
+  } finally { await closeOptions(fixture); }
+});
+
+test('rejected reconnect attempt offers a new code without signing out or endless polling', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.locator('#reconnect-github').click();
+    await expect(page.locator('#device-panel')).toBeVisible();
+    await worker.evaluate(() => { globalThis.rejectNextPoll = true; });
+    await page.locator('#device-done').click();
+    await expect(page.locator('#message')).toContainText('Start again.');
+    await expect(page.locator('#device-panel')).toBeHidden();
+    await expect(page.locator('#reconnect-github')).toBeEnabled();
+    await expect(page.locator('#connected-account')).toHaveText('@octocat');
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('DISCONNECT_GITHUB_APP');
+  } finally { await closeOptions(fixture); }
+});
+
 async function expectReadOnlyRequests(worker) {
   const requests = await worker.evaluate(() => globalThis.requests);
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every(type => [
-    'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'GET_PAGE_STATE', 'GET_LOCAL_PREFERENCES',
+    'GET_STATE', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'GET_PAGE_STATE', 'GET_LOCAL_PREFERENCES',
     'GET_ADDON_SETTINGS', 'LOAD_TASKS', 'LOAD_REPOSITORY_COLLABORATORS',
   ].includes(type)), `Unexpected request types: ${requests.join(', ')}`).toBe(true);
 }
@@ -221,6 +438,31 @@ test('Merge tasks offers an imported identity only on the source side in Chromiu
     await expect(page.locator('#merge-queue-list .merge-queue-row')).toHaveCount(1);
     await expect(page.locator('#merge-tasks-submit')).toBeEnabled();
     await expectReadOnlyRequests(fixture.worker);
+    expect(errors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Merge people keeps the selected avatar visible in Chromium without another collaborator read', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.locator('#merge-task-destination').selectOption('github:20');
+    await expect(page.locator('#merge-people-selected img')).toHaveAttribute('src', 'https://avatars.githubusercontent.com/u/43?v=4');
+    await expect(page.locator('#merge-people-selected')).toHaveAttribute('aria-label', 'Selected people: octocat');
+    const reads = (await worker.evaluate(() => globalThis.requests)).filter(type => type === 'LOAD_REPOSITORY_COLLABORATORS').length;
+    await page.locator('#merge-people-filter').click();
+    await expect(page.locator('#merge-people-list input:checked')).toHaveCount(1);
+    await page.locator('#merge-people-all').click();
+    await expect(page.locator('#merge-people-selected')).toHaveAttribute('aria-label', 'No people selected');
+    await page.setViewportSize({ width: 375, height: 780 });
+    expect(await page.locator('#merge-people-select').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect((await worker.evaluate(() => globalThis.requests)).filter(type => type === 'LOAD_REPOSITORY_COLLABORATORS').length).toBe(reads);
+    await page.reload();
+    await page.locator('#merge-task-destination').selectOption('github:20');
+    await expect(page.locator('#merge-people-selected img')).toHaveAttribute('src', 'https://avatars.githubusercontent.com/u/43?v=4');
     expect(errors).toEqual([]);
   } finally { await closeOptions(fixture); }
 });

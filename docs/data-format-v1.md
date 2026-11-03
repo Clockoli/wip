@@ -1,4 +1,6 @@
-# Clockoli Data Format Specification
+# Data format v1
+
+The normative format of the files Clockoli writes to a time repository: active timers, monthly JSONL time records, and the task index.
 
 **Status:** Canonical Version 1
 **Scope:** Persistent Clockoli work data stored in the user's GitHub repository
@@ -215,7 +217,7 @@ url
 Rules:
 
 - `kind` and `id` are required;
-- `url` is optional in the general schema, but required for work created by the current browser extension;
+- `url` is optional in the general schema; the browser extension can record time against an existing imported task identity without a navigable HTTP(S) URL;
 - `title` is a bounded display snapshot and may be empty;
 - when a provider supplies an immutable object ID, writers should use a provider-qualified ID;
 - otherwise the current browser writer uses `url:{canonical-url}`; imported unresolved records may use `url:{owner/project/task-slug}`;
@@ -230,7 +232,9 @@ Clockoli URL canonicalization:
 - removes query strings and fragments from canonical GitHub issue/PR URLs;
 - preserves query strings and fragments for other URLs because they may identify different work.
 
-Imported unresolved Clockify work records and the personal-branch `.clockoli/tasks.json` projection recognize bare identities of the form `owner/project/task-slug` (for example `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). These are task identities, not navigable URLs: they have exactly three slash-separated segments, a valid owner, an alphanumeric-starting project containing only letters, digits, dots, underscores or hyphens, and a non-empty alphanumeric/hyphen task slug. Store that identity unchanged in `work_item.url` and in the task index. Browser-created work still requires a canonical HTTP(S) URL; imports do not guess a GitHub URL from an unresolved identity.
+Imported unresolved Clockify work records and the personal-branch `.clockoli/tasks.json` projection recognize bare identities of the form `owner/project/task-slug` (for example `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). These are task identities, not navigable URLs: they have exactly three slash-separated segments, a valid owner, an alphanumeric-starting project containing only letters, digits, dots, underscores or hyphens, and a non-empty alphanumeric/hyphen task slug. Store that identity unchanged in `work_item.url` and in the task index. The browser extension may use an existing verified imported identity for tracking and editing in its time repository; direct entry of a new task identity uses a canonical HTTP(S) URL. Imports do not guess a GitHub URL from an unresolved identity.
+
+The personal-branch `.clockoli/tasks.json` index has `version: 1`, `storageLogin`, and a `tasks` map keyed by canonical task identity. Each task summary has nonnegative `totalSeconds`, positive `sessionCount`, and strictly sorted unique `recordIds` (exactly one per session). A summary may additionally have **both** `title` (a normalized display snapshot of at most 300 characters, including an empty string) and `titleSourceId` (one of its `recordIds`); `titleStartedAt` records that source's timestamp when available. A newer untitled completion does not erase an older nonempty title, and editing an older record does not replace a newer title. These fields are updated atomically with completed-record changes. If the source record is removed without a replacement title, the title fields are removed; readers reconstruct older missing titles from validated monthly records rather than inventing them. Older index entries without these fields remain valid and do not require a bulk rewrite of another person's branch.
 
 ---
 
@@ -526,7 +530,7 @@ Additional rules:
 - duplicate IDs in one monthly file are rejected;
 - storage-path month must equal `activity.local_date.slice(0, 7)`;
 - the actor name must match the file's immutable storage login for data created by the current human tracker;
-- current browser-created work items require a valid canonical HTTP(S) URL;
+- browser-created work items use a canonical HTTP(S) URL or a verified existing imported identity in the selected time repository;
 - malformed or structurally invalid files are rejected as a whole, never partially ignored.
 
 ---

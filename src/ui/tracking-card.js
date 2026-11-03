@@ -7,7 +7,7 @@
     live.textContent = 'Tracking now';
     const metrics = document.createElement('div');
     metrics.className = 'running-status-metrics';
-    metrics.append(elapsed, today);
+    metrics.append(elapsed, ...(today ? [today] : []));
     root.classList.add('tracking-card');
     root.append(live, task, ...(description ? [description] : []), metrics, stop);
     return { live, metrics };

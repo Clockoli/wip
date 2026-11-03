@@ -29,6 +29,13 @@
   apply();
   document.addEventListener('DOMContentLoaded', () => {
     const control = document.querySelector('.page-theme-toggle');
+    const brand = document.querySelector('.page-tabs .page-brand');
+    if (brand && control) {
+      const group = document.createElement('div');
+      group.className = 'page-brand-controls';
+      brand.before(group);
+      group.append(brand, control);
+    }
     control?.addEventListener('click', () => {
       const next = document.documentElement.dataset.clockoliTheme === 'dark' ? 'light' : 'dark';
       try { window.localStorage.setItem(key, next); } catch { temporaryChoice = next; }

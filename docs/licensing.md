@@ -1,4 +1,6 @@
-# Clockoli licensing and source releases
+# Licensing and source releases
+
+Clockoli is free software under GPLv3. Each release comes with license notices and a matching source archive.
 
 The original Clockoli code and TaskTimeline are copyright © 2026
 **Manticore Software LTD** (https://manticoresearch.com). See

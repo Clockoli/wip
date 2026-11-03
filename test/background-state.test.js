@@ -6,6 +6,7 @@ import { TrackerService } from '../src/services/tracker.js';
 import { buildActiveTimer, buildEntry } from '../src/domain/records.js';
 import { parseMonthlyRecords, serializeActiveRecord, serializeMonthlyRecords } from '../src/domain/work-records.js';
 import { assertMessageAllowed } from '../src/background/message-policy.js';
+import { taskUrlOf } from '../src/domain/values.js';
 import { loadDestinationRecords } from '../src/services/reports.js';
 
 const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
@@ -36,6 +37,56 @@ test('pending projection includes bounded redacted timing diagnostics only', () 
     { at: '2026-09-10T16:02:32.000Z', message: 'token=[redacted]' },
   ]);
   assert.equal(JSON.stringify(result).includes('secret'), false);
+});
+
+test('extension-only queued context identifies old edits and path mismatch without leaking raw records', () => {
+  const context = vm.createContext({});
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('function destinationSaveConfirmed(')), context);
+  const operation = {
+    id: 'queued-edit', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing',
+    request: { path: 'times/2026-11/alice.jsonl', original: {
+      id: 'original-id', entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T16:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task', description: 'SECRET DESCRIPTION',
+    }, edits: { endedAt: '2026-10-29T17:00:00.000Z', description: 'SECRET DRAFT' } },
+    conflictWith: { id: 'other-id', entryDate: '2026-10-29', startedAt: '2026-10-29T16:30:00.000Z',
+      endedAt: '2026-10-29T18:00:00.000Z', taskTitle: 'Other work', description: 'SECRET OTHER' },
+  };
+  const publicShape = plain(context.safePendingProjection(operation, destinationId));
+  assert.equal(Object.hasOwn(publicShape, 'subjects'), false);
+  assert.equal(Object.hasOwn(publicShape, 'conflictWith'), false);
+  const detail = plain(context.safePendingProjection(operation, destinationId, { includeDetails: true }));
+  assert.deepEqual(detail.subjects, [{
+    original: { entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T16:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task' },
+    proposed: { entryDate: '2026-10-29', startedAt: '2026-10-29T08:00:00.000Z', endedAt: '2026-10-29T17:00:00.000Z',
+      taskTitle: 'Paid time off', taskUrl: 'https://example.com/task' }, queuedMonth: '2026-11', descriptionChanged: true,
+  }]);
+  assert.deepEqual(detail.conflictWith, { entryDate: '2026-10-29', startedAt: '2026-10-29T16:30:00.000Z',
+    endedAt: '2026-10-29T18:00:00.000Z', taskTitle: 'Other work' });
+  assert.equal(JSON.stringify(detail).includes('SECRET'), false);
+  assert.equal(JSON.stringify(detail).includes('times/'), false);
+  assert.equal(JSON.stringify(detail).includes('original-id'), false);
+  const linked = { ...operation, operation: 'editEntries', request: { entries: Array.from({ length: 5 }, () => operation.request) } };
+  assert.equal(plain(context.safePendingProjection(linked, destinationId, { includeDetails: true })).subjects.length, 5);
+  const descriptionOnly = { ...operation, request: { ...operation.request, edits: { description: 'SECRET DRAFT' } } };
+  const descriptionDetail = plain(context.safePendingProjection(descriptionOnly, destinationId, { includeDetails: true }));
+  assert.equal(descriptionDetail.subjects[0].descriptionChanged, true);
+  assert.deepEqual(descriptionDetail.subjects[0].original, descriptionDetail.subjects[0].proposed);
+  assert.equal(JSON.stringify(descriptionDetail).includes('SECRET'), false);
+});
+
+test('queued running start exposes only safe identity and precise start in extension detail', () => {
+  const context = vm.createContext({});
+  vm.runInContext(worker.slice(worker.indexOf('function diagnosticError('), worker.indexOf('function destinationSaveConfirmed(')), context);
+  const operation = { id: 'queued', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+    nextActive: { id: 'private', taskTitle: 'Meeting', taskUrl: 'https://example.com/meeting',
+      entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z', description: 'SECRET NOTES' } };
+  assert.equal(Object.hasOwn(plain(context.safePendingProjection(operation, destinationId)), 'subjects'), false);
+  const detail = plain(context.safePendingProjection(operation, destinationId, { includeDetails: true }));
+  assert.deepEqual(detail.subjects, [{ proposed: { entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z',
+    taskTitle: 'Meeting', taskUrl: 'https://example.com/meeting' } }]);
+  assert.equal(JSON.stringify(detail).includes('SECRET'), false);
+  assert.equal(JSON.stringify(detail).includes('private'), false);
 });
 
 test('Activity returns the current safe pending/conflict projection after records load', async () => {
@@ -263,12 +314,15 @@ test('weekly Activity overlays queued edits before overlap filtering, including 
 
 test('page state exposes full totals while retaining safe active and pending projections', async () => {
   const active = { id: 'running', taskUrl: 'https://example.org/task', startedAt: '2026-09-05T08:00:00Z', entryDate: '2026-09-05', timezone: 'Asia/Bangkok', private: 'not projected' };
+  const pending = { id: 'queued', operation: 'editEntry', stage: 'editEntry', status: 'conflict',
+    request: { path: 'times/2026-10/alice.jsonl', original: { entryDate: '2026-09-05', taskTitle: 'Private task',
+      startedAt: '2026-09-05T08:00:00Z', endedAt: '2026-09-05T09:00:00Z', description: 'SECRET' }, edits: {} } };
   const tracker = {
-    getState: async () => ({ active, recent: [], pendingWrites: [], todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
+    getState: async () => ({ active, recent: [], pendingWrites: [pending], todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
     loadMenuData: async () => ({ todayTrackedMs: 3_600_000, weekTrackedMs: 7_200_000, remoteWriteConfirmed: true }),
   };
   const context = vm.createContext({ assertMessageAllowed,
-    chrome: { runtime: { getURL: () => origin } },
+    chrome: { runtime: { getURL: path => origin + (path || '') } },
     configuredSnapshot: async () => ({ registry, auth: {} }),
     trackerForDestination: async () => tracker,
     store: {
@@ -284,7 +338,102 @@ test('page state exposes full totals while retaining safe active and pending pro
   assert.equal(result.active.entryDate, active.entryDate);
   assert.equal(result.active.timezone, active.timezone);
   assert.equal(Object.hasOwn(result.active, 'private'), false);
+  assert.equal(result.pendingWrites[0].subjects[0].original.taskTitle, 'Private task');
+  const contentState = plain(await context.handle({ type: 'GET_PAGE_STATE' },
+    { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }));
+  assert.equal(Object.hasOwn(contentState.pendingWrites[0], 'subjects'), false);
+  assert.equal(JSON.stringify(contentState).includes('Private task'), false);
+  assert.equal(JSON.stringify(result).includes('SECRET'), false);
   await assert.rejects(() => context.handle({ type: 'LOAD_TIMES' }, { url: 'https://example.org' }), /extension|allowed|trusted/i);
+});
+
+test('read-only Activity timer check exposes GitHub-only active without changing local tracking', async () => {
+  const remote = { id: 'remote', taskUrl: 'https://github.com/acme/repo/issues/1', startedAt: '2026-10-27T08:00:00.000Z', timezone: 'Europe/Warsaw', description: 'private' };
+  let localActive = null, remoteRead = remote;
+  const context = vm.createContext({ assertMessageAllowed, taskUrlOf,
+    chrome: { runtime: { getURL: path => origin + (path || '') } },
+    configuredSnapshot: async () => ({ registry, auth: {} }),
+    trackerForDestination: async (_id, options) => {
+      assert.equal(options.persistUser, false);
+      return {
+        getState: async ({ refresh } = {}) => {
+          assert.notEqual(refresh, true); // The check must not refresh or mutate local activeCache.
+          return { active: localActive, recent: [], pendingWrites: [] };
+        },
+        readRemoteActive: async () => remoteRead,
+      };
+    },
+    store: { getTrackingSnapshot: async () => ({ activeTimer: localActive ? { destinationId } : null }),
+      getLocalPreferences: async () => ({ projects: [] }) },
+  });
+  installWorkerHandler(context);
+  const result = plain(await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender));
+  assert.deepEqual(result.remoteTimers, [{ destinationId, startedAt: remote.startedAt, timezone: remote.timezone }]);
+  assert.equal(JSON.stringify(result).includes('private'), false);
+  localActive = remote;
+  assert.deepEqual(plain((await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender)).remoteTimers), []);
+  localActive = null; remoteRead = undefined;
+  assert.deepEqual(plain((await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender)).remoteTimers), []);
+  await assert.rejects(() => context.handle({ type: 'GET_REMOTE_TIMER_STATUS', payload: {} }, sender), /payload/i);
+  await assert.rejects(() => context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }), /allowed/i);
+});
+
+test('read-only remote timer context does not persist a missing local user', async () => {
+  let writes = 0;
+  const context = vm.createContext({
+    requireConfiguredDestinationId: async (_store, id) => id,
+    configuredSnapshot: async () => ({ config: { repoId: 1 }, auth: { githubLogin: 'alice' } }),
+    githubForConfig: () => ({}), ReportService: class {},
+    TrackerService: class { constructor(options) { this.user = options.user; } },
+    store: { destinationStore: () => ({ getState: async () => ({ user: null }),
+      patchState: async () => { writes++; } }) },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function contextForDestination('), worker.indexOf('function emitReportProgress(')), context);
+  const tracker = await context.trackerForDestination(destinationId, { localOnly: true, persistUser: false });
+  assert.equal(tracker.user, 'alice');
+  assert.equal(writes, 0);
+});
+
+test('stopped overlap review and repair require Activity, a configured destination and a bounded edit', async () => {
+  const calls = [];
+  const context = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: path => origin + (path || '') } }, store: {},
+    requireConfiguredDestinationId: async (_store, id) => {
+      if (id !== destinationId) throw new Error('Unknown destination');
+      return id;
+    },
+    trackerForDestination: async id => {
+      calls.push(['tracker', id]);
+      return {
+        getStoppedOverlapContext: async timerId => { calls.push(['read', timerId]); return { blocked: { id: timerId } }; },
+        resolveStoppedOverlap: async (timerId, edit) => { calls.push(['edit', timerId, edit.side]); return { resolved: true }; },
+        deleteStoppedOverlap: async (timerId, options) => { calls.push(['delete', timerId, options.side]); return { resolved: true }; },
+      };
+    },
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  installWorkerHandler(context);
+  const read = { type: 'GET_STOPPED_OVERLAP', destinationId, id: 'timer-id' };
+  const edit = { type: 'RESOLVE_STOPPED_OVERLAP', destinationId, id: 'timer-id', side: 'previous',
+    startedAt: '2026-11-02T09:08:00.000Z', endedAt: '2026-11-02T11:00:00.000Z' };
+  const remove = { type: 'DELETE_STOPPED_OVERLAP', destinationId, id: 'timer-id', side: 'local' };
+  assert.deepEqual(plain(await context.handle(read, sender)), { blocked: { id: 'timer-id' } });
+  for (const message of [read, edit, remove]) {
+    await assert.rejects(() => context.handle(message, { url: `${origin}src/popup/popup.html` }), /Only Activity/i);
+    await assert.rejects(() => context.handle(message, { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }), /allowed/i);
+  }
+  await assert.rejects(() => context.handle({ ...edit, destinationId: 'github:2' }, sender), /Unknown destination/);
+  await assert.rejects(() => context.handle({ ...edit, side: 'other' }, sender), /Invalid overlap edit/);
+  await assert.rejects(() => context.handle({ ...edit, startedAt: 'garbage' }, sender), /Invalid overlap edit/);
+  await assert.rejects(() => context.handle({ ...edit, taskUrl: 'https://example.org' }, sender), /Invalid overlap request/);
+  await assert.rejects(() => context.handle({ ...remove, destinationId: 'github:2' }, sender), /Unknown destination/);
+  await assert.rejects(() => context.handle({ ...remove, side: 'other' }, sender), /Invalid overlap delete/);
+  await assert.rejects(() => context.handle({ ...remove, taskUrl: 'https://example.org' }, sender), /Invalid overlap request/);
+  assert.deepEqual(plain(await context.handle(edit, sender)), { resolved: true });
+  assert.deepEqual(plain(await context.handle(remove, sender)), { resolved: true });
+  assert.deepEqual(calls.filter(call => call[0] === 'edit'), [['edit', 'timer-id', 'previous']]);
+  assert.deepEqual(calls.filter(call => call[0] === 'delete'), [['delete', 'timer-id', 'local']]);
+  assert.equal(calls.filter(call => call[0] === 'sync').length, 2);
 });
 
 test('real page-state handler confirms a used destination without requiring summaries or records in unused ready destinations', async () => {

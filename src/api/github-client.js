@@ -395,7 +395,8 @@ export class GitHubClient {
     }
     return { users: collaborators.slice(0, 4).map(user => ({
       id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
-    })), hasMore: collaborators.length > 4 };
+    })), hasMore: collaborators.length > 4,
+    avatarUsers: collaborators.map(user => ({ login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) })) };
   }
 
   async listRepositoryCollaboratorProfiles() {

@@ -11,6 +11,7 @@ import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/val
 const html = await readFile(new URL('../src/options/options.html', import.meta.url), 'utf8');
 const widthCss = await readFile(new URL('../src/styles/interface-width.css', import.meta.url), 'utf8');
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
+const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 
 test('Settings stays in a centered column regardless of the shared width preference', () => {
   assert.match(html, /<main class="settings-main">/);
@@ -63,6 +64,10 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
     ClockoliRecovery: { actionFor: () => null },
     chrome: { tabs: { getCurrent: async () => ({ id: 11, windowId: 1 }), onActivated: { addListener(handler) { tabListeners.activated = handler; } } }, runtime: { sendMessage(request, callback) {
+      if (request.type === 'RESUME_DEVICE_FLOW') {
+        callback({ ok: true, data: null });
+        return;
+      }
       if (request.type === 'LOAD_REPOSITORY_COLLABORATORS' && !collaboratorReplies) {
         callback({ ok: true, data: { users: [], hasMore: false } });
         return;
@@ -75,6 +80,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
     } } },
   });
+  vm.runInContext(taskSearchSource, context);
   vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
   return {
     nodes, requests, timers, context, windowListeners, documentListeners, tabListeners,
@@ -777,6 +783,98 @@ test('People multi-select filters checkboxes and Select all toggles every person
   assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople].sort())', page.context)), ['alice', 'bob', 'octocat']);
   page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
   assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify([...mergePeople])', page.context)), []);
+});
+
+test('Merge people shows selected identities using already loaded repository avatars without extra requests', async () => {
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: request.destinationId === 'github:1'
+      ? [{ login: 'Octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' }]
+      : [{ login: 'Other', avatarUrl: 'https://avatars.githubusercontent.com/u/3?v=4' }],
+      avatarUsers: request.destinationId === 'github:1'
+        ? [{ login: 'Octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' },
+          { login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/2?v=4' }]
+        : [{ login: 'Other', avatarUrl: 'https://avatars.githubusercontent.com/u/3?v=4' }], hasMore: true }
+    : request.type === 'LOAD_TASKS'
+      ? { tasks: [], currentUsers: { 'github:1': 'octocat' }, availableUsers: ['octocat', 'ALICE', 'external'] } : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time-data' },
+    'github:2': { owner: 'acme', repo: 'other' },
+  } } });
+  await new Promise(setImmediate);
+  page.nodes.get('merge-tasks').hidden = false;
+  page.nodes.get('merge-task-period').value = 'one-month';
+  await page.context.refreshMergeTasks();
+  const selected = page.nodes.get('merge-people-selected');
+  assert.match(selected.attributes['aria-label'], /octocat/);
+  assert.equal(selected.querySelector('.merge-person-avatar').children[0].src, 'https://avatars.githubusercontent.com/u/1?v=4');
+  assert.equal(page.nodes.get('merge-people-list').children[1].children[1].children[0].src, 'https://avatars.githubusercontent.com/u/2?v=4');
+  const alice = page.nodes.get('merge-people-list').children[1].children[0];
+  alice.checked = true; alice.listeners.change();
+  assert.match(selected.attributes['aria-label'], /ALICE/);
+  assert.equal(selected.querySelectorAll('.merge-person-avatar').filter(avatar => avatar.children.length).length, 2);
+  page.nodes.get('merge-people-all').listeners.click({ stopPropagation() {} });
+  assert.match(selected.attributes['aria-label'], /external/);
+  assert.equal(selected.querySelectorAll('.merge-person-avatar').filter(avatar => avatar.children.length).length, 2, 'unknown accounts use an initial, not a fabricated avatar');
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS').length, 2);
+  page.nodes.get('merge-task-destination').value = 'github:2';
+  page.context.renderMergePeople(['octocat']);
+  assert.equal(selected.querySelectorAll('.merge-person-avatar').filter(avatar => avatar.children.length).length, 0, 'avatars never leak between repositories');
+});
+
+test('Merge people list restores initials when a collaborator avatar becomes null or its refresh fails', async () => {
+  let result = { users: [{ login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' }] };
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS' ? result : {} });
+  page.render({ ...connectedState, destinationRegistry: { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time-data' },
+  } } });
+  await new Promise(setImmediate);
+  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
+  page.context.renderMergePeople(['octocat']);
+  const listAvatar = page.nodes.get('merge-people-list').children[0].querySelector('.merge-person-avatar');
+  assert.equal(listAvatar.children[0].src, 'https://avatars.githubusercontent.com/u/1?v=4');
+  const reload = () => page.context.loadRepositoryCollaborators(
+    page.nodes.get('time-repository-list').children[0], { id: 'github:1' }, page.nodes.get('time-repository-list'));
+  result = { users: [{ login: 'octocat', avatarUrl: null }] };
+  await reload();
+  assert.equal(listAvatar.textContent, 'O');
+  assert.equal(listAvatar.children.length, 0);
+  result = { users: [{ login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' }] };
+  await reload();
+  assert.equal(listAvatar.children.length, 1);
+  result = new Error('Collaborators unavailable');
+  await reload();
+  assert.equal(listAvatar.textContent, 'O');
+  assert.equal(listAvatar.children.length, 0);
+  assert.equal(page.nodes.get('merge-people-selected').querySelector('.merge-person-avatar').textContent, 'O');
+});
+
+test('Merge people immediately removes old-account avatars from the same selected repository', async () => {
+  let replyForNewAccount;
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? request.destinationId === 'github:1' && replyForNewAccount
+      ? new Promise(resolve => { replyForNewAccount = resolve; })
+      : { users: [{ login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' }] } : {} });
+  const destinations = { defaultDestinationId: 'github:1', destinations: {
+    'github:1': { owner: 'acme', repo: 'time-data' },
+  } };
+  page.render({ ...connectedState, destinationRegistry: destinations });
+  await new Promise(setImmediate);
+  vm.runInContext("mergePeople = new Set(['octocat']);", page.context);
+  page.context.renderMergePeople(['octocat']);
+  const listAvatar = page.nodes.get('merge-people-list').children[0].querySelector('.merge-person-avatar');
+  const selected = page.nodes.get('merge-people-selected');
+  assert.equal(listAvatar.children.length, 1);
+  assert.equal(selected.querySelector('.merge-person-avatar').children.length, 1);
+  replyForNewAccount = true;
+  page.render({ ...connectedState, auth: { ...connectedState.auth, githubLogin: 'alice' }, destinationRegistry: destinations });
+  assert.equal(page.nodes.get('merge-task-destination').value, 'github:1');
+  assert.equal(listAvatar.children.length, 0, 'old-account image must disappear before the new read resolves');
+  assert.equal(listAvatar.textContent, 'O');
+  assert.equal(selected.querySelector('.merge-person-avatar').children.length, 0);
+  assert.equal(selected.attributes['aria-label'], 'Selected people: octocat');
+  replyForNewAccount({ users: [{ login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/2?v=4' }] });
+  await new Promise(setImmediate);
+  assert.equal(listAvatar.children[0].src, 'https://avatars.githubusercontent.com/u/2?v=4');
 });
 
 test('repository suggestions stay collapsed until typing and show at most eight matching names', () => {

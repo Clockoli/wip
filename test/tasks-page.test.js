@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange } from '../src/domain/tasks.js';
+import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey } from '../src/domain/tasks.js';
 import { formatClockDuration } from '../src/domain/reporting.js';
 import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local-time.js';
@@ -32,7 +32,7 @@ test('tasks page is a recent tracked-work list without GitHub issue-list clutter
   assert.match(js, /localStorage\.getItem\(PERIOD_KEY\)/);
   assert.match(js, /savedPeriod = localStorage\.getItem\(PERIOD_KEY\) \|\| savedPeriod/);
   assert.match(js, /localStorage\.setItem\(PERIOD_KEY/);
-  assert.match(js, /addEventListener\('input'/);
+  assert.match(js, /ClockoliTaskSearch\.mount\(\$\('task-filter'\)/);
   assert.match(js, /type:\s*'LOAD_TASKS'/);
   assert.match(js, /type:\s*'START'/);
   assert.match(js, /type:\s*'STOP'/);
@@ -252,7 +252,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
-    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
     dateValue, timeValue, parseTime, localTimestamp, mountRunningStatus() {}, mountAddTime() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
@@ -270,6 +270,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
     const strip = fs.readFileSync(new URL('../src/ui/running-status.js', import.meta.url), 'utf8');
     vm.runInContext(`(() => { ${strip.replace(/^import .*;\n/gm, '').replace('export function', 'function')}\nglobalThis.mountRunningStatus = mountRunningStatus; })()`, context);
   }
+  vm.runInContext(fs.readFileSync(new URL('../src/ui/task-search.js', import.meta.url), 'utf8'), context);
   vm.runInContext(js.replace(/^import .*;\n/gm, ''), context);
   const settle = async () => { for (let step = 0; step < 12; step++) await Promise.resolve(); };
   await settle();
@@ -307,8 +308,9 @@ test('Top tasks uses monograms without favicon permission and preserves GitHub a
   assert.equal(icon.textContent, 'E');
   assert.equal(icon['aria-hidden'], 'true');
   assert.equal(icon.src, undefined);
-  assert.equal(unresolved.querySelector('.task-main').children[0].tag, 'img');
-  assert.equal(unresolved.querySelector('.task-main').children[0].hidden, true);
+  assert.equal(unresolved.querySelector('.task-main').children[0].tag, 'span');
+  assert.ok(unresolved.querySelector('.task-main').children[0].className.includes('task-clockoli-icon'));
+  assert.match(unresolved.querySelector('.task-main').children[0].style.maskImage, /clockoli-inverse-circle\.svg/);
   assert.equal(page.resources.includes('/_favicon/'), false);
 });
 
@@ -333,6 +335,25 @@ test('Top tasks starts and switches imported identities without making them link
   const switching = await tasksHarness({ tasks: [imported, taskA], active: { taskUrl: taskA.taskUrl, startedAt: '2026-09-05T09:00:00Z' } });
   await switching.rows().find(item => item.dataset.taskUrl === imported.taskUrl).querySelector('.timer-button').click();
   assert.equal(switching.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, imported.taskUrl);
+});
+
+test('Top tasks distinguishes identical imported identities by time repository only when multiple are configured', async () => {
+  const candidates = ['one', 'two'].map(id => ({ taskUrl: 'team/project/imported', title: 'Imported',
+    destinationId: id, timeRepository: `team/${id}` }));
+  const page = await tasksHarness({ respond: message => message.type === 'SEARCH_TASKS'
+    ? { configured: true, tasks: candidates, readStatus: [{ status: 'ok' }, { status: 'ok' }] }
+    : { configured: true, tasks: [], active: null, pendingWrites: [], sourceRepositories: ['team/one', 'team/two'] } });
+  page.nodes['task-filter'].value = 'Imported';
+  await page.nodes['task-filter'].dispatch('input'); await page.settle();
+  assert.deepEqual(page.rows().map(row => row.querySelector('.task-repository')?.textContent), ['team/one', 'team/two']);
+  await page.rows()[1].querySelector('.timer-button').click(); await page.settle();
+  assert.equal(page.messages.find(message => message.type === 'START')?.destinationId, 'two');
+  const single = await tasksHarness({ respond: message => message.type === 'SEARCH_TASKS'
+    ? { configured: true, tasks: [candidates[0]], readStatus: [{ status: 'ok' }] }
+    : { configured: true, tasks: [], active: null, pendingWrites: [], sourceRepositories: ['team/one'] } });
+  single.nodes['task-filter'].value = 'Imported';
+  await single.nodes['task-filter'].dispatch('input'); await single.settle();
+  assert.equal(single.rows()[0].querySelector('.task-repository'), null);
 });
 
 test('Top tasks distinguishes read failures from conflict-only omissions', async () => {
@@ -370,8 +391,8 @@ test('Tracking now adds multiline Description to a completed Top tasks timer wit
   await page.advance(5);
   assert.equal(description.value, 'First line\nSecond line', 'polling must not discard the unsaved draft');
   const tab = await description.dispatch('keydown', { key: 'Tab', isTrusted: true });
-  assert.equal(tab.defaultPrevented, true, 'Tab should move to Start');
-  assert.equal(page.document.activeElement, strip.querySelector('.running-status-start'));
+  assert.equal(tab.defaultPrevented, true, 'Tab should move directly to Stop and save');
+  assert.equal(page.document.activeElement, strip.querySelector('.running-status-stop'));
   assert.equal(page.messages.some(message => message.type === 'STOP'), false, 'Tab must not stop the timer');
   await strip.querySelector('.running-status-stop').click();
   assert.equal(page.messages.find(message => message.type === 'STOP')?.description, 'First line\nSecond line');
@@ -557,9 +578,11 @@ test('filter keyboard flow launches exactly one idle match, clears on Escape, an
   const page = await tasksHarness({ tasks: [taskA, taskB] });
   const filter = page.nodes['task-filter']; assert.equal(page.document.activeElement, filter);
   await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.length, 1);
-  filter.value = 'missing'; await filter.dispatch('input'); await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.length, 1);
+  filter.value = 'missing'; await filter.dispatch('input'); await filter.dispatch('keydown', { key: 'Enter' });
+  assert.equal(page.messages.filter(message => !['SEARCH_TASKS'].includes(message.type)).length, 1);
   filter.value = 'Fix'; await filter.dispatch('input');
-  await filter.dispatch('keydown', { key: 'Enter', isComposing: true }); assert.equal(page.messages.length, 1);
+  await filter.dispatch('keydown', { key: 'Enter', isComposing: true });
+  assert.equal(page.messages.filter(message => message.type !== 'SEARCH_TASKS').length, 1);
   await filter.dispatch('keydown', { key: 'Enter' }); await page.settle();
   assert.equal(page.messages.at(-1).type, 'START'); assert.equal(page.messages.at(-1).taskUrl, taskA.taskUrl);
   await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.filter(message => message.type === 'STOP').length, 0);
@@ -576,7 +599,8 @@ test('launching a different task uses the durable stop-before-start switch and r
     } });
     page.nodes['task-filter'].value = 'Fix'; await page.nodes['task-filter'].dispatch('input');
     await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.settle();
-    assert.deepEqual(page.messages.map(message => message.type), fail ? ['LOAD_TASKS', 'SWITCH_TASK', 'GET_PAGE_STATE'] : ['LOAD_TASKS', 'SWITCH_TASK']);
+    assert.deepEqual(page.messages.map(message => message.type), fail
+      ? ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK', 'GET_PAGE_STATE'] : ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK']);
     assert.equal(page.rows()[0].querySelector('.timer-button').textContent, fail ? 'Start' : 'Stop: 0s');
     if (fail) assert.equal(page.nodes.error.hidden, false);
   }

@@ -80,6 +80,7 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
   document.getElementById = id => nodes.get(id); document.querySelector = selector => [...nodes.values()].find(node => node.className.split(' ').includes(selector.slice(1))); document.createElement = tag => { const node = new Node(tag); if (tag === 'canvas') createdCanvases.push(node); return node; };
   document.createElementNS = (_, tag) => new Node(tag); document.createTextNode = text => ({ textContent: text });
   const requests = [], downloads = [], prints = [], listeners = [], blobs = [], pdfExports = [], windowListeners = {};
+  let pendingWrites = [], stateReadError = false, stateConfigured = true, stateReads = 0;
   const html2pdf = () => {
     const job = {};
     const worker = {
@@ -93,7 +94,13 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
     ...reporting, ...billing, ...invoicing, ...values, document, Blob, TextEncoder, html2pdf, URL: { createObjectURL: blob => { blobs.push(blob); return 'blob:test'; }, revokeObjectURL() {} },
     setTimeout: () => 1, addEventListener(type, handler) { windowListeners[type] = handler; }, window: { print: () => prints.push(document.title) },
     matchMedia: () => ({ addEventListener() {} }), getComputedStyle: () => ({ fontStyle: 'normal', fontVariant: 'normal', fontWeight: '700', fontSize: '28px', fontFamily: 'sans-serif', lineHeight: '35px', color: '#000' }), mountRunningStatus() {}, ClockoliRecovery: { actionFor: () => null },
-    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) { if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length && !delayInitialPreferences) { callback({ ok: true, data: preferences }); return; } requests.push({ message, callback }); } } },
+    chrome: { runtime: { onMessage: { addListener: handler => listeners.push(handler) }, sendMessage(message, callback) {
+      if (message.type === 'GET_STATE') { stateReads++; callback(stateReadError
+        ? { ok: false, error: { message: 'Cannot verify current local changes' } }
+        : { ok: true, data: { configured: stateConfigured, pendingWrites } }); return; }
+      if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length && !delayInitialPreferences) { callback({ ok: true, data: preferences }); return; }
+      requests.push({ message, callback });
+    } } },
   });
   vm.runInContext(source.replace(/^import[\s\S]*?from '[^']+';\n/gm, ''), context);
   const settle = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
@@ -101,6 +108,9 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
   const fire = (id, type = 'click') => nodes.get(id).listeners[type]({ preventDefault() {}, target: nodes.get(id) });
   const textOf = node => `${node?.textContent || ''}${(node?.children || []).map(textOf).join('')}`;
   return { nodes, document, context, requests, downloads, prints, listeners, blobs, pdfExports, createdCanvases, reply, settle, fire, textOf,
+    setPendingWrites: writes => { pendingWrites = writes; }, setStateReadError: value => { stateReadError = value; },
+    setStateConfigured: value => { stateConfigured = value; },
+    stateReads: () => stateReads,
     select: (key, value, checked) => {
       const input = nodes.get(`${key}-facet`).children.flatMap(label => label.children).find(node => node.value === value);
       assert.ok(input, `visible ${key} checkbox ${value}`);
@@ -200,6 +210,143 @@ test('conflict-only partial reports identify omitted conflicts without claiming 
   for (const id of ['download-csv', 'download-json', 'download-pdf']) assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
 });
 
+test('local queued writes warn beside an empty report and block timesheets and invoices', async () => {
+  const page = await loaded({ ...result([]), partial: true, pendingCount: 5, pendingWrites: [
+    { status: 'pending' }, { status: 'conflict', conflictReason: 'overlap' }, { status: 'pending' },
+    { status: 'pending' }, { status: 'pending' },
+  ] });
+  const warning = page.nodes.get('pending-status');
+  assert.match(html, /id="report-content"[\s\S]*id="pending-status"[\s\S]*id="report-empty"/);
+  assert.equal(warning.hidden, false);
+  const message = page.nodes.get('pending-message').textContent;
+  assert.match(message, /GitHub-only/i);
+  assert.match(message, /local changes are not included/i);
+  assert.match(message, /5.*waiting/i);
+  assert.match(message, /1.*conflict/i);
+  assert.match(html, /id="pending-status"[^>]*role="status"/);
+  assert.match(html, /id="pending-activity"[^>]*href="\.\.\/times\/times\.html"[^>]*>Review in Activity<\/a>/);
+  assert.equal(page.nodes.get('report-content').hidden, false);
+  assert.equal(page.nodes.get('report-empty').hidden, false);
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'create-invoice']) {
+    assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+    await page.fire(id);
+  }
+  assert.equal(page.downloads.length, 0); assert.equal(page.prints.length, 0);
+  assert.equal(page.nodes.get('invoice-dialog').open, false);
+});
+
+test('routine pending reports warn about omitted time without advertising the queue', async () => {
+  const page = await loaded({ ...result([]), pendingCount: 2,
+    pendingWrites: [{ status: 'pending' }, { status: 'pending' }] });
+  assert.equal(page.nodes.get('pending-status').hidden, false);
+  assert.match(page.nodes.get('pending-message').textContent, /GitHub-only.*local changes are not included/i);
+  assert.doesNotMatch(page.nodes.get('pending-message').textContent, /2 operations waiting|queue/i);
+  assert.equal(page.nodes.get('pending-activity').hidden, true);
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'create-invoice']) {
+    assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+  }
+});
+
+test('exports and invoices recheck durable pending writes after a report was loaded', async () => {
+  const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
+  const page = await loaded(result([record('alice')], rate));
+  page.setPendingWrites([{ status: 'pending' }]);
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'create-invoice']) await page.fire(id);
+  await page.settle();
+  assert.equal(page.stateReads(), 1, 'later actions use the newly observed pending state');
+  assert.equal(page.downloads.length, 0); assert.equal(page.prints.length, 0);
+  assert.equal(page.nodes.get('invoice-dialog').open, false);
+  assert.equal(page.nodes.get('pending-status').hidden, false);
+  assert.equal(page.nodes.get('pending-activity').hidden, true);
+  for (const id of ['download-csv', 'download-json', 'download-pdf', 'create-invoice']) {
+    assert.equal(page.nodes.get(id).attributes['aria-disabled'], 'true');
+  }
+});
+
+test('an open invoice cannot reserve, print, or save PDF after a new local write', async () => {
+  const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
+  const page = await loaded(result([record('alice')], rate));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
+  const before = page.requests.length;
+  page.setPendingWrites([{ status: 'pending' }]);
+  await page.fire('invoice-print'); await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.requests.length, before, 'no invoice number is reserved');
+  assert.equal(page.prints.length, 0); assert.equal(page.pdfExports.length, 0);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+});
+
+test('a conflict queued after loading a report reveals its Activity review link before export', async () => {
+  const page = await loaded();
+  page.setPendingWrites([{ status: 'conflict' }, { status: 'pending' }]);
+  await page.fire('download-csv'); await page.settle();
+  assert.equal(page.downloads.length, 0);
+  assert.match(page.nodes.get('pending-message').textContent, /2 operations waiting.*1 conflict needs review/);
+  assert.equal(page.nodes.get('pending-activity').hidden, false);
+});
+
+test('an unavailable durable-state read fails closed before a clean report export', async () => {
+  const page = await loaded();
+  page.setStateReadError(true);
+  await page.fire('download-csv'); await page.settle();
+  assert.equal(page.downloads.length, 0);
+  assert.match(page.textOf(page.nodes.get('error')), /Cannot verify current local changes/);
+});
+
+test('a disconnected local state fails closed before an already opened report export', async () => {
+  const page = await loaded();
+  page.setStateConfigured(false);
+  await page.fire('download-json'); await page.settle();
+  assert.equal(page.downloads.length, 0);
+  assert.match(page.textOf(page.nodes.get('error')), /Could not verify current local changes/);
+});
+
+test('pending writes block a rated invoice, including an already open preview and direct actions', async () => {
+  const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
+  const page = await loaded(result([record('alice')], rate));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  const pending = page.load(newRange);
+  await page.reply({ ...result([record('alice', 'example.com', newRange.startDate)], rate),
+    partial: true, pendingCount: 2, pendingWrites: [{ status: 'pending' }, { status: 'conflict', conflictReason: 'overlap' }] });
+  await pending; await page.settle();
+  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  const before = page.requests.length;
+  await page.fire('invoice-print'); await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.requests.length, before, 'no invoice number is reserved');
+  assert.equal(page.prints.length, 0); assert.equal(page.pdfExports.length, 0);
+  for (const id of ['download-csv', 'download-json', 'download-pdf']) await page.fire(id);
+  assert.equal(page.downloads.length, 0);
+  const clean = page.load(oldRange); await page.reply(result([record('alice')], rate)); await clean; await page.settle();
+  assert.equal(page.nodes.get('pending-status').hidden, true);
+  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
+  assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'false');
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+});
+
+test('remote partial status remains separate from local queue warning and permits invoice without local pending', async () => {
+  const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
+  const partial = { ...result([record('alice')], rate), partial: true,
+    readStatus: [{ status: 'error', timeRepository: 'team/time' }],
+    pendingCount: 1, pendingWrites: [{ status: 'pending' }] };
+  const page = await loaded(partial);
+  assert.match(page.nodes.get('partial-status').textContent, /could not be loaded/);
+  assert.equal(page.nodes.get('pending-status').hidden, false);
+  const next = page.load(newRange);
+  await page.reply({ ...partial, pendingCount: 0, pendingWrites: [], records: [record('alice', 'example.com', newRange.startDate)] });
+  await next; await page.settle();
+  assert.equal(page.nodes.get('pending-status').hidden, true);
+  assert.equal(page.nodes.get('partial-status').hidden, false);
+  assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
+  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+});
+
 test('billing stays visible when a configured rate belongs to someone outside the selection', async () => {
   const page = await loaded(result(undefined, { bob: [{ amountMinorPerHour: 0, currency: 'USD', startDate: '', endDate: '' }] }));
   assert.equal(page.nodes.get('summary-billable')?.hidden, false);
@@ -224,7 +371,7 @@ test('pending period keeps the actual report and filters visible while every exp
   await page.reply(result([record('alice', 'example.com', newRange.startDate)])); await pending;
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'false');
   assert.equal(page.nodes.get('period-label').textContent, 'Aug 24, 2026 – Aug 30, 2026');
-  page.fire('download-json'); assert.equal(page.downloads.length, 1);
+  await page.fire('download-json'); assert.equal(page.downloads.length, 1);
   assert.match(page.downloads[0].download, /2026-08-24.*2026-08-30/);
 });
 
@@ -236,7 +383,7 @@ test('widening a period expands all-selected facets in totals and exports', asyn
   assert.equal(page.selection('projects'), 'Main,Other');
   assert.equal(page.selection('repositories'), 'example.com,other.com');
   assert.equal(page.nodes.get('summary-time').textContent, '2h 0m');
-  page.fire('download-json');
+  await page.fire('download-json');
   const exported = await page.blobs.at(-1).text();
   assert.match(exported, /https:\/\/example.com\/task/);
   assert.match(exported, /https:\/\/other.com\/task/);
@@ -367,7 +514,7 @@ test('invoice dialog renders the filtered records and reserves one number across
   assert.equal(page.nodes.get('invoice-dialog').open, true);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /INV-2026-0007/);
-  const print = page.fire('invoice-print');
+  const print = page.fire('invoice-print'); await page.settle();
   const reserve = page.requests.at(-1);
   assert.equal(reserve.message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 7, revision: 1 }, reserve); await print;
@@ -385,10 +532,10 @@ test('changing an invoice control invalidates its reserved sequence', async () =
   const rates = { alice: [{ amountMinorPerHour: 12000, currency: 'EUR', startDate: '', endDate: '' }] };
   const page = await loaded(result([record('alice')], rates));
   await page.fire('create-invoice'); await page.settle();
-  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  const first = page.fire('invoice-print'); await page.settle(); await page.reply({ sequence: 7 }); await first;
   await page.fire('create-invoice'); await page.settle();
   page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); await page.settle();
-  const second = page.fire('invoice-print');
+  const second = page.fire('invoice-print'); await page.settle();
   assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 8 }); await second;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
@@ -417,14 +564,14 @@ test('invoice project changes rebuild the preview and reset the reserved number'
   await page.fire('create-invoice'); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
-  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  const first = page.fire('invoice-print'); await page.settle(); await page.reply({ sequence: 7 }); await first;
   await page.fire('create-invoice'); await page.settle();
   const other = page.nodes.get('invoice-projects').children.flatMap(label => label.children).find(node => node.value === 'Other');
   other.checked = false; await other.listeners.change(); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Main work/);
   assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Other work/);
   assert.equal(page.nodes.get('invoice-project-count').textContent, 'Billing 1 of 2 projects');
-  const second = page.fire('invoice-print');
+  const second = page.fire('invoice-print'); await page.settle();
   assert.equal(page.requests.at(-1).message.type, 'RESERVE_INVOICE_NUMBER');
   await page.reply({ sequence: 8 }); await second;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
@@ -527,7 +674,7 @@ test('a single source currency fetches exchange rates for the selected client cu
 for (const change of ['close', 'composition']) test(`a reservation response after ${change} survives the failed print and is reused`, async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
-  const first = page.fire('invoice-print');
+  const first = page.fire('invoice-print'); await page.settle();
   const reserve = page.requests.at(-1);
   if (change === 'close') await page.fire('invoice-close');
   else { page.nodes.get('invoice-group-by').value = 'day'; await page.fire('invoice-group-by', 'change'); }
@@ -540,7 +687,7 @@ for (const change of ['close', 'composition']) test(`a reservation response afte
   assert.deepEqual(page.prints, ['invoice-INV-2026-0009']);
   await page.fire('create-invoice'); await page.settle();
   page.nodes.get('invoice-issue-date').value = '2026-09-14'; await page.fire('invoice-issue-date', 'change'); await page.settle();
-  const next = page.fire('invoice-print'); await page.reply({ sequence: 10 }); await next;
+  const next = page.fire('invoice-print'); await page.settle(); await page.reply({ sequence: 10 }); await next;
   assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 2);
 });
 
@@ -548,7 +695,7 @@ test('invoice composition projects billing inputs without serializing record met
   const entry = { ...record('alice'), id: 'record-1', metadata: { toJSON() { assert.fail('invoice composition must not serialize metadata'); } } };
   const page = await loaded(result([entry], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
-  const first = page.fire('invoice-print'); await page.reply({ sequence: 7 }); await first;
+  const first = page.fire('invoice-print'); await page.settle(); await page.reply({ sequence: 7 }); await first;
   await page.fire('create-invoice'); await page.settle();
   page.nodes.get('people-search').value = 'ali'; await page.fire('people-search', 'input'); await page.settle();
   await page.fire('invoice-print'); await page.settle();
@@ -568,7 +715,7 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   const settings = { ...invoiceSettings, seller: { ...invoiceSettings.seller, name: 'Sergey Nikolaev' } };
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }, settings));
   await page.fire('create-invoice'); await page.settle();
-  const saving = page.fire('invoice-save-pdf');
+  const saving = page.fire('invoice-save-pdf'); await page.settle();
   await page.reply({ sequence: 7 }); await saving;
   assert.equal(page.nodes.get('invoice-feedback').textContent, '');
   assert.equal(page.prints.length, 0);
@@ -622,7 +769,7 @@ test('failed HTML-to-PDF export restores preview state and reports the error', a
     const worker = { set() { return worker; }, from(value) { source = value; return worker; }, async save() { throw new Error('PDF render failed'); } };
     return worker;
   };
-  const saving = page.fire('invoice-save-pdf');
+  const saving = page.fire('invoice-save-pdf'); await page.settle();
   await page.reply({ sequence: 7 }); await saving;
   assert.equal(source.classList.contains('invoice-pdf-export'), false);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
@@ -743,7 +890,8 @@ test('extra lines stay in the target currency when time is converted and survive
 test('an open invoice blocks printing during a period reload and ignores stale reservations', async () => {
   const response = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
   const page = await loaded(response); await page.fire('create-invoice'); await page.settle();
-  const printing = page.fire('invoice-print'), reserve = page.requests.at(-1), loading = page.load(newRange), load = page.requests.at(-1);
+  const printing = page.fire('invoice-print'); await page.settle();
+  const reserve = page.requests.at(-1), loading = page.load(newRange), load = page.requests.at(-1);
   assert.equal(page.nodes.get('invoice-print').disabled, true);
   await page.reply({ sequence: 7 }, reserve); await printing;
   assert.equal(page.prints.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, true);

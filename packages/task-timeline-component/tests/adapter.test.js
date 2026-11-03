@@ -63,19 +63,22 @@ test('Calendar preserves supported favicon images, including a failed image', ()
   assert.equal(harness.name.children.length, 1);
 });
 
-test('Calendar keeps unavailable resources and imported identities without favicons', () => {
+test('Calendar keeps unavailable resources without icons and uses Clockoli for imported identities', () => {
   for (const item of [
     { id: 'unavailable', url: 'https://example.com/work', faviconUrl: '' },
-    { id: 'imported', url: null, faviconUrl: '' },
+    { id: 'imported', url: null, faviconUrl: '', fallbackIconUrl: 'chrome-extension://clockoli/src/assets/clockoli-32.png' },
   ]) {
     const harness = calendarFaviconHarness(item);
     harness.decorate();
-    assert.equal(harness.name.children.length, 0);
+    if (item.id === 'imported') {
+      assert.equal(harness.name.children[0].tag, 'span');
+      assert.ok(harness.name.children[0].className.includes('clockoli-fallback-icon'));
+    } else assert.equal(harness.name.children.length, 0);
   }
 });
 
 test('vendored TaskTimeline is the reviewed Clockoli-patched artifact', () => {
-  assert.equal(createHash('sha256').update(vendor).digest('hex'), '04028a3ee2cdcbfe1b5f80421f40ab20518ba3541f8307204fe9388524b54136');
+  assert.equal(createHash('sha256').update(vendor).digest('hex'), '7203e94323969bde4742791681cfd673fd114635cc5d4dc841210cbaef120ca9');
   assert.match(vendor, /let t = this\._floorDay\(this\.domainStart\)/);
   assert.match(vendor, /trailingGutterRatio/);
   assert.match(vendor, /\.calendar-task:hover \{[\s\S]*?z-index: 6/);

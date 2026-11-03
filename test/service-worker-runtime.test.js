@@ -7,6 +7,7 @@ import {
   destinationIdForCompletedMutation,
   taskUrlForParticipantLoad,
   taskUrlForStart,
+  requestedStartDestinationId,
   taskUrlForTimelineSwitch,
 } from '../src/background/message-policy.js';
 import {
@@ -66,7 +67,7 @@ test('a fresh local edit re-arms 15-second wakeup, without needing a minute tick
   const pending = [{ operation: 'editEntry', queuedAt: new Date(now).toISOString() }];
   const timers = [], alarms = [], commits = [];
   const store = {
-    getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+    invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
     getTrackingSnapshot: async () => ({
       destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(pending) } } },
     }),
@@ -116,7 +117,7 @@ test('a new local edit arriving during a slow GitHub write still schedules its o
   const started = new Promise(resolve => { notifyStarted = resolve; });
   const blocked = new Promise(resolve => { release = resolve; });
   const store = {
-    getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+    invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
     getTrackingSnapshot: async () => ({
       destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(pending) } } },
     }),
@@ -169,7 +170,7 @@ test('an early alarm cannot sync before 15 seconds of inactivity after service-w
   const context = vm.createContext({
     Date: FakeDate,
     store: {
-      getPendingDestinationIds: async () => recent.length ? ['github:1'] : [],
+      invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => recent.length ? ['github:1'] : [],
       getTrackingSnapshot: async () => ({
         destinationStates: { entries: { 'github:1': { pendingWrites: structuredClone(recent) } } },
       }),
@@ -189,6 +190,87 @@ test('an early alarm cannot sync before 15 seconds of inactivity after service-w
   now += 10_000;
   await context.syncPendingNow();
   assert.deepEqual(commits, [now]);
+});
+
+test('a completed queued Stop refreshes the unified local index only after GitHub sync', async () => {
+  const pending = [{ id: 'stop-1', operation: 'completeTimer', queuedAt: new Date(Date.now() - 20_000).toISOString() }];
+  const events = [], alarms = [];
+  const context = vm.createContext({
+    Date, store: { invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { 'github:1': { pendingWrites: [...pending] } } } }) },
+    chrome: { alarms: { create: async (...args) => { alarms.push(args); }, clear: async () => true } },
+    executor: { run: fn => fn() }, withCurrentRepositoryRecovery: async (_message, fn) => fn(),
+    trackerForDestination: async () => ({}),
+    syncPendingAll: async () => { events.push('commit'); pending.length = 0; },
+    searchTasks: async (_sender, _query, options) => { events.push('rebuild'); assert.equal(options.refresh, true);
+      return { configured: true, partial: false, conflicts: [] }; },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  await context.syncPendingNow();
+  assert.deepEqual(events, ['commit', 'rebuild']);
+  assert.equal(alarms.some(([name]) => name === 'task-search-refresh'), true);
+  await context.syncPendingNow();
+  assert.deepEqual(events, ['commit', 'rebuild'], 'an empty sync must not fetch all user indexes');
+  pending.push({ id: 'start-1', operation: 'startTimer', queuedAt: new Date(Date.now() - 20_000).toISOString() });
+  await context.syncPendingNow();
+  assert.deepEqual(events, ['commit', 'rebuild', 'commit'], 'saving only a running timer does not rebuild completed-task search');
+  assert.equal(alarms.filter(([name]) => name === 'task-search-refresh').length, 1);
+});
+
+test('queued completeTimerAndStart invalidates before commit and arms retry before removal', async () => {
+  const pending = [{ id: 'switch', operation: 'completeTimerAndStart', queuedAt: new Date(Date.now() - 20_000).toISOString() }];
+  const events = [];
+  const context = vm.createContext({ Date,
+    store: { getPendingDestinationIds: async () => pending.length ? ['github:1'] : [],
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { 'github:1': { pendingWrites: [...pending] } } } }),
+      invalidateTaskSearchCache: async () => { events.push('invalidate'); } },
+    chrome: { alarms: { create: async name => { if (name === 'task-search-refresh') events.push('alarm'); },
+      clear: async () => { events.push('clear'); } } },
+    executor: { run: fn => fn() }, withCurrentRepositoryRecovery: async (_message, fn) => fn(),
+    trackerForDestination: async () => ({}),
+    syncPendingAll: async () => { events.push('commit'); pending.length = 0; },
+    searchTasks: async () => { events.push('rebuild'); return { configured: true, partial: false, conflicts: [] }; },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  await context.syncPendingNow();
+  assert.deepEqual(events, ['alarm', 'invalidate', 'commit', 'rebuild']);
+});
+
+test('failed refresh-alarm setup prevents a completed Git write from leaving the queue', async () => {
+  const pending = [{ id: 'stop', operation: 'completeTimer', queuedAt: new Date(Date.now() - 20_000).toISOString() }];
+  let commits = 0, invalidations = 0;
+  const context = vm.createContext({ Date,
+    store: { getPendingDestinationIds: async () => ['one'],
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { one: { pendingWrites: [...pending] } } } }),
+      invalidateTaskSearchCache: async () => { invalidations++; } },
+    chrome: { alarms: { create: async () => { throw new Error('alarm unavailable'); } } },
+    executor: { run: fn => fn() }, withCurrentRepositoryRecovery: async (_message, fn) => fn(),
+    syncPendingAll: async () => { commits++; pending.length = 0; },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  await assert.rejects(context.syncPendingNow(), /alarm unavailable/);
+  assert.equal(commits, 0);
+  assert.equal(invalidations, 0);
+  assert.equal(pending.length, 1);
+});
+
+test('a partial multi-destination sync rebuilds after a committed Stop without hiding the remaining failure', async () => {
+  const pending = [{ id: 'stop-1', operation: 'completeTimer', queuedAt: new Date(Date.now() - 20_000).toISOString() },
+    { id: 'stop-2', operation: 'completeTimer', queuedAt: new Date(Date.now() - 20_000).toISOString() }];
+  const events = [], failure = new Error('Second destination failed');
+  const context = vm.createContext({ Date,
+    store: { invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => ['github:1'],
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { 'github:1': { pendingWrites: [...pending] } } } }) },
+    chrome: { alarms: { create: async () => {}, clear: async () => true } },
+    executor: { run: fn => fn() }, withCurrentRepositoryRecovery: async (_message, fn) => fn(),
+    trackerForDestination: async () => ({}),
+    syncPendingAll: async () => { pending.shift(); events.push('commit'); throw failure; },
+    searchTasks: async () => { events.push('rebuild'); return { configured: true, partial: false, conflicts: [] }; },
+  });
+  vm.runInContext(sourceBetween('let pendingSync = null;', 'function scheduleSync() {'), context);
+  await assert.rejects(() => context.syncPendingNow(), error => error === failure);
+  assert.deepEqual(events, ['commit', 'rebuild']);
+  assert.equal(pending.length, 1, 'the failed operation remains queued');
 });
 
 test('startup handles an alarm rejection while Chrome replaces the service worker', async () => {
@@ -212,13 +294,17 @@ test('startup handles an alarm rejection while Chrome replaces the service worke
 function handlerContext(overrides = {}) {
   const context = vm.createContext({
     URL, TextEncoder, Date, Map, AbortController,
-    chrome: { runtime: { getURL: () => extensionOrigin }, action: { setIcon: async () => {} }, tabs: { create: async () => {} } },
-    assertMessageAllowed, destinationIdForCompletedMutation, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+    store: { invalidateTaskSearchCache: async () => {} },
+    chrome: { runtime: { getURL: () => extensionOrigin }, action: { setIcon: async () => {} }, tabs: { create: async () => {} }, alarms: { create: async () => {} } },
+    assertMessageAllowed, destinationIdForCompletedMutation, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
     activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll,
     createUlid, normalizeTaskUrl, taskUrlOf,
     globalTrackerState: async () => ({ configured: true, active: null, recent: [], pendingWrites: [] }),
     requestPendingSync: () => {},
+    directCompletedWrites: 0,
+    refreshTaskSearchAfterSync: async () => {},
     ...overrides,
+    store: { invalidateTaskSearchCache: async () => {}, ...overrides.store },
   });
   vm.runInContext(sourceBetween('async function handle(', 'chrome.runtime.onMessage.addListener'), context);
   return context;
@@ -440,6 +526,100 @@ test('extracted service-worker handler requires and routes a completed edit dest
   assert.equal(calls[0].options?.localOnly, true, 'queued edits must never wait for GitHub preflight');
 });
 
+test('direct completed edits and deletes invalidate before Git writes even when they fail', async () => {
+  const events = [], failure = new Error('Git write failed');
+  const context = handlerContext({
+    store: { getDestinationRegistry: async () => registry,
+      invalidateTaskSearchCache: async () => { events.push('invalidate'); } },
+    chrome: { runtime: { getURL: () => extensionOrigin }, alarms: { create: async () => { events.push('alarm'); } } },
+    trackerForDestination: async () => ({
+      editEntries: async () => { events.push('edit'); throw failure; },
+      deleteEntry: async () => { events.push('delete'); throw failure; },
+    }),
+  });
+  for (const type of ['EDIT_ENTRIES', 'DELETE_ENTRY']) {
+    events.length = 0;
+    await assert.rejects(context.handle({ type, payload: { destinationId: 'github:1' } }, extensionSender), error => error === failure);
+    assert.deepEqual(events, ['alarm', 'invalidate', type === 'EDIT_ENTRIES' ? 'edit' : 'delete']);
+  }
+});
+
+test('partial direct merge leaves the cache invalidated and schedules a refresh', async () => {
+  const events = [];
+  const context = handlerContext({
+    store: { invalidateTaskSearchCache: async () => { events.push('invalidate'); } },
+    chrome: { runtime: { getURL: () => extensionOrigin }, alarms: { create: async () => { events.push('alarm'); } } },
+    refreshTaskSearchAfterSync: async () => { events.push('refresh'); },
+    configuredSnapshot: async () => ({ registry, auth: { githubLogin: 'alice' } }),
+    destinationUser: async () => 'alice', githubForConfig: () => ({}),
+    discoverUserStorageBranches: async () => [{ login: 'bob', id: 42, github: {} }],
+    TrackerService: class { async mergeTasks() { events.push('failed'); throw new Error('Git unavailable'); } },
+    trackerForDestination: async () => ({ getState: async () => ({ pendingWrites: [] }),
+      mergeTasks: async () => { events.push('committed'); return { mergedEntries: 1, mergedActive: false }; } }),
+  });
+  await assert.rejects(context.handle({ type: 'MERGE_TASKS', destinationIds: ['github:1'], selectedUsers: ['alice', 'bob'],
+    pairs: [{ sourceTaskUrl: 'https://example.org/old', targetTaskUrl: 'https://example.org/new' }],
+    startDate: '2026-01-01', endDate: '2026-02-01' }, extensionSender), /Git unavailable/i);
+  assert.deepEqual(events, ['alarm', 'invalidate', 'committed', 'failed', 'refresh']);
+});
+
+test('a refresh alarm keeps retrying while a completed write remains pending', async () => {
+  const events = [];
+  const context = vm.createContext({ directCompletedWrites: 0,
+    store: { getTaskSearchRevision: async () => 3,
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { one: {
+        pendingWrites: [{ operation: 'completeTimerAndStart' }],
+      } } } }) },
+    searchTasks: async () => { events.push('searched'); return { configured: true, partial: false, conflicts: [] }; },
+    scheduleSyncAlarm: async () => { events.push('rearm'); },
+  });
+  vm.runInContext(sourceBetween('async function refreshTaskSearchAfterSync(', 'function syncPendingNow()'), context);
+  await context.refreshTaskSearchAfterSync({ retry: true });
+  assert.deepEqual(events, ['rearm']);
+});
+
+test('refresh alarm retries when a separate pending write prevents caching and skips work after success', async () => {
+  const events = [];
+  let dirty = true;
+  const context = vm.createContext({ directCompletedWrites: 0,
+    store: { getTaskSearchRevision: async () => 3, isTaskSearchDirty: async () => dirty,
+      getTrackingSnapshot: async () => ({ destinationStates: { entries: { one: {
+        pendingWrites: [{ operation: 'startTimer' }],
+      } } } }) },
+    searchTasks: async () => { events.push('searched'); return { configured: true, partial: false, conflicts: [] }; },
+    scheduleSyncAlarm: async () => { events.push('rearm'); },
+    chrome: { alarms: { clear: async () => { events.push('clear'); } } },
+  });
+  vm.runInContext(sourceBetween('async function refreshTaskSearchAfterSync(', 'function syncPendingNow()'), context);
+  await context.refreshTaskSearchAfterSync({ retry: true });
+  assert.deepEqual(events, ['searched', 'rearm']);
+  dirty = false;
+  await context.refreshTaskSearchAfterSync({ retry: true });
+  assert.deepEqual(events, ['searched', 'rearm']);
+});
+
+test('an unavailable cache revision does not turn a completed Git write into a failed sync', async () => {
+  const context = vm.createContext({ directCompletedWrites: 0,
+    store: { getTaskSearchRevision: async () => { throw new Error('IndexedDB unavailable'); } },
+  });
+  vm.runInContext(sourceBetween('async function refreshTaskSearchAfterSync(', 'function syncPendingNow()'), context);
+  await context.refreshTaskSearchAfterSync();
+});
+
+test('an older refresh cannot clear a newly armed one-shot alarm', async () => {
+  const events = [];
+  const context = vm.createContext({ directCompletedWrites: 0,
+    store: { getTaskSearchRevision: async () => 3, isTaskSearchDirty: async () => {
+      events.push('new alarm'); return false;
+    }, getTrackingSnapshot: async () => ({ destinationStates: { entries: {} } }) },
+    searchTasks: async () => ({ configured: true, partial: false, conflicts: [] }),
+    chrome: { alarms: { clear: async () => { events.push('clear'); } } },
+  });
+  vm.runInContext(sourceBetween('async function refreshTaskSearchAfterSync(', 'function syncPendingNow()'), context);
+  await context.refreshTaskSearchAfterSync();
+  assert.deepEqual(events, ['new alarm']);
+});
+
 test('passive GitHub pulls run independently and never send UI messages or trigger a render', async () => {
   const calls = [];
   const context = vm.createContext({
@@ -481,11 +661,11 @@ test('extracted alarm handler synchronizes every pending destination without con
     'github:1': [{ id: 'one', operation: 'editEntry', stage: 'editEntry', status: 'pending' }],
     'github:2': [{ id: 'two', operation: 'startTimer', stage: 'startNext', status: 'pending' }],
   };
-  const calls = [], created = [], listeners = [];
+  const calls = [], created = [], listeners = [], refreshed = [];
   const store = {
     ensureDataVersion: async () => { throw new Error('default projected state must not be read'); },
     getState: async () => { throw new Error('default projected state must not be read'); },
-    getPendingDestinationIds: async () => Object.keys(queues).filter(id => queues[id].length),
+    invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => Object.keys(queues).filter(id => queues[id].length),
     getTrackingSnapshot: async () => ({
       destinationStates: { entries: Object.fromEntries(Object.entries(queues).map(([id, pendingWrites]) => [id, { pendingWrites: structuredClone(pendingWrites) }])) },
     }),
@@ -501,10 +681,12 @@ test('extracted alarm handler synchronizes every pending destination without con
       },
     }),
     syncPendingAll,
+    searchTasks: async () => { refreshed.push('rebuilt'); return { configured: true, partial: false, conflicts: [] }; },
     withCurrentRepositoryRecovery: async (_message, operation) => operation(),
     executor: { run: operation => operation() },
     chrome: { alarms: {
       create: (...args) => created.push(args),
+      clear: async () => true,
       onAlarm: { addListener: listener => listeners.push(listener) },
     } },
   });
@@ -514,7 +696,8 @@ test('extracted alarm handler synchronizes every pending destination without con
   listeners[0]({ name: 'sync-pending' });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, ['github:1', 'github:2']);
-  assert.deepEqual(created, []);
+  assert.deepEqual(refreshed, ['rebuilt']);
+  assert.deepEqual(created.map(([name]) => name), ['task-search-refresh']);
 });
 
 for (const [label, operation] of [
@@ -530,7 +713,7 @@ for (const [label, operation] of [
     const queues = { 'github:2': [structuredClone(operation)] };
     const created = [];
     const store = {
-      getPendingDestinationIds: async () => Object.keys(queues).filter(id => queues[id].length),
+      invalidateTaskSearchCache: async () => {}, getPendingDestinationIds: async () => Object.keys(queues).filter(id => queues[id].length),
       getTrackingSnapshot: async () => ({ destinationStates: { entries: {
         'github:2': { pendingWrites: structuredClone(queues['github:2']) },
       } } }),
@@ -545,7 +728,8 @@ for (const [label, operation] of [
     });
     vm.runInContext(sourceBetween('let pendingSync = null;', 'function requestPendingSync('), context);
     await context.syncPendingNow();
-    assert.deepEqual(created, [], 'retries use the existing periodic alarm');
+    assert.deepEqual(created.map(([name]) => name), label === 'retryable conflict' ? ['task-search-refresh'] : [],
+      'a completed edit conflict retains a refresh obligation even when GitHub did not commit');
   });
 }
 
@@ -600,4 +784,30 @@ test('extracted service-worker handler submits one atomic cross-destination SWIT
   });
   assert.equal(plan.target.pendingActive.id, plan.target.operation.nextActive.id);
   assert.deepEqual(requestedSync, [true]);
+});
+
+test('explicit imported destination switch moves even when both repositories contain the same identity', async () => {
+  const taskUrl = 'acme/project/shared-import', plans = [];
+  const current = { id: '01J5SOURCE0000000000000000', taskUrl, startedAt: '2026-09-09T08:00:00.000Z' };
+  const store = {
+    getConfigurationSnapshot: async () => ({ registry, config: registry.destinations['github:1'] }),
+    getLocalPreferences: async () => ({ projects: registry.projects }),
+    getAuthSnapshot: async () => ({ auth: { mode: 'github_app' } }),
+    getTrackingSnapshot: async () => ({ activeTimer: { destinationId: 'github:1', record: current } }),
+    getDestinationRegistry: async () => registry,
+    acceptCrossDestinationSwitch: async plan => { plans.push(plan); return true; },
+  };
+  const source = { getState: async () => ({ active: current }), prepareQueuedStop: active => ({
+    operation: { id: active.id, operation: 'completeTimer' }, entry: active, pendingEntry: active,
+  }) };
+  const target = { prepareQueuedStart: (url, title, description, options) => ({
+    operation: { id: options.id }, pendingActive: { id: options.id, taskUrl: url },
+  }) };
+  const context = handlerContext({ store, trackerForDestination: async id => id === 'github:1' ? source : target,
+    requestPendingSync: () => {} });
+  const result = await context.handle({ type: 'SWITCH_TASK', taskUrl, destinationId: 'github:2' }, extensionSender);
+  assert.equal(result.destinationId, 'github:2');
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].source.destinationId, 'github:1');
+  assert.equal(plans[0].target.destinationId, 'github:2');
 });

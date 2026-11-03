@@ -18,6 +18,12 @@ let deviceClipboardState = 'unknown';
 let deviceOpeningGitHubAutomatically = false;
 let deviceGitHubOpened = false;
 let showOnboarding = false;
+let reconnectingGitHub = false;
+let authExpired = false;
+let refreshRunningStatus = null;
+let authRecoveryChecking = false;
+let authRecoveryKnown = '';
+let authRecoveryTried = '';
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
 let repositoryTarget = '';
@@ -59,6 +65,8 @@ let repositoryActionApplying = false;
 let authorizationBlock = null;
 let projectSequence = 0;
 let closeActiveAvatarMenu = null;
+const repositoryCollaborators = new Map();
+let collaboratorAccount = '';
 
 
 function message(text, kind = '') {
@@ -583,6 +591,8 @@ async function loadRepositoryCollaborators(article, destination, root) {
     if (!root.contains(article) || article.collaboratorLoadId !== loadId) return;
     const users = Array.isArray(result?.users) ? result.users : [];
     const pending = Array.isArray(result?.pendingUsers) ? result.pendingUsers : [];
+    repositoryCollaborators.set(destination.id, new Map((result.avatarUsers || users).map(user => [user.login.toLowerCase(), user.avatarUrl])));
+    if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
     const labels = users.map(user => `@${user.login}`);
     closeActiveAvatarMenu?.();
     display.replaceChildren();
@@ -620,6 +630,8 @@ async function loadRepositoryCollaborators(article, destination, root) {
     }
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
+      repositoryCollaborators.delete(destination.id);
+      if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
       closeActiveAvatarMenu?.();
     }
@@ -696,7 +708,9 @@ function renderDeviceHandoff(attempt) {
 
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
-  const step = onboardingStep({ authorized });
+  const step = authExpired && state?.candidateAuth ? 2
+    : authExpired || reconnectingGitHub || (state?.auth?.mode === 'github_app' && state?.deviceAttempt)
+    ? 1 : onboardingStep({ authorized });
   $('current-step').textContent = String(step);
   $('current-step-name').textContent = ['Connect GitHub', 'Connect time repositories'][step - 1];
   $('progress-fill').style.width = `${(step / 2) * 100}%`;
@@ -713,10 +727,14 @@ function renderOnboardingProgress() {
 }
 
 function renderState() {
+  const account = `${state?.auth?.mode || ''}:${state?.auth?.githubLogin?.toLowerCase() || ''}`;
+  const accountChanged = account !== collaboratorAccount;
+  if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
-  const repositoryFlowOpen = Boolean(state?.candidateAuth) || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
-  $('connected').hidden = !accountConnected;
+  const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
+    || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
+  $('connected').hidden = !accountConnected || authExpired;
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
@@ -728,11 +746,19 @@ function renderState() {
   $('more-settings-toggle').hidden = Boolean(accountConnected);
   $('onboarding-flow').hidden = setupCancelled;
   $('setup-cancelled').hidden = !setupCancelled;
+  $('setup-progress').hidden = authExpired;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
+  $('reconnect-github').hidden = state.auth?.mode !== 'github_app' || authExpired;
+  $('reconnect-github').disabled = !state.appConfigured || Boolean(state.deviceAttempt) || reconnectingGitHub;
   $('device-initial-paste-shortcut').textContent = deviceKeyboardShortcut('V');
-  $('connection-status').textContent = accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
-  $('connection-status').className = `badge${accountConnected ? ' ready' : ''}`;
+  $('connection-status').textContent = authExpired && state.candidateAuth ? 'Checking repository access'
+    : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
+  $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
+  $('connected-status').textContent = authExpired ? 'Sign-in required' : 'Connected';
+  $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
+  $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
+  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Sign in with GitHub';
   $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
 
   if (state.config) {
@@ -751,6 +777,7 @@ function renderState() {
   renderDestinationCards();
   renderDestinationControls(localPreferences || {});
   renderMergeDestinationOptions();
+  if (accountChanged) updateMergePeopleAvatars();
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
   else $('device-panel').hidden = true;
@@ -814,18 +841,28 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
+      reconnectingGitHub = false;
+      state.deviceAttempt = null;
       message(`Device activation complete for ${result.githubLogin}. Connect your time repositories below.`, 'success');
       discoveryStatus = 'idle';
-      await refreshState();
+      try {
+        await refreshState();
+      } catch (error) {
+        // Authorization consumed this attempt; retry only the durable read, never the poll.
+        try { await refreshState(); }
+        catch { renderState(); message(`${error.message} Reload Settings to retry.`, 'error'); return; }
+      }
+      try { await refreshRunningStatus?.(); }
+      catch (error) { message(`${error.message} Reload Settings to retry.`, 'error'); }
       return;
     }
     state.deviceAttempt = result;
     renderDeviceAttempt(result);
   } catch (error) {
-    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing'].includes(error.code)) {
+    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing', 'invalid_device_flow'].includes(error.code)) {
       state.deviceAttempt = null;
-      $('device-panel').hidden = true;
-      $('authorize-panel').hidden = false;
+      reconnectingGitHub = false;
+      renderState();
       message(error.message, 'error');
       return;
     }
@@ -1579,6 +1616,36 @@ const mergeSelection = { source: '', target: '' };
 let mergePairs = [];
 let mergePeople = new Set();
 let mergeAvailableUsers = [];
+function mergePersonAvatar(user) {
+  const avatar = document.createElement('span'); avatar.className = 'merge-person-avatar';
+  avatar.textContent = user[0]?.toUpperCase() || '?';
+  const url = repositoryCollaborators.get($('merge-task-destination').value)?.get(user.toLowerCase());
+  if (url) {
+    const image = document.createElement('img'); image.src = url; image.alt = '';
+    image.referrerPolicy = 'no-referrer'; image.addEventListener('error', () => image.remove()); avatar.append(image);
+  }
+  return avatar;
+}
+function updateMergePeopleAvatars() {
+  for (const label of $('merge-people-list').children) {
+    const avatar = label.querySelector('.merge-person-avatar');
+    if (!avatar) continue;
+    const updated = mergePersonAvatar(label.dataset.user);
+    avatar.replaceChildren();
+    avatar.textContent = updated.textContent;
+    avatar.append(...updated.children);
+  }
+  const selected = mergeAvailableUsers.filter(user => mergePeople.has(user));
+  const display = $('merge-people-selected'); display.replaceChildren();
+  display.setAttribute('aria-label', selected.length ? `Selected people: ${selected.join(', ')}` : 'No people selected');
+  for (const user of selected.slice(0, 3)) {
+    const avatar = mergePersonAvatar(user); avatar.title = user; display.append(avatar);
+  }
+  const count = document.createElement('span'); count.className = 'merge-people-count';
+  count.textContent = selected.length > 3 ? `${selected.length} selected` : selected.length ? selected.join(', ') : 'None selected';
+  display.append(count);
+  $('merge-people-filter').placeholder = selected.length ? 'Filter' : 'People';
+}
 function renderMergeDestinationOptions() {
   const select = $('merge-task-destination'), destinations = configuredDestinations();
   const previous = select.value, fallback = defaultDestinationId();
@@ -1595,9 +1662,7 @@ function renderMergeDestinationOptions() {
   }
 }
 function mergeTasksVisible(side) {
-  const query = $(`merge-${side}-filter`).value.trim().toLowerCase();
-  return mergeTasks.filter(task => (side === 'source' || isMergeTarget(task))
-    && (!query || `${task.title || ''} ${task.taskUrl}`.toLowerCase().includes(query)));
+  return mergeSearch[side].matches(mergeTasks, task => side === 'source' || isMergeTarget(task));
 }
 function isMergeTarget(task) {
   try { return normalizeTaskUrl(task.taskUrl) === task.taskUrl; }
@@ -1612,6 +1677,7 @@ function updateMergePeopleState(users = mergeAvailableUsers) {
   $('merge-people-all').disabled = !users.length;
   $('merge-people-all').setAttribute('aria-pressed', String(allSelected));
   $('merge-people-all').setAttribute('aria-label', allSelected ? 'Clear all people' : 'Select all people');
+  updateMergePeopleAvatars();
 }
 function renderMergePeople(users = []) {
   const focusedUser = document.activeElement?.type === 'checkbox' ? document.activeElement.value : '';
@@ -1625,7 +1691,7 @@ function renderMergePeople(users = []) {
       clearMergePairs(); updateMergePeopleState(); void refreshMergeTasks();
     });
     const text = document.createElement('span'); text.textContent = user;
-    label.append(input, text); list.append(label);
+    label.append(input, mergePersonAvatar(user), text); list.append(label);
   }
   updateMergePeopleState(users);
   filterMergePeople();
@@ -1836,9 +1902,17 @@ $('authorize').addEventListener('click', async () => {
     }
   } catch (error) {
     if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
+    if (!state.deviceAttempt) { reconnectingGitHub = false; renderState(); }
     message(error.message, 'error');
   }
   finally { $('authorize').disabled = !state?.appConfigured; }
+});
+
+$('reconnect-github').addEventListener('click', () => {
+  reconnectingGitHub = true;
+  setupCancelled = false;
+  renderState();
+  $('authorize').click();
 });
 
 $('open-device-page').addEventListener('click', () => {
@@ -2428,7 +2502,8 @@ $('import-settings-file').addEventListener('change', async () => {
   finally { input.value = ''; input.disabled = false; }
 });
 
-for (const side of ['source', 'target']) $(`merge-${side}-filter`).addEventListener('input', () => renderMergeTaskList(side));
+const mergeSearch = Object.fromEntries(['source', 'target'].map(side => [side,
+  globalThis.ClockoliTaskSearch.mount($(`merge-${side}-filter`), { onInput: () => renderMergeTaskList(side) })]));
 const mergePeopleSelect = $('merge-people-select');
 function setMergePeopleOpen(open) {
   mergePeopleSelect.open = open;
@@ -2488,6 +2563,46 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
+function showSignInRequired() {
+  if (authExpired) return;
+  authExpired = true;
+  authRecoveryKnown = `${state?.auth?.accessTokenExpiresAt || ''}:${state?.auth?.refreshTokenExpiresAt || ''}`;
+  authRecoveryTried = '';
+  setupCancelled = false;
+  if (state?.auth?.mode === 'github_app') renderState();
+}
+
+function clearSignInRequired() {
+  if (!authExpired) return;
+  authExpired = false;
+  authRecoveryKnown = '';
+  void refreshState().catch(error => message(error.message, 'error'));
+}
+
+async function checkSignInRecovery() {
+  if (!authExpired || document.hidden || state?.deviceAttempt || authRecoveryChecking) return;
+  authRecoveryChecking = true;
+  try {
+    // A new authorization in another tab changes stored credentials. Do not retry
+    // the same rejected refresh token every five seconds.
+    const current = await send({ type: 'GET_ONBOARDING_STATE' });
+    const auth = current.auth;
+    const key = `${auth?.accessTokenExpiresAt || ''}:${auth?.refreshTokenExpiresAt || ''}`;
+    if (authExpired && !state?.deviceAttempt && auth?.mode === 'github_app'
+        && Number(auth.accessTokenExpiresAt) > Date.now()
+        && key !== authRecoveryKnown
+        && key !== authRecoveryTried) {
+      authRecoveryTried = key;
+      await refreshRunningStatus?.();
+      if (authExpired) authRecoveryKnown = key;
+    }
+  } catch { /* Keep sign-in available when the local state cannot be checked. */ }
+  finally { authRecoveryChecking = false; }
+}
+
 refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
 
-mountRunningStatus($('running-status'), { send });
+const disposeRunningStatus = mountRunningStatus($('running-status'), { send, onAuthExpired: showSignInRequired, onAuthRestored: clearSignInRequired });
+refreshRunningStatus = disposeRunningStatus.refresh;
+const authRecoveryTimer = setInterval(() => void checkSignInRecovery(), 5_000);
+window.addEventListener('pagehide', () => clearInterval(authRecoveryTimer));

@@ -31,7 +31,12 @@ test('repository collaborator previews use verified identities and safe avatar U
     { id: 11, login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/11?v=4' },
     { id: 12, login: 'bob', avatarUrl: null }, { id: 13, login: 'carol', avatarUrl: null },
     { id: 14, login: 'dan', avatarUrl: 'https://avatars.githubusercontent.com/u/14?v=4' },
-  ], hasMore: true });
+  ], hasMore: true, avatarUsers: [
+    { login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/11?v=4' },
+    { login: 'bob', avatarUrl: null }, { login: 'carol', avatarUrl: null },
+    { login: 'dan', avatarUrl: 'https://avatars.githubusercontent.com/u/14?v=4' },
+    { login: 'eve', avatarUrl: 'https://avatars.githubusercontent.com/u/15?v=4' },
+  ] });
   assert.ok(requests[0].endsWith('/repos/acme/time-data/collaborators?per_page=100'));
   assert.equal(requests.length, 1);
   for (const malformed of [[{ login: 'bob' }], [{ id: 1, login: 'bob' }, { id: 2, login: 'BOB' }], {}]) {

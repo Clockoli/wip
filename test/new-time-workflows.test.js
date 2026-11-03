@@ -35,7 +35,8 @@ test('Times page is a packaged shared-renderer surface with week navigation, fil
   assert.match(content, /Previous week/);
   assert.match(content, /Next week/);
   assert.doesNotMatch(content, /periodLabel\.append\(period\)/);
-  assert.match(content, /Search activity[\s\S]*URL or title/);
+  assert.match(content, /filter\.placeholder = 'Search entries'/);
+  assert.match(content, /filter\.setAttribute\('aria-label', 'Search activity'\)/);
   assert.match(content, /View activity/);
   assert.match(content, /button\('Activity'/);
   assert.match(content, /BULK_ADD_TIMES/);

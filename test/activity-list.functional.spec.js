@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const currentWeekFriday = () => {
+  const friday = new Date();
+  friday.setDate(friday.getDate() - (friday.getDay() + 6) % 7 + 4);
+  friday.setHours(18, 0, 0, 0);
+  return friday;
+};
 const workerSource = `
 const day = new Date(); day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);
 const date = [day.getFullYear(), String(day.getMonth() + 1).padStart(2, '0'), String(day.getDate()).padStart(2, '0')].join('-');
@@ -52,6 +58,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         startedAt: date + 'T12:30:00Z', endedAt: date + 'T13:00:00Z' },
     ] : [])],
     pendingWrites, pendingCount: pendingWrites.length });
+  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent) {
+    globalThis.finishOverlapRecent = () => respond({ ok: true, data: state() });
+    return true;
+  }
   if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });
   else if (message.type === 'SEARCH_ACTIVITY') {
     if (globalThis.searchMode === 'error') respond({ ok: false, error: { message: 'History unavailable' } });
@@ -111,6 +121,1161 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   } else respond({ ok: false, error: { message: 'Unexpected test request: ' + message.type } });
 });
 `;
+
+test('toolbar-injected HTTP panel searches and clears its List filter', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-action-search-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-action-search-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const contentPath = join(extension, 'src/content/github.js');
+    await writeFile(contentPath, (await readFile(contentPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    manifest.host_permissions.push('https://example.com/*'); // Test-only access for programmatic injection.
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
+    const background = await readFile(new URL('src/background/service-worker.js', ROOT), 'utf8');
+    const injection = background.match(/files: (\['src\/domain\/recovery-actions\.js'[^\]]*'src\/content\/github\.js'\])/);
+    expect(injection).not.toBeNull();
+    const files = JSON.parse(injection[1].replaceAll("'", '"'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
+    await page.route('https://example.com/clockoli-test', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><main>Test task page</main></body></html>' }));
+    await page.goto('https://example.com/clockoli-test');
+    await worker.evaluate(async files => {
+      const [tab] = await chrome.tabs.query({ url: 'https://example.com/clockoli-test' });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; } });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files });
+    }, files);
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'List', exact: true }).click();
+    const filter = panel.getByRole('searchbox', { name: 'Search current week' });
+    const records = panel.locator('.entry-record');
+    await expect(records).toHaveCount(3);
+    await filter.fill('Same day task');
+    await expect(records).toHaveCount(1);
+    await expect(records).toContainText('Same day task');
+    await filter.fill('');
+    await expect(records).toHaveCount(3);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity keeps local sync and conflict warnings visible in Timeline and Calendar', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource
+      .replace('let active = null;', 'let configured = true; let active = null;')
+      .replace('const state = () => ({ configured: true, active,', 'const state = () => ({ configured, active,')
+      .replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'edit-A', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_missing',
+        subjects: [{ original: { entryDate: '2026-09-12', startedAt: '2026-09-12T08:00:00.000Z', endedAt: '2026-09-12T09:00:00.000Z',
+          taskTitle: 'Old task' }, proposed: { entryDate: '2026-09-12', startedAt: '2026-09-12T08:00:00.000Z',
+          endedAt: '2026-09-12T10:00:00.000Z', taskTitle: 'Old task' }, queuedMonth: '2026-10' }] },
+      { id: 'edit-C', operation: 'editEntry', stage: 'editEntry', status: 'conflict', conflictReason: 'queued_entry_edit_conflict',
+        subjects: [{ original: { entryDate: '2026-09-15', startedAt: '2026-09-15T08:00:00.000Z', endedAt: '2026-09-15T09:00:00.000Z',
+          taskTitle: 'Another edit' }, proposed: { entryDate: '2026-09-15', startedAt: '2026-09-15T08:00:00.000Z',
+          endedAt: '2026-09-15T10:00:00.000Z', taskTitle: 'Another edit' }, queuedMonth: '2026-09', descriptionChanged: true }],
+        conflictWith: { entryDate: '2026-09-15', startedAt: '2026-09-15T09:30:00.000Z', endedAt: '2026-09-15T11:00:00.000Z', taskTitle: 'Other task' } },
+      { id: 'add-B', operation: 'addTime', status: 'pending' },
+    ];`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const root = page.locator('#clockoli-times-root');
+    const status = page.locator('#activity-sync-status');
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await expect(status.getByRole('alert')).toContainText('2 conflicts');
+      await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible();
+    }
+    for (const mode of ['Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await worker.evaluate(() => {
+        globalThis.savedConflicts = pendingWrites;
+        pendingWrites = pendingWrites.filter(item => item.status === 'pending');
+      });
+      await expect(status).toBeEmpty({ timeout: 12_000 });
+      await worker.evaluate(() => { pendingWrites = globalThis.savedConflicts; });
+      await expect(status.getByRole('alert')).toContainText('2 conflicts', { timeout: 12_000 });
+    }
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Old task.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Another edit.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Pending sync/ })).toBeVisible();
+    await expect(dialog.getByText(/Original: Old task/)).toBeVisible();
+    await expect(dialog.getByText(/Queued change: Old task/)).toBeVisible();
+    await expect(dialog.getByText(/2026-09.*2026-10/)).toBeVisible();
+    if (process.env.CLOCKOLI_SYNC_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_SYNC_SCREENSHOT });
+    await dialog.getByRole('button', { name: /Another edit.*Conflict/ }).click();
+    await expect(dialog.getByText(/Overlaps: Other task/)).toBeVisible();
+    await expect(dialog.getByText(/Description changed/)).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeFocused();
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await dialog.getByRole('button', { name: /Old task.*Conflict/ }).click();
+    expect(await worker.evaluate(() => trackingMessages.filter(type => type === 'RESOLVE_PENDING').length)).toBe(0);
+    await page.setViewportSize({ width: 390, height: 740 });
+    await expect(dialog.getByRole('button', { name: 'Retry saved edit' })).toBeVisible();
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await dialog.getByRole('button', { name: 'Retry saved edit' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('not resolved');
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(3);
+    await dialog.getByRole('button', { name: /View week of.*12 Sep/ }).click();
+    await expect(dialog).toBeHidden();
+    await expect(root.locator('.week-navigation-label')).toContainText('2026-09-07');
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(dialog).toBeVisible();
+    await worker.evaluate(() => { pendingWrites = pendingWrites.filter(item => item.status === 'pending'); });
+    await expect(status).toBeEmpty({ timeout: 12_000 });
+    await expect(dialog).toHaveCount(0);
+    expect(await worker.evaluate(() => trackingMessages.filter(type => type === 'RESOLVE_PENDING').length)).toBe(1);
+    await worker.evaluate(() => { pendingWrites = globalThis.savedConflicts; });
+    await expect(status.getByRole('alert')).toContainText('2 conflicts', { timeout: 12_000 });
+    await worker.evaluate(() => {
+      const blocked = globalThis.savedConflicts[0];
+      pendingWrites = [blocked, { id: 'dependent-edit', operation: 'editEntry', stage: 'editEntry', status: 'pending',
+        subjects: [{ original: blocked.subjects[0].original }] }];
+    });
+    for (const mode of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: mode }).click();
+      await expect(status.getByRole('alert')).toContainText('1 conflict needs review', { timeout: 12_000 });
+      await expect(status.getByRole('alert')).toContainText('1 waiting to sync');
+      await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible();
+    }
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(page.getByRole('dialog', { name: 'Sync issues' }).getByRole('button', { name: /Old task.*Pending sync/ })).toBeVisible();
+    expect(await worker.evaluate(() => pendingWrites.map(item => item.id))).toEqual(['edit-A', 'dependent-edit']);
+    await page.keyboard.press('Escape');
+    await worker.evaluate(() => { configured = false; pendingWrites = []; });
+    await expect(root).toContainText('Choose where Clockoli should save your time', { timeout: 12_000 });
+    await expect(status).toBeEmpty();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity names the locally queued running start and offers precise, non-discarding repair', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-start-conflict-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-start-conflict-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'queued-start', destinationId: 'github:1', operation: 'startTimer', status: 'conflict', stage: 'startNext',
+        conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: {
+          taskTitle: 'Meet - dev call', taskUrl: 'https://example.com/meeting', entryDate: date,
+          startedAt: date + 'T12:01:00.000Z' } }] }
+    ];`).replace("else if (message.type === 'GET_ACTIVITY_VIEW_MODE')", `else if (message.type === 'RESOLVE_PENDING') {
+    globalThis.lastResolve = message;
+    respond({ ok: true, data: { resolved: false } });
+  }
+  else if (message.type === 'GET_ACTIVITY_VIEW_MODE')`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(dialog.getByRole('button', { name: /Meet - dev call.*Conflict/ })).toBeVisible();
+    await expect(dialog.getByText(/Queued start: Meet - dev call.*started 12:01:00\.000 local/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Start after previous entry' }).click();
+    expect(await worker.evaluate(() => globalThis.lastResolve)).toEqual({
+      type: 'RESOLVE_PENDING', id: 'queued-start', action: 'align_queued_start',
+    });
+    await worker.evaluate(() => { pendingWrites.push({ id: 'unrelated-edit', destinationId: 'github:1',
+      operation: 'editEntry', status: 'pending' }); });
+    await expect(dialog.getByRole('button', { name: 'Start after previous entry' })).toHaveCount(0, { timeout: 12_000 });
+    await expect(dialog.getByRole('button', { name: 'Discard queued start' })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity explains a blocked start followed by a local stop without offering unavailable repair', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-stopped-conflict-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-stopped-conflict-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let pendingWrites = [];', `let pendingWrites = [
+      { id: 'same-timer', destinationId: 'github:1', operation: 'startTimer', status: 'conflict',
+        stage: 'startNext', conflictReason: 'add_time_overlap_changed', subjects: [] },
+      { id: 'same-timer', destinationId: 'github:1', operation: 'completeTimer', status: 'pending',
+        stage: 'verifyActive', subjects: [{ proposed: { taskTitle: 'Meet - dev call',
+          taskUrl: 'https://example.com/meeting', entryDate: date,
+          startedAt: date + 'T12:01:00.000Z', endedAt: date + 'T12:30:00.000Z' } }] },
+      { id: 'other-edit', destinationId: 'github:1', operation: 'editEntry', status: 'pending',
+        subjects: [{ original: { taskTitle: 'Previous task', taskUrl: 'https://example.com/previous', entryDate: date,
+          startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:01:22.296Z' },
+          proposed: { taskTitle: 'Previous task', taskUrl: 'https://example.com/previous', entryDate: date,
+          startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:00:00.000Z' } }] }
+    ];`).replace("else if (message.type === 'GET_ACTIVITY_VIEW_MODE')", `else if (message.type === 'DELETE_STOPPED_OVERLAP') {
+      globalThis.overlapDeletes ||= []; globalThis.overlapDeletes.push(message);
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Current worker cannot verify this deletion' } }); return; }
+      respond({ ok: true, data: { deleted: true, resolved: true } });
+    }
+    else if (message.type === 'RESOLVE_STOPPED_OVERLAP') {
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Message RESOLVE_STOPPED_OVERLAP is not allowed from this sender' } }); return; }
+      globalThis.overlapEdits ||= []; globalThis.overlapEdits.push(message);
+      if (globalThis.deferOverlapResolution) {
+        globalThis.finishOverlapResolution = () => respond({ ok: true, data: { resolved: true } });
+        return true;
+      }
+      respond({ ok: true, data: { resolved: true } });
+    }
+    else if (message.type === 'GET_STOPPED_OVERLAP') {
+      if (globalThis.overlapLookupUnavailable) { respond({ ok: false, error: { message: 'Message GET_STOPPED_OVERLAP is not allowed from this sender' } }); return; }
+      respond({ ok: true, data: { previous: { id: 'previous', destinationId: 'github:1', taskTitle: 'Previous task',
+        taskUrl: 'https://example.com/previous', entryDate: date, timezone: 'UTC',
+        startedAt: date + 'T10:08:00.000Z', endedAt: date + 'T12:01:22.296Z' },
+        blocked: { id: 'same-timer', destinationId: 'github:1', taskTitle: 'Meet - dev call',
+          taskUrl: 'https://example.com/meeting', entryDate: date, timezone: 'UTC',
+          startedAt: date + 'T12:01:00.000Z', endedAt: date + 'T12:30:00.000Z' },
+        queuedPrevious: { endedAt: date + 'T12:00:00.000Z' }, editable: pendingWrites.length === 3 } });
+    }
+    else if (message.type === 'GET_ACTIVITY_VIEW_MODE')`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = true; });
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sync issues' });
+    const queued = dialog.locator('.sync-other-pending');
+    await expect(queued.locator('summary')).toContainText('All queued changes (3)');
+    await queued.locator('summary').click();
+    await queued.getByRole('button', { name: /Previous task.*Pending sync/ }).click();
+    await expect(dialog).toContainText('Waiting to sync');
+    await expect(dialog).toContainText('Queued change:');
+    await dialog.locator('.sync-issue-list').getByRole('button', { name: /Timer start.*Conflict/ }).click();
+    const pair = dialog.locator('.sync-overlap-pair');
+    await expect(pair.locator('.sync-overlap-card')).toHaveCount(2);
+    await expect(pair).toContainText('not yet checked on GitHub');
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete pending entry' })).toBeEnabled();
+    await expect(pair.locator('.entry-actions .entry-edit svg')).toHaveCount(2);
+    await expect(pair.locator('.entry-actions .entry-delete svg')).toHaveCount(2);
+    await expect(pair.locator('.sync-overlap-edit')).toHaveCount(2);
+    await expect(pair).not.toContainText(/\b\d\d:\d\d local\b/);
+    await expect(pair.getByRole('heading', { name: /Overlap/ })).not.toContainText('local');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(dialog).not.toContainText('Could not load both entries');
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    const editor = page.getByRole('dialog', { name: 'Resolve time overlap' });
+    await expect(editor.locator('#add-time-start')).toBeHidden();
+    await expect(editor.locator('#add-time-end')).toBeVisible();
+    await expect(editor.locator('#add-time-end')).toBeFocused();
+    await expect(editor.locator('label[for="add-time-end"]')).toContainText('End');
+    await expect(editor.locator('label[for="add-time-end"]')).not.toContainText('optional');
+    await editor.getByRole('button', { name: 'Save' }).click();
+    await expect(editor).toContainText('Reload Clockoli');
+    await expect(editor).not.toContainText('Message RESOLVE_STOPPED_OVERLAP');
+    await expect(editor.locator('.add-time-progress')).toBeHidden();
+    await expect(editor.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(3);
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editor).toBeHidden();
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = false; });
+    await pair.getByRole('button', { name: 'Recheck GitHub entry' }).click();
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled();
+    await expect(pair).toContainText('Previous task');
+    await expect(pair).toContainText('Meet - dev call');
+    await expect(pair).toContainText('12:01');
+    await expect(pair.getByRole('heading', { name: /Overlap.*12:01$/ })).toBeVisible();
+    await expect(pair).toContainText('12:00');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeVisible();
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeVisible();
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    await expect(editor.locator('#add-time-start')).toHaveValue('10:08');
+    await expect(editor.locator('#add-time-start')).toBeDisabled();
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:00');
+    await expect(editor.locator('#add-time-date')).toBeDisabled();
+    if (process.env.CLOCKOLI_STOPPED_EDITOR_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_STOPPED_EDITOR_SCREENSHOT });
+    await worker.evaluate(() => { pendingWrites[2].lastError = 'Pending sync changed'; });
+    await page.waitForTimeout(5500);
+    await expect(editor).toBeVisible();
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:00');
+    await editor.getByRole('button', { name: 'Cancel' }).click();
+    await pair.getByRole('button', { name: 'Edit pending entry' }).click();
+    await expect(editor.locator('#add-time-start')).toBeVisible();
+    await expect(editor.locator('#add-time-start')).toBeFocused();
+    await expect(editor.locator('#add-time-end')).toBeHidden();
+    await expect(editor.locator('#add-time-start')).toHaveValue('12:01');
+    await expect(editor.locator('#add-time-end')).toHaveValue('12:30');
+    await expect(editor.locator('#add-time-end')).toBeDisabled();
+    await editor.locator('#add-time-start').fill('12:02');
+    await worker.evaluate(() => { globalThis.deferOverlapResolution = true; });
+    await editor.getByRole('button', { name: 'Save' }).click();
+    const progress = editor.getByRole('progressbar', { name: 'Resolving overlap and syncing time' });
+    await expect(progress).toBeVisible();
+    expect(await progress.evaluate(node => ({ value: node.getAttribute('value'), width: node.getBoundingClientRect().width })))
+      .toMatchObject({ value: null, width: expect.any(Number) });
+    expect(await progress.evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThan(0);
+    await expect(editor.getByRole('status')).toContainText('syncing queued time with GitHub');
+    await expect(editor.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await expect(editor.getByRole('button', { name: 'Close Edit time' })).toBeDisabled();
+    await worker.evaluate(() => {
+      globalThis.deferOverlapResolution = false; globalThis.deferOverlapRecent = true;
+      globalThis.finishOverlapResolution();
+    });
+    await expect(editor).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => typeof globalThis.finishOverlapRecent)).toBe('function');
+    await worker.evaluate(() => { globalThis.deferOverlapRecent = false; globalThis.finishOverlapRecent(); });
+    expect(await worker.evaluate(() => globalThis.overlapEdits)).toMatchObject([{
+      type: 'RESOLVE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'local',
+      startedAt: expect.stringContaining('T12:02:01.000Z'), endedAt: expect.stringContaining('T12:30:00.000Z'),
+    }]);
+    await pair.getByRole('button', { name: 'Edit earlier entry' }).click();
+    await editor.getByRole('button', { name: 'Save' }).click();
+    await expect(editor).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.overlapEdits)).toMatchObject([{}, {
+      type: 'RESOLVE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'previous',
+      startedAt: expect.stringContaining('T10:08:00.000Z'), endedAt: expect.stringContaining('T12:00:00.000Z'),
+    }]);
+    if (process.env.CLOCKOLI_STOPPED_SYNC_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_STOPPED_SYNC_SCREENSHOT });
+    await expect(dialog.getByRole('button', { name: 'Start after previous entry' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Discard queued start' })).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = true;
+      pendingWrites.unshift({ id: 'earlier-edit', destinationId: 'github:1',
+      operation: 'editEntry', status: 'pending', subjects: [{ proposed: { taskTitle: 'Earlier pending edit' } }] }); });
+    await expect(dialog.locator('.sync-overlap-card')).toHaveCount(2, { timeout: 12_000 });
+    await expect(dialog.locator('.sync-other-pending summary')).toContainText('All queued changes (4)');
+    await dialog.locator('.sync-other-pending summary').click();
+    await expect(dialog.locator('.sync-other-pending').getByRole('button', { name: /Earlier pending edit.*Pending sync/ })).toBeVisible();
+    await expect(pair).toContainText('not yet checked on GitHub');
+    await expect(pair).toContainText('Pending');
+    await expect(pair).not.toContainText(/\d\d:\d\d:\d\d|seconds/);
+    await expect(dialog).not.toContainText('Could not load both entries');
+    await expect(dialog).not.toContainText('The exact earlier entry is not included');
+    await expect(pair.getByRole('button', { name: 'Edit earlier entry' })).toBeEnabled({ timeout: 12_000 });
+    await expect(pair.getByRole('button', { name: 'Edit pending entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete earlier entry' })).toBeEnabled();
+    await expect(pair.getByRole('button', { name: 'Delete pending entry' })).toBeEnabled();
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('tracked time'); return prompt.dismiss(); });
+    await pair.getByRole('button', { name: 'Delete pending entry' }).click();
+    expect(await worker.evaluate(() => globalThis.overlapDeletes ?? [])).toEqual([]);
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('tracked time'); return prompt.accept(); });
+    await pair.getByRole('button', { name: 'Delete pending entry' }).click();
+    await expect(dialog).toContainText('Current worker cannot verify this deletion');
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(4);
+    await worker.evaluate(() => { globalThis.overlapLookupUnavailable = false; });
+    page.once('dialog', prompt => { expect(prompt.message()).toContain('earlier saved entry'); return prompt.accept(); });
+    await pair.getByRole('button', { name: 'Delete earlier entry' }).click();
+    expect(await worker.evaluate(() => globalThis.overlapDeletes)).toMatchObject([
+      { type: 'DELETE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'local' },
+      { type: 'DELETE_STOPPED_OVERLAP', destinationId: 'github:1', id: 'same-timer', side: 'previous' },
+    ]);
+    await page.setViewportSize({ width: 390, height: 740 });
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await expect(dialog.locator('.sync-overlap-pair .sync-overlap-card')).toHaveCount(2);
+    expect(await worker.evaluate(() => pendingWrites.length)).toBe(4);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('imported Activity records display the theme-colored Clockoli icon in List and Calendar', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-imported-icon-profile-'));
+  const fixtureTime = currentWeekFriday();
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);').replace('for (const entry of recent) entry.destinationId',
+      "recent.push({ ...recent[0], id: 'imported', taskUrl: 'owner/repo/slug', taskTitle: 'Imported task', startedAt: date + 'T10:00:00Z', endedAt: date + 'T10:30:00Z' });\nrecent.push({ ...recent[0], id: 'github-icon', taskUrl: 'https://github.com/acme/app/issues/42', taskTitle: 'GitHub task', startedAt: date + 'T11:00:00Z', endedAt: date + 'T11:30:00Z' });\nfor (const entry of recent) entry.destinationId")
+      .replace("else if (message.type === 'GET_PAGE_STATE')", "else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [{ taskUrl: 'owner/repo/slug', title: 'Imported task', totalSeconds: 1800 }], active: null, pendingWrites: [] } });\n  else if (message.type === 'GET_PAGE_STATE')"));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.clock.install({ time: fixtureTime });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const maskPixels = await page.evaluate(async () => {
+      const image = new Image();
+      image.src = chrome.runtime.getURL('src/assets/clockoli-inverse-circle.svg');
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 442; canvas.height = 442;
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, 442, 442);
+      const alpha = (x, y) => context.getImageData(x, y, 1, 1).data[3];
+      return { outside: alpha(0, 0), circle: alpha(221, 40), crown: alpha(210, 160), stem: alpha(210, 310), hands: alpha(211, 220) };
+    });
+    expect(maskPixels).toEqual({ outside: 0, circle: 255, crown: 0, stem: 0, hands: 255 });
+    const root = page.locator('#clockoli-times-root');
+    const switcher = page.locator('#activity-view-switcher');
+    await switcher.getByRole('button', { name: 'Calendar' }).click();
+    await expect(root.locator('.calendar-day-header')).toHaveCount(7);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => document.documentElement.setAttribute('data-clockoli-theme', theme), theme);
+      await switcher.getByRole('button', { name: 'List' }).click();
+      await expect(root.locator('.entry-record').first()).toBeVisible();
+      const icon = root.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+      await expect(icon).toBeVisible();
+      const listColor = await icon.evaluate(element => getComputedStyle(element).backgroundColor);
+      expect(await icon.evaluate(element => getComputedStyle(element).maskImage)).toContain('clockoli-inverse-circle.svg');
+      expect(listColor).toBe(await icon.evaluate(element => getComputedStyle(element).color));
+      expect(listColor).toBe(theme === 'light' ? 'rgb(31, 35, 40)' : 'rgb(240, 246, 252)');
+      const githubIcon = root.locator('.entry-record').filter({ hasText: 'GitHub task' }).locator('.site-github-favicon');
+      await expect(githubIcon).toBeVisible();
+      await expect(githubIcon).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await expect(root.locator('.entry-record').filter({ hasText: 'Activity test task' }).locator('.entry-record-favicon')).toHaveCSS('filter', 'none');
+      await switcher.getByRole('button', { name: 'Calendar' }).click();
+      const tile = root.locator('.calendar-task[data-task-key="entry:imported"] .clockoli-fallback-icon').first();
+      await expect(tile).toBeVisible();
+      expect(await tile.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(listColor);
+      expect(await tile.evaluate(element => getComputedStyle(element).maskImage)).toContain('clockoli-inverse-circle.svg');
+      const githubTile = root.locator('.calendar-task[data-task-key="entry:github-icon"] .clockoli-github-favicon').first();
+      await expect(githubTile).toBeVisible();
+      await expect(githubTile).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await githubTile.hover();
+      const githubDetails = root.locator('.clockoli-compact-entry-details .clockoli-details-task-icon img.clockoli-github-favicon');
+      await expect(githubDetails).toBeVisible();
+      await expect(githubDetails).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
+      await tile.hover();
+      const detailsIcon = root.locator('.clockoli-compact-entry-details .clockoli-details-task-icon.clockoli-fallback-icon');
+      await expect(detailsIcon).toBeVisible();
+      expect(await detailsIcon.evaluate(element => getComputedStyle(element, '::before').backgroundColor)).toBe(listColor);
+      expect(await detailsIcon.evaluate(element => getComputedStyle(element, '::before').maskImage)).toContain('clockoli-inverse-circle.svg');
+    }
+    const tasksPage = await context.newPage();
+    tasksPage.on('pageerror', error => errors.push(error.message));
+    await tasksPage.goto(`chrome-extension://${new URL(worker.url()).host}/src/tasks/tasks.html`);
+    const taskIcon = tasksPage.locator('.task-clockoli-icon');
+    await expect(taskIcon).toBeVisible();
+    await expect(taskIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    for (const theme of ['light', 'dark']) {
+      await tasksPage.evaluate(theme => document.documentElement.setAttribute('data-clockoli-theme', theme), theme);
+      await expect(taskIcon).toHaveCSS('background-color', theme === 'light' ? 'rgb(31, 35, 40)' : 'rgb(240, 246, 252)');
+    }
+    const toolbar = await context.newPage();
+    toolbar.on('pageerror', error => errors.push(error.message));
+    await toolbar.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const toolbarRoot = toolbar.locator('#clockoli-popup-root');
+    await toolbarRoot.getByRole('button', { name: 'List', exact: true }).click();
+    const toolbarIcon = toolbarRoot.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+    await expect(toolbarIcon).toBeVisible();
+    await expect(toolbarIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    await expect(toolbarIcon).toHaveCSS('background-color', 'rgb(31, 35, 40)');
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1774, height: 900 });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: 'List', exact: true }).click();
+    const popupIcon = panel.locator('.entry-record').filter({ hasText: 'Imported task' }).locator('.site-clockoli-icon');
+    await expect(popupIcon).toBeVisible();
+    await expect(popupIcon).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
+    await expect(popupIcon).toHaveCSS('background-color', 'rgb(31, 35, 40)');
+    const resourceLoaded = await popupIcon.evaluate(async icon => {
+      const mask = getComputedStyle(icon).maskImage;
+      const image = new Image();
+      image.src = mask.slice(5, -2);
+      await image.decode();
+      return image.naturalWidth > 0 && image.naturalHeight > 0;
+    });
+    expect(resourceLoaded).toBe(true);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.evaluate(() => document.documentElement.removeAttribute('data-clockoli-theme'));
+    await switcher.getByRole('button', { name: 'List' }).click();
+    const githubIcon = root.locator('.entry-record').filter({ hasText: 'GitHub task' }).locator('.site-github-favicon');
+    await expect(githubIcon).toHaveCSS('filter', 'brightness(0) invert(1)');
+    await page.evaluate(() => document.documentElement.setAttribute('data-clockoli-theme', 'light'));
+    await expect(githubIcon).toHaveCSS('filter', 'none');
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Activity calendar metrics and view switcher fit the desktop and mobile layouts', async () => {
+  test.setTimeout(30000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-activity-layout-profile-'));
+  const fixtureTime = currentWeekFriday();
+  const clockOffset = fixtureTime.getTime() - Date.now();
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    // Page clocks do not reach isolated content scripts; offset both Date.now() and new Date().
+    await writeFile(rendererPath, `if (location.protocol === 'https:') {
+      const RealDate = Date;
+      const offset = ${clockOffset};
+      globalThis.Date = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [RealDate.now() + offset])); }
+        static now() { return RealDate.now() + offset; }
+      };
+    }\n`
+      + (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource
+      .replace(' - 3);', ' + 1);')
+      .replace("let viewMode = 'timeline';", "let viewMode = 'calendar';")
+      .replace("respond({ ok: true, data: state() });\n  else if (message.type === 'SEARCH_ACTIVITY')",
+        "respond({ ok: true, data: message.type === 'LOAD_TIMES' ? { configured: true, recent: state().recent } : state() });\n  else if (message.type === 'SEARCH_ACTIVITY')")
+      .replace('pendingWrites, pendingCount: pendingWrites.length });',
+        'pendingWrites, pendingCount: pendingWrites.length, todayTrackedMs: 7 * 3600000 + 11 * 60000 });'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.setViewportSize({ width: 1774, height: 900 });
+    await page.clock.install({ time: fixtureTime });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const root = page.locator('#clockoli-times-root');
+    const summary = page.locator('#activity-summary');
+    const switcher = page.locator('#activity-view-switcher');
+    await expect(root.locator('.calendar-day-header')).toHaveCount(7);
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
+    await expect(summary).not.toContainText('Daily average');
+    await expect(summary.locator('.activity-weekly-heading')).toContainText(/\w+ \d+–(?:\w+ )?\d+/);
+    await expect(summary.locator('.activity-weekly-label')).toBeHidden();
+    await expect(root.locator('.week-navigation-label')).toBeHidden();
+    await expect(root.locator('.times-list-total')).toBeHidden();
+    await expect(switcher.getByRole('group', { name: 'Activity view' })).toBeVisible();
+    await expect(summary.locator('.activity-weekly-card').first()).toContainText('Today');
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await page.reload();
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await root.getByRole('button', { name: 'Previous week' }).click();
+    await root.getByRole('button', { name: 'Next week' }).click();
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await switcher.getByRole('button', { name: 'List' }).click();
+    const search = root.getByRole('searchbox', { name: 'Search activity' });
+    await expect(search).toBeVisible();
+    await expect(root.getByText('Search activity', { exact: true })).toHaveCount(0);
+    await expect(search).toHaveCSS('margin-top', '0px');
+    await expect(root.getByText('Tracked time', { exact: true })).toHaveCount(0);
+    await expect(root.locator('.week-navigation-label')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(root.locator('.times-list-total')).toBeHidden();
+    await search.fill('Activity test task');
+    await expect(search).toHaveValue('Activity test task');
+    await search.fill('');
+    await switcher.getByRole('button', { name: 'Calendar' }).click();
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1774, height: 900 });
+    await github.clock.install({ time: fixtureTime });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    const [isolatedClock] = await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'https://github.com/acme/app/issues/42' });
+      return chrome.scripting.executeScript({ target: { tabId: tab.id },
+        func: () => ({ now: Date.now(), constructed: new Date().getTime() }) });
+    });
+    const pageNow = await github.evaluate(() => Date.now());
+    expect(Math.abs(isolatedClock.result.now - isolatedClock.result.constructed)).toBeLessThan(1000);
+    expect(Math.abs(isolatedClock.result.now - pageNow)).toBeLessThan(10000);
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.popup-overview-layout .strip-idle')).toHaveText('Not tracking');
+    await expect(panel.locator('.active-task-strip .running-status-recent-task')).toHaveCount(3);
+    await expect(panel.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toHaveText('Track this task');
+    await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
+    await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
+    const idleOverview = await panel.locator('.full-width-popup').evaluate(popup => {
+      const summary = popup.querySelector('.popup-overview-layout .activity-weekly-summary').getBoundingClientRect();
+      const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
+      return { summaryTop: summary.top, summaryRight: summary.right, summaryHeight: summary.height,
+        cardTop: card.top, cardLeft: card.left, cardHeight: card.height, cardWidth: card.width,
+        scrollWidth: popup.scrollWidth, clientWidth: popup.clientWidth };
+    });
+    const activitySummary = await summary.boundingBox();
+    const activityCard = await page.locator('#activity-running-status .running-status-row').boundingBox();
+    expect(Math.abs(idleOverview.summaryTop - idleOverview.cardTop)).toBeLessThan(2);
+    expect(idleOverview.summaryRight).toBeLessThan(idleOverview.cardLeft);
+    expect(idleOverview.cardHeight).toBeGreaterThanOrEqual(idleOverview.summaryHeight - 2);
+    expect(idleOverview.cardWidth).toBeGreaterThan(600);
+    expect(idleOverview.summaryHeight).toBeLessThanOrEqual(activitySummary.height + 20);
+    expect(idleOverview.cardHeight).toBeLessThanOrEqual(activityCard.height + 20);
+    expect(idleOverview.scrollWidth).toBeLessThanOrEqual(idleOverview.clientWidth);
+    const quickStartLabels = await panel.locator('.running-status-recent-task').allTextContents();
+    await panel.getByRole('button', { name: 'Previous week' }).click();
+    await panel.getByRole('button', { name: 'Next week' }).click();
+    await expect(panel.locator('.running-status-recent-task')).toHaveText(quickStartLabels);
+    if (process.env.CLOCKOLI_PANEL_SCREENSHOT) await github.screenshot({ path: process.env.CLOCKOLI_PANEL_SCREENSHOT });
+    const panelEntry = panel.locator('.calendar-task[data-task-key="entry:record"]');
+    await panelEntry.hover();
+    const panelDetails = panel.locator('.task-timeline-host .details');
+    await expect(panelDetails).toBeVisible();
+    await expect(panelDetails).toHaveClass(/clockoli-compact-entry-details/);
+    await expect(panelDetails.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(panelDetails.locator('.details-value').first()).toBeHidden();
+    const panelSkin = await panelDetails.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      radius: getComputedStyle(node).borderRadius,
+      width: node.getBoundingClientRect().width,
+    }));
+    const panelBounds = await panelDetails.evaluate(card => ({
+      card: card.getBoundingClientRect().toJSON(),
+      popup: card.getRootNode().host.getRootNode().querySelector('.full-width-popup').getBoundingClientRect().toJSON(),
+    }));
+    expect(panelBounds.card.top).toBeGreaterThanOrEqual(panelBounds.popup.top);
+    expect(panelBounds.card.bottom).toBeLessThanOrEqual(panelBounds.popup.bottom);
+    await panel.locator('.calendar-task[data-task-key="entry:same-day"]').hover();
+    await expect(panelDetails).toContainText('Same day task');
+    const sidePlacement = await panelDetails.evaluate(card => {
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:same-day"]').getBoundingClientRect();
+      const below = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      const rect = card.getBoundingClientRect();
+      return { beside: rect.left >= anchor.right + 8 || rect.right <= anchor.left - 8,
+        coversNext: rect.top < below.bottom && rect.bottom > below.top && rect.left < below.right && rect.right > below.left };
+    });
+    expect(sidePlacement).toEqual({ beside: true, coversNext: false });
+    await panelDetails.getByRole('button', { name: 'Edit' }).hover();
+    await expect(panelDetails).toContainText('Same day task');
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    const editDialog = github.locator('.add-time-dialog');
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.locator('#add-time-task')).toHaveValue('Same day task');
+    await editDialog.getByRole('button', { name: 'Close Edit time' }).click();
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await panelEntry.hover();
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.locator('#add-time-task')).toBeFocused();
+    await github.keyboard.press('Escape');
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await panelEntry.hover();
+    await panelDetails.getByRole('button', { name: 'Edit' }).click();
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(editDialog).toBeHidden();
+    await expect(panel.locator('.full-width-popup')).toBeVisible();
+    await github.setViewportSize({ width: 600, height: 500 });
+    await panelEntry.hover();
+    const constrained = await panelDetails.evaluate(card => ({
+      card: card.getBoundingClientRect().toJSON(),
+      popup: card.getRootNode().host.getRootNode().querySelector('.full-width-popup').getBoundingClientRect().toJSON(),
+    }));
+    expect(constrained.card.left).toBeGreaterThanOrEqual(constrained.popup.left);
+    expect(constrained.card.right).toBeLessThanOrEqual(constrained.popup.right);
+    expect(constrained.card.top).toBeGreaterThanOrEqual(constrained.popup.top);
+    expect(constrained.card.bottom).toBeLessThanOrEqual(constrained.popup.bottom);
+    await github.close();
+    await expect(root.locator('.calendar-task[data-task-key="entry:record"]')).toBeVisible();
+    const calendarRecord = root.locator('.calendar-task[data-task-key="entry:record"]');
+    await calendarRecord.hover();
+    const details = root.locator('.task-timeline-host .details');
+    await expect(details).toBeVisible();
+    await expect(details).toHaveClass(/clockoli-compact-entry-details/);
+    const activitySkin = await details.evaluate(node => ({
+      background: getComputedStyle(node).backgroundColor,
+      radius: getComputedStyle(node).borderRadius,
+      width: node.getBoundingClientRect().width,
+    }));
+    expect(panelSkin).toEqual(activitySkin);
+    await expect(details.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(details.locator('.clockoli-details-time')).toContainText(/\d{2}:\d{2} – \d{2}:\d{2} · 30m/);
+    await expect(details.locator('.details-value')).toHaveCount(3);
+    await expect(details.locator('.details-value').first()).toBeHidden();
+    await expect(details.getByRole('button', { name: 'Delete' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    const activityPlacement = await details.evaluate(card => {
+      const rect = card.getBoundingClientRect();
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      return rect.left >= anchor.right + 8 || rect.right <= anchor.left - 8;
+    });
+    expect(activityPlacement).toBe(true);
+    const approach = await details.evaluate(card => {
+      const anchor = card.getRootNode().querySelector('.calendar-task[data-task-key="entry:record"]').getBoundingClientRect();
+      const panel = card.getBoundingClientRect();
+      if (panel.left >= anchor.right || panel.right <= anchor.left) {
+        return { x: panel.left >= anchor.right ? (anchor.right + panel.left) / 2 : (anchor.left + panel.right) / 2,
+          y: Math.max(panel.top + 8, Math.min(anchor.top + anchor.height / 2, panel.bottom - 8)) };
+      }
+      return { x: Math.max(panel.left + 8, Math.min(anchor.left + anchor.width / 2, panel.right - 8)),
+        y: panel.top >= anchor.bottom ? (anchor.bottom + panel.top) / 2 : (panel.bottom + anchor.top) / 2 };
+    });
+    await page.mouse.move(approach.x, approach.y);
+    await page.waitForTimeout(350);
+    await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Edit' }).hover();
+    await expect(details).toBeVisible();
+    await calendarRecord.hover();
+    if (process.env.CLOCKOLI_ACTIVITY_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const timelineRecord = root.locator('.task[data-task-key="entry:record"]').first();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    await expect(details).toHaveClass(/clockoli-compact-entry-details/);
+    await expect(details.locator('.clockoli-details-task-icon')).toBeVisible();
+    await expect(details.locator('.clockoli-details-time')).toContainText(/\d{2}:\d{2} – \d{2}:\d{2} · 30m/);
+    await expect(details.locator('.details-value').first()).toBeHidden();
+    await expect(details.getByRole('button', { name: 'Delete' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Edit' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    if (process.env.CLOCKOLI_ACTIVITY_TIMELINE_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_TIMELINE_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect(switcher.getByRole('button', { name: 'Calendar', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(summary.locator('[data-stat="total"]')).not.toHaveText('—');
+    expect(await page.locator('#activity-running-status .running-status-row').evaluate(row => row.getBoundingClientRect().height)).toBeGreaterThanOrEqual(84);
+    const geometry = () => page.evaluate(() => {
+      const section = document.querySelector('#activity-summary');
+      const cards = [...section.querySelectorAll('.activity-weekly-card')].map(el => el.getBoundingClientRect());
+      const tracking = document.querySelector('#activity-running-status .running-status-row').getBoundingClientRect();
+      const stats = section.getBoundingClientRect();
+      const theme = document.querySelector('.page-theme-toggle').getBoundingClientRect();
+      const tabs = document.querySelector('#activity-view-switcher').getBoundingClientRect();
+      return { stackedCards: cards.every((rect, index) => !index || rect.top > cards[index - 1].top),
+        stats: { top: stats.top, right: stats.right, width: stats.width },
+        tracking: { top: tracking.top, left: tracking.left, width: tracking.width },
+        tabs: { top: tabs.top, left: tabs.left, height: tabs.height, right: tabs.right }, theme: { top: theme.top, right: theme.right, bottom: theme.bottom, height: theme.height, left: theme.left },
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth };
+    });
+    const desktop = await geometry();
+    expect(desktop.stackedCards).toBe(true);
+    expect(desktop.stats.top).toBe(desktop.tracking.top);
+    expect(desktop.stats.right).toBeLessThan(desktop.tracking.left);
+    expect(desktop.tracking.width / desktop.stats.width).toBeCloseTo(7, 0);
+    expect(Math.abs(desktop.tabs.top + desktop.tabs.height / 2 - desktop.theme.top - desktop.theme.height / 2)).toBeLessThanOrEqual(1);
+    expect(desktop.theme.right).toBeLessThan(desktop.tabs.left);
+    expect(desktop.horizontalOverflow).toBe(false);
+    if (process.env.CLOCKOLI_ACTIVITY_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_SCREENSHOT });
+    const lightPanel = await details.evaluate(node => getComputedStyle(node).backgroundColor);
+    await page.locator('.page-theme-toggle').click();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
+    await calendarRecord.hover();
+    await expect(details).toBeVisible();
+    const darkPanel = await details.evaluate(node => getComputedStyle(node).backgroundColor);
+    expect(darkPanel).not.toBe(lightPanel);
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    if (process.env.CLOCKOLI_ACTIVITY_DARK_TOOLTIP_SCREENSHOT) {
+      await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_DARK_TOOLTIP_SCREENSHOT });
+    }
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    expect(await details.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(darkPanel);
+    await switcher.getByRole('button', { name: 'Calendar', exact: true }).click();
+    for (const width of [1280, 1024, 901]) {
+      await page.setViewportSize({ width, height: 900 });
+      const intermediate = await geometry();
+      expect(intermediate.stats.right).toBeLessThan(intermediate.tracking.left);
+      expect(intermediate.stats.width).toBeGreaterThanOrEqual(190);
+      expect(intermediate.horizontalOverflow).toBe(false);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
+    const mobileCards = await summary.locator('.activity-weekly-card').evaluateAll(cards => cards.map(card => {
+      const rect = card.getBoundingClientRect();
+      return { top: rect.top, right: rect.right };
+    }));
+    expect(new Set(mobileCards.map(card => card.top)).size).toBe(3);
+    const mobile = await geometry();
+    expect(mobile.stats.top).toBeLessThan(mobile.tracking.top);
+    expect(mobile.theme.bottom).toBeLessThan(mobile.tabs.top);
+    expect(mobile.horizontalOverflow).toBe(false);
+    if (process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT) await page.screenshot({ path: process.env.CLOCKOLI_ACTIVITY_MOBILE_SCREENSHOT });
+    await switcher.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await timelineRecord.hover();
+    await expect(details).toBeVisible();
+    const mobilePopover = await details.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right };
+    });
+    expect(mobilePopover.left).toBeGreaterThanOrEqual(0);
+    expect(mobilePopover.right).toBeLessThanOrEqual(390);
+    await expect(details.getByRole('button', { name: 'Track time' })).toBeVisible();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveText('7h 11m');
+    await switcher.getByRole('button', { name: 'List', exact: true }).click();
+    await expect(summary.locator('.activity-weekly-card')).toHaveCount(3);
+    await expect(summary.locator('[data-tracked-total="todayTrackedMs"]')).toHaveCount(1);
+    await expect(root.locator('.today-list-totals')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const quickStartPage = await context.newPage();
+    quickStartPage.on('pageerror', error => errors.push(error.message));
+    await quickStartPage.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await quickStartPage.goto('https://github.com/acme/app/issues/42');
+    await quickStartPage.locator('#clockoli-root .trigger-main').click();
+    const githubPanel = quickStartPage.locator('#clockoli-full-width-popup-root');
+    const panelSummary = githubPanel.locator('.popup-overview-layout .activity-weekly-summary');
+    await expect(panelSummary.locator('.activity-weekly-range')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(githubPanel.locator('.tracker-toolbar .activity-weekly-summary')).toHaveCount(0);
+    await expect(githubPanel.locator('.strip-idle-caption')).toHaveText('Start a task to begin');
+    for (const mode of ['Timeline', 'Calendar']) {
+      await githubPanel.getByRole('button', { name: mode, exact: true }).click();
+      const shell = githubPanel.locator('.popup-timeline-section .timeline-shell');
+      const nav = shell.locator(':scope > .week-navigation');
+      await expect(nav).toBeVisible();
+      await expect(nav.locator('.week-navigation-label')).toBeHidden();
+      const [shellBox, navBox] = await Promise.all([shell.boundingBox(), nav.boundingBox()]);
+      expect(Math.abs(shellBox.y - navBox.y)).toBeLessThan(2);
+      expect(await nav.evaluate(node => getComputedStyle(node, '::before').backgroundImage)).toContain('gradient');
+      await nav.getByRole('button', { name: 'Previous week' }).click();
+      await nav.getByRole('button', { name: 'Next week' }).click();
+    }
+    await githubPanel.getByRole('button', { name: 'List', exact: true }).click();
+    const panelToolbar = githubPanel.locator('.popup-list-toolbar');
+    const localSearch = panelToolbar.getByRole('searchbox', { name: 'Search current week' });
+    await expect(panelToolbar.locator('.week-navigation-label')).toHaveText(await panelSummary.locator('.activity-weekly-range').innerText());
+    await expect(panelToolbar.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    const listControls = await panelToolbar.evaluate(toolbar => {
+      const bounds = selector => toolbar.querySelector(selector).getBoundingClientRect();
+      const previous = bounds('.week-navigation-button:first-child');
+      const label = bounds('.week-navigation-label');
+      const next = bounds('.week-navigation-button:last-child');
+      return { searchRight: bounds('.times-filter').right, navigationLeft: bounds('.week-navigation').left,
+        navigationRight: bounds('.week-navigation').right, refreshLeft: bounds('.times-refresh').left,
+        previousWidth: previous.width, previousHeight: previous.height,
+        previousGap: label.left - previous.right, nextGap: next.left - label.right,
+        nextWidth: next.width, nextHeight: next.height };
+    });
+    expect(listControls.searchRight).toBeLessThan(listControls.navigationLeft);
+    expect(listControls.navigationRight).toBeLessThan(listControls.refreshLeft);
+    expect(listControls.previousWidth).toBe(46);
+    expect(listControls.previousHeight).toBe(50);
+    expect(listControls.nextWidth).toBe(46);
+    expect(listControls.nextHeight).toBe(50);
+    expect(listControls.previousGap).toBe(12);
+    expect(listControls.nextGap).toBe(12);
+    await quickStartPage.setViewportSize({ width: 420, height: 720 });
+    const narrowControls = await panelToolbar.evaluate(toolbar => {
+      const nav = toolbar.querySelector('.week-navigation').getBoundingClientRect();
+      const refresh = toolbar.querySelector('.times-refresh').getBoundingClientRect();
+      return { navRight: nav.right, refreshLeft: refresh.left, refreshRight: refresh.right,
+        navMid: nav.top + nav.height / 2, refreshMid: refresh.top + refresh.height / 2,
+        overflow: toolbar.closest('.full-width-popup').scrollWidth - toolbar.closest('.full-width-popup').clientWidth };
+    });
+    expect(narrowControls.navRight).toBeLessThan(narrowControls.refreshLeft);
+    expect(narrowControls.refreshRight).toBeLessThanOrEqual(420);
+    expect(Math.abs(narrowControls.navMid - narrowControls.refreshMid)).toBeLessThan(2);
+    expect(narrowControls.overflow).toBeLessThanOrEqual(1);
+    await quickStartPage.setViewportSize({ width: 1774, height: 900 });
+    await expect(githubPanel.locator('.popup-list-total')).toBeHidden();
+    await expect(githubPanel.locator('.today-list .section-head')).toHaveCount(0);
+    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await localSearch.fill('Earlier day task');
+    await expect(githubPanel.locator('.today-list .entry-record')).toHaveCount(1);
+    await localSearch.fill('Archived task');
+    await expect(githubPanel.locator('.today-list')).toContainText('No entries match this week.');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.includes('SEARCH_ACTIVITY'))).toBe(false);
+    await localSearch.fill('');
+    await githubPanel.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const recentTask = quickStartPage.locator('#clockoli-full-width-popup-root .running-status-recent-task');
+    await expect(recentTask).toHaveCount(3);
+    const toolbar = await context.newPage();
+    toolbar.on('pageerror', error => errors.push(error.message));
+    await toolbar.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const toolbarRoot = toolbar.locator('#clockoli-popup-root');
+    await expect(toolbarRoot.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
+    await expect(toolbarRoot.locator('.tracker-toolbar .popup-switch-action .popup-timeline-track')).toBeVisible();
+    await expect(toolbarRoot.locator('.running-status-recent-task')).toHaveCount(3);
+    await toolbarRoot.locator('.running-status-recent-task').first().click();
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'SWITCH_TASK').length)).toBe(1);
+    await expect(toolbarRoot.locator('.active-task-strip.is-active')).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+async function withActivityWorker(source, run) {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-review-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-review-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), source);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    await run({ context, worker, extensionId: new URL(worker.url()).host });
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+}
+
+test('Activity List requires confirmation before discarding an unsaved completion', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'conflict',
+    conflictReason: 'active_changed_no_completion', destinationId: 'github:1',
+  }];`)
+    .replace("else if (message.type === 'GET_PAGE_STATE')", `else if (message.type === 'RESOLVE_PENDING') {
+      if (message.id !== 'stopped-timer' || message.action !== 'discard_unsaved_completion') {
+        respond({ ok: false, error: { message: 'Unexpected recovery action' } }); return;
+      }
+      pendingWrites = []; respond({ ok: true, data: {} });
+    }
+    else if (message.type === 'GET_PAGE_STATE')`);
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#activity-sync-status').getByRole('alert')).toContainText('1 conflict');
+    await page.getByRole('button', { name: 'Review sync issues' }).click();
+    const review = page.getByRole('dialog', { name: 'Sync issues' });
+    await expect(review.getByText('Completion was not saved')).toBeVisible();
+    await expect(page.locator('#activity-running-status .running-status-idle')).toHaveText('Stop needs attention');
+    page.once('dialog', dialog => dialog.dismiss());
+    await review.getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(review.getByText('Completion was not saved')).toBeVisible();
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    page.once('dialog', dialog => dialog.accept());
+    await review.getByRole('button', { name: 'Discard unsaved completion' }).click();
+    await expect(review).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual(['RESOLVE_PENDING']);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity keeps routine pending work unobtrusive in List, Timeline, and Calendar', async () => {
+  const source = workerSource.replace('let pendingWrites = [];', `let pendingWrites = [{
+    id: 'stopped-timer', operation: 'completeTimer', stage: 'verifyActive', status: 'pending',
+    destinationId: 'github:1',
+  }];`);
+  await withActivityWorker(source, async ({ context, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    for (const view of ['List', 'Timeline', 'Calendar']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
+      await expect(page.locator('#activity-sync-status')).toBeEmpty();
+      await expect(page.getByRole('button', { name: 'Review sync issues' })).toHaveCount(0);
+    }
+  });
+});
+
+function remoteActivityWorkerSource() {
+  return workerSource.replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+    `else if (message.type === 'GET_REMOTE_TIMER_STATUS') respond({ ok: true, data: { remoteTimers:
+      globalThis.remotePresent ? [{ destinationId: 'github:1', startedAt: '2026-10-27T08:00:00.000Z',
+        timezone: 'Europe/Warsaw' }] : [] } });
+    else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });`)
+    .replace('let active = null;', 'globalThis.remotePresent = true;\nlet active = null;');
+}
+
+test('Activity List shows a GitHub-only timer separately from completed rows and rechecks it safely', async () => {
+  const source = remoteActivityWorkerSource();
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    await expect(page.locator('#clockoli-times-root .entry-overlap')).toHaveCount(0);
+    await expect(page.locator('#clockoli-times-root .conflict')).toHaveCount(0);
+    await worker.evaluate(() => { globalThis.remotePresent = false; });
+    await warning.getByRole('button', { name: 'Recheck GitHub timer' }).click();
+    await expect(warning).toHaveCount(0);
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity rechecks a GitHub-only timer when the pending completion leaves the queue', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'verifyActive' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+    await expect(warning).toBeVisible();
+    await expect(page.locator('#activity-sync-status')).toBeEmpty();
+    const checksBefore = await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length);
+    await worker.evaluate(() => { globalThis.remotePresent = false; pendingWrites = []; });
+    await expect(page.locator('#activity-sync-status')).toBeEmpty();
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'GET_REMOTE_TIMER_STATUS').length)).toBeGreaterThan(checksBefore);
+    await expect(warning).toHaveCount(0, { timeout: 12_000 });
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'RESOLVE_PENDING'))).toEqual([]);
+  });
+});
+
+test('Activity shows an unsynced Stop beside idle status in every view without offering a second Stop', async () => {
+  const source = remoteActivityWorkerSource().replace('let pendingWrites = [];',
+    "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'commitCompletion', destinationId: 'github:1' }];");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    const status = page.locator('#activity-running-status');
+    await expect(status.locator('.running-status-idle')).toHaveText('Stop waiting to sync');
+    await expect(status.locator('.running-status-idle-hint')).toHaveText('Do not stop this timer again');
+    await expect(status.locator('.running-status-stop')).toBeHidden();
+    await expect(status).toHaveClass(/is-pending-stop/);
+    expect(await status.evaluate(node => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--borderColor-attention-emphasis)';
+      node.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(node.querySelector('.running-status-row')).borderLeftColor === expected;
+    })).toBe(true);
+    for (const view of ['Timeline', 'Calendar', 'List']) {
+      await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
+      const warning = page.locator('#clockoli-times-root .remote-timer-warning');
+      await expect(warning).toBeVisible();
+      await expect(warning).toContainText('Stop is already queued locally');
+    }
+    expect(errors).toEqual([]);
+  });
+});
+
+test('Activity checks the remote timer even when the selected week read fails', async () => {
+  const source = remoteActivityWorkerSource().replace(
+    "if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });",
+    "if (message.type === 'LOAD_TIMES') respond({ ok: false, error: { message: 'Week unavailable' } });\n  else if (message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT') respond({ ok: true, data: state() });");
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    await page.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
+    await expect(page.locator('#clockoli-times-root .remote-timer-warning')).toContainText('27 Oct 2026, 09:00 Europe/Warsaw');
+    expect(await worker.evaluate(() => globalThis.trackingMessages.includes('GET_REMOTE_TIMER_STATUS'))).toBe(true);
+  });
+});
+
+test('Activity removes view controls when its configuration disappears', async () => {
+  const source = workerSource.replace('let active = null;', 'globalThis.configured = true;\nlet active = null;')
+    .replace('const state = () => ({ configured: true, active, recent:', 'const state = () => ({ configured: globalThis.configured, active, recent:');
+  await withActivityWorker(source, async ({ context, worker, extensionId }) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
+    const switcher = page.locator('#activity-view-switcher');
+    await expect(switcher.getByRole('button', { name: 'Calendar' })).toBeVisible();
+    await worker.evaluate(() => { globalThis.configured = false; });
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.locator('#clockoli-times-root').getByText('Choose where Clockoli should save your time before viewing time.')).toBeVisible();
+    await expect(switcher.getByRole('button')).toHaveCount(0);
+  });
+});
+
+test('popup Quick start uses the fresh recent response rather than the older page-state snapshot', async () => {
+  const source = workerSource.replace("else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+    "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), recent: [] } });");
+  await withActivityWorker(source, async ({ context }) => {
+    const page = await context.newPage();
+    await page.route('https://github.com/acme/app/issues/42', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>' }));
+    await page.goto('https://github.com/acme/app/issues/42');
+    await page.locator('#clockoli-root .trigger-main').click();
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.running-status-recent-task')).toHaveCount(3);
+  });
+});
+
+for (const view of ['Timeline', 'Calendar']) test(`popup weekly total advances with a running timer in ${view}`, async () => {
+  const source = workerSource.replace('let active = null;', `let active = { id: 'running', taskUrl,
+  taskTitle: 'Running task', startedAt: new Date(Date.now() - 50000).toISOString(),
+  entryDate: new Date().toLocaleDateString('en-CA'), timezone: 'UTC' };`);
+  await withActivityWorker(source, async ({ context }) => {
+    const page = await context.newPage();
+    await page.route('https://github.com/acme/app/issues/42', route => route.fulfill({ status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>' }));
+    await page.goto('https://github.com/acme/app/issues/42');
+    await page.locator('#clockoli-root .trigger-main').click();
+    const panel = page.locator('#clockoli-full-width-popup-root');
+    await panel.getByRole('button', { name: view }).click();
+    const total = panel.locator('.popup-overview-layout [data-stat="total"]');
+    await expect(total).not.toHaveText('—');
+    const before = await total.textContent();
+    await expect.poll(() => panel.locator('.running-status-elapsed').textContent(), { timeout: 20_000 })
+      .not.toContain('Duration0m');
+    await expect(total).not.toHaveText(before);
+  });
+});
 
 test('Activity focuses the current Timeline after loading without overriding manual scroll', async () => {
   test.setTimeout(30000);
@@ -191,7 +1356,211 @@ let active = { id: 'running', taskUrl: 'https://example.com/running', taskTitle:
   }
 });
 
-test('Tracking now keeps Description compact and edits only Start without a Date control', async () => {
+test('toolbar popup gives Description the remaining width and aligns Stop with Started and Duration', async ({}, testInfo) => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-running-layout-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-popup-running-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace('let active = null;', `let active = {
+      id: 'running', taskUrl, taskTitle: 'Running task', startedAt: date + 'T12:00:17Z',
+      entryDate: date, timezone: 'UTC', description: '' };`));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const root = page.locator('#clockoli-popup-root');
+    const card = root.locator('.active-task-strip.is-active');
+    await expect(card.getByRole('textbox', { name: 'Started' })).toBeVisible();
+    await expect(card.getByRole('textbox', { name: 'Description (optional)' })).toHaveValue('');
+    for (const width of [420, 390, 800, 320]) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.evaluate(full => { document.documentElement.dataset.clockoliWidth = full ? 'full' : 'contained'; }, width === 800);
+      const layout = await card.evaluate(node => {
+        const b = selector => node.querySelector(selector).getBoundingClientRect();
+        const cardBox = node.getBoundingClientRect();
+        const title = b('.strip-task-copy');
+        const field = b('.strip-description-field');
+        const input = b('.strip-description');
+        const stats = b('.running-status-stats');
+        const stop = b('[data-panel-action="stop"]');
+        return { card: cardBox.toJSON(), title: title.toJSON(), field: field.toJSON(),
+          input: input.toJSON(), stats: stats.toJSON(), stop: stop.toJSON(),
+          overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      expect(layout.title.bottom).toBeLessThanOrEqual(layout.field.top);
+      if (width > 359) {
+        expect(layout.stats.left - layout.input.right).toBeGreaterThanOrEqual(8);
+        expect(layout.stats.left - layout.input.right).toBeLessThanOrEqual(24);
+      } else {
+        expect(layout.input.right).toBeGreaterThan(layout.stats.left);
+        expect(layout.input.bottom).toBeLessThanOrEqual(layout.stats.top);
+      }
+      expect(Math.abs(layout.input.right - layout.field.right)).toBeLessThan(2);
+      expect(Math.abs(layout.stop.width - layout.stats.width)).toBeLessThan(2);
+      expect(Math.abs(layout.stop.right - layout.stats.right)).toBeLessThan(2);
+      expect(layout.stop.top).toBeGreaterThanOrEqual(layout.stats.bottom);
+      if (width <= 420) {
+        expect(layout.input.height).toBeGreaterThanOrEqual(44);
+        expect(layout.stop.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(layout.overflow).toBeLessThanOrEqual(0);
+      if (width === 420 || width === 800) {
+        await page.screenshot({ path: testInfo.outputPath(`popup-running-${width}.png`) });
+      }
+    }
+    await card.locator('.strip-description').focus();
+    await page.keyboard.press('Tab');
+    await expect(card.getByRole('button', { name: 'Stop and save' })).toBeFocused();
+    await expect(card.getByRole('button', { name: 'Stop and save' })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('toolbar popup shares Activity summary, chart navigation, and List controls', async ({}, testInfo) => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-visual-parity-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-popup-visual-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.setViewportSize({ width: 420, height: 720 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    const root = page.locator('#clockoli-popup-root');
+    const summary = root.locator('.popup-overview-layout .activity-weekly-summary');
+    await expect(summary.locator('.activity-weekly-range')).toBeVisible();
+    await expect(summary.locator('.activity-weekly-range')).not.toBeEmpty();
+    await expect(root.locator('.tracker-toolbar .activity-weekly-summary')).toHaveCount(0);
+    await expect(root.locator('.active-task-strip .strip-idle-caption')).toHaveText('Start a task to begin');
+    await expect(root.locator('.running-status-recent-task').first()).toBeVisible();
+    const quickStartBounds = await root.locator('.active-task-strip').evaluate(card => {
+      const label = card.querySelector('.running-status-quick-label').getBoundingClientRect();
+      const choice = card.querySelector('.running-status-recent-task').getBoundingClientRect();
+      const bounds = card.getBoundingClientRect();
+      return { labelRight: label.right, choiceLeft: choice.left, choiceRight: choice.right, cardLeft: bounds.left, cardRight: bounds.right };
+    });
+    expect(quickStartBounds.labelRight).toBeLessThan(quickStartBounds.cardRight);
+    expect(quickStartBounds.choiceLeft).toBeGreaterThan(quickStartBounds.cardLeft);
+    expect(quickStartBounds.choiceRight).toBeLessThan(quickStartBounds.cardRight);
+    for (const mode of ['Timeline', 'Calendar']) {
+      await root.getByRole('button', { name: mode, exact: true }).click();
+      const shell = root.locator('.popup-timeline-section .timeline-shell');
+      const navigation = shell.locator(':scope > .week-navigation');
+      await expect(navigation).toBeVisible();
+      await expect(navigation.locator('.week-navigation-label')).toBeHidden();
+      const [shellBox, navBox] = await Promise.all([shell.boundingBox(), navigation.boundingBox()]);
+      expect(Math.abs(shellBox.y - navBox.y)).toBeLessThan(2);
+      expect(await navigation.evaluate(node => getComputedStyle(node, '::before').backgroundImage)).toContain('gradient');
+      if (mode === 'Calendar') {
+        const activity = await context.newPage();
+        await activity.setViewportSize({ width: 420, height: 720 });
+        await activity.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+        await activity.locator('#activity-view-switcher').getByRole('button', { name: 'Calendar' }).click();
+        const popupArrow = await navigation.getByRole('button', { name: 'Previous week' }).boundingBox();
+        const activityArrow = await activity.getByRole('button', { name: 'Previous week' }).boundingBox();
+        expect({ width: popupArrow.width, height: popupArrow.height })
+          .toEqual({ width: activityArrow.width, height: activityArrow.height });
+        await activity.close();
+      }
+      await navigation.getByRole('button', { name: 'Previous week' }).click();
+      await expect(navigation.getByRole('button', { name: 'Next week' })).toBeEnabled();
+      await navigation.getByRole('button', { name: 'Next week' }).click();
+    }
+    await root.getByRole('button', { name: 'List', exact: true }).click();
+    const toolbar = root.locator('.popup-list-toolbar');
+    const search = toolbar.getByRole('searchbox', { name: 'Search activity' });
+    const navigation = toolbar.locator('.week-navigation');
+    const refresh = toolbar.getByRole('button', { name: 'Refresh' });
+    await expect(search).toHaveAttribute('placeholder', 'Search entries');
+    await expect(navigation.locator('.week-navigation-label')).toHaveText(await summary.locator('.activity-weekly-range').innerText());
+    await expect(refresh).toBeVisible();
+    const listControls = await toolbar.evaluate(node => {
+      const box = selector => node.querySelector(selector).getBoundingClientRect();
+      const nav = box('.week-navigation'), previous = box('.week-navigation-button:first-child');
+      const label = box('.week-navigation-label'), next = box('.week-navigation-button:last-child');
+      const refresh = box('.times-refresh');
+      return { navWidth: nav.width, labelWidth: label.width, previousRight: previous.right,
+        labelLeft: label.left, labelRight: label.right, nextLeft: next.left,
+        nextRight: next.right, refreshLeft: refresh.left,
+        nextMid: next.top + next.height / 2, refreshMid: refresh.top + refresh.height / 2 };
+    });
+    expect(listControls.navWidth).toBeLessThan(240);
+    expect(listControls.labelWidth).toBeLessThan(140);
+    expect(listControls.labelLeft - listControls.previousRight).toBeLessThanOrEqual(8);
+    expect(listControls.nextLeft - listControls.labelRight).toBeLessThanOrEqual(8);
+    expect(listControls.refreshLeft - listControls.nextRight).toBeLessThanOrEqual(16);
+    expect(Math.abs(listControls.nextMid - listControls.refreshMid)).toBeLessThan(2);
+    const currentRange = await summary.locator('.activity-weekly-range').innerText();
+    await navigation.getByRole('button', { name: 'Previous week' }).click();
+    await expect(summary.locator('.activity-weekly-range')).not.toHaveText(currentRange);
+    await navigation.getByRole('button', { name: 'Next week' }).click();
+    await expect(summary.locator('.activity-weekly-range')).toHaveText(currentRange);
+    await expect(root.locator('.today-list .section-head')).toHaveCount(0);
+    await expect(root.locator('.popup-list-total')).toBeHidden();
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-width', '1px');
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    const reads = await worker.evaluate(() => globalThis.trackingMessages.length);
+    await refresh.click();
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.length)).toBeGreaterThan(reads);
+    await expect(refresh).toBeEnabled();
+    await search.fill('Archived task');
+    await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.includes('SEARCH_ACTIVITY'))).toBe(true);
+    await expect(root.locator('.today-list').getByRole('link', { name: 'Archived task' })).toBeVisible();
+    await search.fill('');
+    await expect(root.locator('.today-list').getByRole('link', { name: 'Archived task' })).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('popup-list-420.png') });
+    for (const width of [320, 390, 800]) {
+      await page.setViewportSize({ width, height: 720 });
+      const controls = await toolbar.evaluate(node => {
+        const nav = node.querySelector('.week-navigation').getBoundingClientRect();
+        const refresh = node.querySelector('.times-refresh').getBoundingClientRect();
+        const label = node.querySelector('.week-navigation-label').getBoundingClientRect();
+        return { navRight: nav.right, refreshLeft: refresh.left, refreshRight: refresh.right,
+          navMid: nav.top + nav.height / 2, refreshMid: refresh.top + refresh.height / 2,
+          labelWidth: label.width, overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      expect(controls.navRight).toBeLessThan(controls.refreshLeft);
+      expect(controls.refreshRight).toBeLessThanOrEqual(width);
+      expect(controls.labelWidth).toBeLessThan(140);
+      expect(Math.abs(controls.navMid - controls.refreshMid)).toBeLessThan(2);
+      expect(controls.overflow).toBeLessThanOrEqual(1);
+    }
+    await page.screenshot({ path: testInfo.outputPath('popup-list-800.png') });
+    expect(await toolbar.evaluate(node => document.documentElement.scrollWidth <= innerWidth && node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('Tracking now stacks task details and places Start, Duration and Stop on the right', async () => {
   test.setTimeout(45000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-status-start-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-status-start-profile-'));
@@ -221,59 +1590,122 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     const strip = page.locator('.running-status.is-active .running-status-row');
     const description = strip.getByRole('textbox', { name: 'Description' });
-    const start = strip.getByRole('textbox', { name: 'Start' });
+    const start = strip.getByRole('textbox', { name: 'Started' });
     await expect(start).toHaveValue('12:00');
-    const editIcon = strip.locator('.running-status-start-edit-icon');
-    await expect(editIcon).toBeVisible();
-    await expect(editIcon).toHaveText('✎');
-    await expect(editIcon).toHaveAttribute('aria-hidden', 'true');
-    const iconPlacement = await start.evaluate(input => {
-      const icon = input.parentElement.querySelector('.running-status-start-edit-icon');
-      return { followsTime: input.nextElementSibling === icon,
-        gap: icon.getBoundingClientRect().left - input.getBoundingClientRect().right };
-    });
-    expect(iconPlacement.followsTime).toBe(true);
-    expect(iconPlacement.gap).toBeGreaterThanOrEqual(0);
-    expect(iconPlacement.gap).toBeLessThan(12);
+    await expect(strip.locator('.running-status-start-caption')).toHaveText('Started');
+    await expect(strip.locator('.running-status-start-edit-icon')).toHaveCount(0);
+    await expect(start).toHaveCSS('cursor', 'text');
+    await expect(start).toHaveCSS('border-bottom-style', 'dashed');
     await expect(strip.getByLabel('Date')).toHaveCount(0);
     const stats = strip.locator('.running-status-stats');
     await expect(stats).toBeVisible();
-    await expect(stats.locator('.running-status-metric-label')).toHaveText(['Duration', 'Today']);
-    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    await expect(stats.locator('.running-status-metric-label')).toHaveText(['Duration']);
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
+    await expect(page.locator('#activity-summary .activity-weekly-card').first()).toContainText('7h 11m');
     const widths = await strip.evaluate(row => ({ row: row.getBoundingClientRect().width,
       description: row.querySelector('.running-status-description-field').getBoundingClientRect().width }));
-    expect(widths.description).toBeLessThan(290);
-    expect(widths.description).toBeLessThan(widths.row / 3);
+    expect(widths.description).toBeGreaterThan(290);
+    expect(widths.description).toBeGreaterThan(widths.row * .55);
     const measureControls = () => strip.evaluate(row => {
       const rect = selector => row.querySelector(selector).getBoundingClientRect();
       const startField = rect('.running-status-start-field');
       const metrics = rect('.running-status-metrics');
       const stop = rect('.running-status-stop');
-      const title = document.createRange();
-      title.selectNodeContents(row.querySelector('.running-status-task'));
+      const live = rect('.running-status-live');
+      const title = rect('.running-status-task');
+      const description = rect('.running-status-description-field');
+      const stats = rect('.running-status-stats');
       const values = [...row.querySelectorAll('.running-status-start,.running-status-metric-value')]
         .map(node => node.getBoundingClientRect().top);
       return { rightInset: row.getBoundingClientRect().right - stop.right,
-        titleToDescription: rect('.running-status-description-field').left - title.getBoundingClientRect().right,
+        leftColumn: [live.left, title.left, description.left],
+        verticalOrder: [live.top, title.top, description.top],
+        statsRightOfTitle: stats.left > title.right,
+        stopBelowStats: stop.top >= stats.bottom,
+        descriptionBeforeStop: description.right < stop.left,
+        descriptionFillsColumn: Math.abs(description.right - stats.left) < 30,
         startToMetrics: metrics.left - startField.right,
-        metricsToStop: stop.left - metrics.right,
         valueOffset: Math.max(...values) - Math.min(...values),
         statsBackground: getComputedStyle(row.querySelector('.running-status-stats')).backgroundColor,
         resize: getComputedStyle(row.querySelector('.running-status-description')).resize };
     });
     const desktop = await measureControls();
-    expect(desktop.titleToDescription).toBeLessThan(35);
+    expect(Math.max(...desktop.leftColumn) - Math.min(...desktop.leftColumn)).toBeLessThan(4);
+    expect(desktop.verticalOrder[0]).toBeLessThan(desktop.verticalOrder[1]);
+    expect(desktop.verticalOrder[1]).toBeLessThan(desktop.verticalOrder[2]);
+    expect(desktop.statsRightOfTitle).toBe(true);
+    expect(desktop.stopBelowStats).toBe(true);
+    expect(desktop.descriptionBeforeStop).toBe(true);
+    expect(desktop.descriptionFillsColumn).toBe(true);
     expect(desktop.rightInset).toBeLessThan(30);
     expect(desktop.startToMetrics).toBeGreaterThanOrEqual(0);
     expect(desktop.startToMetrics).toBeLessThan(3);
-    expect(desktop.metricsToStop).toBeLessThan(24);
+
     expect(desktop.valueOffset).toBeLessThan(6);
     expect(desktop.statsBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(desktop.resize).toBe('none');
+    const github = await context.newPage();
+    github.on('pageerror', error => errors.push(error.message));
+    await github.setViewportSize({ width: 1440, height: 800 });
+    await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
+    }));
+    await github.goto('https://github.com/acme/app/issues/42');
+    await github.locator('#clockoli-root .trigger-main').click();
+    const panel = github.locator('#clockoli-full-width-popup-root');
+    await expect(panel.locator('.popup-overview-layout .activity-weekly-card')).toHaveCount(3);
+    await expect(panel.locator('.activity-weekly-label')).toHaveText('Statistic');
+    await expect(panel.locator('.activity-weekly-card').first()).toContainText('7h 11m');
+    await expect(panel.locator('.active-task-strip .running-status-live')).toHaveText('Tracking now');
+    await expect(panel.locator('.active-task-strip .running-status-metric-label')).toHaveText(['Duration']);
+    await expect(panel.locator('.active-task-strip .running-status-start')).toHaveValue('12:00');
+    const panelStart = panel.locator('.active-task-strip .running-status-start');
+    await expect(panel.locator('.running-status-start-caption')).toHaveText('Started');
+    await expect(panel.locator('.running-status-start-edit-icon')).toHaveCount(0);
+    await expect(panelStart).toHaveCSS('cursor', 'text');
+    await expect(panelStart).toHaveCSS('border-bottom-style', 'dashed');
+    await panelStart.click();
+    await expect(panelStart).toBeFocused();
+    expect(await panelStart.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
+    await expect(panel.locator('.timeline-toolbar-end .timeline-view-button')).toHaveCount(3);
+    await expect(panel.locator('.menu-body > .timeline-view-modes')).toHaveCount(0);
+    const overview = await panel.locator('.full-width-popup').evaluate(popup => {
+      const summary = popup.querySelector('.popup-overview-layout .activity-weekly-summary').getBoundingClientRect();
+      const card = popup.querySelector('.active-task-strip').getBoundingClientRect();
+      return { summaryTop: summary.top, summaryRight: summary.right, summaryHeight: summary.height,
+        cardTop: card.top, cardLeft: card.left, cardHeight: card.height, cardWidth: card.width };
+    });
+    expect(Math.abs(overview.summaryTop - overview.cardTop)).toBeLessThan(2);
+    expect(overview.summaryRight).toBeLessThan(overview.cardLeft);
+    expect(overview.cardHeight).toBeGreaterThanOrEqual(overview.summaryHeight - 2);
+    expect(overview.cardWidth).toBeGreaterThan(600);
+    for (const width of [800, 420, 320]) {
+      await github.setViewportSize({ width, height: 720 });
+      const controls = await panel.locator('.active-task-strip.is-active').evaluate(card => {
+        const box = selector => card.querySelector(selector).getBoundingClientRect();
+        const stats = box('.running-status-stats'), stop = box('[data-panel-action="stop"]');
+        const description = box('.strip-description'), live = box('.running-status-live');
+        const bounds = card.getBoundingClientRect();
+        return { stats: stats.toJSON(), stop: stop.toJSON(), description: description.toJSON(),
+          live: live.toJSON(), bounds: bounds.toJSON(),
+          overflow: card.closest('.full-width-popup').scrollWidth - card.closest('.full-width-popup').clientWidth };
+      });
+      expect(controls.live.width).toBeLessThan(170);
+      expect(Math.abs(controls.stop.left - controls.stats.left)).toBeLessThan(2);
+      expect(Math.abs(controls.stop.right - controls.stats.right)).toBeLessThan(2);
+      expect(controls.stop.top).toBeGreaterThanOrEqual(controls.stats.bottom);
+      expect(controls.stop.right).toBeLessThanOrEqual(controls.bounds.right);
+      expect(controls.overflow).toBeLessThanOrEqual(0);
+      if (width > 359) expect(Math.abs(controls.stop.top - controls.description.top)).toBeLessThan(2);
+      else expect(controls.stop.top).toBeGreaterThanOrEqual(controls.description.bottom);
+    }
+    await github.close();
     await page.setViewportSize({ width: 1280, height: 800 });
     const narrowDesktop = await measureControls();
     expect(narrowDesktop.startToMetrics).toBeLessThan(26);
     expect(narrowDesktop.rightInset).toBeLessThan(30);
+    expect(narrowDesktop.stopBelowStats).toBe(true);
     await start.click();
     expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     const focusedStyle = await start.evaluate(node => ({ outline: getComputedStyle(node).outlineStyle,
@@ -281,22 +1713,24 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     expect(focusedStyle.outline).toBe('none');
     expect(focusedStyle.ring).not.toBe('none');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-start-focused.png') });
-    await editIcon.click();
-    await expect(start).toBeFocused();
-    expect(await start.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([0, 5]);
     await start.evaluate(node => node.blur());
     await page.setViewportSize({ width: 390, height: 740 });
-    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m', '7h 11m']);
+    await expect(stats.locator('.running-status-metric-value')).toHaveText(['2h 59m']);
     const narrow = await strip.evaluate(row => {
       const bounds = row.getBoundingClientRect();
-      return [...row.querySelectorAll('.running-status-stats,.running-status-stop')]
-        .every(node => node.getBoundingClientRect().right <= bounds.right);
+      const stats = row.querySelector('.running-status-stats').getBoundingClientRect();
+      const stop = row.querySelector('.running-status-stop').getBoundingClientRect();
+      const description = row.querySelector('.running-status-description-field').getBoundingClientRect();
+      return { contained: [stats, stop].every(rect => rect.right <= bounds.right),
+        stacked: description.bottom <= stats.top && stats.bottom <= stop.top,
+        rightEdges: Math.abs(stats.right - stop.right) };
     });
-    expect(narrow).toBe(true);
+    expect(narrow.contained).toBe(true);
+    expect(narrow.stacked).toBe(true);
+    expect(narrow.rightEdges).toBeLessThan(4);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-stats-realistic-mobile.png') });
     await page.setViewportSize({ width: 1440, height: 800 });
     await start.fill('1000');
-    await expect(editIcon).toBeHidden();
     await page.clock.runFor(5000);
     await expect(start).toHaveValue('1000');
     await start.press('Tab');
@@ -318,7 +1752,6 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     await strip.getByRole('button', { name: 'Save start' }).click();
     await expect.poll(() => worker.evaluate(() => active.startedAt)).toBe(`${day}T10:00:00.000Z`);
     await expect(strip.locator('.running-status-start-saved')).toHaveText('✓ Saved');
-    await expect(editIcon).toBeHidden();
     const payloads = await worker.evaluate(() => globalThis.activeEditPayloads);
     expect(payloads.at(-1)).toEqual({ original: { id: 'running', startedAt: `${day}T12:00:17Z` }, startedAt: `${day}T10:00:00.000Z` });
     await start.fill('0900');
@@ -331,11 +1764,10 @@ test('Tracking now keeps Description compact and edits only Start without a Date
     expect(await worker.evaluate(() => active.entryDate)).toBe(day);
     await start.fill('2500');
     await strip.getByRole('button', { name: 'Save start' }).click();
-    await expect(page.locator('.running-status-error')).toContainText('valid Start time');
+    await expect(page.locator('.running-status-error')).toContainText('valid Started time');
     expect(await worker.evaluate(() => globalThis.activeEditPayloads.length)).toBe(3);
     await start.fill('0900');
     await expect(strip.getByRole('button', { name: 'Save start' })).toBeHidden();
-    await expect(editIcon).toBeVisible();
     await page.setViewportSize({ width: 390, height: 740 });
     const mobile = await strip.evaluate(row => ({ row: row.getBoundingClientRect().right,
       fields: [...row.querySelectorAll('input,textarea,button')].filter(node => !node.hidden)
@@ -781,20 +2213,19 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await panelSource.evaluate(element => element.scrollIntoView({ inline: 'center' }));
     await panelNeighbor.evaluate(element => element.scrollIntoView({ inline: 'nearest' }));
     let panelGeometry;
-    // Timeline may replace its task nodes while finishing the week refresh.
     await expect.poll(async () => {
-      try {
-        panelGeometry = await panelSource.evaluate(element => {
-          const root = element.getRootNode();
-          const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
-          const viewport = root.querySelector('.viewport');
-          if (!neighbor || !viewport) return null;
-          return { panelFrom: element.getBoundingClientRect().toJSON(),
-            panelTo: neighbor.getBoundingClientRect().toJSON(),
-            panelViewport: viewport.getBoundingClientRect().toJSON() };
-        });
-        return panelGeometry !== null;
-      } catch { return false; }
+      panelGeometry = await panelSource.evaluate(element => {
+        if (!element.isConnected) return null;
+        const root = element.getRootNode();
+        const neighbor = root.querySelector('.task[data-task-key="entry:same-day"]');
+        const viewport = root.querySelector('.viewport');
+        if (!neighbor || !viewport) return null;
+        const panelFrom = element.getBoundingClientRect(), panelTo = neighbor.getBoundingClientRect();
+        if (!panelFrom.width || !panelFrom.height || !panelTo.width || !panelTo.height) return null;
+        return { panelFrom: panelFrom.toJSON(), panelTo: panelTo.toJSON(),
+          panelViewport: viewport.getBoundingClientRect().toJSON() };
+      });
+      return Boolean(panelGeometry);
     }).toBe(true);
     const { panelFrom, panelTo, panelViewport } = panelGeometry;
     const destinationX = Math.max(panelViewport.x + 8, panelTo.x + 6);
@@ -880,14 +2311,39 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
   }
 });
 
-async function expectFullWidthActivitySearch(page) {
+async function expectActivityListBounds(page) {
   const bounds = await page.getByRole('searchbox', { name: 'Search activity' }).evaluate(input => {
     const field = input.getBoundingClientRect();
     const toolbar = input.closest('.times-toolbar').getBoundingClientRect();
-    return { leftGap: field.left - toolbar.left, rightGap: toolbar.right - field.right };
+    const overview = document.querySelector('.activity-overview-layout').getBoundingClientRect();
+    const label = input.closest('label').getBoundingClientRect();
+    const root = input.getRootNode();
+    const list = root.querySelector('.times-results').getBoundingClientRect();
+    const navigation = root.querySelector('.week-navigation').getBoundingClientRect();
+    const content = root.querySelector('.times-page').getBoundingClientRect();
+    return { field: field.toJSON(), toolbar: toolbar.toJSON(), overview: overview.toJSON(),
+      list: list.toJSON(), navigation: navigation.toJSON(), content: content.toJSON(),
+      labelLeftGap: label.left - field.left, viewportWidth: innerWidth,
+      overflow: document.documentElement.scrollWidth > innerWidth };
   });
-  expect(Math.abs(bounds.leftGap)).toBeLessThan(2);
-  expect(Math.abs(bounds.rightGap)).toBeLessThan(2);
+  const aligned = bounds.viewportWidth <= 700 ? ['field', 'toolbar', 'list']
+    : ['toolbar', 'list', 'content'];
+  for (const element of aligned) {
+    expect(Math.abs(bounds[element].left - bounds.overview.left), element).toBeLessThan(2);
+    expect(Math.abs(bounds[element].right - bounds.overview.right), element).toBeLessThan(2);
+  }
+  expect(Math.abs(bounds.field.left - bounds.toolbar.left)).toBeLessThan(2);
+  expect(bounds.field.right).toBeLessThanOrEqual(bounds.toolbar.right);
+  expect(bounds.navigation.left).toBeGreaterThanOrEqual(bounds.toolbar.left);
+  expect(bounds.navigation.right).toBeLessThanOrEqual(bounds.toolbar.right);
+  if (bounds.viewportWidth <= 700) {
+    expect(bounds.content.left).toBe(0);
+    expect(bounds.content.right).toBe(bounds.viewportWidth);
+  }
+  expect(Math.abs(bounds.labelLeftGap)).toBeLessThan(2);
+  expect(bounds.field.left).toBeGreaterThanOrEqual(12);
+  expect(bounds.field.right).toBeLessThanOrEqual(bounds.viewportWidth - 12);
+  expect(bounds.overflow).toBe(false);
 }
 
 test('Activity List icon switches from Start to Stop and back in the extension page', async () => {
@@ -955,23 +2411,26 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await expect(feedback).toHaveCount(0);
     await bulk.locator('summary').click();
     const tabs = page.locator('.times-view-modes');
-    expect(await tabs.evaluate(element => element.closest('.activity-heading-row')?.nextElementSibling?.classList.contains('activity-weekly-summary'))).toBe(true);
+    await expect(page.locator('.activity-overview-heading')).toHaveCount(0);
+    await expect(page.getByText('Track time and manage your work')).toHaveCount(0);
+    await expect(page.locator('#activity-view-switcher > .times-view-modes')).toBeVisible();
+    await expect(page.locator('#activity-summary .activity-weekly-summary')).toBeVisible();
     await expect(page.locator('.times-toolbar')).toHaveCount(1);
     const status = page.locator('.running-status');
     const [statusBox, tabsBox] = await Promise.all([status.boundingBox(), tabs.boundingBox()]);
-    expect(tabsBox.y).toBeGreaterThanOrEqual(statusBox.y + statusBox.height);
+    expect(tabsBox.y + tabsBox.height).toBeLessThanOrEqual(statusBox.y);
     const tabAppearance = await tabs.evaluate(element => {
       const buttons = [...element.querySelectorAll('button')];
       const boxes = buttons.map(button => button.getBoundingClientRect());
       const selected = buttons.find(button => button.getAttribute('aria-pressed') === 'true');
-      return { gap: getComputedStyle(element).gap, selectedUnderline: getComputedStyle(selected).borderBottomColor,
-        selectedWidth: getComputedStyle(selected).borderBottomWidth,
+      return { gap: getComputedStyle(element).gap, selectedBackground: getComputedStyle(selected).backgroundColor,
+        icons: element.querySelectorAll('button svg').length,
         firstRadius: getComputedStyle(buttons[0]).borderTopLeftRadius,
-        adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right < 2) };
+        adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right <= 4) };
     });
-    expect(tabAppearance.gap).toBe('0px');
-    expect(tabAppearance.selectedWidth).toBe('3px');
-    expect(tabAppearance.selectedUnderline).not.toBe('rgba(0, 0, 0, 0)');
+    expect(tabAppearance.gap).toBe('2px');
+    expect(tabAppearance.icons).toBe(3);
+    expect(tabAppearance.selectedBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(tabAppearance.firstRadius).not.toBe('0px');
     expect(tabAppearance.adjacent).toBe(true);
     const tabCenter = await tabs.evaluate(element => {
@@ -983,7 +2442,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     });
     expect(tabCenter).toBeLessThan(2);
     await page.getByRole('button', { name: 'List', exact: true }).click();
-    await expectFullWidthActivitySearch(page);
+    await expectActivityListBounds(page);
+    await page.setViewportSize({ width: 1750, height: 900 });
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'full'; document.documentElement.dataset.clockoliWidth = 'full';
+    });
+    await expectActivityListBounds(page);
+    await page.setViewportSize({ width: 2200, height: 900 });
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'contained'; document.documentElement.dataset.clockoliWidth = 'contained';
+    });
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.getByRole('button', { name: 'Previous week' }).click();
     const groups = page.locator('.activity-list .entry');
     await expect(groups).toHaveCount(2);
@@ -1002,7 +2472,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
       expect(appearance.radius).not.toBe('0px');
       expect(appearance.contained).toBe(true);
     }
-    expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '0px']);
+    expect(await groups.first().locator('.entry-record').evaluateAll(records => records.map(record => getComputedStyle(record).borderBottomWidth))).toEqual(['1px', '1px']);
     await page.screenshot({ path: join(tmpdir(), 'clockoli-activity-list-days-desktop.png') });
     const edited = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
     await edited.hover();
@@ -1047,7 +2517,14 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await runningDescription.fill('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });
     await page.setViewportSize({ width: 390, height: 740 });
-    await expectFullWidthActivitySearch(page);
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'full'; document.documentElement.dataset.clockoliWidth = 'full';
+    });
+    await expectActivityListBounds(page);
+    await page.locator('#clockoli-times-root').evaluate(host => {
+      host.dataset.clockoliWidth = 'contained'; document.documentElement.dataset.clockoliWidth = 'contained';
+    });
     await expect(stop).toBeVisible();
     const stripBounds = await strip.evaluate(element => ({ left: element.getBoundingClientRect().left,
       right: element.getBoundingClientRect().right,
@@ -1063,8 +2540,6 @@ test('Activity List icon switches from Start to Stop and back in the extension p
         .map(group => ({ right: group.getBoundingClientRect().right, width: group.getBoundingClientRect().width })) }));
     expect(mobile.groups.every(group => group.right <= mobile.viewport)).toBe(true);
     await runningDescription.press('Tab');
-    await expect(strip.getByRole('textbox', { name: 'Start' })).toBeFocused();
-    await page.keyboard.press('Tab');
     const saveTime = strip.getByRole('button', { name: 'Stop and save' });
     await expect(saveTime).toBeFocused();
     await page.keyboard.press('Enter');
@@ -1122,7 +2597,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await worker.evaluate(() => { globalThis.searchMode = 'error'; });
     await page.getByRole('searchbox', { name: 'Search activity' }).fill('Archived');
     await page.getByRole('button', { name: 'Next week' }).click();
-    await expect(page.getByRole('status')).toContainText('History unavailable');
+    await expect(page.getByRole('status').filter({ hasText: 'History unavailable' })).toBeVisible();
     await expect(page.locator('.activity-list .entry-record')).toHaveCount(0);
     await worker.evaluate(() => { globalThis.searchMode = 'partial'; });
     await page.getByRole('button', { name: 'Retry search' }).click();
@@ -1240,18 +2715,28 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
-    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
+      "else if (message.type === 'GET_PAGE_STATE')",
+      "else if (message.type === 'SEARCH_TASKS') respond({ ok: true, data: { configured: true, tasks: [{ taskUrl: 'manticoresoftware/Routines/1-dev-call', title: 'Routines — #1 dev call', destinationId: 'github:1', timeRepository: 'team/time' }], readStatus: [{ timeRepository: 'team/time', status: 'ok' }] } });\n  else if (message.type === 'GET_PAGE_STATE')"));
     context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    worker.on('pageerror', error => errors.push(error.message));
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await page.getByRole('button', { name: 'List', exact: true }).click();
     await page.getByRole('button', { name: 'Previous week' }).click();
     const row = page.locator('.activity-list .entry-record').filter({ hasText: 'Activity test task' });
+    await row.hover();
     await row.locator('.entry-edit').click();
     const dialog = page.getByRole('dialog', { name: 'Edit time' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Task' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
+    await row.locator('.entry-edit').click();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel('Description (optional)', { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('Task title', { exact: true })).toHaveCount(0);
@@ -1271,6 +2756,12 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await expect(dialog.getByLabel('Date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue(visibleRange[0].slice(11));
     await expect(dialog.getByLabel('End (optional)')).toHaveValue(visibleRange[1].slice(11));
+    const movedRange = await page.evaluate(range => range.map(value => {
+      const date = new Date(new Date(value).getTime() + 16 * 60_000);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }), originalRange);
+    await dialog.getByLabel('Start', { exact: true }).fill(movedRange[0]);
+    await expect(dialog.getByLabel('End (optional)')).toHaveValue(movedRange[1]);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
     await row.locator('.entry-edit').click();
@@ -1319,6 +2810,11 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     const popupRow = popup.locator('.today-list .entry-record').filter({ hasText: 'Activity test task' });
     await popupRow.locator('.entry-edit').click();
     const popupDialog = popup.getByRole('dialog', { name: 'Edit time' });
+    await expect(popupDialog).toBeVisible();
+    await expect(popupDialog.getByRole('combobox', { name: 'Task' })).toBeFocused();
+    await popup.keyboard.press('Escape');
+    await expect(popupDialog).toBeHidden();
+    await popupRow.locator('.entry-edit').click();
     await expect(popupDialog).toBeVisible();
     await expect(popupDialog.getByLabel('Description')).toHaveValue('Edited from form');
     await popupDialog.getByRole('button', { name: 'Cancel' }).click();
@@ -1375,17 +2871,17 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await dateInput.fill(nextDay);
     await expect(endInput).toHaveValue('12:00');
     await startInput.fill('11:00');
-    await expect(endInput).toHaveValue('12:00');
+    await expect(endInput).toHaveValue('11:00');
     await startInput.fill('13:00');
-    await expect(endInput).toHaveValue('12:00', 'changing only Start time must not overwrite End');
+    await expect(endInput).toHaveValue('13:00', 'changing Start moves End by the same amount');
     await dateInput.fill(followingDay);
-    await expect(endInput).toHaveValue('12:00');
+    await expect(endInput).toHaveValue('13:00');
     await endInput.fill('15:00');
     await startInput.fill('14:00');
-    await expect(endInput).toHaveValue('15:00', 'manual End remains editable');
+    await expect(endInput).toHaveValue('16:00', 'moving Start preserves the manually adjusted duration');
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
-    expect(await page.evaluate(() => window.__editValues[3].endedAt)).toBe(new Date(`${followingDay}T15:00`).toISOString());
+    expect(await page.evaluate(() => window.__editValues[3].endedAt)).toBe(new Date(`${followingDay}T16:00`).toISOString());
     await page.evaluate(() => window.__openFixtureEdit({ taskUrl: 'https://example.com/overnight', taskTitle: 'Overnight',
       startedAt: new Date(2024, 1, 28, 23, 30).toISOString(),
       endedAt: new Date(2024, 1, 29, 0, 15).toISOString(), description: '' }));
@@ -1396,6 +2892,19 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await expect(dialog).toBeHidden();
     expect(await page.evaluate(() => window.__editValues[4].endedAt))
       .toBe(await page.evaluate(() => new Date(2024, 3, 1, 0, 15).toISOString()));
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    await row.hover();
+    await row.locator('.entry-edit').click();
+    await dialog.getByRole('combobox', { name: 'Task' }).fill('Routines');
+    await dialog.getByRole('button', { name: /Routines — #1 dev call/ }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(3);
+    expect(await worker.evaluate(() => globalThis.editPayloads.at(-1))).toMatchObject({
+      destinationId: 'github:1', original: { id: 'record' },
+      edits: { taskUrl: 'manticoresoftware/Routines/1-dev-call', taskTitle: 'Routines — #1 dev call' },
+    });
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
