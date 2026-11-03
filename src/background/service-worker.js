@@ -38,7 +38,7 @@ import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { addTimeForSender, assertMessageAllowed, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -708,7 +708,7 @@ const READ_RETRY_MESSAGES = new Set([
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
-  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'RESOLVE_STOPPED_OVERLAP',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'ADD_DAY_RANGE', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'RESOLVE_STOPPED_OVERLAP',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -1409,6 +1409,22 @@ async function handle(message, sender) {
     }
   };
   switch (message.type) {
+    case 'ADD_DAY_RANGE': {
+      const { type, ...fields } = message;
+      const payload = dayRangeForSender(fields, sender, extensionOrigin);
+      const destinationId = payload.destinationId
+        ? await requireConfiguredDestinationId(store, payload.destinationId)
+        : await resolveStartDestinationId(store, payload.taskUrl);
+      const currentDestinationId = await activeDestinationId(store);
+      if (currentDestinationId && currentDestinationId !== destinationId) {
+        throw new Error('A timer is running in another time repository. Stop it before adding time.');
+      }
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
+      const { destinationId: _requestedDestination, ...range } = payload;
+      const result = await tracker.addDayRange(range);
+      if (result.pending) requestPendingSync();
+      return { ...result, destinationId };
+    }
     case 'ADD_TIME': {
       const { type, ...fields } = message;
       const payload = addTimeForSender(fields, sender, extensionOrigin);
@@ -1674,7 +1690,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
-      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'BULK_ADD_TIMES',
+      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
     ].includes(message?.type);
     const taskMerge = message?.type === 'MERGE_TASKS';

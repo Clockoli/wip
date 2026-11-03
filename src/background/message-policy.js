@@ -16,7 +16,7 @@ const EXTENSION_MESSAGES = new Set([
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'GET_STOPPED_OVERLAP', 'RESOLVE_STOPPED_OVERLAP', 'DELETE_STOPPED_OVERLAP', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'SET_INTERFACE_WIDTH', 'GET_LOCAL_PREFERENCES',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
   'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
-  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'SEARCH_TASKS', 'BULK_ADD_TIMES', 'ADD_TIME', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
+  'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'SEARCH_TASKS', 'BULK_ADD_TIMES', 'ADD_TIME', 'ADD_DAY_RANGE', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
   'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
   'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS', 'GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED',
@@ -148,6 +148,38 @@ export function addTimeForSender(payload, sender, extensionOrigin) {
     return { taskUrl, taskTitle, description, startedAt, endedAt, destinationId: payload.destinationId };
   }
   return { taskUrl: normalizeTaskUrl(payload.taskUrl), taskTitle, description, startedAt, endedAt };
+}
+
+export function dayRangeForSender(payload, sender, extensionOrigin) {
+  assertMessageAllowed('ADD_DAY_RANGE', sender, extensionOrigin);
+  if (![`${extensionOrigin}src/tasks/tasks.html`, `${extensionOrigin}src/times/times.html`].includes(sender?.url)) {
+    throw new Error('Day range is not allowed from this page');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || !['dates,description,durationSeconds,taskTitle,taskUrl',
+        'dates,description,destinationId,durationSeconds,taskTitle,taskUrl'].includes(Object.keys(payload).sort().join(','))) {
+    throw new Error('Invalid day range payload');
+  }
+  if (typeof payload.taskTitle !== 'string' || payload.taskTitle.length > 500
+      || typeof payload.description !== 'string' || payload.description.length > 2000
+      || !Number.isSafeInteger(payload.durationSeconds) || payload.durationSeconds < 0 || payload.durationSeconds > 86400) {
+    throw new Error('Invalid day range duration or text');
+  }
+  const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`))
+    && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+  if (!Array.isArray(payload.dates) || !payload.dates.length || payload.dates.length > 500
+      || payload.dates.some((date, index) => !validDate(date) || index > 0 && date <= payload.dates[index - 1])
+      || (Date.parse(`${payload.dates.at(-1)}T00:00:00.000Z`) - Date.parse(`${payload.dates[0]}T00:00:00.000Z`)) / 86400000 >= 500) {
+    throw new Error('Invalid selected days (maximum 500-day span)');
+  }
+  if (Object.hasOwn(payload, 'destinationId')) {
+    if (typeof payload.destinationId !== 'string' || !DESTINATION_ID_RE.test(payload.destinationId)) throw new Error('Invalid day range destination');
+    const taskUrl = normalizeStoredTaskIdentity(payload.taskUrl);
+    if (/^https?:\/\//i.test(taskUrl)) throw new Error('Invalid day range payload');
+    return { ...payload, taskUrl };
+  }
+  return { ...payload, taskUrl: normalizeTaskUrl(payload.taskUrl) };
 }
 
 export function taskUrlForTimelineSwitch(payloadTaskUrl, sender, extensionOrigin, sourceEntry, storedRecords = []) {

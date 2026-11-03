@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, addTimeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+import { assertMessageAllowed, addTimeForSender, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
   requestedStartDestinationId, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
@@ -32,6 +32,54 @@ test('Add time permits an imported identity only with a scoped destination for s
   assert.throws(() => addTimeForSender({ ...request, destinationId: 'github:0' }, sender, origin), /destination|invalid/i);
   assert.throws(() => addTimeForSender({ ...request, taskUrl: issue.url }, sender, origin), /invalid/i);
   assert.throws(() => addTimeForSender({ ...request, taskUrl: 'acme/project/not valid' }, sender, origin), /task URL|identity/i);
+});
+
+test('day-range addition is extension-page-only and validates selected noncontiguous days', () => {
+  const sender = { url: origin + 'src/times/times.html' };
+  const request = { taskUrl: issue.url + '?view=1', taskTitle: 'Day off', description: '',
+    dates: ['2026-10-30', '2026-11-02'], durationSeconds: 28800 };
+  assert.deepEqual(dayRangeForSender(request, sender, origin), { ...request, taskUrl: issue.url });
+  assert.equal(dayRangeForSender({ ...request, durationSeconds: 0 }, sender, origin).durationSeconds, 0);
+  for (const wrong of [content, extension]) assert.throws(() => dayRangeForSender(request, wrong, origin), /not allowed/i);
+  for (const invalid of [
+    { ...request, dates: [] }, { ...request, dates: ['2026-02-30'] },
+    { ...request, dates: ['2026-11-02', '2026-10-30'] },
+    { ...request, dates: ['2026-10-30', '2026-10-30'] },
+    { ...request, dates: ['2025-01-01', '2026-11-02'] },
+    { ...request, durationSeconds: -1 },
+    { ...request, durationSeconds: 86401 }, { ...request, durationSeconds: 0.5 },
+    { ...request, destinationId: 'github:2' }, { ...request, unexpected: true },
+    { ...request, startDate: '2026-10-30' },
+  ]) assert.throws(() => dayRangeForSender(invalid, sender, origin), /invalid|range|day/i);
+  const imported = { ...request, taskUrl: 'acme/project/time-off', destinationId: 'github:2' };
+  assert.deepEqual(dayRangeForSender(imported, sender, origin), imported);
+});
+
+test('day-range dispatcher rejects untrusted payloads before routing and queues the validated batch', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = []; let active = null;
+  const context = vm.createContext({ dayRangeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    resolveStartDestinationId: async (_store, url) => { calls.push(['route', url]); return 'github:1'; },
+    activeDestinationId: async () => active,
+    trackerForDestination: async () => ({ addDayRange: async range => { calls.push(['add', range]); return { added: 2, pending: true }; } }),
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_DAY_RANGE', taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-10-30', '2026-11-01'], durationSeconds: 28800 };
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+  await assert.rejects(context.handle({ ...message, durationSeconds: 86401 }, { url: origin + 'src/times/times.html' }), /invalid/i);
+  assert.equal(calls.length, 0);
+  active = 'github:2';
+  await assert.rejects(context.handle(message, { url: origin + 'src/times/times.html' }), /another time repository/i);
+  assert.deepEqual(calls, [['route', issue.url]]);
+  calls.length = 0; active = null;
+  const result = await context.handle(message, { url: origin + 'src/times/times.html' });
+  assert.equal(result.added, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['route', issue.url], ['add', {
+    taskUrl: issue.url, taskTitle: 'Time off', description: '', dates: ['2026-10-30', '2026-11-01'], durationSeconds: 28800,
+  }], ['sync']]);
 });
 
 test('Add time dispatcher validates before destination selection and schedules a queued timer sync', async () => {

@@ -6,7 +6,7 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 ## Add a single entry
 
-The **Add time** button next to the page tabs on **Top tasks** and **Activity** adds a **single** time entry; it is not available in the toolbar panel.
+The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days; it is not available in the toolbar panel.
 
 1. Search tracked tasks from all joined people in the connected time repositories by title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
 2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
@@ -21,6 +21,14 @@ Rules for the interval:
 - Future timestamps are rejected.
 
 Imported identities must already exist in a verified person's task index in the selected time repository; arbitrary new imported identities are rejected. URL tasks use [project routing](projects-and-routing.md); selected imported tasks remain bound to their chosen time repository. Adding time never silently stops a running timer in another repository.
+
+### Multiple days (for time off)
+
+1. Choose the tracked task (for example, **Time off**) in the Task search.
+2. Select **Multiple days**. The calendar appears on the left, with **Hours per day** and **Description** on the right; on narrow screens these controls stack below the calendar. Use the month arrows and click the days you want, including nonconsecutive days; click a selected day again to remove it. No Start or End time is needed. Selected days must fit within a 500-calendar-day span and cannot be in the future.
+3. Enter **Hours per day** from 0 to 24 (for example, 8). Enter 0 explicitly to add a zero-hour record for each selected day; these records do not increase tracked-hour totals or invoices. The field cannot be left empty. Choose **Add**.
+
+Each selected day becomes a separate completed record with its own identity and date, starting at 09:00 local time. For example, 8 hours runs from 09:00 to 17:00; 24 hours extends into the following day. If that interval overlaps existing time or the running timer, the error names the selected date and no part of the batch is accepted locally. A current-day interval must already be over. The complete batch is accepted into the durable local queue together and later checked against GitHub history, the running timer, and other writes before one atomic commit across the affected monthly files and task index. A remote overlap remains recoverable as a sync conflict rather than losing any accepted entries. Zero-hour records start at 09:00 but add no tracked duration.
 
 ### Search for a task
 

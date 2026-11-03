@@ -4054,6 +4054,188 @@ test('bulk import commits multiple monthly files atomically', async () => {
   assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path), ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl', TASK_INDEX_PATH]);
 });
 
+test('day range queues one atomic batch, retains task title and zero-hour days through restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const request = { taskUrl: issue.url, taskTitle: 'Time off', description: 'Holiday',
+    dates: ['2026-08-30', '2026-09-01'], durationSeconds: 0 };
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  const result = await service({ github, store, clock, timezone: 'UTC' }).addDayRange(request);
+  assert.equal(result.added, 2);
+  assert.equal(github.atomicWrites.length, 0);
+  const operation = (await store.getState()).pendingWrites[0];
+  assert.equal(operation.operation, 'bulkAddTimes');
+  assert.deepEqual(operation.entries.map(entry => [entry.entryDate, entry.durationSeconds, entry.taskTitle]), [
+    ['2026-08-30', 0, 'Time off'], ['2026-09-01', 0, 'Time off'],
+  ]);
+  assert.deepEqual(operation.entries.map(entry => [new Date(entry.startedAt).getHours(), entry.startedAt === entry.endedAt]),
+    [[9, true], [9, true]]);
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal(github.atomicWrites.length, 1);
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text,
+    { user: 'alice', month: '2026-08' }).length, 1);
+});
+
+test('eight hours per day across months syncs all records and the index in one guarded commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({
+    taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-08-31', '2026-09-02'], durationSeconds: 28800,
+  });
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path),
+    ['times/2026-08/alice.jsonl', 'times/2026-09/alice.jsonl', TASK_INDEX_PATH]);
+  const saved = ['2026-08', '2026-09'].flatMap(month => parseMonthlyRecords(github.files.get(`times/${month}/alice.jsonl`).text,
+    { user: 'alice', month }));
+  assert.deepEqual(saved.map(entry => [entry.entryDate, entry.durationSeconds, entry.taskTitle]), [
+    ['2026-08-31', 28800, 'Time off'], ['2026-09-02', 28800, 'Time off'],
+  ]);
+  assert.deepEqual(saved.map(entry => [new Date(entry.startedAt).getHours(), new Date(entry.endedAt).getHours()]),
+    [[9, 17], [9, 17]]);
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal(github.atomicWrites.length, 1);
+});
+
+test('day range does not partly queue when one requested day cannot fit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const existing = entry(localTimestamp(2026, 10, 2, 10), localTimestamp(2026, 10, 2, 11));
+  seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([existing]));
+  await store.patchState({ recentCache: [existing] });
+  const tracker = service({ github, store, clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
+  await assert.rejects(() => tracker.addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-11-01', '2026-11-02'], durationSeconds: 8 * 3600 }),
+  error => /Selected day 2026-11-02 overlaps an existing time entry\. No days were added\./.test(error.message)
+    && !/Line 2/.test(error.message));
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('multiple days reject an existing interval inside the default 09:00–17:00 block without moving the start', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const existing = entry(localTimestamp(2026, 7, 31, 10), localTimestamp(2026, 7, 31, 11));
+  await store.patchState({ recentCache: [existing] });
+  const tracker = service({ github, store, clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
+  await assert.rejects(() => tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-08-30', '2026-08-31'],
+    durationSeconds: 28800 }), /overlap/i);
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+});
+
+test('multiple days use 09:00 even when a nonoverlapping evening entry already exists', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const existing = entry(localTimestamp(2026, 10, 2, 20), localTimestamp(2026, 10, 2, 23));
+  await store.patchState({ recentCache: [existing] });
+  const tracker = service({ github, store, clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
+  await tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 28800 });
+  const [planned] = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual([new Date(planned.startedAt).getHours(), new Date(planned.endedAt).getHours()], [9, 17]);
+});
+
+test('24-hour multiple-day entry starts at 09:00 and guards the following monthly partition', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({
+    taskUrl: issue.url, dates: ['2026-08-31'], durationSeconds: 86400,
+  });
+  const pending = (await store.getState()).pendingWrites[0].entries[0];
+  assert.deepEqual([new Date(pending.startedAt).getDate(), new Date(pending.startedAt).getHours(),
+    new Date(pending.endedAt).getDate(), new Date(pending.endedAt).getHours()], [31, 9, 1, 9]);
+  seedText(github, 'times/2026-09/alice.jsonl', serializeMonthlyRecords([
+    entry(localTimestamp(2026, 8, 1, 8), localTimestamp(2026, 8, 1, 10)),
+  ]));
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal((await store.getState()).pendingWrites[0].status, 'conflict');
+});
+
+test('24-hour multiple-day entry can sync across midnight without another day being selected', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({
+    taskUrl: issue.url, dates: ['2026-08-31'], durationSeconds: 86400,
+  });
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 1);
+  assert.deepEqual(github.atomicWrites[0].changes.map(change => change.path),
+    ['times/2026-08/alice.jsonl', TASK_INDEX_PATH]);
+  assert.ok(github.atomicWrites[0].guards.some(guard => guard.path === 'times/2026-09/alice.jsonl'));
+  const [saved] = parseMonthlyRecords(github.files.get('times/2026-08/alice.jsonl').text,
+    { user: 'alice', month: '2026-08' });
+  assert.deepEqual([new Date(saved.startedAt).getHours(), new Date(saved.endedAt).getHours()], [9, 9]);
+});
+
+test('multiple-day sync preserves the locally accepted instant and timezone after a browser timezone change', async () => {
+  const previousTz = process.env.TZ;
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  try {
+    process.env.TZ = 'America/New_York';
+    await service({ github, store, clock, timezone: 'America/New_York' }).addDayRange({
+      taskUrl: issue.url, dates: ['2026-10-30'], durationSeconds: 28800,
+    });
+    const accepted = (await store.getState()).pendingWrites[0].entries[0];
+    assert.equal(accepted.startedAt, '2026-10-30T13:00:00.000Z');
+    process.env.TZ = 'America/Los_Angeles';
+    await service({ github, store, clock, timezone: 'America/Los_Angeles' }).syncPending();
+    const [saved] = parseMonthlyRecords(github.files.get('times/2026-10/alice.jsonl').text,
+      { user: 'alice', month: '2026-10' });
+    assert.deepEqual([saved.entryDate, saved.startedAt, saved.endedAt, saved.timezone],
+      [accepted.entryDate, accepted.startedAt, accepted.endedAt, accepted.timezone]);
+    assert.equal((await store.getState()).pendingWrites.length, 0);
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  }
+});
+
+test('multiple-day replay does not adopt a changed 09:00 record with the same ID and duration', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({
+    taskUrl: issue.url, dates: ['2026-10-30'], durationSeconds: 28800,
+  });
+  const accepted = (await store.getState()).pendingWrites[0].entries[0];
+  const laterStart = new Date(new Date(accepted.startedAt).getTime() + 3600000).toISOString();
+  const laterEnd = new Date(new Date(accepted.endedAt).getTime() + 3600000).toISOString();
+  seedText(github, 'times/2026-10/alice.jsonl', serializeMonthlyRecords([
+    { ...accepted, startedAt: laterStart, endedAt: laterEnd },
+  ]));
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  const [operation] = (await store.getState()).pendingWrites;
+  assert.equal(operation.status, 'conflict');
+  assert.match(operation.lastError, /Previously saved bulk time has changed/);
+  assert.equal(github.atomicWrites.length, 0);
+});
+
+test('day range rejects future, duplicate, and unordered selections before queuing', async () => {
+  const store = new MemoryStore(), tracker = service({ github: new FakeGitHub(), store,
+    clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
+  for (const dates of [['2026-11-04'], ['2026-11-01', '2026-11-01'], ['2026-11-02', '2026-11-01']]) {
+    await assert.rejects(() => tracker.addDayRange({ taskUrl: issue.url, dates, durationSeconds: 0 }), /Invalid selected days/);
+  }
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+});
+
+test('remote day-range overlap after acceptance keeps every locally queued day for review', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-03T12:00:00Z');
+  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({ taskUrl: issue.url,
+    taskTitle: 'Time off', description: '', dates: ['2026-08-30', '2026-08-31'], durationSeconds: 28800 });
+  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([
+    entry(localTimestamp(2026, 7, 31, 10), localTimestamp(2026, 7, 31, 11))
+  ]));
+  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  const state = await store.getState();
+  assert.equal(state.pendingWrites.length, 1);
+  assert.equal(state.pendingWrites[0].entries.length, 2);
+  assert.equal(state.pendingWrites[0].status, 'conflict');
+  assert.match(state.pendingWrites[0].lastError, /Queued days remain for review/);
+  assert.doesNotMatch(state.pendingWrites[0].lastError, /No days were added/);
+});
+
 
 test('bulk import rejects intervals that would overlap the running timer', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();

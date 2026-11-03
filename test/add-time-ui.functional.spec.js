@@ -8,6 +8,8 @@ const taskUrl = 'https://example.com/work/1';
 const workerSource = `
 globalThis.messages = [];
 globalThis.failAdd = false;
+globalThis.staleDayRangeWorker = false;
+globalThis.overlapDayRange = false;
 globalThis.deferAdd = false;
 globalThis.pendingAddRespond = null;
 globalThis.deferTasks = false;
@@ -36,9 +38,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   else if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { configured: true, recent: [], active: null, pendingWrites: [] } });
   else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { configured: true, active: globalThis.topActive, pendingWrites: [] } });
-  else if (message.type === 'ADD_TIME') {
+  else if (message.type === 'ADD_TIME' || message.type === 'ADD_DAY_RANGE') {
     if (globalThis.deferAdd) { globalThis.pendingAddRespond = respond; return true; }
-    respond(globalThis.failAdd
+    respond(message.type === 'ADD_DAY_RANGE' && globalThis.staleDayRangeWorker
+      ? { ok: false, error: { message: 'Message ADD_DAY_RANGE is not allowed from this sender' } }
+      : message.type === 'ADD_DAY_RANGE' && globalThis.overlapDayRange
+      ? { ok: false, error: { message: 'Selected day 2026-11-02 overlaps an existing time entry. No days were added.' } }
+      : globalThis.failAdd
       ? { ok: false, error: { message: 'Cannot add time' } }
       : { ok: true, data: { accepted: true } });
   }
@@ -53,6 +59,133 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
 });
 `;
+
+test('Add time selects individual calendar days with required daily hours on Activity and Top tasks', async () => {
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-day-range-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-day-range-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource);
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true, timezoneId: 'UTC',
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const errors = [];
+    worker.on('pageerror', error => errors.push(error.message));
+    for (const surface of ['times', 'tasks']) {
+      const page = await context.newPage();
+      page.on('pageerror', error => errors.push(error.message));
+      await page.clock.install({ time: new Date('2026-11-03T15:00:00Z') });
+      await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/${surface}/${surface}.html`);
+      await page.locator('#add-time-button').click();
+      const dialog = page.getByRole('dialog', { name: 'Add new time' });
+      await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+      expect(await dialog.getByLabel('Description (optional)').evaluate(input => input.closest('.add-time-range-fields'))).toBeNull();
+      await dialog.getByLabel('Multiple days').check();
+      const desktopLayout = await dialog.evaluate(element => {
+        const calendar = element.querySelector('.add-time-calendar').getBoundingClientRect();
+        const hours = element.querySelector('#add-time-daily-hours').getBoundingClientRect();
+        const description = element.querySelector('#add-time-description').getBoundingClientRect();
+        return { calendarRight: calendar.right, hoursLeft: hours.left, hoursTop: hours.top,
+          descriptionLeft: description.left, descriptionTop: description.top,
+          nestedDescription: Boolean(element.querySelector('.add-time-range-fields #add-time-description')) };
+      });
+      expect(desktopLayout.nestedDescription).toBe(true);
+      expect(desktopLayout.hoursLeft).toBeGreaterThan(desktopLayout.calendarRight);
+      expect(desktopLayout.descriptionLeft).toBe(desktopLayout.hoursLeft);
+      expect(desktopLayout.descriptionTop).toBeGreaterThan(desktopLayout.hoursTop);
+      await dialog.getByLabel('Description (optional)').fill('Paid time off');
+      await dialog.getByLabel('Multiple days').uncheck();
+      expect(await dialog.getByLabel('Description (optional)').evaluate(input => input.closest('.add-time-range-fields'))).toBeNull();
+      await dialog.getByLabel('Multiple days').check();
+      await expect(dialog.getByLabel('Description (optional)')).toHaveValue('Paid time off');
+      await expect(dialog.getByLabel('Start', { exact: true })).toBeHidden();
+      await expect(dialog.getByLabel('End (optional)')).toBeHidden();
+      await expect(dialog.getByRole('group', { name: 'Select days' })).toBeVisible();
+      await dialog.getByRole('button', { name: 'Previous month' }).click();
+      await dialog.getByRole('button', { name: 'October 30, 2026' }).click();
+      await dialog.getByRole('button', { name: 'Next month' }).click();
+      await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
+      await expect(dialog.getByRole('button', { name: 'November 2, 2026' })).toHaveAttribute('aria-pressed', 'true');
+      await expect(dialog.getByRole('button', { name: 'November 4, 2026' })).toBeDisabled();
+      await expect(dialog.getByLabel('Hours per day')).toBeVisible();
+      await expect(dialog.getByLabel('Hours per day')).toHaveAttribute('required', '');
+      await dialog.getByLabel('Hours per day').fill('8');
+      await worker.evaluate(() => { globalThis.staleDayRangeWorker = true; });
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('Reload Clockoli');
+      await expect(dialog.getByRole('button', { name: 'November 2, 2026' })).toHaveAttribute('aria-pressed', 'true');
+      await worker.evaluate(() => { globalThis.staleDayRangeWorker = false; globalThis.overlapDayRange = true; });
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toHaveText('Selected day 2026-11-02 overlaps an existing time entry. No days were added.');
+      await expect(dialog.getByRole('button', { name: 'November 2, 2026' })).toHaveAttribute('aria-pressed', 'true');
+      await worker.evaluate(() => { globalThis.overlapDayRange = false; });
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      let sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
+      expect(sent.at(-1)).toMatchObject({ taskUrl, description: 'Paid time off',
+        dates: ['2026-10-30', '2026-11-02'], durationSeconds: 28800 });
+      await page.locator('#add-time-button').click();
+      await expect(dialog.getByLabel('Multiple days')).not.toBeChecked();
+      await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+      await dialog.getByLabel('Multiple days').check();
+      await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
+      const sentBeforeBlank = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE').length;
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('Enter hours per day');
+      expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE')).toHaveLength(sentBeforeBlank);
+      await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
+      await dialog.getByLabel('Hours per day').fill('0');
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('Select at least one day');
+      await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
+      await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
+      await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
+      await expect(dialog.getByRole('button', { name: 'November 1, 2026' })).toHaveAttribute('aria-pressed', 'false');
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
+      expect(sent.at(-1)).toMatchObject({ dates: ['2026-11-02'], durationSeconds: 0 });
+      if (surface === 'times') {
+        await page.setViewportSize({ width: 390, height: 700 });
+        await page.locator('#add-time-button').click();
+        await dialog.getByRole('combobox', { name: 'Task' }).fill('Imported');
+        await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
+        await dialog.getByLabel('Multiple days').check();
+        const mobileLayout = await dialog.evaluate(element => {
+          const calendar = element.querySelector('.add-time-calendar').getBoundingClientRect();
+          const hours = element.querySelector('#add-time-daily-hours').getBoundingClientRect();
+          const description = element.querySelector('#add-time-description').getBoundingClientRect();
+          return { calendarBottom: calendar.bottom, hoursTop: hours.top, descriptionTop: description.top,
+            overflow: element.scrollWidth > element.clientWidth };
+        });
+        expect(mobileLayout.hoursTop).toBeGreaterThan(mobileLayout.calendarBottom);
+        expect(mobileLayout.descriptionTop).toBeGreaterThan(mobileLayout.hoursTop);
+        expect(mobileLayout.overflow).toBe(false);
+        await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
+        await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
+        await dialog.getByLabel('Hours per day').fill('25');
+        await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+        await expect(dialog.getByRole('alert')).toContainText('0–24');
+        expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE')).toHaveLength(4);
+        await dialog.getByLabel('Hours per day').fill('8');
+        await expect(dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).resolves.toBe(true);
+        await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+        await expect(dialog).toBeHidden();
+        sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
+        expect(sent.at(-1)).toMatchObject({ taskUrl: 'acme/project/imported', destinationId: 'github:2', durationSeconds: 28800 });
+      }
+      await page.close();
+    }
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 test('default running Add time starts at submission precision, while an explicit Start stays at the chosen minute', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-running-start-extension-'));
@@ -130,7 +263,7 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
     await page.getByRole('button', { name: 'Add time', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Add new time' });
-    const hint = dialog.locator('.add-time-times + .add-time-hint');
+    const hint = dialog.locator('.add-time-times + .add-time-range-fields + .add-time-hint');
     await expect(hint).not.toContainText('Type 1000 for 10:00. An End earlier than Start is on the next day.');
     const form = page.locator('.add-time-dialog');
     const start = form.getByLabel('Start', { exact: true }), end = form.getByLabel('End (optional)');
@@ -449,7 +582,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog).not.toContainText('Select a task to preview it here.');
       await expect(dialog.getByRole('group', { name: 'Time range' })).toBeVisible();
       await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(0);
-      await expect(dialog.locator('input[type="date"]')).toHaveCount(1);
+      await expect(dialog.locator('input[type="date"]:visible')).toHaveCount(1);
       await expect(dialog.locator('.add-time-times input[type="text"]')).toHaveCount(2);
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       const startTime = dialog.getByLabel('Start', { exact: true });
