@@ -183,6 +183,24 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await editing.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => [globalThis.testEditPayload.startedAt, globalThis.testEditPayload.endedAt]))
       .toEqual(['2026-10-18T23:00:45.000Z', '2026-10-19T01:00:30.000Z']);
+    for (const [endTime, expectedEnd] of [
+      ['02:00', '2026-10-19T02:00:00.000Z'],
+      ['23:55', '2026-10-18T23:55:00.000Z'],
+    ]) {
+      await page.evaluate(url => {
+        globalThis.testEditPayload = null;
+        globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl: url, taskTitle: 'Existing task',
+          destinationId: 'github:1', startedAt: '2026-10-18T23:00:45.000Z',
+          endedAt: '2026-10-19T07:00:30.000Z', description: '' },
+        value => { globalThis.testEditPayload = value; });
+      }, taskUrl);
+      await expect(date).toHaveValue('2026-10-18');
+      await expect(end).toHaveValue('07:00');
+      await end.fill(endTime);
+      await editing.getByRole('button', { name: 'Save' }).click();
+      expect(await page.evaluate(() => [globalThis.testEditPayload?.startedAt, globalThis.testEditPayload?.endedAt]))
+        .toEqual(['2026-10-18T23:00:45.000Z', expectedEnd]);
+    }
     await page.evaluate(url => {
       const entry = { id: 'synthetic', taskUrl: url, taskTitle: 'Existing task', destinationId: 'github:1',
         startedAt: '2026-10-18T23:00:45.000Z', endedAt: '2026-10-19T01:00:30.000Z', description: '' };
