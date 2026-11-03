@@ -1173,7 +1173,7 @@ export class TrackerService {
           try {
             result = await this.bulkAddTimes('', {
               requested: operation.requested, ids: operation.entries.map(entry => entry.id),
-              updateCache: false, includeEntries: true,
+              acceptedEntries: operation.entries, updateCache: false, includeEntries: true,
             });
           } catch (error) {
             if (error instanceof TrackerConflictError) throw error;
@@ -2760,30 +2760,50 @@ export class TrackerService {
     }
   }
 
-  planBulkRows(requested, files, activeTimer, fixedIds = null) {
+  planBulkRows(requested, files, activeTimer, fixedIds = null, acceptedEntries = null) {
     const activeStartMs = activeTimer ? new Date(activeTimer.startedAt).getTime() : Infinity;
     const added = [], usedIds = new Set([...files.values()].flatMap(file => file.entries.map(record => record.id)));
     for (const [offset, item] of requested.entries()) {
       const dayStart = localMidnight(item.date), dayEnd = nextLocalMidnight(item.date);
       const dayStartMs = new Date(dayStart).getTime(), dayEndMs = new Date(dayEnd).getTime();
+      const fixedStart = item.startTime === '09:00';
+      const accepted = fixedStart && fixedIds ? acceptedEntries?.[offset] : null;
+      const requestedStartMs = fixedStart
+        ? accepted ? new Date(accepted.startedAt).getTime() : new Date(`${item.date}T09:00:00`).getTime()
+        : dayStartMs;
+      const requestedEndMs = requestedStartMs + item.durationSeconds * 1000;
       const existing = [...files.values()].flatMap(file => file.entries).filter(entry => {
         const start = new Date(entry.startedAt).getTime(), end = new Date(entry.endedAt).getTime();
-        return start < dayEndMs && end > dayStartMs;
+        return fixedStart ? item.durationSeconds > 0 && start < requestedEndMs && end > requestedStartMs
+          : start < dayEndMs && end > dayStartMs;
       }).sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+      if (fixedStart && existing.length) {
+        throw new TrackerConflictError(fixedIds
+          ? `Selected day ${item.date} overlaps an existing time entry on GitHub. Queued days remain for review.`
+          : `Selected day ${item.date} overlaps an existing time entry. No days were added.`, 'bulk_add_validation');
+      }
       for (let index = 1; index < existing.length; index += 1) {
         if (new Date(existing[index].startedAt) < new Date(existing[index - 1].endedAt)) {
           throw new Error(`Line ${item.line}: existing time on ${item.date} already overlaps. No entries were added.`);
         }
       }
-      const latestEnd = existing.reduce((latest, entry) => Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
+      const latestEnd = fixedStart ? requestedStartMs
+        : existing.reduce((latest, entry) => Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
       const startedAt = latestEnd === dayStartMs ? dayStart : localTimestamp(new Date(latestEnd));
       const endedAt = localTimestamp(new Date(latestEnd + item.durationSeconds * 1000)), endedAtMs = new Date(endedAt).getTime();
-      if (endedAtMs > dayEndMs) throw new Error(`Line ${item.line}: ${item.durationSeconds / 3600} hours do not fit after existing time on ${item.date}. No entries were added.`);
-      if (endedAtMs > activeStartMs) throw new Error(`Line ${item.line}: imported time would overlap the running timer that started at ${activeTimer.startedAt}. No entries were added.`);
+      if (!fixedStart && (endedAtMs > dayEndMs || (item.durationSeconds === 0 && latestEnd >= dayEndMs))) throw new Error(`Line ${item.line}: ${item.durationSeconds / 3600} hours do not fit after existing time on ${item.date}. No entries were added.`);
+      if (endedAtMs > activeStartMs) {
+        if (fixedStart) throw new TrackerConflictError(fixedIds
+          ? `Selected day ${item.date} overlaps the running timer on GitHub. Queued days remain for review.`
+          : `Selected day ${item.date} overlaps the running timer. No days were added.`, 'bulk_add_validation');
+        throw new Error(`Line ${item.line}: imported time would overlap the running timer that started at ${activeTimer.startedAt}. No entries were added.`);
+      }
       const id = fixedIds?.[offset] || this.uniqueRecordId(latestEnd, usedIds);
       if (fixedIds && (usedIds.has(id) || !id)) throw new TrackerConflictError('A bulk time entry ID already exists. Review Activity before retrying.', 'bulk_add_id_conflict');
       usedIds.add(id);
-      const active = this.buildActive({ id, taskUrl: item.taskUrl, startedAt, entryDate: item.date, description: item.description });
+      const active = this.buildActive({ id, taskUrl: item.taskUrl, taskTitle: item.taskTitle || '',
+        startedAt, entryDate: item.date, description: item.description,
+        ...(accepted ? { timezone: accepted.timezone } : {}) });
       const entry = buildEntry({ active, endedAt, now: endedAt, description: item.description });
       entry.entryDate = item.date;
       const path = monthlyRecordsPath(this.user, item.date), file = files.get(path);
@@ -2793,8 +2813,27 @@ export class TrackerService {
     return added;
   }
 
-  async queueBulkAddTimes(text) {
-    const requested = parseBulkTimeText(text), queuedAt = this.clock();
+  async addDayRange({ taskUrl, taskTitle = '', description = '', dates, durationSeconds }) {
+    const canonical = normalizeStoredTaskIdentity(taskUrl);
+    const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`))
+      && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+    if (!Array.isArray(dates) || !dates.length || dates.length > 500
+        || dates.some((date, index) => !validDate(date) || index > 0 && date <= dates[index - 1])
+        || (Date.parse(`${dates.at(-1)}T00:00:00.000Z`) - Date.parse(`${dates[0]}T00:00:00.000Z`)) / 86400000 >= 500
+        || dates.at(-1) > localDateInTimezone(this.clock(), this.timezone)
+        || !Number.isSafeInteger(durationSeconds) || durationSeconds < 0 || durationSeconds > 86400
+        || typeof taskTitle !== 'string' || taskTitle.length > 500
+        || typeof description !== 'string' || description.length > 2000) throw new Error('Invalid selected days or hours per day.');
+    const requested = dates.map((date, index) => ({
+      line: index + 1, date,
+      taskUrl: canonical, taskTitle, description, durationSeconds, startTime: '09:00',
+    }));
+    return this.queueBulkAddTimes('', requested, { noFuture: true });
+  }
+
+  async queueBulkAddTimes(text, requested = parseBulkTimeText(text), { noFuture = false } = {}) {
+    const queuedAt = this.clock();
     let accepted;
     await this.mutateState(state => {
       const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])],
@@ -2810,6 +2849,9 @@ export class TrackerService {
         if (!files.has(path)) files.set(path, { path, month: item.date.slice(0, 7), entries: [] });
       }
       const planned = this.planBulkRows(requested, files, state.activeCache);
+      if (noFuture && planned.some(entry => new Date(entry.endedAt) > queuedAt)) {
+        throw new Error('Day range would add time in the future. No entries were added.');
+      }
       accepted = planned.map(entry => ({
         ...entry, _path: monthlyRecordsPath(this.user, entry.entryDate), _sha: null, _index: -1, _pending: true,
       }));
@@ -2828,17 +2870,33 @@ export class TrackerService {
     return { added: requested.length, pending: true, entries: accepted };
   }
 
-  async bulkAddTimes(text, { background = false, requested = null, ids = null, updateCache = true, includeEntries = false } = {}) {
-    if (background) return this.queueBulkAddTimes(text);
+  async bulkAddTimes(text, { background = false, requested = null, ids = null, acceptedEntries = null,
+    updateCache = true, includeEntries = false } = {}) {
+    if (background) return this.queueBulkAddTimes(text, requested ?? parseBulkTimeText(text));
     requested ||= parseBulkTimeText(text);
+    if (ids && requested.some((item, index) => item.startTime === '09:00'
+        && (acceptedEntries?.[index]?.id !== ids[index] || acceptedEntries[index].entryDate !== item.date
+          || acceptedEntries[index].taskUrl !== item.taskUrl
+          || acceptedEntries[index].durationSeconds !== item.durationSeconds
+          || !Number.isFinite(Date.parse(acceptedEntries[index].startedAt))))) {
+      throw new TrackerConflictError('Queued multiple-day time changed locally. Review Activity before retrying.', 'bulk_add_changed');
+    }
+    const importedTask = requested.find(item => !/^https?:\/\//i.test(item.taskUrl));
+    const indexFile = importedTask ? await this.assertKnownImportedTask(importedTask.taskUrl) : null;
     const activeTimer = ids ? await this.readRemoteActive() : await this.refreshActive();
     const touchedMonths = new Set(requested.map(item => item.date.slice(0, 7)));
-    const validationMonths = new Set(touchedMonths), latestTouchedMonth = [...touchedMonths].sort().at(-1);
+    const validationMonths = new Set(touchedMonths);
+    for (const item of requested) if (item.startTime === '09:00' && item.durationSeconds > 0) {
+      const nextDay = new Date(`${item.date}T00:00:00.000Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      if (nextDay.toISOString().slice(0, 7) !== item.date.slice(0, 7)) validationMonths.add(nextDay.toISOString().slice(0, 7));
+    }
+    const lastCheckedMonth = [...validationMonths].sort().at(-1);
     const snapshot = await this.github.listTextFilesSnapshot('times/');
     for (const file of snapshot.files ?? []) {
       try {
         const month = monthFromPath(file.path, this.user);
-        if (month <= latestTouchedMonth) validationMonths.add(month);
+        if (month <= lastCheckedMonth) validationMonths.add(month);
       } catch { /* Another user's or unrelated text file. */ }
     }
     const files = new Map();
@@ -2850,14 +2908,18 @@ export class TrackerService {
       const found = ids.map(id => [...files.values()].flatMap(file => file.entries).find(entry => entry.id === id));
       if (found.every(Boolean)) {
         if (found.some((entry, index) => entry.taskUrl !== requested[index].taskUrl
-            || entry.description !== requested[index].description || entry.durationSeconds !== requested[index].durationSeconds)) {
+            || entry.description !== requested[index].description || entry.durationSeconds !== requested[index].durationSeconds
+            || (requested[index].taskTitle !== undefined && entry.taskTitle !== requested[index].taskTitle)
+            || (requested[index].startTime === '09:00' && (entry.entryDate !== acceptedEntries[index].entryDate
+              || entry.startedAt !== acceptedEntries[index].startedAt || entry.endedAt !== acceptedEntries[index].endedAt
+              || entry.timezone !== acceptedEntries[index].timezone)))) {
           throw new TrackerConflictError('Previously saved bulk time has changed on GitHub.', 'bulk_add_changed');
         }
         return { added: found.length, ...(includeEntries ? { savedEntries: found } : {}) };
       }
       if (found.some(Boolean)) throw new TrackerConflictError('Bulk time is only partially present on GitHub. No automatic rewrite was attempted.', 'bulk_add_partial');
     }
-    const added = this.planBulkRows(requested, files, activeTimer, ids);
+    const added = this.planBulkRows(requested, files, activeTimer, ids, acceptedEntries);
     const touched = [...touchedMonths].sort().map(month => files.get(monthlyRecordsPath(this.user, `${month}-01`)));
     const staged = touched.map(file => {
       const text = serializeMonthlyRecords(file.entries);
@@ -2870,7 +2932,7 @@ export class TrackerService {
       const guards = [...files.values()].filter(file => !touchedPaths.has(file.path)).map(file => ({ path: file.path, sha: file.sha }));
       guards.push({ path: activeRecordPath(this.user), sha: activeTimer?._sha ?? null });
       const { blobShas } = await this.updateCompletedRecords(changes, `time: bulk add ${added.length} entries ${this.user}`, {
-        add: added, guards, expectedHeadSha: snapshot.headSha || null,
+        add: added, guards, expectedHeadSha: snapshot.headSha || null, ...(indexFile ? { indexFile } : {}),
       });
       const saved = staged.flatMap(({ file, entries }) => entries.map(entry => ({ ...entry, _sha: blobShas[file.path] })));
       if (updateCache) {

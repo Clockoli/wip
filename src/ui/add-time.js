@@ -24,6 +24,9 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   searchStatus.append(searchSpinner, document.createTextNode('Searching tasks…'));
   const suggestions = document.createElement('div'); suggestions.id = 'add-time-suggestions'; suggestions.className = 'add-time-suggestions';
   suggestions.setAttribute('aria-label', 'Matching tasks');
+  const dayRangeLabel = document.createElement('label'); dayRangeLabel.className = 'add-time-day-range-toggle';
+  const dayRange = document.createElement('input'); dayRange.type = 'checkbox'; dayRange.id = 'add-time-day-range';
+  dayRangeLabel.append(dayRange, document.createTextNode('Multiple days'));
   const times = document.createElement('div'); times.className = 'add-time-times';
   times.setAttribute('role', 'group'); times.setAttribute('aria-label', 'Time range');
   const makeField = (text, id, type) => {
@@ -35,6 +38,26 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const start = makeField('Start', 'add-time-start', 'text');
   const end = makeField('End (optional)', 'add-time-end', 'text');
   const date = makeField('Date', 'add-time-date', 'date');
+  const rangeFields = document.createElement('div'); rangeFields.className = 'add-time-range-fields'; rangeFields.hidden = true;
+  const calendar = document.createElement('div'); calendar.className = 'add-time-calendar';
+  calendar.setAttribute('role', 'group'); calendar.setAttribute('aria-label', 'Select days');
+  const calendarHeader = document.createElement('div'); calendarHeader.className = 'add-time-calendar-header';
+  const previousMonth = document.createElement('button'); previousMonth.type = 'button';
+  previousMonth.textContent = '‹'; previousMonth.setAttribute('aria-label', 'Previous month');
+  const monthTitle = document.createElement('strong'); monthTitle.setAttribute('aria-live', 'polite');
+  const nextMonth = document.createElement('button'); nextMonth.type = 'button';
+  nextMonth.textContent = '›'; nextMonth.setAttribute('aria-label', 'Next month');
+  calendarHeader.append(previousMonth, monthTitle, nextMonth);
+  const days = document.createElement('div'); days.className = 'add-time-calendar-days';
+  const selectedCount = document.createElement('p'); selectedCount.className = 'add-time-selected-count';
+  selectedCount.setAttribute('role', 'status');
+  calendar.append(calendarHeader, days, selectedCount);
+  const hoursLabel = document.createElement('label'); hoursLabel.textContent = 'Hours per day';
+  const hours = document.createElement('input'); hours.type = 'number'; hours.id = 'add-time-daily-hours';
+  hours.min = '0'; hours.max = '24'; hours.step = 'any'; hours.required = true; hours.placeholder = 'e.g. 8';
+  hoursLabel.htmlFor = hours.id; hoursLabel.append(hours);
+  const rangeDetails = document.createElement('div'); rangeDetails.className = 'add-time-range-details';
+  rangeDetails.append(hoursLabel); rangeFields.append(calendar, rangeDetails);
   for (const input of [start, end]) {
     input.inputMode = 'numeric'; input.placeholder = 'HH:MM'; input.autocomplete = 'off'; input.maxLength = 5;
     input.addEventListener('click', () => input.select());
@@ -46,6 +69,57 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const refreshDateMax = () => { date.max = dateValue(new Date()); };
   date.addEventListener('focus', refreshDateMax);
   const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Leave End empty to start a timer. One entry can be at most 24 hours.';
+  const rangeHint = document.createElement('p'); rangeHint.className = 'add-time-hint'; rangeHint.hidden = true;
+  rangeHint.textContent = 'Choose days in the calendar, including nonconsecutive days. Click a selected day to remove it. Up to a 500-day span. Enter 0 hours to record a day without tracked time.';
+  const selectedDays = new Set();
+  let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const renderCalendar = () => {
+    const today = dateValue(new Date());
+    monthTitle.textContent = calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    nextMonth.disabled = calendarMonth.getFullYear() === new Date().getFullYear()
+      && calendarMonth.getMonth() === new Date().getMonth();
+    days.replaceChildren();
+    for (const name of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
+      const heading = document.createElement('span'); heading.textContent = name;
+      heading.setAttribute('aria-hidden', 'true'); days.append(heading);
+    }
+    const firstWeekday = calendarMonth.getDay();
+    for (let index = 0; index < firstWeekday; index++) days.append(document.createElement('span'));
+    const count = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+    for (let day = 1; day <= count; day++) {
+      const current = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+      const key = dateValue(current);
+      const cell = document.createElement('button'); cell.type = 'button'; cell.textContent = String(day);
+      cell.setAttribute('aria-label', current.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
+      cell.setAttribute('aria-pressed', String(selectedDays.has(key)));
+      cell.disabled = key > today;
+      cell.addEventListener('click', () => {
+        if (selectedDays.has(key)) selectedDays.delete(key);
+        else {
+          const all = [...selectedDays, key].sort();
+          const span = (Date.parse(`${all.at(-1)}T00:00:00Z`) - Date.parse(`${all[0]}T00:00:00Z`)) / 86400000;
+          if (all.length > 500 || span >= 500) { setError('Select days within a 500-day span.'); return; }
+          selectedDays.add(key);
+        }
+        cell.setAttribute('aria-pressed', String(selectedDays.has(key)));
+        selectedCount.textContent = `${selectedDays.size} ${selectedDays.size === 1 ? 'day' : 'days'} selected`;
+        setError('');
+      });
+      days.append(cell);
+    }
+  };
+  previousMonth.addEventListener('click', () => { calendarMonth.setMonth(calendarMonth.getMonth() - 1); renderCalendar(); });
+  nextMonth.addEventListener('click', () => { calendarMonth.setMonth(calendarMonth.getMonth() + 1); renderCalendar(); });
+  const showDayRange = () => {
+    const enabled = dayRange.checked;
+    start.parentElement.hidden = enabled; end.parentElement.hidden = enabled;
+    date.parentElement.hidden = enabled;
+    rangeFields.hidden = !enabled; rangeHint.hidden = !enabled; hint.hidden = enabled;
+    if (enabled) rangeDetails.append(descriptionFields);
+    else boundaryHint.after(descriptionFields);
+    if (enabled) renderCalendar();
+  };
+  dayRange.addEventListener('change', showDayRange);
   const boundaryHint = document.createElement('p'); boundaryHint.className = 'add-time-hint'; boundaryHint.hidden = true;
   const overlapProgress = document.createElement('progress'); overlapProgress.className = 'add-time-progress';
   overlapProgress.setAttribute('aria-label', 'Resolving overlap and syncing time'); overlapProgress.hidden = true;
@@ -67,13 +141,16 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     moreDescription.hidden = !clipped;
   };
   description.addEventListener('input', resizeDescription);
+  const descriptionFields = document.createElement('div'); descriptionFields.className = 'add-time-description-fields';
+  descriptionFields.append(descriptionLabel, description, moreDescription);
   const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite'); preview.hidden = true;
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, times, hint, boundaryHint, descriptionLabel, description, moreDescription, preview, error, actions);
+  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, dayRangeLabel, times, rangeFields,
+    hint, rangeHint, boundaryHint, descriptionFields, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
   saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
@@ -216,6 +293,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     heading.textContent = runningEdit ? 'Edit timer start' : boundary ? 'Resolve time overlap' : entry ? 'Edit time' : 'Add new time';
     close.setAttribute('aria-label', runningEdit ? 'Close Edit timer start' : entry ? 'Close Edit time' : 'Close Add time');
     add.textContent = entry ? 'Save' : 'Add';
+    dayRange.checked = false; dayRangeLabel.hidden = Boolean(entry);
+    selectedDays.clear(); selectedCount.textContent = '0 days selected';
+    calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1); hours.value = '';
+    showDayRange();
     hint.hidden = Boolean(entry);
     boundaryHint.hidden = !boundary;
     boundaryHint.textContent = boundary === 'end'
@@ -301,6 +382,31 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     const runningEdit = Boolean(editing?.running);
     const task = runningEdit ? null : taskIdentity();
     if (!runningEdit && !task) { setError('Select a task or enter an HTTP(S) URL.'); return; }
+    if (!editing && dayRange.checked) {
+      refreshDateMax();
+      const dates = [...selectedDays].sort(), daily = hours.value.trim();
+      const durationSeconds = Number(daily) * 3600;
+      if (!dates.length) { setError('Select at least one day.'); return; }
+      if (!daily) { setError('Enter hours per day (0–24). Use 0 for a day without tracked hours.'); hours.focus(); return; }
+      if (dates.at(-1) > date.max || !Number.isSafeInteger(durationSeconds)
+          || durationSeconds < 0 || durationSeconds > 86400) { setError('Choose past days and 0–24 hours per day.'); return; }
+      busy = true; add.disabled = true; cancel.disabled = true; setError('');
+      try {
+        const result = await send({ type: 'ADD_DAY_RANGE', taskUrl: task.taskUrl, taskTitle: task.title || '',
+          description: description.value.trim(), dates, durationSeconds,
+          ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}) });
+        dialog.close(); saved.hidden = false;
+        clearTimeout(savedTimer); savedTimer = setTimeout(() => { saved.hidden = true; }, 3000);
+        await onAdded(result);
+      } catch (cause) {
+        const message = cause?.message || '';
+        setError(/^Message ADD_DAY_RANGE is not allowed from this sender$|^Unknown extension message$/.test(message)
+          ? 'Reload Clockoli in your browser’s Extensions page, then reopen Activity or Top tasks and try again. No days were added.'
+          : message || 'Could not add the selected days.');
+      }
+      finally { busy = false; add.disabled = false; cancel.disabled = false; }
+      return;
+    }
     if (runningEdit && !start.value) { setError('Enter a start time.'); return; }
     if (!runningEdit && end.value && !start.value) { setError('Enter a start time before an end.'); return; }
     const now = new Date();

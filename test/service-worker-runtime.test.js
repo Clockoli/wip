@@ -408,7 +408,7 @@ test('Bulk add accepts locally and queues a shared idle GitHub flush without blo
   assert.equal(calls[0].settings.background, true);
   assert.deepEqual(schedules, [true]);
   const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
-  assert.match(worker, /'ADD_TIME', 'BULK_ADD_TIMES'/);
+  assert.match(worker, /'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES'/);
   assert.match(worker, /const taskMerge = message\?\.type === 'MERGE_TASKS'/,
     'Merge tasks must stay outside the local-acceptance scheduler');
 });
